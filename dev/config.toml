@@ -1,5 +1,5 @@
 [device]
-path = "/dev/video0"
+path = "/dev/video2"
 max_height = 480
 
 [recognition]

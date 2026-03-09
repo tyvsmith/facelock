@@ -19,6 +19,8 @@ pub struct ModelEntry {
     pub size_mb: u64,
     pub sha256: String,
     #[serde(default)]
+    pub url: String,
+    #[serde(default)]
     pub optional: bool,
 }
 

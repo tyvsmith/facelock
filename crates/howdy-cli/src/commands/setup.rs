@@ -11,10 +11,6 @@ use howdy_core::Config;
 /// Embedded model manifest (same source as howdy-face).
 const MANIFEST_TOML: &str = include_str!("../../../../models/manifest.toml");
 
-/// Base URL for model downloads (InsightFace models hosted on GitHub).
-const MODEL_BASE_URL: &str =
-    "https://github.com/nickvdyck/howdy-models/releases/download/v1.0.0";
-
 #[derive(Debug, serde::Deserialize)]
 struct ModelManifest {
     models: Vec<ModelEntry>,
@@ -27,6 +23,8 @@ struct ModelEntry {
     purpose: String,
     size_mb: u64,
     sha256: String,
+    #[serde(default)]
+    url: String,
     #[serde(default)]
     optional: bool,
 }
@@ -170,7 +168,10 @@ fn check_model(path: &Path, expected_sha256: &str) -> anyhow::Result<ModelStatus
 }
 
 fn download_model(entry: &ModelEntry, dest: &Path) -> anyhow::Result<()> {
-    let url = format!("{MODEL_BASE_URL}/{}", entry.filename);
+    if entry.url.is_empty() {
+        bail!("no download URL configured for {}", entry.name);
+    }
+    let url = entry.url.as_str();
 
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(600))
@@ -178,7 +179,7 @@ fn download_model(entry: &ModelEntry, dest: &Path) -> anyhow::Result<()> {
         .context("failed to create HTTP client")?;
 
     let response = client
-        .get(&url)
+        .get(url)
         .send()
         .with_context(|| format!("failed to download {}", entry.name))?;
 

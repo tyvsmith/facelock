@@ -1,18 +1,24 @@
 # Model manifest — URLs, checksums, and metadata for ONNX models
+#
+# TODO: Once howdy-rust has its own GitHub repo, upload model files to a
+# GitHub Release (e.g. v0.1.0-models) and update the URLs below to point
+# to your own repo's releases. See docs/TODO-model-hosting.md for details.
 
 [[models]]
 name = "scrfd_2.5g"
 filename = "scrfd_2.5g_bnkps.onnx"
 purpose = "Face detection + 5-point landmarks"
 size_mb = 3
-sha256 = ""  # Fill after downloading
+sha256 = "bc24bb349491481c3ca793cf89306723162c280cb284c5a5e49df3760bf5c2ce"
+url = "https://github.com/visomaster/visomaster-assets/releases/download/v0.1.0/scrfd_2.5g_bnkps.onnx"
 
 [[models]]
 name = "arcface_r50"
 filename = "w600k_r50.onnx"
 purpose = "512-D face embedding"
 size_mb = 166
-sha256 = ""  # Fill after downloading
+sha256 = "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"
+url = "https://github.com/visomaster/visomaster-assets/releases/download/v0.1.0/w600k_r50.onnx"
 
 [[models]]
 name = "scrfd_10g"
@@ -20,6 +26,7 @@ filename = "scrfd_10g_bnkps.onnx"
 purpose = "Higher accuracy face detection"
 size_mb = 16
 sha256 = ""
+url = ""
 optional = true
 
 [[models]]
@@ -28,4 +35,5 @@ filename = "w600k_r100.onnx"
 purpose = "Higher accuracy 512-D face embedding (99.77% LFW)"
 size_mb = 249
 sha256 = ""
+url = ""
 optional = true
