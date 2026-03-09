@@ -1,0 +1,23 @@
+FROM archlinux:latest
+
+# Install dependencies
+RUN pacman -Syu --noconfirm pam pamtester sudo && pacman -Scc --noconfirm
+
+# Create test user
+RUN useradd -m testuser && echo "testuser:test" | chpasswd
+
+# Copy built artifacts
+COPY target/release/libpam_howdy.so /lib/security/pam_howdy.so
+COPY target/release/howdy-daemon /usr/bin/howdy-daemon
+COPY target/release/howdy /usr/bin/howdy
+COPY test/pam.d/howdy-test /etc/pam.d/howdy-test
+
+# Create config directory and copy dev config
+RUN mkdir -p /etc/howdy
+COPY dev/config.toml /etc/howdy/config.toml
+
+# Copy test script
+COPY test/run-container-tests.sh /run-tests.sh
+RUN chmod +x /run-tests.sh
+
+CMD ["/run-tests.sh"]

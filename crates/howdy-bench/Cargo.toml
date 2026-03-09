@@ -11,3 +11,10 @@ path = "src/main.rs"
 
 [dependencies]
 howdy-core = { path = "../howdy-core" }
+howdy-camera = { path = "../howdy-camera" }
+howdy-face = { path = "../howdy-face" }
+howdy-store = { path = "../howdy-store" }
+clap = { version = "4", features = ["derive"] }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

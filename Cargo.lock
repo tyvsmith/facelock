@@ -1246,7 +1246,14 @@ dependencies = [
 name = "howdy-bench"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "clap",
+ "howdy-camera",
  "howdy-core",
+ "howdy-face",
+ "howdy-store",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
