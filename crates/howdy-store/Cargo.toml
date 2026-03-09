@@ -7,3 +7,5 @@ license.workspace = true
 
 [dependencies]
 howdy-core = { path = "../howdy-core" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+bytemuck = { version = "1", features = ["derive"] }

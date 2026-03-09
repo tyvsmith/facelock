@@ -7,3 +7,5 @@ license.workspace = true
 
 [dependencies]
 howdy-core = { path = "../howdy-core" }
+v4l = "0.14"
+image = "0.25"

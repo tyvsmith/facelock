@@ -7,3 +7,9 @@ license.workspace = true
 
 [dependencies]
 howdy-core = { path = "../howdy-core" }
+ort = { version = "2.0.0-rc.12", features = ["download-binaries", "ndarray"] }
+ndarray = "0.16"
+image = "0.25"
+sha2 = "0.10"
+serde = { workspace = true }
+toml = { workspace = true }
