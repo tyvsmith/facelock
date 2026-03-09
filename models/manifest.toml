@@ -1,0 +1,31 @@
+# Model manifest — URLs, checksums, and metadata for ONNX models
+
+[[models]]
+name = "scrfd_2.5g"
+filename = "scrfd_2.5g_bnkps.onnx"
+purpose = "Face detection + 5-point landmarks"
+size_mb = 3
+sha256 = ""  # Fill after downloading
+
+[[models]]
+name = "arcface_r50"
+filename = "w600k_r50.onnx"
+purpose = "512-D face embedding"
+size_mb = 166
+sha256 = ""  # Fill after downloading
+
+[[models]]
+name = "scrfd_10g"
+filename = "scrfd_10g_bnkps.onnx"
+purpose = "Higher accuracy face detection"
+size_mb = 16
+sha256 = ""
+optional = true
+
+[[models]]
+name = "arcface_r100"
+filename = "w600k_r100.onnx"
+purpose = "Higher accuracy 512-D face embedding (99.77% LFW)"
+size_mb = 249
+sha256 = ""
+optional = true

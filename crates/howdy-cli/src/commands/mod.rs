@@ -1,0 +1,9 @@
+pub mod clear;
+pub mod config;
+pub mod enroll;
+pub mod list;
+pub mod preview;
+pub mod remove;
+pub mod setup;
+pub mod status;
+pub mod test_cmd;

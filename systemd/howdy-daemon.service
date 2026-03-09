@@ -1,0 +1,33 @@
+[Unit]
+Description=Howdy Face Authentication Daemon
+After=local-fs.target
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/howdy-daemon
+Restart=on-failure
+RestartSec=3
+
+# Filesystem isolation
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/howdy /run/howdy /var/log/howdy
+PrivateTmp=yes
+
+# Device access
+DeviceAllow=/dev/video* rw
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+SystemCallFilter=@system-service @io-event
+
+[Install]
+WantedBy=multi-user.target

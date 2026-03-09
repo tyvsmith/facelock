@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/howdy-core",
+    "crates/howdy-camera",
+    "crates/howdy-face",
+    "crates/howdy-store",
+    "crates/howdy-daemon",
+    "crates/howdy-cli",
+    "crates/pam-howdy",
+    "crates/howdy-bench",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+bincode = "2.0.0-rc.3"

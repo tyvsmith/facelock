@@ -1,0 +1,13 @@
+[package]
+name = "howdy-bench"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "howdy-bench"
+path = "src/main.rs"
+
+[dependencies]
+howdy-core = { path = "../howdy-core" }

@@ -1,0 +1,39 @@
+# Howdy configuration — default template
+# Copy to /etc/howdy/config.toml and edit
+
+[device]
+path = "/dev/video2"   # Required: camera device path
+# max_height = 480     # Max frame height (downscale if larger)
+# rotation = 0         # Frame rotation: 0, 90, 180, 270
+
+[recognition]
+# threshold = 0.45     # Cosine similarity threshold for match
+# timeout_secs = 5     # Auth timeout in seconds
+# detection_confidence = 0.5  # Minimum face detection confidence
+# nms_threshold = 0.4  # Non-maximum suppression threshold
+
+[daemon]
+# socket_path = "/run/howdy/howdy.sock"
+# model_dir = "/var/lib/howdy/models"
+
+[storage]
+# db_path = "/var/lib/howdy/howdy.db"
+
+[security]
+# disabled = false
+# abort_if_ssh = true
+# abort_if_lid_closed = true
+# require_ir = true
+# require_frame_variance = true
+# min_auth_frames = 3
+# detection_notice = true
+
+[notification]
+# enabled = true
+
+[snapshots]
+# enabled = false
+# dir = "/var/log/howdy/snapshots"
+
+[debug]
+# verbose = false
