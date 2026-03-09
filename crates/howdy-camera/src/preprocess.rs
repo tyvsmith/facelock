@@ -2,21 +2,32 @@ use howdy_core::types::BoundingBox;
 
 /// Convert YUYV (YUV 4:2:2) packed data to RGB.
 /// Each 4-byte YUYV group produces 2 RGB pixels.
+/// Uses fixed-point integer math (Q10) to avoid per-pixel float conversion.
 pub fn yuyv_to_rgb(data: &[u8], width: u32, height: u32) -> Vec<u8> {
     let pixel_count = (width * height) as usize;
     let mut rgb = Vec::with_capacity(pixel_count * 3);
 
+    // Fixed-point coefficients (multiplied by 1024)
+    const C_RV: i32 = 1436; // 1.402 * 1024
+    const C_GU: i32 = 352; // 0.344136 * 1024
+    const C_GV: i32 = 731; // 0.714136 * 1024
+    const C_BU: i32 = 1814; // 1.772 * 1024
+
     // Process 4 bytes at a time (2 pixels)
     for chunk in data.chunks_exact(4) {
-        let y0 = chunk[0] as f32;
-        let u = chunk[1] as f32 - 128.0;
-        let y1 = chunk[2] as f32;
-        let v = chunk[3] as f32 - 128.0;
+        let u = chunk[1] as i32 - 128;
+        let v = chunk[3] as i32 - 128;
 
-        for y in [y0, y1] {
-            let r = (y + 1.402 * v).clamp(0.0, 255.0) as u8;
-            let g = (y - 0.344136 * u - 0.714136 * v).clamp(0.0, 255.0) as u8;
-            let b = (y + 1.772 * u).clamp(0.0, 255.0) as u8;
+        // Pre-compute chrominance contributions (shared by both pixels)
+        let cr = C_RV * v;
+        let cg = -(C_GU * u + C_GV * v);
+        let cb = C_BU * u;
+
+        for &y_val in &[chunk[0], chunk[2]] {
+            let y = (y_val as i32) << 10; // scale Y to Q10
+            let r = ((y + cr) >> 10).clamp(0, 255) as u8;
+            let g = ((y + cg) >> 10).clamp(0, 255) as u8;
+            let b = ((y + cb) >> 10).clamp(0, 255) as u8;
             rgb.push(r);
             rgb.push(g);
             rgb.push(b);
@@ -27,13 +38,16 @@ pub fn yuyv_to_rgb(data: &[u8], width: u32, height: u32) -> Vec<u8> {
 }
 
 /// Convert RGB image to grayscale using luminance formula.
+/// Uses fixed-point integer math (Q8) to avoid per-pixel float conversion.
 pub fn rgb_to_gray(rgb: &[u8], _width: u32, _height: u32) -> Vec<u8> {
+    // Fixed-point coefficients (multiplied by 256)
+    const CR: u32 = 77; // 0.299 * 256
+    const CG: u32 = 150; // 0.587 * 256
+    const CB: u32 = 29; // 0.114 * 256
+
     rgb.chunks_exact(3)
         .map(|px| {
-            let r = px[0] as f32;
-            let g = px[1] as f32;
-            let b = px[2] as f32;
-            (0.299 * r + 0.587 * g + 0.114 * b).clamp(0.0, 255.0) as u8
+            ((CR * px[0] as u32 + CG * px[1] as u32 + CB * px[2] as u32) >> 8) as u8
         })
         .collect()
 }

@@ -17,6 +17,10 @@ use crate::rate_limit::RateLimiter;
 /// the explicit ReleaseCamera command.
 const CAMERA_DEBOUNCE: Duration = Duration::from_secs(10);
 
+/// Estimated JPEG size for a 640x480 frame at quality 60.
+/// Pre-allocating avoids repeated heap growth during encoding.
+const JPEG_BUF_CAPACITY: usize = 128 * 1024;
+
 pub struct Handler {
     pub config: Config,
     pub engine: FaceEngine,
@@ -26,6 +30,7 @@ pub struct Handler {
     pub shutdown_requested: bool,
     camera: Option<Camera<'static>>,
     camera_last_used: Instant,
+    jpeg_buf: Vec<u8>,
 }
 
 impl Handler {
@@ -45,6 +50,7 @@ impl Handler {
             shutdown_requested: false,
             camera: None,
             camera_last_used: Instant::now(),
+            jpeg_buf: Vec::with_capacity(JPEG_BUF_CAPACITY),
         }
     }
 
@@ -161,15 +167,17 @@ impl Handler {
 
             // Preview keeps the camera open across frames — the client
             // sends ReleaseCamera when the preview window closes.
+            // Uses capture_rgb_only() to skip grayscale/CLAHE (not needed for display).
             DaemonRequest::PreviewFrame => {
                 let camera = match self.acquire_camera() {
                     Ok(c) => c,
                     Err(resp) => return resp,
                 };
-                match camera.capture() {
+                match camera.capture_rgb_only() {
                     Ok(frame) => {
-                        let mut jpeg_buf = Vec::new();
-                        let mut encoder = JpegEncoder::new_with_quality(&mut jpeg_buf, 80);
+                        self.jpeg_buf.clear();
+                        let mut encoder =
+                            JpegEncoder::new_with_quality(&mut self.jpeg_buf, 60);
                         match encoder.encode(
                             &frame.rgb,
                             frame.width,
@@ -177,7 +185,7 @@ impl Handler {
                             image::ExtendedColorType::Rgb8,
                         ) {
                             Ok(()) => DaemonResponse::Frame {
-                                jpeg_data: jpeg_buf,
+                                jpeg_data: self.jpeg_buf.clone(),
                             },
                             Err(e) => DaemonResponse::Error {
                                 message: format!("JPEG encode error: {e}"),

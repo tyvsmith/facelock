@@ -115,9 +115,18 @@ pub fn fill_rect(
     h: u32,
     color: [u8; 3],
 ) {
-    for py in y..y.saturating_add(h).min(buf_h) {
-        for px in x..x.saturating_add(w).min(stride / 4) {
-            set_pixel(buf, stride, buf_h, px, py, color);
+    let max_w = stride / 4;
+    let x_end = x.saturating_add(w).min(max_w);
+    let y_end = y.saturating_add(h).min(buf_h);
+    let pixel = [color[2], color[1], color[0], 0xFF]; // BGRX
+
+    for py in y..y_end {
+        let row_start = (py * stride) as usize;
+        for px in x..x_end {
+            let offset = row_start + (px * 4) as usize;
+            if offset + 3 < buf.len() {
+                buf[offset..offset + 4].copy_from_slice(&pixel);
+            }
         }
     }
 }

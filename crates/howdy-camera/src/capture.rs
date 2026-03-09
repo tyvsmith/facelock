@@ -98,8 +98,38 @@ impl<'a> Camera<'a> {
         &self.format
     }
 
-    /// Capture a single frame (blocking).
+    /// Capture a single frame with full preprocessing (RGB + grayscale + CLAHE).
+    /// Use this for authentication and enrollment where face detection is needed.
     pub fn capture(&mut self) -> Result<Frame> {
+        let (rgb, width, height) = self.capture_rgb()?;
+
+        // Convert to grayscale and apply CLAHE for face detection
+        let gray = preprocess::rgb_to_gray(&rgb, width, height);
+        let gray = preprocess::clahe(&gray, width, height);
+
+        Ok(Frame {
+            rgb,
+            gray,
+            width,
+            height,
+        })
+    }
+
+    /// Capture a frame and return only the RGB data, skipping grayscale
+    /// conversion and CLAHE. Use this for preview where no face detection runs.
+    pub fn capture_rgb_only(&mut self) -> Result<Frame> {
+        let (rgb, width, height) = self.capture_rgb()?;
+
+        Ok(Frame {
+            rgb,
+            gray: Vec::new(),
+            width,
+            height,
+        })
+    }
+
+    /// Internal: capture and convert to RGB, applying downscale and rotation.
+    fn capture_rgb(&mut self) -> Result<(Vec<u8>, u32, u32)> {
         let (buf, _meta) = self
             .stream
             .next()
@@ -173,18 +203,7 @@ impl<'a> Camera<'a> {
             rgb = rotated.into_raw();
         }
 
-        // Convert to grayscale
-        let gray = preprocess::rgb_to_gray(&rgb, width, height);
-
-        // Apply CLAHE
-        let gray = preprocess::clahe(&gray, width, height);
-
-        Ok(Frame {
-            rgb,
-            gray,
-            width,
-            height,
-        })
+        Ok((rgb, width, height))
     }
 
     /// Check if a frame is too dark (>40% of gray pixels < 10).

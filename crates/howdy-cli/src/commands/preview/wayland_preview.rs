@@ -218,23 +218,27 @@ fn render_frame(
             let offset_x = (width.saturating_sub(disp_w)) / 2;
             let offset_y = (height.saturating_sub(disp_h)) / 2;
 
-            // Clear canvas to black
+            // Clear canvas to black using bulk fill
+            // XRGB8888: [B=0, G=0, R=0, X=0xFF] but since B/G/R are all 0,
+            // we can memset to 0 then fix up alpha — or just fill directly.
             for chunk in canvas.chunks_exact_mut(4) {
-                chunk[0] = 0;
-                chunk[1] = 0;
-                chunk[2] = 0;
-                chunk[3] = 0xFF;
+                chunk.copy_from_slice(&[0, 0, 0, 0xFF]);
             }
+
+            // Pre-compute source X lookup table to avoid per-pixel division
+            let src_x_table: Vec<u32> = (0..disp_w)
+                .map(|dx| (dx as u64 * img_w as u64 / disp_w as u64) as u32)
+                .collect();
 
             // Nearest-neighbor scale and blit
             for dy in 0..disp_h {
                 let src_y = (dy as u64 * img_h as u64 / disp_h as u64) as u32;
-                for dx in 0..disp_w {
-                    let src_x = (dx as u64 * img_w as u64 / disp_w as u64) as u32;
-                    let src_idx = ((src_y * img_w + src_x) * 3) as usize;
-                    let dst_x = offset_x + dx;
-                    let dst_y = offset_y + dy;
-                    let dst_idx = ((dst_y * stride) + dst_x * 4) as usize;
+                let src_row_offset = (src_y * img_w * 3) as usize;
+                let dst_row_offset = ((offset_y + dy) * stride + offset_x * 4) as usize;
+
+                for (dx, &src_x) in src_x_table.iter().enumerate() {
+                    let src_idx = src_row_offset + (src_x * 3) as usize;
+                    let dst_idx = dst_row_offset + dx * 4;
 
                     if src_idx + 2 < rgb.len() && dst_idx + 3 < canvas.len() {
                         canvas[dst_idx] = rgb[src_idx + 2]; // B
