@@ -10,72 +10,81 @@ use tracing::{debug, info, warn};
 
 use crate::rate_limit::RateLimiter;
 
+/// Run pre-flight checks that don't need the camera.
+/// Returns Some(response) to short-circuit, or None to proceed with auth.
+pub fn pre_check(
+    config: &Config,
+    store: &FaceStore,
+    user: &str,
+    rate_limiter: &mut RateLimiter,
+    device_is_ir: bool,
+) -> Option<DaemonResponse> {
+    if config.security.disabled {
+        warn!(user, "howdy is disabled");
+        return Some(DaemonResponse::Error {
+            message: "howdy is disabled".into(),
+        });
+    }
+
+    if config.security.abort_if_ssh && is_ssh_session() {
+        info!(user, "SSH session detected, aborting");
+        return Some(DaemonResponse::Error {
+            message: "SSH session detected".into(),
+        });
+    }
+
+    if config.security.abort_if_lid_closed && is_lid_closed() {
+        info!(user, "lid closed, aborting");
+        return Some(DaemonResponse::Error {
+            message: "lid closed".into(),
+        });
+    }
+
+    let has_models = match store.has_models(user) {
+        Ok(v) => v,
+        Err(e) => {
+            return Some(DaemonResponse::Error {
+                message: format!("storage error: {e}"),
+            });
+        }
+    };
+    if !has_models {
+        return Some(DaemonResponse::AuthResult(MatchResult {
+            matched: false,
+            model_id: None,
+            label: None,
+            similarity: 0.0,
+        }));
+    }
+
+    if !rate_limiter.check_and_record(user) {
+        warn!(user, "rate limited");
+        return Some(DaemonResponse::Error {
+            message: "rate limited".into(),
+        });
+    }
+
+    if config.security.require_ir && !device_is_ir {
+        warn!(user, "IR camera required but device is not IR");
+        return Some(DaemonResponse::Error {
+            message: "IR camera required for authentication. Set security.require_ir = false to override (NOT RECOMMENDED).".into(),
+        });
+    }
+
+    None
+}
+
+/// Run the camera-based authentication loop.
+/// Called after pre_check returns None.
 pub fn authenticate(
     camera: &mut Camera<'_>,
     engine: &mut FaceEngine,
     store: &FaceStore,
     config: &Config,
     user: &str,
-    rate_limiter: &mut RateLimiter,
     device_is_ir: bool,
 ) -> DaemonResponse {
     let start = Instant::now();
-
-    // Pre-condition checks
-    if config.security.disabled {
-        warn!(user, "howdy is disabled");
-        return DaemonResponse::Error {
-            message: "howdy is disabled".into(),
-        };
-    }
-
-    if config.security.abort_if_ssh && is_ssh_session() {
-        info!(user, "SSH session detected, aborting");
-        return DaemonResponse::Error {
-            message: "SSH session detected".into(),
-        };
-    }
-
-    if config.security.abort_if_lid_closed && is_lid_closed() {
-        info!(user, "lid closed, aborting");
-        return DaemonResponse::Error {
-            message: "lid closed".into(),
-        };
-    }
-
-    // Check if user has any enrolled models
-    let has_models = match store.has_models(user) {
-        Ok(v) => v,
-        Err(e) => {
-            return DaemonResponse::Error {
-                message: format!("storage error: {e}"),
-            };
-        }
-    };
-    if !has_models {
-        return DaemonResponse::AuthResult(MatchResult {
-            matched: false,
-            model_id: None,
-            label: None,
-            similarity: 0.0,
-        });
-    }
-
-    // Rate limit check
-    if !rate_limiter.check_and_record(user) {
-        warn!(user, "rate limited");
-        return DaemonResponse::Error {
-            message: "rate limited".into(),
-        };
-    }
-
-    // IR camera enforcement
-    if config.security.require_ir && !device_is_ir {
-        warn!(user, "IR camera required but device is not IR");
-        return DaemonResponse::Error {
-            message: "IR camera required for authentication. Set security.require_ir = false to override (NOT RECOMMENDED).".into(),
-        };
-    }
 
     // Load user embeddings
     let stored = match store.get_user_embeddings(user) {

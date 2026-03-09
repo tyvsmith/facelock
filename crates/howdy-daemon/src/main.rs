@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use howdy_camera::{Camera, is_ir_camera, validate_device};
+use howdy_camera::{is_ir_camera, validate_device};
 use howdy_core::config::Config;
 use howdy_core::ipc::{decode_request, encode_response, recv_message, send_message};
 use howdy_face::FaceEngine;
@@ -68,15 +68,6 @@ fn main() {
         }
     };
 
-    // Open camera
-    let camera = match Camera::open(&config.device) {
-        Ok(c) => c,
-        Err(e) => {
-            error!("failed to open camera: {e}");
-            std::process::exit(1);
-        }
-    };
-
     // Load ONNX models
     let engine = match FaceEngine::load(
         &config.recognition,
@@ -130,15 +121,7 @@ fn main() {
         .set_nonblocking(true)
         .expect("failed to set socket non-blocking");
 
-    let mut handler = Handler {
-        camera,
-        engine,
-        store,
-        config,
-        rate_limiter,
-        device_is_ir,
-        shutdown_requested: false,
-    };
+    let mut handler = Handler::new(config, engine, store, rate_limiter, device_is_ir);
 
     info!(socket = %&socket_path, "listening for connections");
 
@@ -158,7 +141,8 @@ fn main() {
                 }
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // No pending connection, sleep briefly then check signals
+                // No pending connection, release camera if idle, then check signals
+                handler.maybe_release_camera();
                 std::thread::sleep(Duration::from_millis(100));
             }
             Err(e) => {
@@ -239,6 +223,13 @@ fn verify_peer(stream: &std::os::unix::net::UnixStream) -> Result<(), String> {
         return Ok(());
     }
 
+    // Development mode: if no howdy group exists on the system, allow any user.
+    // In production, the howdy group is created during installation.
+    if nix::unistd::Group::from_name("howdy").ok().flatten().is_none() {
+        tracing::debug!("no howdy group found, allowing UID {peer_uid} (dev mode)");
+        return Ok(());
+    }
+
     Err(format!("unauthorized UID {peer_uid}"))
 }
 
@@ -270,7 +261,7 @@ fn is_in_howdy_group(uid: u32) -> bool {
 }
 
 fn handle_connection(
-    handler: &mut Handler<'_>,
+    handler: &mut Handler,
     stream: std::os::unix::net::UnixStream,
 ) -> howdy_core::Result<()> {
     // Set a read timeout to avoid blocking forever

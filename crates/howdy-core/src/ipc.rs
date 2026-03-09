@@ -16,6 +16,7 @@ pub enum DaemonRequest {
     RemoveModel { user: String, model_id: u32 },
     ClearModels { user: String },
     PreviewFrame,
+    ReleaseCamera,
     Ping,
     Shutdown,
 }

@@ -119,6 +119,17 @@ fn request_round_trip_shutdown() {
     );
 }
 
+#[test]
+fn request_round_trip_release_camera() {
+    let req = DaemonRequest::ReleaseCamera;
+    let bytes = encode_request(&req).unwrap();
+    let decoded = decode_request(&bytes).unwrap();
+    assert!(
+        matches!(decoded, DaemonRequest::ReleaseCamera),
+        "expected ReleaseCamera, got {decoded:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // DaemonResponse round-trip tests
 // ---------------------------------------------------------------------------

@@ -40,20 +40,22 @@ sha256sum models/*.onnx
 ## 3. Configure for Development
 
 The repo includes `dev/config.toml` which uses temp paths and disables security
-checks that require an IR camera. All commands below use it via `HOWDY_CONFIG`:
+checks that require an IR camera. Set `HOWDY_CONFIG` in your shell — every
+command (daemon, CLI, bench) reads it:
 
 ```bash
 export HOWDY_CONFIG=dev/config.toml
 ```
 
-You may need to adjust `device.path` — find your camera:
+Find your camera and update `dev/config.toml` if needed:
 ```bash
 cargo run --bin howdy -- devices
+# Update device.path in dev/config.toml to match (e.g. /dev/video2)
 ```
 
-Update `dev/config.toml` if your camera isn't `/dev/video0`.
-
 ## 4. Run the Daemon
+
+The daemon must be running for the CLI to work. Start it in the background:
 
 ```bash
 cargo run --bin howdy-daemon &

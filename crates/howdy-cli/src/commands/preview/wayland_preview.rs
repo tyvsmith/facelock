@@ -39,6 +39,11 @@ const MAX_HEIGHT: u32 = 480;
 
 /// Run the Wayland layer-shell preview.
 pub fn run(socket_path: &str) -> anyhow::Result<()> {
+    // Catch Ctrl+C so we can clean up the camera
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    signal_hook::flag::register(signal_hook::consts::SIGINT, std::sync::Arc::clone(&stop))
+        .context("failed to register SIGINT handler")?;
+
     let conn = Connection::connect_to_env().context("failed to connect to Wayland display")?;
 
     let (globals, mut event_queue) =
@@ -92,8 +97,9 @@ pub fn run(socket_path: &str) -> anyhow::Result<()> {
             .blocking_dispatch(&mut state)
             .context("Wayland dispatch error")?;
 
-        if state.exit {
+        if state.exit || stop.load(std::sync::atomic::Ordering::Relaxed) {
             tracing::info!("preview closed");
+            let _ = ipc_client::send_request(socket_path, &DaemonRequest::ReleaseCamera);
             break;
         }
     }

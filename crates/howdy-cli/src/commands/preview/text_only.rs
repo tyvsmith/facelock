@@ -1,7 +1,8 @@
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::Context;
 use howdy_core::ipc::{DaemonRequest, DaemonResponse};
 
 use crate::ipc_client;
@@ -13,6 +14,9 @@ use crate::ipc_client;
 pub fn run(socket_path: &str) -> anyhow::Result<()> {
     eprintln!("Text-only preview mode. Press Ctrl+C to stop.\n");
 
+    let stop = Arc::new(AtomicBool::new(false));
+    let _ = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&stop));
+
     let mut frame_count: u64 = 0;
     let start = Instant::now();
     let mut last_fps_time = start;
@@ -21,9 +25,11 @@ pub fn run(socket_path: &str) -> anyhow::Result<()> {
 
     let stdout = std::io::stdout();
 
-    loop {
-        let response = ipc_client::send_request(socket_path, &DaemonRequest::PreviewFrame)
-            .context("failed to request preview frame")?;
+    while !stop.load(Ordering::Relaxed) {
+        let response = match ipc_client::send_request(socket_path, &DaemonRequest::PreviewFrame) {
+            Ok(r) => r,
+            Err(_) => break,
+        };
 
         match response {
             DaemonResponse::Frame { jpeg_data } => {
@@ -51,10 +57,12 @@ pub fn run(socket_path: &str) -> anyhow::Result<()> {
                 });
 
                 let mut handle = stdout.lock();
-                writeln!(handle, "{output}")
-                    .context("failed to write to stdout")?;
+                if writeln!(handle, "{output}").is_err() {
+                    break;
+                }
             }
             DaemonResponse::Error { message } => {
+                let _ = ipc_client::send_request(socket_path, &DaemonRequest::ReleaseCamera);
                 anyhow::bail!("daemon error: {message}");
             }
             other => {
@@ -62,6 +70,11 @@ pub fn run(socket_path: &str) -> anyhow::Result<()> {
             }
         }
     }
+
+    // Tell the daemon to release the camera
+    let _ = ipc_client::send_request(socket_path, &DaemonRequest::ReleaseCamera);
+    let _ = start; // suppress unused warning
+    Ok(())
 }
 
 /// Try to extract JPEG dimensions without full decode.

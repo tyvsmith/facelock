@@ -27,6 +27,7 @@ smithay-client-toolkit = { version = "0.20", optional = true }
 wayland-client = { version = "0.31", optional = true }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 xkbcommon = { version = "0.8", optional = true }
+signal-hook = "0.3"
 
 [features]
 default = ["wayland"]
