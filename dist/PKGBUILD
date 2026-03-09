@@ -1,0 +1,49 @@
+# Maintainer: howdy-rust contributors
+pkgname=howdy-rust
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Face authentication for Linux (Rust rewrite)"
+arch=('x86_64')
+url="https://github.com/user/howdy-rust"
+license=('MIT')
+depends=('pam')
+makedepends=('rust' 'cargo')
+backup=('etc/howdy/config.toml')
+install=howdy-rust.install
+
+build() {
+    cd "$srcdir/$pkgname-$pkgver"
+    cargo build --release
+}
+
+package() {
+    cd "$srcdir/$pkgname-$pkgver"
+
+    # Binaries
+    install -Dm755 target/release/howdy "$pkgdir/usr/bin/howdy"
+    install -Dm755 target/release/howdy-daemon "$pkgdir/usr/bin/howdy-daemon"
+
+    # PAM module (Arch uses /usr/lib/security/)
+    install -Dm755 target/release/libpam_howdy.so "$pkgdir/usr/lib/security/pam_howdy.so"
+
+    # Configuration
+    install -Dm644 config/howdy.toml "$pkgdir/etc/howdy/config.toml"
+
+    # systemd service
+    install -Dm644 systemd/howdy-daemon.service "$pkgdir/usr/lib/systemd/system/howdy-daemon.service"
+
+    # sysusers.d for howdy group
+    install -Dm644 dist/howdy.sysusers "$pkgdir/usr/lib/sysusers.d/howdy.conf"
+
+    # tmpfiles.d for runtime directories
+    install -Dm644 dist/howdy.tmpfiles "$pkgdir/usr/lib/tmpfiles.d/howdy.conf"
+
+    # Data directories
+    install -dm750 "$pkgdir/var/lib/howdy"
+    install -dm755 "$pkgdir/var/lib/howdy/models"
+    install -dm750 "$pkgdir/var/log/howdy"
+    install -dm750 "$pkgdir/var/log/howdy/snapshots"
+
+    # License
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE" 2>/dev/null || true
+}

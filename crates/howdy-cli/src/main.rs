@@ -1,5 +1,6 @@
 mod commands;
 mod ipc_client;
+pub mod notifications;
 
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;

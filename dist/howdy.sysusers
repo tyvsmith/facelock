@@ -1,0 +1,2 @@
+# Create howdy system group for daemon socket and database access
+g howdy -

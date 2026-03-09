@@ -150,10 +150,24 @@ impl Default for SecurityConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub on_success: bool,
+    #[serde(default = "default_true")]
+    pub on_failure: bool,
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            on_success: true,
+            on_failure: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

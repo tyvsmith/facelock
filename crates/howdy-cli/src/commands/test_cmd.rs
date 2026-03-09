@@ -6,13 +6,18 @@ use howdy_core::ipc::{DaemonRequest, DaemonResponse};
 use howdy_core::Config;
 
 use crate::ipc_client;
+use crate::notifications::{notify_if_enabled, NotifyEvent};
 
 pub fn run(user: Option<String>) -> anyhow::Result<()> {
     let config = Config::load().context("failed to load config")?;
     let user = ipc_client::resolve_user(user.as_deref());
+    let notif_config = &config.notification;
 
     println!("Testing face recognition for user '{user}'...");
     println!("Look at the camera.");
+
+    // Fire scanning notification (non-blocking, errors silently ignored)
+    notify_if_enabled(notif_config, &NotifyEvent::Scanning);
 
     let request = DaemonRequest::Authenticate {
         user: user.clone(),
@@ -32,15 +37,37 @@ pub fn run(user: Option<String>) -> anyhow::Result<()> {
                     result.similarity,
                     elapsed.as_secs_f64()
                 );
+                notify_if_enabled(
+                    notif_config,
+                    &NotifyEvent::Success {
+                        label: result.label.clone(),
+                        similarity: result.similarity,
+                    },
+                );
             } else {
                 println!(
                     "No match (best: {:.2}) after {:.1}s",
                     result.similarity,
                     elapsed.as_secs_f64()
                 );
+                notify_if_enabled(
+                    notif_config,
+                    &NotifyEvent::Failure {
+                        reason: format!(
+                            "no match (best similarity: {:.2})",
+                            result.similarity
+                        ),
+                    },
+                );
             }
         }
         other => {
+            notify_if_enabled(
+                notif_config,
+                &NotifyEvent::Failure {
+                    reason: "unexpected daemon response".to_string(),
+                },
+            );
             anyhow::bail!("unexpected response from daemon: {other:?}");
         }
     }

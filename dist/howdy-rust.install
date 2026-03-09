@@ -1,0 +1,46 @@
+post_install() {
+    systemd-sysusers
+    systemd-tmpfiles --create
+
+    # Set ownership on data directories
+    chown root:howdy /var/lib/howdy 2>/dev/null || true
+    chown root:howdy /var/log/howdy 2>/dev/null || true
+    chown root:howdy /var/log/howdy/snapshots 2>/dev/null || true
+
+    echo "==> howdy-rust installed."
+    echo "==> Next steps:"
+    echo "    1. Edit /etc/howdy/config.toml (set device.path to your IR camera)"
+    echo "    2. Run: sudo howdy setup              (download ONNX models)"
+    echo "    3. Run: sudo systemctl enable --now howdy-daemon"
+    echo "    4. Run: sudo howdy enroll             (capture your face)"
+    echo "    5. Run: sudo howdy test               (verify recognition)"
+    echo "    6. Add to PAM config (see docs/testing-safety.md first):"
+    echo "       auth  sufficient  pam_howdy.so"
+}
+
+post_upgrade() {
+    systemd-sysusers
+    systemd-tmpfiles --create
+
+    # Ensure ownership after upgrade
+    chown root:howdy /var/lib/howdy 2>/dev/null || true
+    chown root:howdy /var/log/howdy 2>/dev/null || true
+    chown root:howdy /var/log/howdy/snapshots 2>/dev/null || true
+
+    # Restart daemon if running
+    if systemctl is-active --quiet howdy-daemon; then
+        echo "==> Restarting howdy-daemon..."
+        systemctl restart howdy-daemon
+    fi
+}
+
+pre_remove() {
+    # Stop and disable daemon
+    systemctl stop howdy-daemon 2>/dev/null || true
+    systemctl disable howdy-daemon 2>/dev/null || true
+}
+
+post_remove() {
+    echo "==> Config and data preserved in /etc/howdy and /var/lib/howdy."
+    echo "==> To remove all data: rm -rf /etc/howdy /var/lib/howdy /var/log/howdy"
+}
