@@ -113,6 +113,25 @@ pub struct SecurityConfig {
     pub min_auth_frames: u32,
     #[serde(default = "default_true")]
     pub detection_notice: bool,
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitConfig {
+    #[serde(default = "default_max_attempts")]
+    pub max_attempts: u32,
+    #[serde(default = "default_window_secs")]
+    pub window_secs: u64,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: default_max_attempts(),
+            window_secs: default_window_secs(),
+        }
+    }
 }
 
 impl Default for SecurityConfig {
@@ -126,6 +145,7 @@ impl Default for SecurityConfig {
             require_frame_variance: true,
             min_auth_frames: default_min_auth_frames(),
             detection_notice: true,
+            rate_limit: RateLimitConfig::default(),
         }
     }
 }
@@ -183,6 +203,12 @@ fn default_min_auth_frames() -> u32 {
 }
 fn default_true() -> bool {
     true
+}
+fn default_max_attempts() -> u32 {
+    5
+}
+fn default_window_secs() -> u64 {
+    60
 }
 
 impl Config {

@@ -93,6 +93,11 @@ impl<'a> Camera<'a> {
         })
     }
 
+    /// Return the negotiated pixel format string (e.g. "MJPG", "YUYV", "GREY").
+    pub fn format(&self) -> &str {
+        &self.format
+    }
+
     /// Capture a single frame (blocking).
     pub fn capture(&mut self) -> Result<Frame> {
         let (buf, _meta) = self
