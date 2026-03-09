@@ -13,3 +13,12 @@ path = "src/main.rs"
 howdy-core = { path = "../howdy-core" }
 clap = { version = "4", features = ["derive"] }
 anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+indicatif = "0.17"
+reqwest = { version = "0.12", features = ["blocking"] }
+notify-rust = "4"
+sha2 = "0.10"
+serde = { workspace = true }
+toml = { workspace = true }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }

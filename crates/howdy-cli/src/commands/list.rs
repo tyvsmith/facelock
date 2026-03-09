@@ -1,4 +1,97 @@
-pub fn run() -> anyhow::Result<()> {
-    eprintln!("howdy list: not yet implemented");
+use anyhow::Context;
+use chrono::{Local, TimeZone};
+
+use howdy_core::ipc::{DaemonRequest, DaemonResponse};
+use howdy_core::types::FaceModelInfo;
+use howdy_core::Config;
+
+use crate::ipc_client;
+
+pub fn run(user: Option<String>, json: bool) -> anyhow::Result<()> {
+    let config = Config::load().context("failed to load config")?;
+    let user = ipc_client::resolve_user(user.as_deref());
+
+    let request = DaemonRequest::ListModels {
+        user: user.clone(),
+    };
+
+    let response = ipc_client::send_request(&config.daemon.socket_path, &request)?;
+
+    match response {
+        DaemonResponse::Models(models) => {
+            if json {
+                print_json(&models);
+            } else {
+                print_table(&user, &models);
+            }
+        }
+        other => {
+            anyhow::bail!("unexpected response from daemon: {other:?}");
+        }
+    }
+
     Ok(())
+}
+
+fn print_table(user: &str, models: &[FaceModelInfo]) {
+    if models.is_empty() {
+        println!("No face models enrolled for user '{user}'.");
+        return;
+    }
+
+    println!("Face models for user '{user}':\n");
+    println!("  {:<6} {:<20} Created", "ID", "Label");
+    println!("  {}", "-".repeat(50));
+
+    for model in models {
+        let created = format_timestamp(model.created_at);
+        println!("  {:<6} {:<20} {}", model.id, model.label, created);
+    }
+
+    println!("\n  Total: {} model(s)", models.len());
+}
+
+fn print_json(models: &[FaceModelInfo]) {
+    // Manual JSON output to avoid adding serde_json dependency
+    println!("[");
+    for (i, model) in models.iter().enumerate() {
+        let comma = if i + 1 < models.len() { "," } else { "" };
+        println!(
+            "  {{\"id\": {}, \"label\": \"{}\", \"user\": \"{}\", \"created_at\": {}}}{}",
+            model.id, model.label, model.user, model.created_at, comma
+        );
+    }
+    println!("]");
+}
+
+fn format_timestamp(unix_ts: u64) -> String {
+    match Local.timestamp_opt(unix_ts as i64, 0) {
+        chrono::LocalResult::Single(dt) => dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+        _ => unix_ts.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_timestamp_valid() {
+        let formatted = format_timestamp(1700000000);
+        // Should produce a date string, not just the raw number
+        assert!(
+            formatted.contains("2023"),
+            "expected 2023 in {formatted}"
+        );
+    }
+
+    #[test]
+    fn format_timestamp_zero() {
+        let formatted = format_timestamp(0);
+        // Should produce 1970 date (or 1969 depending on timezone)
+        assert!(
+            formatted.contains("1970") || formatted.contains("1969"),
+            "expected 1970 or 1969 (timezone-dependent) in {formatted}"
+        );
+    }
 }

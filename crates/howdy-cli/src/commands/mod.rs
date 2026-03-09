@@ -1,5 +1,6 @@
 pub mod clear;
 pub mod config;
+pub mod devices;
 pub mod enroll;
 pub mod list;
 pub mod preview;

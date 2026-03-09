@@ -24,3 +24,8 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 bincode = "2.0.0-rc.3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
