@@ -1,5 +1,8 @@
+# Development config — uses temp paths, no root required.
+# Set VISAGE_CONFIG=dev/config.toml in your shell.
+
 [device]
-path = "/dev/video2"
+# path auto-detected (omit for auto-detect, or set explicitly)
 max_height = 480
 
 [recognition]
@@ -7,6 +10,7 @@ threshold = 0.50
 timeout_secs = 5
 
 [daemon]
+# mode = "daemon"  # or "oneshot" for daemonless development
 socket_path = "/tmp/visage-dev.sock"
 model_dir = "./models"
 

@@ -30,62 +30,45 @@ curl -L -o models/w600k_r50.onnx \
   "https://github.com/visomaster/visomaster-assets/releases/download/v0.1.0/w600k_r50.onnx"
 ```
 
-Verify checksums:
-```bash
-sha256sum models/*.onnx
-# scrfd_2.5g_bnkps.onnx: bc24bb349491481c3ca793cf89306723162c280cb284c5a5e49df3760bf5c2ce
-# w600k_r50.onnx:        4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43
-```
-
 ## 3. Configure for Development
 
-The repo includes `dev/config.toml` which uses temp paths and disables security
-checks that require an IR camera. Set `VISAGE_CONFIG` in your shell — every
-command (daemon, CLI, bench) reads it:
+The repo includes `dev/config.toml` which uses temp paths and auto-detects the camera. Set `VISAGE_CONFIG` in your shell:
 
 ```bash
 export VISAGE_CONFIG=dev/config.toml
 ```
 
-Find your camera and update `dev/config.toml` if needed:
+Camera auto-detection will find your device. To check which camera was detected:
 ```bash
 cargo run --bin visage -- devices
-# Update device.path in dev/config.toml to match (e.g. /dev/video2)
 ```
 
-## 4. Run the Daemon
+## 4. Choose a Mode
 
-The daemon must be running for the CLI to work. Start it in the background:
+### Option A: Daemon Mode (default)
+
+Start the daemon, then use the CLI:
 
 ```bash
 cargo run --bin visage-daemon &
-```
-
-Check it's running:
-```bash
 cargo run --bin visage -- status
+cargo run --bin visage -- enroll
+cargo run --bin visage -- test
+kill %1  # stop daemon
 ```
 
-## 5. Enroll and Test
+### Option B: Oneshot Mode (no daemon)
+
+Set `daemon.mode = "oneshot"` in `dev/config.toml`, then use the CLI directly — no daemon needed:
 
 ```bash
-# Enroll your face (look at the camera)
+cargo run --bin visage -- devices
 cargo run --bin visage -- enroll
-
-# Test recognition
 cargo run --bin visage -- test
-
-# Live camera preview with detection overlay (Wayland)
-cargo run --bin visage -- preview
-
-# List enrolled face models
 cargo run --bin visage -- list
 ```
 
-Stop the daemon when done:
-```bash
-kill %1
-```
+Every command opens the camera and models directly. Slightly slower (~700ms startup per command) but zero background processes.
 
 ## Testing
 
@@ -102,31 +85,27 @@ cargo clippy --workspace -- -D warnings
 cargo test --workspace -- --ignored
 ```
 
-### Tier 3: PAM Container Tests (requires podman/docker)
-
-Tests the PAM module inside a container — safe, never touches your host PAM config.
+### Tier 3: Container Tests (requires podman)
 
 ```bash
-# Build release first (container copies the binaries)
-cargo build --workspace --release
+# PAM smoke tests (no camera needed)
+just test-pam
 
-# Build and run the test container
-podman build -f test/Containerfile -t visage-test .
-podman run --rm visage-test
+# End-to-end with camera (daemon mode)
+just test-integration
+
+# End-to-end with camera (oneshot mode, no daemon)
+just test-oneshot
+
+# Interactive shell for manual pamtester
+just test-shell
 ```
-
-This verifies:
-- PAM module loads without crashing
-- Returns `PAM_IGNORE` when daemon isn't running (graceful fallback)
-- Handles missing/invalid config gracefully
-- Exports correct PAM symbols (`pam_sm_authenticate`, `pam_sm_setcred`)
 
 ### Full CI Script
 
-Runs Tier 1 tests, clippy, release build, and PAM symbol/size checks:
-
 ```bash
-bash test/run-tests.sh
+just check           # test + clippy + fmt
+bash test/run-tests.sh  # full CI with PAM checks
 ```
 
 ### Benchmarks
@@ -134,55 +113,63 @@ bash test/run-tests.sh
 ```bash
 cargo run --bin visage-bench -- model-load    # ONNX load time
 cargo run --bin visage-bench -- report        # full benchmark report
-cargo run --bin visage-bench -- --help        # all subcommands
 ```
 
 ## Installing on Your System (PAM)
 
 **Read `docs/testing-safety.md` first.** A broken PAM module can lock you out.
 
-The safe progression:
-
-1. **Container tests pass** (Tier 3 above)
-2. **VM tests pass** (optional but recommended — test in a disposable VM with snapshots)
-3. **Host install** (only after 1 and 2):
+### Arch Linux (PKGBUILD)
 
 ```bash
-# Keep a root shell open in another terminal the entire time
-sudo -i
+cd dist && makepkg -si
+visage setup
+visage enroll
+visage test
 
-# Build release
+# Daemon mode with socket activation:
+sudo systemctl enable --now visage-daemon.socket
+
+# Or oneshot mode (edit /etc/visage/config.toml):
+#   [daemon]
+#   mode = "oneshot"
+```
+
+### Manual Install
+
+```bash
+sudo -i  # keep this root shell open the entire time
+
 cargo build --workspace --release
 
 # Install binaries
 sudo install -m 755 target/release/visage /usr/bin/visage
 sudo install -m 755 target/release/visage-daemon /usr/bin/visage-daemon
+sudo install -m 755 target/release/visage-auth /usr/bin/visage-auth
 sudo install -m 755 target/release/libpam_visage.so /lib/security/pam_visage.so
 
 # Create directories and config
 sudo mkdir -p /etc/visage /var/lib/visage/models /run/visage /var/log/visage/snapshots
-sudo cp dev/config.toml /etc/visage/config.toml
-# Edit /etc/visage/config.toml — set device.path, enable security.require_ir, etc.
+sudo cp config/visage.toml /etc/visage/config.toml
 
 # Copy models
 sudo cp models/*.onnx /var/lib/visage/models/
 
-# Back up your sudo PAM config
-sudo cp /etc/pam.d/sudo /etc/pam.d/sudo.bak
+# Install systemd units (if using daemon mode)
+sudo cp systemd/visage-daemon.service /usr/lib/systemd/system/
+sudo cp systemd/visage-daemon.socket /usr/lib/systemd/system/
+sudo systemctl enable --now visage-daemon.socket
 
-# Add visage to sudo (ONLY sudo first, never system-auth)
-# Add this line at the TOP of /etc/pam.d/sudo:
+# Back up and edit PAM config
+sudo cp /etc/pam.d/sudo /etc/pam.d/sudo.bak
+# Add to TOP of /etc/pam.d/sudo:
 #   auth  sufficient  pam_visage.so
 
 # Test in a NEW terminal (keep root shell open!)
 sudo echo "it works"
-
-# If anything goes wrong, revert from your root shell:
-#   cp /etc/pam.d/sudo.bak /etc/pam.d/sudo
 ```
 
-**Never** edit `/etc/pam.d/system-auth` or `/etc/pam.d/login` until sudo works
-perfectly. Never close your root shell until you've verified everything works.
+**Never** edit `/etc/pam.d/system-auth` or `/etc/pam.d/login` until sudo works perfectly.
 
 ## Dev Config Reference
 
@@ -191,11 +178,8 @@ perfectly. Never close your root shell until you've verified everything works.
 | What | Path |
 |------|------|
 | Config | `dev/config.toml` (via `VISAGE_CONFIG`) |
+| Camera | Auto-detected |
 | Socket | `/tmp/visage-dev.sock` |
 | Database | `/tmp/visage-dev.db` |
 | Models | `./models/` |
 | Snapshots | `/tmp/visage-dev-snapshots/` |
-
-Security checks disabled for development:
-- `require_ir = false` — allows RGB webcams
-- `require_frame_variance = false` — skips anti-spoofing frame check

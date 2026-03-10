@@ -103,13 +103,15 @@ fn config_path() -> PathBuf {
 
 ### Dev Config
 
-Create `dev/config.toml` with local paths (no root required):
+`dev/config.toml` uses local paths (no root required). Camera is auto-detected:
 
 ```toml
 [device]
-path = "/dev/video2"
+# path auto-detected — omit for auto, or set explicitly
+max_height = 480
 
 [daemon]
+# mode = "daemon"  # or "oneshot" for daemonless development
 socket_path = "/tmp/visage-dev.sock"
 model_dir = "./models"
 
@@ -117,12 +119,13 @@ model_dir = "./models"
 db_path = "/tmp/visage-dev.db"
 
 [security]
-abort_if_ssh = false
-abort_if_lid_closed = false
+require_ir = true
+require_frame_variance = true
 ```
 
 ### Dev Workflow (No Root Required)
 
+**Daemon mode:**
 ```bash
 export VISAGE_CONFIG=dev/config.toml
 cargo build --workspace
@@ -130,6 +133,15 @@ cargo run --bin visage-daemon &    # starts with dev config
 cargo run --bin visage -- setup    # downloads models to ./models
 cargo run --bin visage -- enroll   # captures face
 cargo run --bin visage -- test     # tests recognition
+```
+
+**Oneshot mode (no daemon):**
+```bash
+export VISAGE_CONFIG=dev/config.toml
+# Set daemon.mode = "oneshot" in dev/config.toml
+cargo run --bin visage -- setup    # downloads models
+cargo run --bin visage -- enroll   # opens camera directly
+cargo run --bin visage -- test     # tests recognition directly
 ```
 
 ## CI Test Script
@@ -160,10 +172,25 @@ fi
 echo "=== All automated checks passed ==="
 ```
 
-## Files to Create
+## Test Files
 
-- `dev/config.toml` -- development config (spec 00)
-- `test/Containerfile` -- PAM container test image (spec 12)
-- `test/run-tests.sh` -- CI test script (spec 12)
-- `test/run-container-tests.sh` -- container PAM tests (spec 12)
-- `test/pam.d/visage-test` -- test PAM config for container (spec 12)
+| File | Purpose |
+|------|---------|
+| `dev/config.toml` | Development config (auto-detect, temp paths) |
+| `test/Containerfile` | PAM container test image |
+| `test/run-tests.sh` | CI test script |
+| `test/run-container-tests.sh` | Container PAM smoke tests |
+| `test/run-integration-tests.sh` | End-to-end daemon mode tests (with camera) |
+| `test/run-oneshot-tests.sh` | End-to-end oneshot mode tests (no daemon, with camera) |
+| `test/pam.d/visage-test` | Test PAM config for container |
+
+## Just Recipes
+
+| Recipe | Description |
+|--------|-------------|
+| `just test` | Unit tests |
+| `just check` | test + clippy + fmt |
+| `just test-pam` | Container PAM smoke tests |
+| `just test-integration` | End-to-end with camera (daemon mode) |
+| `just test-oneshot` | End-to-end with camera (oneshot mode) |
+| `just test-shell` | Interactive container shell |

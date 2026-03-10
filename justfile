@@ -94,6 +94,7 @@ install: build
     # Install binaries
     install -Dm755 target/release/visage /usr/bin/visage
     install -Dm755 target/release/visage-daemon /usr/bin/visage-daemon
+    install -Dm755 target/release/visage-auth /usr/bin/visage-auth
     install -Dm755 target/release/libpam_visage.so /lib/security/pam_visage.so
 
     # Config (don't overwrite existing)

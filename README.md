@@ -1,211 +1,180 @@
-# visage: Facial Authentication for Linux
+# Visage: Facial Authentication for Linux
 
-A modern, performant rewrite of [visage](https://github.com/boltgolt/visage) in Rust. Provides Windows Hello-style facial authentication via Linux PAM.
-
-## Why Rewrite?
-
-The original visage suffers from:
-- Python dependency conflicts and virtualenv fragility
-- 2-3 second cold-start latency (spawns Python per auth)
-- Complex dlib/OpenCV/GTK dependency chain
-- Painful packaging across distributions
-
-This rewrite eliminates all of that: zero Python, ~200ms auth via persistent daemon, single workspace, deterministic packaging.
+A modern, performant face authentication system for Linux PAM. Provides Windows Hello-style facial auth with IR anti-spoofing, configurable as a persistent daemon or daemonless one-shot.
 
 ## Architecture
 
+Visage supports three operating modes:
+
+### Daemon Mode (default)
 ```
-                    +------------------+
-                    |  /etc/pam.d/...  |
-                    +--------+---------+
-                             |
-                    +--------v---------+
-                    |  pam_visage.so    |   Thin IPC client (~200KB cdylib)
-                    |  (connect to     |   No ONNX, no camera, no heavy deps
-                    |   daemon socket) |   Returns PAM_IGNORE if daemon down
-                    +--------+---------+
-                             | Unix socket IPC
-                    +--------v-------------------------------------------+
-                    |  visage-daemon                                       |
-                    |  (persistent, holds models + camera in memory)      |
-                    |                                                     |
-                    |  +------------+  +----------+  +---------+         |
-                    |  | V4L2       |  | SCRFD    |  | ArcFace |         |
-                    |  | Camera     |->| Detect   |->| Embed   |         |
-                    |  +------------+  +----------+  +----+----+         |
-                    |                                      |             |
-                    |  +------------+              +-------v------+      |
-                    |  | Config     |              | SQLite       |      |
-                    |  | (TOML)     |              | FaceStore    |      |
-                    |  +------------+              +--------------+      |
-                    +----------------------------------------------------+
-                             ^
-                    +--------+---------+
-                    |  visage-cli       |   User-facing CLI (enroll, test,
-                    |  (IPC client)    |   preview, config, status)
-                    +------------------+
+sudo / login
+    → pam_visage.so (thin IPC client, ~600KB)
+    → Unix socket
+    → visage-daemon (holds ONNX models + camera in memory)
+    → PAM_SUCCESS / PAM_AUTH_ERR
 ```
+~50ms auth latency (warm). Best for frequent authentication. Managed by systemd socket activation or any process supervisor.
 
-### Why Daemon?
+### Oneshot Mode (daemonless)
+```
+sudo / login
+    → pam_visage.so
+    → fork/exec visage-auth
+    → loads models + opens camera + matches + exits
+    → PAM_SUCCESS / PAM_AUTH_ERR
+```
+~700ms auth latency. No daemon process, no socket, no systemd. Set `daemon.mode = "oneshot"` in config.
 
-A persistent daemon keeps ONNX models loaded in memory, achieving ~200ms auth latency vs 2-3s cold start. This was the original visage's most frustrating UX problem.
-
-- PAM module stays thin (~200KB) -- just an IPC client
-- If daemon crashes or isn't running, PAM returns PAM_IGNORE (graceful fallback to password)
-- Camera and GPU resources managed in one place
-- Single-threaded: PAM requests are sequential, camera is shared, ONNX sessions aren't thread-safe
-
-### Why Not Subprocess (OpenCode) or In-Process (Codex)?
-
-- **Subprocess** (original visage pattern): 2-3s cold start per auth -- the #1 complaint about visage
-- **In-process** (PAM loads ONNX directly): A segfault in ONNX Runtime would crash PAM, potentially locking out the user
-
-The daemon provides both speed and crash isolation.
+### Socket Activation (systemd)
+```
+systemctl enable visage-daemon.socket
+    → systemd listens on /run/visage/visage.sock
+    → first PAM auth starts visage-daemon on demand
+    → daemon shuts down after idle timeout
+```
+Zero memory when idle. Automatic lifecycle management.
 
 ## Workspace Crates
 
 | Crate | Type | Purpose |
 |-------|------|---------|
-| `visage-core` | lib | Config, types, error handling, IPC protocol |
-| `visage-camera` | lib | V4L2 camera capture and frame preprocessing |
+| `visage-core` | lib | Config, types, error handling, IPC protocol, traits |
+| `visage-camera` | lib | V4L2 camera capture, auto-detection, preprocessing |
 | `visage-face` | lib | ONNX inference pipeline (SCRFD + ArcFace) |
 | `visage-store` | lib | SQLite face embedding storage |
 | `visage-daemon` | bin | Persistent daemon owning camera + models |
-| `pam-visage` | cdylib | Thin PAM module, IPC client to daemon |
+| `visage-auth` | bin | One-shot auth binary (used by PAM in oneshot mode) |
+| `pam-visage` | cdylib | PAM module — thin IPC client or oneshot launcher |
 | `visage-cli` | bin | User-facing CLI tool |
 | `visage-bench` | bin | Benchmark and calibration tooling |
-
-## Technology Choices
-
-| Component | Technology | Rationale |
-|-----------|-----------|-----------|
-| Face detection | SCRFD via ONNX | Single-pass detection + landmarks, fast, accurate |
-| Face recognition | ArcFace via ONNX | State-of-art accuracy (99.5-99.8% LFW), 512-D embeddings |
-| ML runtime | `ort` crate (ONNX Runtime) | Production-proven, hardware acceleration support |
-| Camera | `v4l` crate (V4L2) | Pure Rust, zero-copy MMAP, no OpenCV dependency |
-| Preview | `smithay-client-toolkit` | Native Wayland layer-shell, works on Hyprland/Sway |
-| Notifications | `notify-rust` | D-Bus notifications, works with mako/dunst/swaync |
-| Config | `toml` + `serde` | Native Rust ecosystem, typed config |
-| CLI | `clap` (derive) | Standard Rust CLI framework |
-| Storage | `rusqlite` (bundled) | Embedded SQLite, migration support, concurrent access |
-| IPC | Unix socket + bincode | Fast, typed, no D-Bus dependency |
-| PAM | Raw FFI via `libc` | Minimal surface, no heavy deps in PAM module |
+| `visage-tpm` | lib | Optional TPM embedding encryption (feature-gated) |
+| `visage-test-support` | lib | Mock camera/engine for testing (dev only) |
 
 ## Configuration
 
-TOML config at `/etc/visage/config.toml`:
+TOML config at `/etc/visage/config.toml`. All keys are optional — Visage auto-detects the camera and uses sensible defaults.
 
 ```toml
 [device]
-path = "/dev/video2"       # IR camera device
-# format auto-detected (GREY, YUYV, MJPG)
+# path = "/dev/video2"     # Optional: auto-detected if omitted (prefers IR cameras)
+# max_height = 480
+# rotation = 0
 
 [recognition]
-threshold = 0.45           # Cosine similarity (0.0-1.0, higher = stricter)
-timeout_secs = 5           # Max seconds to attempt recognition
-max_height = 480           # Downscale frames for faster processing
+# threshold = 0.45         # Cosine similarity threshold (0.0-1.0)
+# timeout_secs = 5
 
 [daemon]
-socket_path = "/run/visage/visage.sock"
-model_dir = "/var/lib/visage/models"
+# mode = "daemon"          # "daemon" (default) or "oneshot" (no daemon needed)
+# socket_path = "/run/visage/visage.sock"
+# model_dir = "/var/lib/visage/models"
+# idle_timeout_secs = 0    # Socket-activated idle shutdown (0 = disabled)
 
 [storage]
-db_path = "/var/lib/visage/visage.db"
+# db_path = "/var/lib/visage/visage.db"
 
 [security]
-abort_if_ssh = true
-abort_if_lid_closed = true
-disabled = false
-require_ir = true              # Refuse auth on RGB-only cameras (anti-spoof)
-require_frame_variance = true  # Reject static images (photo attack defense)
-min_auth_frames = 3            # Minimum frames before accepting match
+# require_ir = true        # Refuse auth on RGB-only cameras (anti-spoof)
+# require_frame_variance = true  # Reject static images (photo attack defense)
+# min_auth_frames = 3
+# abort_if_ssh = true
+# abort_if_lid_closed = true
 
 [notification]
-enabled = true
-on_success = true
-on_failure = true
+# enabled = true
 
-[snapshots]
-save_failed = false
-save_successful = false
-dir = "/var/log/visage/snapshots"
+# [tpm]
+# seal_database = false    # Encrypt embeddings at rest with TPM
+# pcr_binding = false      # Verify system integrity at startup
 ```
 
 Supports `VISAGE_CONFIG` env var override for rootless development.
 
+## Quick Start
+
+```bash
+# Build
+cargo build --workspace
+
+# Download models (~170MB)
+VISAGE_CONFIG=dev/config.toml cargo run --bin visage -- setup
+
+# Option A: Daemon mode (start daemon, then use CLI)
+export VISAGE_CONFIG=dev/config.toml
+cargo run --bin visage-daemon &
+cargo run --bin visage -- enroll
+cargo run --bin visage -- test
+
+# Option B: Oneshot mode (no daemon needed)
+# Set mode = "oneshot" in dev/config.toml, then:
+cargo run --bin visage -- enroll
+cargo run --bin visage -- test
+```
+
+## Testing
+
+```bash
+# Unit tests (no hardware)
+cargo test --workspace
+
+# Hardware tests (camera + models)
+cargo test --workspace -- --ignored
+
+# Container PAM smoke tests
+just test-pam
+
+# Container end-to-end with camera (daemon mode)
+just test-integration
+
+# Container end-to-end with camera (oneshot, no daemon)
+just test-oneshot
+
+# Interactive container shell for manual pamtester
+just test-shell
+
+# All checks (test + clippy + fmt)
+just check
+```
+
 ## Face Recognition Pipeline
 
 ```
-Camera Frame (RGB)
-    |
-    v
-[SCRFD Detection] -----> Bounding boxes + 5-point landmarks
-    |                     (confidence threshold + NMS)
-    v
-[Alignment] ------------> 112x112 aligned face crop
-    |                     (affine transform from landmarks)
-    v
-[ArcFace Embedding] ----> 512-dim float32 vector (L2-normalized)
-    |
-    v
-[Cosine Similarity] ----> Match score vs stored embeddings
-    |                     (threshold from config)
-    v
-  MATCH / NO MATCH
+Camera Frame (RGB) → SCRFD Detection → Bounding boxes + 5-point landmarks
+    → Affine Alignment → 112x112 face crop
+    → ArcFace Embedding → 512-dim L2-normalized vector
+    → Cosine Similarity vs stored embeddings → MATCH / NO MATCH
 ```
 
 ## Models
 
-Downloaded during `visage setup` from HuggingFace (InsightFace):
+Downloaded during `visage setup`:
 - **SCRFD** (`scrfd_2.5g_bnkps.onnx`): ~3MB face detection with keypoints
 - **ArcFace** (`w600k_r50.onnx`): ~166MB face embedding network
 
-Optional higher-accuracy models:
-- **SCRFD 10G** (`scrfd_10g_bnkps.onnx`): ~16MB, higher accuracy
-- **ArcFace R100** (`w600k_r100.onnx`): ~249MB, 99.77% LFW accuracy
+Stored in `/var/lib/visage/models/` with SHA-256 integrity verification at load time.
 
-Stored in `/var/lib/visage/models/` with SHA-256 integrity verification.
+## Installation
 
-## Reading Order for Agents
+See `docs/quickstart.md` for full instructions. On Arch Linux:
 
-1. `AGENTS.md` -- rules and conventions
-2. `docs/contracts.md` -- stable cross-spec contracts
-3. `docs/security.md` -- security model, threat mitigations, anti-spoofing
-4. `docs/risk-register.md` -- known hard edges
-5. `docs/delivery-roadmap.md` -- phases and dependencies
-6. Your assigned `specs/XX-name.md`
+```bash
+makepkg -si        # from dist/PKGBUILD
+visage setup       # download models
+visage enroll      # capture your face
+visage test        # verify recognition
 
-## Spec Dependency Graph
+# For daemon mode with socket activation:
+sudo systemctl enable --now visage-daemon.socket
 
-```
-Phase 1 (Foundation):   00-workspace -> 01-core-types
-Phase 2 (Components):   02-camera, 03-face-engine, 04-face-store  (parallel, depend on 01)
-Phase 3 (Integration):  05-daemon  (integrates Phase 2)
-Phase 4 (Interfaces):   06-pam-module, 07-cli  (parallel, depend on 05)
-Phase 5 (Polish):       08-preview, 09-notifications, 10-build-install  (parallel)
-Phase 6 (Validation):   11-benchmarks, 12-integration-tests  (sequential)
+# Or for oneshot mode, just set in /etc/visage/config.toml:
+#   [daemon]
+#   mode = "oneshot"
 ```
 
-## Definition of Done
+Then add to `/etc/pam.d/sudo`:
+```
+auth  sufficient  pam_visage.so
+```
 
-- No Python runtime or pip dependency anywhere in the auth path
-- Models installed locally and never downloaded on first use in production
-- Camera preview, enrollment, and PAM auth all use the same daemon
-- PAM module is a thin IPC client (no ONNX, no camera, no heavy deps)
-- Auth latency < 450ms warm, < 900ms cold (daemon startup + first auth)
-- Graceful PAM fallback when daemon is unavailable
-- Container + VM validated PAM integration before any host PAM changes
-- Benchmark evidence backing shipped default thresholds
-- IR camera enforcement enabled by default (anti-spoofing)
-- Frame variance check rejects static photo attacks
-- Model integrity verified at load time (SHA256)
-- All auth attempts logged to syslog/journald
-- Socket access restricted to root + visage group with peer credential checks
-- Database file permissions restrict biometric data access
-
-## Source Plans
-
-This aggregate plan synthesizes the best elements from three independent planning efforts:
-- **OpenCode + Opus 4.6**: Detailed implementation specs, 4-tier testing, pragmatic design
-- **Codex + ChatGPT 4**: Contract-first governance, risk register, benchmark tooling
-- **Claude + Opus 4.6**: Daemon architecture, crate structure, dev safety
+**Read `docs/testing-safety.md` before editing PAM config.** Keep a root shell open.
