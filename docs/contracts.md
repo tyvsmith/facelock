@@ -1,196 +1,162 @@
 # System Contracts
 
-Stable contracts that agents must not change without orchestrator approval and explicit documentation of the reason.
+Stable contracts. Do not change without updating this document.
 
-## Binary Names
+## Binaries
 
-| Binary | Package | Purpose |
-|--------|---------|---------|
-| `visage` | visage-cli | User-facing CLI |
-| `visage-daemon` | visage-daemon | Persistent authentication daemon |
-| `visage-auth` | visage-daemon | One-shot auth binary (PAM helper for oneshot mode) |
-| `pam_visage.so` | pam-visage | PAM authentication module |
-| `visage-bench` | visage-bench | Benchmark and calibration tool |
+| Binary | Crate | Purpose |
+|--------|-------|---------|
+| `visage` | visage-cli | Unified CLI (daemon, auth, enroll, test, setup, etc.) |
+| `libpam_visage.so` | pam-visage | PAM authentication module |
+
+## CLI Subcommands
+
+| Command | Purpose |
+|---------|---------|
+| `visage setup` | Download models, create directories |
+| `visage setup --systemd` | Install/enable systemd units |
+| `visage setup --pam` | Install PAM module to `/etc/pam.d/` |
+| `visage enroll` | Capture and store a face |
+| `visage test` | Test face recognition |
+| `visage list` | List enrolled face models |
+| `visage remove <id>` | Remove a specific model |
+| `visage clear` | Remove all models for a user |
+| `visage preview` | Live camera preview |
+| `visage devices` | List V4L2 cameras |
+| `visage status` | Check system status |
+| `visage config` | Show/edit configuration |
+| `visage daemon` | Run persistent daemon |
+| `visage auth --user X` | One-shot auth (PAM helper) |
+| `visage tpm status` | TPM status |
+| `visage bench` | Benchmarks |
 
 ## Operating Modes
 
-| Mode | Config | PAM Path | Latency | Use Case |
-|------|--------|----------|---------|----------|
-| Daemon | `daemon.mode = "daemon"` (default) | pam_visage.so → socket → visage-daemon | ~50ms warm | Frequent auth, systemd systems |
-| Socket activation | systemd `.socket` unit | Same as daemon, systemd manages lifecycle | ~700ms cold, ~50ms warm | Systemd systems, minimal memory |
-| Oneshot | `daemon.mode = "oneshot"` | pam_visage.so → fork/exec visage-auth | ~700ms | No daemon, no systemd, minimal setups |
+| Mode | Config | PAM Behavior | CLI Behavior |
+|------|--------|-------------|-------------|
+| Daemon | `daemon.mode = "daemon"` (default) | IPC to daemon socket | Uses daemon if available, falls back to direct |
+| Oneshot | `daemon.mode = "oneshot"` | Spawns `visage auth` | Operates directly (no daemon) |
 
-In oneshot mode, the CLI also operates directly (no daemon needed for any command).
+The CLI silently falls back to direct mode when the daemon socket doesn't exist, regardless of config mode.
 
-### visage-auth Exit Codes
+### visage auth Exit Codes
 
 | Code | Meaning | PAM Code |
 |------|---------|----------|
 | 0 | Face matched | PAM_SUCCESS |
-| 1 | No match / timeout / dark frames | PAM_AUTH_ERR |
-| 2 | Error (no camera, no models, config error) | PAM_IGNORE |
+| 1 | No match / timeout / dark | PAM_AUTH_ERR |
+| 2 | Error | PAM_IGNORE |
 
 ## Filesystem Paths
 
-| Path | Owner | Purpose |
-|------|-------|---------|
-| `/etc/visage/config.toml` | root | System configuration |
-| `/var/lib/visage/visage.db` | root:visage | SQLite face embedding database |
-| `/var/lib/visage/models/` | root | ONNX model files |
-| `/var/log/visage/snapshots/` | root:visage | Auth snapshot images |
-| `/run/visage/visage.sock` | visage-daemon | Unix domain socket (daemon mode only) |
-| `/usr/bin/visage` | package | CLI binary |
-| `/usr/bin/visage-daemon` | package | Daemon binary |
-| `/usr/bin/visage-auth` | package | One-shot auth binary |
-| `/lib/security/pam_visage.so` | package | PAM module |
+| Path | Owner | Mode | Purpose |
+|------|-------|------|---------|
+| `/etc/visage/config.toml` | root:root | 644 | Configuration |
+| `/var/lib/visage/visage.db` | root:visage | 640 | Face embeddings |
+| `/var/lib/visage/models/` | root:root | 755 | ONNX models |
+| `/var/log/visage/snapshots/` | root:visage | 750 | Auth snapshots |
+| `/run/visage/visage.sock` | daemon | 660 | IPC socket (daemon mode) |
+| `/usr/bin/visage` | root:root | 755 | CLI binary |
+| `/lib/security/pam_visage.so` | root:root | 755 | PAM module |
 
-All paths overridable via config. `VISAGE_CONFIG` env var overrides config file location for development.
+All paths overridable via config. `VISAGE_CONFIG` env var overrides config location.
 
 ## Config Schema
 
-TOML format. All keys are optional — `device.path` is auto-detected if omitted.
+TOML format. All keys optional — camera auto-detected, sensible defaults for everything.
 
-Sections: `device`, `recognition`, `daemon`, `storage`, `security`, `notification`, `snapshots`, `debug`, `tpm`.
+### Sections
 
-### Key Config Fields
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `device.path` | `Option<String>` | None (auto-detect) | Camera device path. Auto-detects if omitted, preferring IR cameras. |
-| `daemon.mode` | `String` | `"daemon"` | `"daemon"` or `"oneshot"`. Oneshot runs visage-auth per PAM call, no daemon needed. |
-| `daemon.socket_path` | `String` | `/run/visage/visage.sock` | IPC socket (daemon mode only). |
-| `daemon.idle_timeout_secs` | `u64` | `0` | Auto-shutdown after idle period when socket-activated. 0 = disabled. |
-| `security.require_ir` | `bool` | `true` | Refuse auth on RGB-only cameras. |
-| `security.require_frame_variance` | `bool` | `true` | Reject static images (photo attacks). |
-| `tpm.seal_database` | `bool` | `false` | Encrypt embeddings at rest with TPM. |
+| Section | Key fields |
+|---------|-----------|
+| `[device]` | `path` (Option), `max_height`, `rotation` |
+| `[recognition]` | `threshold`, `timeout_secs`, `detector_model`, `embedder_model`, `threads`, `execution_provider` |
+| `[daemon]` | `mode` (DaemonMode enum), `socket_path`, `model_dir`, `idle_timeout_secs` |
+| `[storage]` | `db_path` |
+| `[security]` | `require_ir`, `require_frame_variance`, `min_auth_frames`, `abort_if_ssh`, `abort_if_lid_closed`, rate_limit sub-section |
+| `[notification]` | `enabled`, `on_success`, `on_failure` |
+| `[snapshots]` | `enabled`, `dir` |
+| `[tpm]` | `seal_database`, `pcr_binding`, `pcr_indices`, `tcti` |
 
 ### Camera Auto-Detection
 
 When `device.path` is omitted:
 1. Enumerate `/dev/video0` through `/dev/video63`
 2. Filter to VIDEO_CAPTURE devices
-3. Prefer devices with IR indicators: name contains "ir"/"infrared", or supports GREY/Y16 format
+3. Prefer IR cameras (name contains "ir"/"infrared", or supports GREY/Y16 format)
 4. Fall back to first available device
-5. Log which device was selected
 
 ## Database Schema
 
-SQLite. Two core tables:
+SQLite with WAL mode and foreign keys:
 
 ```sql
 CREATE TABLE face_models (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user TEXT NOT NULL,
     label TEXT NOT NULL,
-    created_at INTEGER NOT NULL,  -- Unix timestamp
+    created_at INTEGER NOT NULL,
     UNIQUE(user, label)
 );
 
 CREATE TABLE face_embeddings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     model_id INTEGER NOT NULL REFERENCES face_models(id) ON DELETE CASCADE,
-    embedding BLOB NOT NULL,  -- 512 x f32 = 2048 bytes
-    UNIQUE(model_id)
+    embedding BLOB NOT NULL  -- 512 x f32 = 2048 bytes
 );
-
-CREATE INDEX idx_face_models_user ON face_models(user);
-CREATE INDEX idx_face_embeddings_model ON face_embeddings(model_id);
 ```
 
 ## IPC Protocol
 
-Unix domain socket at `daemon.socket_path`. Length-prefixed bincode messages:
+Unix socket, length-prefixed bincode. Only used in daemon mode.
 
 ```
-[4 bytes: u32 LE message length][N bytes: bincode-encoded Request or Response]
+[4 bytes: u32 LE length][N bytes: bincode payload]
 ```
 
-Only used in daemon mode. Oneshot mode bypasses IPC entirely.
+Max message size: 10MB.
 
-### Request Variants
-- `Authenticate { user: String }` -- run face auth for user
-- `Enroll { user: String, label: String }` -- capture and store face
-- `ListModels { user: String }` -- list stored face models
-- `RemoveModel { user: String, model_id: u32 }` -- delete specific model
-- `ClearModels { user: String }` -- delete all models for user
-- `PreviewFrame` -- capture and return one JPEG frame
-- `PreviewDetectFrame { user: String }` -- frame with face detection overlay
-- `ListDevices` -- enumerate V4L2 devices
-- `ReleaseCamera` -- release camera resource
-- `Ping` -- health check
-- `Shutdown` -- graceful daemon shutdown
+### Requests
+`Authenticate`, `Enroll`, `ListModels`, `RemoveModel`, `ClearModels`, `PreviewFrame`, `PreviewDetectFrame`, `ListDevices`, `ReleaseCamera`, `Ping`, `Shutdown`
 
-### Response Variants
-- `AuthResult { matched: bool, model_id: Option<u32>, label: Option<String>, similarity: f32 }`
-- `Enrolled { model_id: u32, embedding_count: u32 }`
-- `Models { models: Vec<FaceModelInfo> }`
-- `Removed`
-- `Frame { jpeg_data: Vec<u8> }`
-- `DetectFrame { jpeg_data: Vec<u8>, faces: Vec<PreviewFace> }`
-- `Devices { devices: Vec<IpcDeviceInfo> }`
-- `Ok`
-- `Error { message: String }`
+### Responses
+`AuthResult`, `Enrolled`, `Models`, `Removed`, `Frame`, `DetectFrame`, `Devices`, `Ok`, `Error`
 
 ## PAM Semantics
 
-| Outcome | PAM Code | Meaning |
-|---------|----------|---------|
-| Face matched | `PAM_SUCCESS` | Auth succeeded |
-| Face not matched | `PAM_AUTH_ERR` | Valid attempt, no match |
-| Daemon unavailable (daemon mode) | `PAM_IGNORE` | Graceful fallback to next module |
-| visage-auth error (oneshot mode) | `PAM_IGNORE` | Graceful fallback |
-| Config/setup error | `PAM_IGNORE` | Graceful fallback |
-| Timeout | `PAM_AUTH_ERR` | Treated as failed match |
+| Outcome | PAM Code |
+|---------|----------|
+| Face matched | `PAM_SUCCESS` (0) |
+| No match | `PAM_AUTH_ERR` (7) |
+| Daemon unavailable / error | `PAM_IGNORE` (25) |
+| Timeout | `PAM_AUTH_ERR` (7) |
 
-The PAM module must NEVER block indefinitely. All operations have timeouts.
+PAM module never blocks indefinitely. All operations have timeouts.
 
-## Model Pack
+### Syslog Format
 
-Default models (InsightFace, ONNX format):
+```
+pam_visage(<service>): <result> for user <username>
+```
 
-| Model | File | Size | Purpose |
+## Anti-Spoofing
+
+| Defense | Config | Default |
+|---------|--------|---------|
+| IR camera enforcement | `security.require_ir` | **true** |
+| Frame variance check | `security.require_frame_variance` | **true** |
+| Minimum auth frames | `security.min_auth_frames` | 3 |
+| Variance threshold | `FRAME_VARIANCE_THRESHOLD` | 0.998 |
+
+These defaults must not be weakened without security review.
+
+## Models
+
+| Model | File | Size | Default |
 |-------|------|------|---------|
-| SCRFD 2.5G | `scrfd_2.5g_bnkps.onnx` | ~3MB | Face detection + 5-point landmarks |
-| ArcFace R50 | `w600k_r50.onnx` | ~166MB | 512-D face embedding |
+| SCRFD 2.5G | `scrfd_2.5g_bnkps.onnx` | ~3MB | Yes |
+| ArcFace R50 | `w600k_r50.onnx` | ~166MB | Yes |
+| SCRFD 10G | `scrfd_10g_bnkps.onnx` | ~16MB | Optional |
+| ArcFace R100 | `w600k_r100.onnx` | ~249MB | Optional |
 
-## Matching Contract
-
-- Cosine similarity on L2-normalized 512-D embeddings (= dot product)
-- Compare live embedding against all active embeddings for target user
-- Match threshold from `recognition.threshold` config (default 0.45)
-- Return best match above threshold, or no-match if none exceed
-
-## File Permissions Contract
-
-| Path | Owner | Mode | Rationale |
-|------|-------|------|-----------|
-| `/etc/visage/config.toml` | root:root | 644 | Config readable by all, writable by root |
-| `/var/lib/visage/visage.db` | root:visage | 640 | Biometric data, restricted read |
-| `/var/lib/visage/models/*.onnx` | root:root | 644 | Models readable by daemon |
-| `/run/visage/visage.sock` | root:visage | 660 | IPC restricted to root + visage group |
-| `/lib/security/pam_visage.so` | root:root | 755 | PAM module |
-| `/var/log/visage/` | root:visage | 750 | Auth snapshots, restricted |
-
-## Anti-Spoofing Contract
-
-- `security.require_ir` defaults to **true** — refuse auth on RGB-only cameras
-- `security.require_frame_variance` defaults to **true** — reject static images
-- `security.min_auth_frames` defaults to **3** — require multiple frames before accepting
-- IR detection heuristic: camera supports GREY/Y16 format AND/OR name contains "ir"/"infrared"
-- Frame variance: first and last matched embeddings must have cosine similarity < 0.998
-- These defaults must NOT be weakened without explicit security review
-
-## Audit Logging Contract
-
-All PAM authentication attempts must be logged to syslog (LOG_AUTH facility):
-- Format: `pam_visage(<service>): <result> for user <username>`
-- Results: `success`, `no_match`, `timeout`, `error: <reason>`, `rate_limited`, `disabled`, `ir_required`
-- Oneshot results: `success (oneshot)`, `no_match (oneshot)`, `timeout (oneshot)`
-- Daemon must also log auth attempts with timestamps and similarity scores via tracing
-
-## Host Safety Contract
-
-- Host/container for unit tests, integration tests, CLI work
-- Container for PAM module smoke testing (pamtester)
-- Disposable VM with snapshots for full PAM integration testing
-- Host PAM edits forbidden until container + VM validation passes
+Configurable via `recognition.detector_model` and `recognition.embedder_model`.

@@ -3,8 +3,8 @@
 ## Prerequisites
 
 - Rust 1.85+ (`rustup update`)
-- A webcam (IR camera recommended for production; RGB works for development)
 - Linux with V4L2 support
+- A webcam (IR recommended for production; RGB works for development)
 
 ## 1. Build
 
@@ -14,14 +14,13 @@ cargo build --workspace
 
 ## 2. Download Models
 
-Models are ~170MB total and gitignored. Two options:
+Models are ~170MB total and gitignored.
 
-**Option A: Use the CLI** (downloads automatically)
 ```bash
 VISAGE_CONFIG=dev/config.toml cargo run --bin visage -- setup
 ```
 
-**Option B: Manual download**
+Or manually:
 ```bash
 mkdir -p models
 curl -L -o models/scrfd_2.5g_bnkps.onnx \
@@ -32,152 +31,106 @@ curl -L -o models/w600k_r50.onnx \
 
 ## 3. Configure for Development
 
-The repo includes `dev/config.toml` which uses temp paths and auto-detects the camera. Set `VISAGE_CONFIG` in your shell:
-
 ```bash
 export VISAGE_CONFIG=dev/config.toml
 ```
 
-Camera auto-detection will find your device. To check which camera was detected:
-```bash
-cargo run --bin visage -- devices
-```
+The dev config auto-detects the camera and uses temp paths. No root needed.
 
-## 4. Choose a Mode
+## 4. Enroll and Test
 
-### Option A: Daemon Mode (default)
-
-Start the daemon, then use the CLI:
+No daemon required — the CLI operates directly when no daemon is running:
 
 ```bash
-cargo run --bin visage-daemon &
-cargo run --bin visage -- status
-cargo run --bin visage -- enroll
-cargo run --bin visage -- test
-kill %1  # stop daemon
+visage devices            # list cameras
+visage enroll             # capture face (look at camera)
+visage test               # verify recognition
+visage list               # see enrolled models
+visage preview --text-only  # live detection output
 ```
 
-### Option B: Oneshot Mode (no daemon)
-
-Set `daemon.mode = "oneshot"` in `dev/config.toml`, then use the CLI directly — no daemon needed:
-
+To use daemon mode instead:
 ```bash
-cargo run --bin visage -- devices
-cargo run --bin visage -- enroll
-cargo run --bin visage -- test
-cargo run --bin visage -- list
+visage daemon &           # start daemon in background
+visage enroll             # now uses daemon (faster)
+visage test
+kill %1                   # stop daemon
 ```
 
-Every command opens the camera and models directly. Slightly slower (~700ms startup per command) but zero background processes.
+## 5. Testing
 
-## Testing
-
-### Tier 1: Unit Tests (always safe, no hardware needed)
-
+### Unit tests (no hardware)
 ```bash
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 ```
 
-### Tier 2: Hardware Integration Tests (requires camera + models)
-
+### Hardware tests (camera + models)
 ```bash
 cargo test --workspace -- --ignored
 ```
 
-### Tier 3: Container Tests (requires podman)
-
+### Container tests (requires podman)
 ```bash
-# PAM smoke tests (no camera needed)
-just test-pam
-
-# End-to-end with camera (daemon mode)
-just test-integration
-
-# End-to-end with camera (oneshot mode, no daemon)
-just test-oneshot
-
-# Interactive shell for manual pamtester
-just test-shell
+just test-pam             # PAM smoke tests (no camera)
+just test-integration     # end-to-end with camera (daemon mode)
+just test-oneshot         # end-to-end with camera (no daemon)
+just test-shell           # interactive container shell
 ```
 
-### Full CI Script
-
+### All checks
 ```bash
-just check           # test + clippy + fmt
-bash test/run-tests.sh  # full CI with PAM checks
+just check                # test + clippy + fmt
 ```
 
-### Benchmarks
-
-```bash
-cargo run --bin visage-bench -- model-load    # ONNX load time
-cargo run --bin visage-bench -- report        # full benchmark report
-```
-
-## Installing on Your System (PAM)
+## 6. System Installation
 
 **Read `docs/testing-safety.md` first.** A broken PAM module can lock you out.
 
-### Arch Linux (PKGBUILD)
-
+### Arch Linux
 ```bash
 cd dist && makepkg -si
-visage setup
-visage enroll
-visage test
-
-# Daemon mode with socket activation:
-sudo systemctl enable --now visage-daemon.socket
-
-# Or oneshot mode (edit /etc/visage/config.toml):
-#   [daemon]
-#   mode = "oneshot"
+sudo visage setup                    # download models
+sudo visage enroll                   # capture face
+sudo visage test                     # verify
+sudo visage setup --systemd          # enable socket activation
+sudo visage setup --pam              # install to /etc/pam.d/sudo
 ```
 
 ### Manual Install
-
 ```bash
-sudo -i  # keep this root shell open the entire time
+sudo -i                              # keep this root shell open!
 
 cargo build --workspace --release
-
-# Install binaries
 sudo install -m 755 target/release/visage /usr/bin/visage
-sudo install -m 755 target/release/visage-daemon /usr/bin/visage-daemon
-sudo install -m 755 target/release/visage-auth /usr/bin/visage-auth
 sudo install -m 755 target/release/libpam_visage.so /lib/security/pam_visage.so
 
-# Create directories and config
-sudo mkdir -p /etc/visage /var/lib/visage/models /run/visage /var/log/visage/snapshots
+sudo mkdir -p /etc/visage /var/lib/visage/models /run/visage
 sudo cp config/visage.toml /etc/visage/config.toml
-
-# Copy models
 sudo cp models/*.onnx /var/lib/visage/models/
 
-# Install systemd units (if using daemon mode)
-sudo cp systemd/visage-daemon.service /usr/lib/systemd/system/
-sudo cp systemd/visage-daemon.socket /usr/lib/systemd/system/
-sudo systemctl enable --now visage-daemon.socket
+# Socket activation (systemd):
+sudo visage setup --systemd
 
-# Back up and edit PAM config
-sudo cp /etc/pam.d/sudo /etc/pam.d/sudo.bak
-# Add to TOP of /etc/pam.d/sudo:
-#   auth  sufficient  pam_visage.so
+# Or oneshot mode (no daemon):
+# Edit /etc/visage/config.toml: daemon.mode = "oneshot"
 
-# Test in a NEW terminal (keep root shell open!)
+# PAM (start with sudo only):
+sudo visage setup --pam --service sudo
+
+# Test in a NEW terminal:
 sudo echo "it works"
-```
 
-**Never** edit `/etc/pam.d/system-auth` or `/etc/pam.d/login` until sudo works perfectly.
+# If anything breaks, revert from root shell:
+# sudo cp /etc/pam.d/sudo.visage-backup /etc/pam.d/sudo
+```
 
 ## Dev Config Reference
 
-`dev/config.toml` uses these paths (no root needed):
+`dev/config.toml` uses temp paths — no root needed:
 
 | What | Path |
 |------|------|
-| Config | `dev/config.toml` (via `VISAGE_CONFIG`) |
 | Camera | Auto-detected |
 | Socket | `/tmp/visage-dev.sock` |
 | Database | `/tmp/visage-dev.db` |

@@ -4,114 +4,102 @@
 
 ## The Golden Rule
 
-**Never install `pam_visage.so` on the host or edit `/etc/pam.d/*` until validated in both container and VM.** A broken PAM module can lock you out of sudo, login, and su.
+**Never install `pam_visage.so` on the host or edit `/etc/pam.d/*` until validated in container.** A broken PAM module can lock you out of sudo, login, and su.
 
 ## Testing Tiers
 
-### Tier 1: Unit Tests (Host, Always Safe)
+### Tier 1: Unit Tests (always safe)
 
-Run: `cargo test --workspace`
-
-Covers:
-- Config parsing and validation
-- YUV/MJPG format conversion
-- CLAHE histogram equalization
-- NMS and IoU computation
-- Similarity transforms (Umeyama alignment)
-- L2 normalization and cosine similarity
-- IPC serialization round-trip
-- SQLite CRUD operations
-- Bincode/bytemuck embedding round-trip
-- File locking and atomic writes
-
-All pure functions. No hardware, no system state, no root required.
-
-### Tier 2: Integration Tests with Hardware (Host, Marked #[ignore])
-
-Run: `cargo test --workspace -- --ignored`
-
-Requires: camera device, downloaded ONNX models.
-
-Covers:
-- Camera capture and format negotiation
-- ONNX model loading and inference
-- Full detect -> align -> embed pipeline
-- End-to-end face matching
-- Model download and SHA256 verification
-
-Safe: worst case is camera doesn't open or model file is invalid.
-
-### Tier 3: PAM Module Testing (Container Only)
-
-Build container, install PAM module inside, test with `pamtester`.
-
-```dockerfile
-FROM archlinux:latest
-RUN pacman -Syu --noconfirm pam pamtester sudo
-RUN useradd -m testuser && echo "testuser:test" | chpasswd
-COPY target/release/libpam_visage.so /lib/security/pam_visage.so
-COPY test/pam.d/visage-test /etc/pam.d/visage-test
+```bash
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
 ```
 
-Test cases:
-1. Module loads without crash
-2. Returns PAM_IGNORE when daemon not running
-3. Returns PAM_IGNORE with missing/invalid config
-4. Respects `security.disabled = true`
-5. Falls through to password when face fails
-6. Works with sudo integration (daemon running in container)
+Covers: config parsing, format conversion, NMS, cosine similarity, IPC serialization, SQLite CRUD, frame variance logic. No hardware, no root.
 
-Run: `podman build -f test/Containerfile -t visage-test . && podman run visage-test`
+### Tier 2: Hardware Integration (camera + models)
 
-### Tier 4: VM Testing (Disposable VM with Snapshots)
+```bash
+cargo test --workspace -- --ignored
+```
 
-For full end-to-end PAM integration with real camera:
-- Use QEMU/virt-manager or systemd-nspawn
-- Take snapshot before installing PAM module
-- Test sudo, su, and login scenarios
-- Verify rollback by restoring snapshot
+Requires camera and downloaded ONNX models. Tests capture, model loading, full pipeline.
 
-USB camera passthrough: `qemu -device usb-host,vendorid=0x...,productid=0x...`
-Or virtual V4L2 device for deterministic tests.
+### Tier 3: Container Tests (requires podman)
 
-### Tier 5: Host Installation (After Tier 3 + 4 Pass)
+```bash
+just test-pam             # PAM smoke tests (no camera needed)
+just test-integration     # full E2E with camera (daemon mode)
+just test-oneshot         # full E2E with camera (no daemon)
+just test-shell           # interactive shell for manual testing
+```
+
+Container tests validate:
+- PAM module loads without crashing
+- Returns PAM_IGNORE when daemon unavailable
+- Handles missing/invalid config
+- Exports correct PAM symbols
+- End-to-end: enroll → list → test → PAM auth → clear
+- Both daemon and oneshot modes
+
+### Tier 4: VM Testing (optional, recommended)
+
+Disposable VM with snapshots. USB camera passthrough for real hardware testing. Verify sudo, su, login scenarios with rollback safety.
+
+### Tier 5: Host PAM Installation
 
 Safety checklist:
-1. Open a root shell in a separate terminal (keep it open throughout)
-2. Back up: `sudo cp /etc/pam.d/sudo /etc/pam.d/sudo.bak`
-3. Add ONLY to `/etc/pam.d/sudo`: `auth sufficient pam_visage.so`
-4. Test in a NEW terminal: `sudo echo test`
-5. If it hangs or fails, revert with the root shell: `cp /etc/pam.d/sudo.bak /etc/pam.d/sudo`
-6. NEVER modify `/etc/pam.d/system-auth` or `/etc/pam.d/login` until sudo works perfectly
+1. Open root shell in separate terminal — **keep it open**
+2. `sudo cp /etc/pam.d/sudo /etc/pam.d/sudo.bak`
+3. `sudo visage setup --pam --service sudo`
+4. Test in NEW terminal: `sudo echo test`
+5. If broken, revert from root shell: `sudo cp /etc/pam.d/sudo.bak /etc/pam.d/sudo`
+6. **Never** modify `system-auth` or `login` until sudo works perfectly
 
-Emergency recovery (if locked out):
-- Boot from USB, mount partition, remove PAM line, reboot
+Emergency recovery: boot from USB, mount partition, remove PAM line, reboot.
 
-## Development Safety
+## Development Workflow
 
-### VISAGE_CONFIG Environment Variable
-
-All crates must support `VISAGE_CONFIG` env var, checked before `/etc/visage/config.toml`:
-
-```rust
-fn config_path() -> PathBuf {
-    std::env::var("VISAGE_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/etc/visage/config.toml"))
-}
+### Setup
+```bash
+export VISAGE_CONFIG=dev/config.toml
+cargo build --workspace
+cargo run --bin visage -- setup       # download models
 ```
 
-### Dev Config
+### No-Daemon Development
+All CLI commands work without a daemon — the CLI falls back to direct mode silently:
+```bash
+visage enroll
+visage test
+visage list
+visage devices
+```
 
-`dev/config.toml` uses local paths (no root required). Camera is auto-detected:
+### Daemon Development
+```bash
+visage daemon &
+visage enroll       # uses daemon (faster for repeated commands)
+visage test
+kill %1             # stop daemon
+```
+
+### Logging
+Control via `RUST_LOG` environment variable:
+```bash
+RUST_LOG=visage_daemon=debug visage daemon    # verbose daemon
+RUST_LOG=visage_cli=debug visage test         # verbose CLI
+```
+
+## Dev Config
+
+`dev/config.toml` — temp paths, no root, camera auto-detected:
 
 ```toml
 [device]
-# path auto-detected — omit for auto, or set explicitly
 max_height = 480
 
 [daemon]
-# mode = "daemon"  # or "oneshot" for daemonless development
 socket_path = "/tmp/visage-dev.sock"
 model_dir = "./models"
 
@@ -123,74 +111,34 @@ require_ir = true
 require_frame_variance = true
 ```
 
-### Dev Workflow (No Root Required)
+## CI
 
-**Daemon mode:**
-```bash
-export VISAGE_CONFIG=dev/config.toml
-cargo build --workspace
-cargo run --bin visage-daemon &    # starts with dev config
-cargo run --bin visage -- setup    # downloads models to ./models
-cargo run --bin visage -- enroll   # captures face
-cargo run --bin visage -- test     # tests recognition
-```
+GitHub Actions at `.github/workflows/ci.yml`:
+- Build + test + clippy + fmt check
+- Container PAM smoke tests
 
-**Oneshot mode (no daemon):**
-```bash
-export VISAGE_CONFIG=dev/config.toml
-# Set daemon.mode = "oneshot" in dev/config.toml
-cargo run --bin visage -- setup    # downloads models
-cargo run --bin visage -- enroll   # opens camera directly
-cargo run --bin visage -- test     # tests recognition directly
-```
-
-## CI Test Script
-
-```bash
-#!/bin/bash
-set -euo pipefail
-
-echo "=== Tier 1: Unit Tests ==="
-cargo test --workspace
-
-echo "=== Lint ==="
-cargo clippy --workspace -- -D warnings
-
-echo "=== Build Check ==="
-cargo build --workspace --release
-
-echo "=== PAM Symbol Verification ==="
-nm -D target/release/libpam_visage.so | grep -q pam_sm_authenticate
-nm -D target/release/libpam_visage.so | grep -q pam_sm_setcred
-
-echo "=== PAM Size Check ==="
-size=$(stat -c%s target/release/libpam_visage.so)
-if [ "$size" -gt 1048576 ]; then
-    echo "WARNING: PAM module is ${size} bytes (>1MB)"
-fi
-
-echo "=== All automated checks passed ==="
-```
+Local full CI: `bash test/run-tests.sh`
 
 ## Test Files
 
 | File | Purpose |
 |------|---------|
-| `dev/config.toml` | Development config (auto-detect, temp paths) |
-| `test/Containerfile` | PAM container test image |
-| `test/run-tests.sh` | CI test script |
-| `test/run-container-tests.sh` | Container PAM smoke tests |
-| `test/run-integration-tests.sh` | End-to-end daemon mode tests (with camera) |
-| `test/run-oneshot-tests.sh` | End-to-end oneshot mode tests (no daemon, with camera) |
-| `test/pam.d/visage-test` | Test PAM config for container |
+| `test/Containerfile` | Container image (Arch + pamtester) |
+| `test/run-tests.sh` | CI script (unit + lint + PAM symbols) |
+| `test/run-container-tests.sh` | PAM smoke tests |
+| `test/run-integration-tests.sh` | E2E with camera (daemon) |
+| `test/run-oneshot-tests.sh` | E2E with camera (oneshot) |
+| `test/pam.d/visage-test` | Test PAM config |
 
 ## Just Recipes
 
 | Recipe | Description |
 |--------|-------------|
 | `just test` | Unit tests |
-| `just check` | test + clippy + fmt |
-| `just test-pam` | Container PAM smoke tests |
-| `just test-integration` | End-to-end with camera (daemon mode) |
-| `just test-oneshot` | End-to-end with camera (oneshot mode) |
-| `just test-shell` | Interactive container shell |
+| `just lint` | Clippy |
+| `just check` | test + lint + fmt |
+| `just test-pam` | Container PAM smoke |
+| `just test-integration` | E2E daemon mode |
+| `just test-oneshot` | E2E oneshot mode |
+| `just test-shell` | Interactive container |
+| `just install` | System install (root) |
