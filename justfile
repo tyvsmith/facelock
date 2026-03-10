@@ -84,9 +84,9 @@ test-shell: build-release
     podman run --rm -it $devices visage-pam-test /bin/bash
 
 # Build release and install to system
-# Run as: just install (builds as you, installs as root via sudo)
+# Run as: just install (builds as you, installs as root)
 install: build-release
-    sudo just install-files
+    sudo env PATH="$PATH" just install-files
 
 # Install pre-built binaries to system (requires root, no build)
 install-files:
