@@ -44,6 +44,34 @@ test-pam: build
         exit 1
     fi
 
+# Run end-to-end integration tests in container (requires camera)
+test-integration: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build -t visage-pam-test -f test/Containerfile .
+    devices=""
+    for d in /dev/video*; do
+        [ -e "$d" ] && devices="$devices --device $d"
+    done
+    podman run --rm $devices visage-pam-test /run-integration-tests.sh
+
+# Open interactive shell in PAM test container (requires camera)
+test-shell: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build -t visage-pam-test -f test/Containerfile .
+    devices=""
+    for d in /dev/video*; do
+        [ -e "$d" ] && devices="$devices --device $d"
+    done
+    echo "Starting interactive shell. Try:"
+    echo "  visage-daemon &"
+    echo "  sleep 2"
+    echo "  visage enroll --user testuser --label myface"
+    echo "  visage test --user testuser"
+    echo "  pamtester visage-test testuser authenticate"
+    podman run --rm -it $devices visage-pam-test /bin/bash
+
 # Install binaries, PAM module, config, and systemd service (requires root)
 install: build
     #!/usr/bin/env bash
