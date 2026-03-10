@@ -1,8 +1,3 @@
-mod auth;
-mod enroll;
-mod handler;
-mod rate_limit;
-
 use std::io::{BufReader, BufWriter};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
@@ -15,12 +10,11 @@ use visage_camera::{Camera, auto_detect_device, is_ir_camera, validate_device};
 use visage_core::config::Config;
 use visage_core::ipc::{decode_request, encode_response, recv_message, send_message};
 use visage_core::traits::{CameraSource, FaceProcessor};
+use visage_daemon::handler::Handler;
+use visage_daemon::rate_limit::RateLimiter;
 use visage_face::FaceEngine;
 use visage_store::FaceStore;
-use tracing::{error, info, warn};
-
-use crate::handler::Handler;
-use crate::rate_limit::RateLimiter;
+use tracing::{debug, error, info, warn};
 
 /// Production type alias for the handler with real Camera and FaceEngine.
 type ProductionHandler = Handler<Camera<'static>, FaceEngine>;
@@ -28,10 +22,7 @@ type ProductionHandler = Handler<Camera<'static>, FaceEngine>;
 /// Type alias for the camera factory closure.
 type CameraFactory = Box<dyn Fn(&Config) -> Result<Camera<'static>, String>>;
 
-fn main() {
-    // Parse args
-    let config_path = parse_args();
-
+pub fn run(config_path: Option<String>) -> anyhow::Result<()> {
     // Load config
     let config = match config_path {
         Some(ref p) => Config::load_from(Path::new(p)),
@@ -40,21 +31,21 @@ fn main() {
     let mut config = match config {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("visage-daemon: failed to load config: {e}");
+            eprintln!("visage daemon: failed to load config: {e}");
             std::process::exit(1);
         }
     };
 
-    // Init tracing
+    // Init tracing (daemon uses its own tracing setup with target=true)
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "visage_daemon=info".into()),
+                .unwrap_or_else(|_| "visage_daemon=info,visage_cli=info".into()),
         )
         .with_target(true)
         .init();
 
-    info!("visage-daemon starting");
+    info!("visage daemon starting");
 
     // Auto-detect device if not specified
     if config.device.path.is_none() {
@@ -219,18 +210,8 @@ fn main() {
     } else {
         info!("socket-activated mode, socket owned by systemd, goodbye");
     }
-}
 
-fn parse_args() -> Option<String> {
-    let args: Vec<String> = std::env::args().collect();
-    let mut i = 1;
-    while i < args.len() {
-        if args[i] == "--config" && i + 1 < args.len() {
-            return Some(args[i + 1].clone());
-        }
-        i += 1;
-    }
-    None
+    Ok(())
 }
 
 /// Check if systemd socket activation is in effect.
@@ -306,7 +287,7 @@ fn verify_peer(stream: &std::os::unix::net::UnixStream) -> Result<(), String> {
     // Development mode: if no visage group exists on the system, allow any user.
     // In production, the visage group is created during installation.
     if nix::unistd::Group::from_name("visage").ok().flatten().is_none() {
-        tracing::debug!("no visage group found, allowing UID {peer_uid} (dev mode)");
+        debug!("no visage group found, allowing UID {peer_uid} (dev mode)");
         return Ok(());
     }
 
@@ -369,13 +350,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_args_none() {
-        assert!(parse_args().is_none() || parse_args().is_some());
-    }
-
-    #[test]
     fn socket_creation_and_cleanup() {
-        let dir = std::env::temp_dir().join("visage-test-daemon");
+        let dir = std::env::temp_dir().join("visage-test-daemon-cli");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("test.sock");
         let path_str = path.to_str().unwrap();
@@ -394,7 +370,7 @@ mod tests {
 
     #[test]
     fn socket_replaces_stale() {
-        let dir = std::env::temp_dir().join("visage-test-stale");
+        let dir = std::env::temp_dir().join("visage-test-stale-cli");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("stale.sock");
         let path_str = path.to_str().unwrap();
@@ -437,25 +413,11 @@ mod tests {
 
     #[test]
     fn receive_systemd_socket_returns_none_without_env() {
-        // Ensure env vars are not set
         unsafe {
             std::env::remove_var("LISTEN_PID");
             std::env::remove_var("LISTEN_FDS");
         }
         assert!(receive_systemd_socket().is_none());
-    }
-
-    #[test]
-    fn receive_systemd_socket_returns_none_with_wrong_pid() {
-        unsafe {
-            std::env::set_var("LISTEN_PID", "99999999");
-            std::env::set_var("LISTEN_FDS", "1");
-        }
-        assert!(receive_systemd_socket().is_none());
-        unsafe {
-            std::env::remove_var("LISTEN_PID");
-            std::env::remove_var("LISTEN_FDS");
-        }
     }
 
     #[test]

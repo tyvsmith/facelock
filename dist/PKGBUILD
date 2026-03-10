@@ -20,11 +20,8 @@ build() {
 package() {
     cd "$srcdir/$pkgname-$pkgver"
 
-    # Binaries
+    # Binary (unified)
     install -Dm755 target/release/visage "$pkgdir/usr/bin/visage"
-    install -Dm755 target/release/visage-daemon "$pkgdir/usr/bin/visage-daemon"
-    install -Dm755 target/release/visage-auth "$pkgdir/usr/bin/visage-auth"
-    install -Dm755 target/release/visage-bench "$pkgdir/usr/bin/visage-bench"
 
     # PAM module (Arch uses /usr/lib/security/)
     install -Dm755 target/release/libpam_visage.so "$pkgdir/usr/lib/security/pam_visage.so"

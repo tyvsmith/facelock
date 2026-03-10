@@ -1,56 +1,19 @@
-//! One-shot authentication binary.
+//! One-shot authentication subcommand.
 //!
 //! Exit codes: 0 = matched, 1 = no match/timeout, 2 = error.
 
-// These module declarations pull in the daemon's shared code.
-// Only `auth` is actually used; the others exist so the mod tree compiles.
-#[allow(dead_code)]
-mod enroll;
-#[allow(dead_code)]
-mod handler;
-#[allow(dead_code)]
-mod rate_limit;
-mod auth;
-
 use std::path::Path;
-use std::process::ExitCode;
 
 use visage_camera::{Camera, auto_detect_device, is_ir_camera, validate_device};
 use visage_core::config::Config;
 use visage_core::ipc::DaemonResponse;
 use visage_core::types::MatchResult;
+use visage_daemon::auth;
 use visage_face::FaceEngine;
 use visage_store::FaceStore;
 use tracing::{error, info};
 
-fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().collect();
-
-    let mut user: Option<String> = None;
-    let mut config_path: Option<String> = None;
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--user" if i + 1 < args.len() => {
-                user = Some(args[i + 1].clone());
-                i += 2;
-            }
-            "--config" if i + 1 < args.len() => {
-                config_path = Some(args[i + 1].clone());
-                i += 2;
-            }
-            _ => i += 1,
-        }
-    }
-
-    let user = match user {
-        Some(u) => u,
-        None => {
-            eprintln!("visage-auth: --user <username> required");
-            return ExitCode::from(2);
-        }
-    };
-
+pub fn run(user: String, config_path: Option<String>) -> i32 {
     let config = match config_path {
         Some(ref p) => Config::load_from(Path::new(p)),
         None => Config::load(),
@@ -58,15 +21,15 @@ fn main() -> ExitCode {
     let mut config = match config {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("visage-auth: config error: {e}");
-            return ExitCode::from(2);
+            eprintln!("visage auth: config error: {e}");
+            return 2;
         }
     };
 
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "visage_auth=info".into()),
+                .unwrap_or_else(|_| "visage_cli=info".into()),
         )
         .with_target(false)
         .with_writer(std::io::stderr)
@@ -80,7 +43,7 @@ fn main() -> ExitCode {
             }
             Err(e) => {
                 error!("no camera: {e}");
-                return ExitCode::from(2);
+                return 2;
             }
         }
     }
@@ -92,14 +55,14 @@ fn main() -> ExitCode {
 
     if config.security.require_ir && !device_is_ir {
         error!("IR camera required but device is not IR");
-        return ExitCode::from(2);
+        return 2;
     }
 
     let mut camera = match Camera::open(&config.device) {
         Ok(c) => c,
         Err(e) => {
             error!("camera: {e}");
-            return ExitCode::from(2);
+            return 2;
         }
     };
 
@@ -107,7 +70,7 @@ fn main() -> ExitCode {
         Ok(e) => e,
         Err(e) => {
             error!("models: {e}");
-            return ExitCode::from(2);
+            return 2;
         }
     };
 
@@ -115,7 +78,7 @@ fn main() -> ExitCode {
         Ok(s) => s,
         Err(e) => {
             error!("database: {e}");
-            return ExitCode::from(2);
+            return 2;
         }
     };
 
@@ -123,11 +86,11 @@ fn main() -> ExitCode {
         Ok(true) => {}
         Ok(false) => {
             info!(user = %user, "no enrolled models");
-            return ExitCode::from(1);
+            return 1;
         }
         Err(e) => {
             error!("storage: {e}");
-            return ExitCode::from(2);
+            return 2;
         }
     }
 
@@ -142,23 +105,23 @@ fn main() -> ExitCode {
     match response {
         DaemonResponse::AuthResult(MatchResult { matched: true, similarity, .. }) => {
             info!(user = %user, similarity = format!("{similarity:.4}"), "authenticated");
-            ExitCode::from(0)
+            0
         }
         DaemonResponse::AuthResult(MatchResult { matched: false, similarity, .. }) => {
             info!(user = %user, similarity = format!("{similarity:.4}"), "no match");
-            ExitCode::from(1)
+            1
         }
         DaemonResponse::Error { message } if message.contains("all frames dark") => {
             info!(user = %user, "all frames dark");
-            ExitCode::from(1)
+            1
         }
         DaemonResponse::Error { message } => {
             error!(user = %user, "auth error: {message}");
-            ExitCode::from(2)
+            2
         }
         _ => {
             error!("unexpected response");
-            ExitCode::from(2)
+            2
         }
     }
 }

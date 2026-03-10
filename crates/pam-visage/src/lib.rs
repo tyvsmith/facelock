@@ -471,7 +471,7 @@ fn load_config() -> Result<PamConfig, String> {
 // One-shot authentication (daemonless)
 // ---------------------------------------------------------------------------
 
-const VISAGE_AUTH_BIN: &str = "/usr/bin/visage-auth";
+const VISAGE_AUTH_BIN: &str = "/usr/bin/visage";
 
 /// Run visage-auth as a subprocess for daemonless authentication.
 /// Exit codes: 0 = matched, 1 = no match, 2+ = error.
@@ -485,6 +485,7 @@ fn run_oneshot_auth(service: &str, user: &str, config: &PamConfig) -> libc::c_in
         .unwrap_or_else(|_| DEFAULT_CONFIG_PATH.to_string());
 
     let result = Command::new(VISAGE_AUTH_BIN)
+        .arg("auth")
         .arg("--user")
         .arg(user)
         .arg("--config")

@@ -56,7 +56,7 @@ dir = "/tmp/visage-snapshots"
 CONF
 
 # Start daemon in background
-visage-daemon &
+visage daemon &
 DAEMON_PID=$!
 sleep 2
 

@@ -76,7 +76,7 @@ test-shell: build
         [ -e "$d" ] && devices="$devices --device $d"
     done
     echo "Starting interactive shell. Try:"
-    echo "  visage-daemon &"
+    echo "  visage daemon &"
     echo "  sleep 2"
     echo "  visage enroll --user testuser --label myface"
     echo "  visage test --user testuser"
@@ -91,10 +91,8 @@ install: build
     # Create visage system group if it doesn't exist
     getent group visage >/dev/null || groupadd -r visage
 
-    # Install binaries
+    # Install binary (unified)
     install -Dm755 target/release/visage /usr/bin/visage
-    install -Dm755 target/release/visage-daemon /usr/bin/visage-daemon
-    install -Dm755 target/release/visage-auth /usr/bin/visage-auth
     install -Dm755 target/release/libpam_visage.so /lib/security/pam_visage.so
 
     # Config (don't overwrite existing)
@@ -129,7 +127,7 @@ install: build
 
 # Uninstall binaries only (keeps config and data)
 uninstall:
-    rm -f /usr/bin/visage /usr/bin/visage-daemon /lib/security/pam_visage.so
+    rm -f /usr/bin/visage /lib/security/pam_visage.so
     rm -f /usr/lib/systemd/system/visage-daemon.service
     @echo "Binaries and service removed. Config and data preserved in /etc/visage and /var/lib/visage."
 
@@ -140,7 +138,6 @@ clean:
 # Show installed file locations
 show-paths:
     @echo "Binary:   /usr/bin/visage"
-    @echo "Daemon:   /usr/bin/visage-daemon"
     @echo "PAM:      /lib/security/pam_visage.so"
     @echo "Config:   /etc/visage/config.toml"
     @echo "Models:   /var/lib/visage/models/"

@@ -78,17 +78,17 @@ run_test "visage list (oneshot)" \
 run_test "visage test (oneshot)" \
     "visage test --user testuser"
 
-# visage-auth binary (used by PAM module)
-run_test "visage-auth authenticates (oneshot)" \
-    "visage-auth --user testuser --config /etc/visage/config.toml"
+# visage auth binary (used by PAM module)
+run_test "visage auth authenticates (oneshot)" \
+    "visage auth --user testuser --config /etc/visage/config.toml"
 
 # PAM authentication (the real deal — no daemon)
 run_test "pamtester authenticates (oneshot, no daemon)" \
     "pamtester visage-test testuser authenticate"
 
-# visage-auth rejects unknown user
-run_test "visage-auth rejects unknown user" \
-    "visage-auth --user nobody --config /etc/visage/config.toml" \
+# visage auth rejects unknown user
+run_test "visage auth rejects unknown user" \
+    "visage auth --user nobody --config /etc/visage/config.toml" \
     1
 
 # Clear models (direct DB access)

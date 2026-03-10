@@ -3493,20 +3493,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
 
 [[package]]
-name = "visage-bench"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "tracing",
- "tracing-subscriber",
- "visage-camera",
- "visage-core",
- "visage-face",
- "visage-store",
-]
-
-[[package]]
 name = "visage-camera"
 version = "0.1.0"
 dependencies = [
@@ -3525,6 +3511,7 @@ dependencies = [
  "image",
  "indicatif",
  "libc",
+ "nix",
  "notify-rust",
  "reqwest",
  "serde",
@@ -3537,6 +3524,7 @@ dependencies = [
  "tracing-subscriber",
  "visage-camera",
  "visage-core",
+ "visage-daemon",
  "visage-face",
  "visage-store",
  "wayland-client",

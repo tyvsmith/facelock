@@ -14,6 +14,7 @@ visage-core = { path = "../visage-core" }
 visage-camera = { path = "../visage-camera" }
 visage-face = { path = "../visage-face" }
 visage-store = { path = "../visage-store" }
+visage-daemon = { path = "../visage-daemon" }
 clap = { version = "4", features = ["derive"] }
 anyhow = { workspace = true }
 tracing = { workspace = true }
@@ -32,6 +33,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 xkbcommon = { version = "0.8", optional = true }
 signal-hook = "0.3"
 libc = "0.2"
+nix = { version = "0.29", features = ["socket", "user", "fs"] }
 
 [features]
 default = ["wayland"]

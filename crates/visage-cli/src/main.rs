@@ -6,6 +6,8 @@ pub mod notifications;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
+use commands::bench::BenchCommand;
+
 #[derive(Parser)]
 #[command(name = "visage", about = "Linux face authentication", version)]
 struct Cli {
@@ -80,31 +82,67 @@ enum Commands {
     Status,
     /// List available camera devices
     Devices,
+    /// Run the persistent authentication daemon
+    Daemon {
+        /// Path to config file
+        #[arg(short, long)]
+        config: Option<String>,
+    },
+    /// One-shot authentication (used by PAM module)
+    Auth {
+        /// Username to authenticate
+        #[arg(long)]
+        user: String,
+        /// Path to config file
+        #[arg(long)]
+        config: Option<String>,
+    },
+    /// Benchmark and calibration tools
+    Bench {
+        #[command(subcommand)]
+        command: BenchCommand,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .with_target(false)
-        .init();
-
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Setup => commands::setup::run(),
-        Commands::Enroll { user, label } => commands::enroll::run(user, label),
-        Commands::Remove {
-            model_id,
-            user,
-            yes,
-        } => commands::remove::run(model_id, user, yes),
-        Commands::Clear { user, yes } => commands::clear::run(user, yes),
-        Commands::List { user, json } => commands::list::run(user, json),
-        Commands::Test { user } => commands::test_cmd::run(user),
-        Commands::Preview { text_only, user } => commands::preview::run(text_only, user),
-        Commands::Config { edit } => commands::config::run(edit),
-        Commands::Status => commands::status::run(),
-        Commands::Devices => commands::devices::run(),
+        // Daemon and auth init their own tracing, so handle them separately
+        Commands::Daemon { config } => {
+            commands::daemon::run(config)
+        }
+        Commands::Auth { user, config } => {
+            let exit_code = commands::auth::run(user, config);
+            std::process::exit(exit_code);
+        }
+        other => {
+            // Default tracing init for all other commands
+            tracing_subscriber::fmt()
+                .with_env_filter(EnvFilter::from_default_env())
+                .with_target(false)
+                .init();
+
+            match other {
+                Commands::Setup => commands::setup::run(),
+                Commands::Enroll { user, label } => commands::enroll::run(user, label),
+                Commands::Remove {
+                    model_id,
+                    user,
+                    yes,
+                } => commands::remove::run(model_id, user, yes),
+                Commands::Clear { user, yes } => commands::clear::run(user, yes),
+                Commands::List { user, json } => commands::list::run(user, json),
+                Commands::Test { user } => commands::test_cmd::run(user),
+                Commands::Preview { text_only, user } => commands::preview::run(text_only, user),
+                Commands::Config { edit } => commands::config::run(edit),
+                Commands::Status => commands::status::run(),
+                Commands::Devices => commands::devices::run(),
+                Commands::Bench { command } => commands::bench::run(command),
+                // Already handled above
+                Commands::Daemon { .. } | Commands::Auth { .. } => unreachable!(),
+            }
+        }
     }
 }
 

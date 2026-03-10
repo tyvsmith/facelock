@@ -5,13 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
-[[bin]]
-name = "visage-daemon"
-path = "src/main.rs"
-
-[[bin]]
-name = "visage-auth"
-path = "src/auth_oneshot.rs"
+[lib]
+name = "visage_daemon"
+path = "src/lib.rs"
 
 [dependencies]
 visage-core = { path = "../visage-core" }

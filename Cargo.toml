@@ -8,7 +8,6 @@ members = [
     "crates/visage-daemon",
     "crates/visage-cli",
     "crates/pam-visage",
-    "crates/visage-bench",
     "crates/visage-test-support",
     "crates/visage-tpm",
 ]

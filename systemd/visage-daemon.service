@@ -6,7 +6,7 @@ Requires=visage-daemon.socket
 
 [Service]
 Type=notify
-ExecStart=/usr/bin/visage-daemon
+ExecStart=/usr/bin/visage daemon
 Restart=on-failure
 RestartSec=3
 
