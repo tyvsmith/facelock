@@ -83,8 +83,10 @@ test-shell: build-release
     echo "  pamtester visage-test testuser authenticate"
     podman run --rm -it $devices visage-pam-test /bin/bash
 
-# Build release and install to system (requires root)
-install: build-release install-files
+# Build release and install to system
+# Run as: just install (builds as you, installs as root via sudo)
+install: build-release
+    sudo just install-files
 
 # Install pre-built binaries to system (requires root, no build)
 install-files:
