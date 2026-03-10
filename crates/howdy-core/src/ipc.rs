@@ -16,9 +16,27 @@ pub enum DaemonRequest {
     RemoveModel { user: String, model_id: u32 },
     ClearModels { user: String },
     PreviewFrame,
+    /// Preview with face detection + recognition against the given user's models.
+    PreviewDetectFrame { user: String },
     ReleaseCamera,
     Ping,
     Shutdown,
+}
+
+/// A detected face in a preview frame with its recognition status.
+#[derive(Debug, Clone, Encode, Decode)]
+pub struct PreviewFace {
+    /// Bounding box in original (pre-JPEG) frame coordinates.
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    /// Detection confidence from SCRFD.
+    pub confidence: f32,
+    /// Best cosine similarity against stored embeddings (0.0 if no models).
+    pub similarity: f32,
+    /// Whether similarity exceeded the recognition threshold.
+    pub recognized: bool,
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
@@ -28,6 +46,11 @@ pub enum DaemonResponse {
     Models(Vec<FaceModelInfo>),
     Removed,
     Frame { jpeg_data: Vec<u8> },
+    /// Preview frame with face detection results.
+    DetectFrame {
+        jpeg_data: Vec<u8>,
+        faces: Vec<PreviewFace>,
+    },
     Ok,
     Error { message: String },
 }

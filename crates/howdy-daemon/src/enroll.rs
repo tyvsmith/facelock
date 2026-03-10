@@ -1,12 +1,12 @@
 use std::time::{Duration, Instant};
 
 use howdy_camera::Camera;
+use howdy_core::config::Config;
 use howdy_core::ipc::DaemonResponse;
 use howdy_face::FaceEngine;
 use howdy_store::FaceStore;
 use tracing::{debug, info, warn};
 
-const ENROLL_DURATION: Duration = Duration::from_secs(3);
 const MIN_CAPTURES: usize = 3;
 const MAX_CAPTURES: usize = 10;
 const INTER_FRAME_DELAY: Duration = Duration::from_millis(200);
@@ -15,10 +15,26 @@ pub fn enroll(
     camera: &mut Camera<'_>,
     engine: &mut FaceEngine,
     store: &FaceStore,
+    config: &Config,
     user: &str,
     label: &str,
 ) -> DaemonResponse {
-    let deadline = Instant::now() + ENROLL_DURATION;
+    // Clear any previous model with the same label (re-enrollment)
+    match store.remove_model_by_label(user, label) {
+        Ok(true) => info!(user, label, "removed existing model for re-enrollment"),
+        Ok(false) => {}
+        Err(e) => {
+            warn!(user, label, "failed to remove existing model: {e}");
+            return DaemonResponse::Error {
+                message: format!("storage error clearing old model: {e}"),
+            };
+        }
+    }
+
+    // Use 3x the auth timeout for enrollment since we need multiple good captures
+    let enroll_secs = (config.recognition.timeout_secs as u64).max(5) * 3;
+    let deadline = Instant::now() + Duration::from_secs(enroll_secs);
+    debug!(timeout_secs = enroll_secs, "starting enrollment");
     let mut stored_count: u32 = 0;
     let mut model_id: Option<u32> = None;
     let mut last_capture = Instant::now() - INTER_FRAME_DELAY; // allow immediate first capture
@@ -30,6 +46,7 @@ pub fn enroll(
             std::thread::sleep(INTER_FRAME_DELAY - since_last);
         }
 
+        let capture_start = Instant::now();
         let frame = match camera.capture() {
             Ok(f) => f,
             Err(e) => {
@@ -37,45 +54,59 @@ pub fn enroll(
                 continue;
             }
         };
+        let capture_ms = capture_start.elapsed().as_millis();
 
         if Camera::is_dark(&frame) {
-            debug!("skipping dark frame during enroll");
+            warn!(capture_ms, "skipping dark frame during enroll");
             continue;
         }
 
+        let detect_start = Instant::now();
         let faces = match engine.process(&frame) {
             Ok(f) => f,
             Err(e) => {
-                debug!("face engine error during enroll: {e}");
+                warn!("face engine error during enroll: {e}");
                 continue;
             }
         };
+        let detect_ms = detect_start.elapsed().as_millis();
 
         // Require exactly 1 face
         if faces.is_empty() {
-            debug!("no face detected during enroll");
+            info!(capture_ms, detect_ms, "no face detected during enroll");
             continue;
         }
         if faces.len() > 1 {
-            warn!("multiple faces detected during enroll, skipping frame");
+            warn!(count = faces.len(), "multiple faces detected during enroll, skipping frame");
             continue;
         }
 
         let (_det, embedding) = &faces[0];
 
-        match store.add_model(user, label, embedding) {
-            Ok(id) => {
-                if model_id.is_none() {
+        // First face: create the model. Subsequent faces: add embeddings.
+        match model_id {
+            None => match store.add_model(user, label, embedding) {
+                Ok(id) => {
                     model_id = Some(id);
+                    stored_count += 1;
+                    info!(capture_ms, detect_ms, model_id = id, "created model with first embedding");
                 }
-                stored_count += 1;
-                debug!(user, label, count = stored_count, "stored embedding");
-            }
-            Err(e) => {
-                // On duplicate label, the first add succeeds and subsequent ones may fail.
-                // This is expected since we store multiple embeddings under one model.
-                debug!("store error: {e}");
-            }
+                Err(e) => {
+                    warn!("failed to create model: {e}");
+                    return DaemonResponse::Error {
+                        message: format!("storage error: {e}"),
+                    };
+                }
+            },
+            Some(id) => match store.add_embedding(id, embedding) {
+                Ok(()) => {
+                    stored_count += 1;
+                    debug!(capture_ms, detect_ms, count = stored_count, "stored embedding");
+                }
+                Err(e) => {
+                    warn!("failed to store embedding: {e}");
+                }
+            },
         }
 
         last_capture = Instant::now();

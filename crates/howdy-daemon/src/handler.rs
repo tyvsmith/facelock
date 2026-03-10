@@ -2,11 +2,13 @@ use std::time::{Duration, Instant};
 
 use howdy_camera::Camera;
 use howdy_core::config::Config;
-use howdy_core::ipc::{DaemonRequest, DaemonResponse};
+use howdy_core::ipc::{DaemonRequest, DaemonResponse, PreviewFace};
 use howdy_face::FaceEngine;
 use howdy_store::FaceStore;
 use image::codecs::jpeg::JpegEncoder;
 use tracing::{debug, info};
+
+use howdy_core::types::cosine_similarity;
 
 use crate::auth;
 use crate::enroll;
@@ -136,7 +138,7 @@ impl Handler {
                 };
                 let camera = unsafe { &mut *camera };
                 let result =
-                    enroll::enroll(camera, &mut self.engine, &self.store, &user, &label);
+                    enroll::enroll(camera, &mut self.engine, &self.store, &self.config, &user, &label);
                 // Enroll is a one-shot operation — release camera when done
                 self.release_camera();
                 result
@@ -174,7 +176,24 @@ impl Handler {
                     Err(resp) => return resp,
                 };
                 match camera.capture_rgb_only() {
+                    Ok(frame) => self.encode_frame_response(&frame.rgb, frame.width, frame.height),
+                    Err(e) => DaemonResponse::Error {
+                        message: format!("capture error: {e}"),
+                    },
+                }
+            }
+
+            // Preview with face detection + recognition.
+            // Uses full capture() (RGB + grayscale + CLAHE) for the face engine.
+            DaemonRequest::PreviewDetectFrame { user } => {
+                let camera = match self.acquire_camera() {
+                    Ok(c) => c as *mut Camera<'static>,
+                    Err(resp) => return resp,
+                };
+                let camera = unsafe { &mut *camera };
+                match camera.capture() {
                     Ok(frame) => {
+                        let faces = self.detect_and_match(&frame, &user);
                         self.jpeg_buf.clear();
                         let mut encoder =
                             JpegEncoder::new_with_quality(&mut self.jpeg_buf, 60);
@@ -184,8 +203,9 @@ impl Handler {
                             frame.height,
                             image::ExtendedColorType::Rgb8,
                         ) {
-                            Ok(()) => DaemonResponse::Frame {
+                            Ok(()) => DaemonResponse::DetectFrame {
                                 jpeg_data: self.jpeg_buf.clone(),
+                                faces,
                             },
                             Err(e) => DaemonResponse::Error {
                                 message: format!("JPEG encode error: {e}"),
@@ -198,6 +218,61 @@ impl Handler {
                 }
             }
         }
+    }
+
+    fn encode_frame_response(&mut self, rgb: &[u8], width: u32, height: u32) -> DaemonResponse {
+        self.jpeg_buf.clear();
+        let mut encoder = JpegEncoder::new_with_quality(&mut self.jpeg_buf, 60);
+        match encoder.encode(rgb, width, height, image::ExtendedColorType::Rgb8) {
+            Ok(()) => DaemonResponse::Frame {
+                jpeg_data: self.jpeg_buf.clone(),
+            },
+            Err(e) => DaemonResponse::Error {
+                message: format!("JPEG encode error: {e}"),
+            },
+        }
+    }
+
+    fn detect_and_match(
+        &mut self,
+        frame: &howdy_core::types::Frame,
+        user: &str,
+    ) -> Vec<PreviewFace> {
+        let detections = match self.engine.process(frame) {
+            Ok(d) => d,
+            Err(e) => {
+                debug!("face engine error during preview: {e}");
+                return Vec::new();
+            }
+        };
+
+        let stored = self
+            .store
+            .get_user_embeddings(user)
+            .unwrap_or_default();
+        let threshold = self.config.recognition.threshold;
+
+        detections
+            .into_iter()
+            .map(|(det, embedding)| {
+                let mut best_sim: f32 = 0.0;
+                for (_model_id, stored_emb) in &stored {
+                    let sim = cosine_similarity(&embedding, stored_emb);
+                    if sim > best_sim {
+                        best_sim = sim;
+                    }
+                }
+                PreviewFace {
+                    x: det.bbox.x,
+                    y: det.bbox.y,
+                    width: det.bbox.width,
+                    height: det.bbox.height,
+                    confidence: det.confidence,
+                    similarity: best_sim,
+                    recognized: best_sim >= threshold,
+                }
+            })
+            .collect()
     }
 }
 

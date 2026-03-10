@@ -65,6 +65,9 @@ enum Commands {
         /// Print detection results to stdout instead of graphical preview
         #[arg(long)]
         text_only: bool,
+        /// User to match faces against (defaults to current user)
+        #[arg(short, long)]
+        user: Option<String>,
     },
     /// Show or edit configuration
     Config {
@@ -97,7 +100,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Clear { user, yes } => commands::clear::run(user, yes),
         Commands::List { user, json } => commands::list::run(user, json),
         Commands::Test { user } => commands::test_cmd::run(user),
-        Commands::Preview { text_only } => commands::preview::run(text_only),
+        Commands::Preview { text_only, user } => commands::preview::run(text_only, user),
         Commands::Config { edit } => commands::config::run(edit),
         Commands::Status => commands::status::run(),
         Commands::Devices => commands::devices::run(),

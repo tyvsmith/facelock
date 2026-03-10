@@ -1,8 +1,4 @@
-// Rendering primitives for the preview overlay. Some functions (draw_rect,
-// draw_detection_box, rgb_to_xrgb) are not yet called from the main code path
-// because the daemon IPC does not yet include detection metadata with preview
-// frames. They will be used once detection overlays are wired through.
-#![allow(dead_code)]
+// Rendering primitives for the preview overlay.
 
 use super::font;
 
@@ -13,12 +9,14 @@ pub const INFO_BAR_H: u32 = font::CHAR_H + 4;
 pub const COLOR_GREEN: [u8; 3] = [0, 255, 0];
 pub const COLOR_RED: [u8; 3] = [255, 0, 0];
 pub const COLOR_WHITE: [u8; 3] = [255, 255, 255];
+#[cfg(test)]
 pub const COLOR_BLACK: [u8; 3] = [0, 0, 0];
 
 /// Convert RGB frame data to XRGB8888 (little-endian: BGRX bytes).
 ///
 /// `rgb` is width*height*3 bytes (R, G, B per pixel).
 /// Output is width*height*4 bytes (B, G, R, 0xFF per pixel).
+#[cfg(test)]
 pub fn rgb_to_xrgb(rgb: &[u8], width: u32, height: u32, out: &mut [u8]) {
     let pixel_count = (width * height) as usize;
     let expected_rgb = pixel_count * 3;
@@ -138,19 +136,22 @@ pub fn draw_info_bar(
     width: u32,
     height: u32,
     fps: f32,
-    detection_count: u32,
+    recognized: u32,
+    unrecognized: u32,
 ) {
     let bar_y = height.saturating_sub(INFO_BAR_H);
 
     // Semi-dark background
     fill_rect(buf, stride, height, 0, bar_y, width, INFO_BAR_H, [20, 20, 20]);
 
-    // FPS and info text
-    let info = format!(
-        " {width}x{height} | {fps:.0} fps | {detection_count} faces",
-        width = width,
-        height = height.saturating_sub(INFO_BAR_H),
-    );
+    let frame_h = height.saturating_sub(INFO_BAR_H);
+    let face_info = match (recognized, unrecognized) {
+        (0, 0) => String::new(),
+        (r, 0) => format!(" | {r} recognized"),
+        (0, u) => format!(" | {u} unrecognized"),
+        (r, u) => format!(" | {r} recognized, {u} unrecognized"),
+    };
+    let info = format!(" {width}x{frame_h} | {fps:.0} fps{face_info}");
     font::draw_text(buf, stride, 2, bar_y + 2, &info, COLOR_WHITE);
 }
 
@@ -233,7 +234,7 @@ mod tests {
         let h = 32u32;
         let stride = w * 4;
         let mut buf = vec![0u8; (stride * h) as usize];
-        draw_info_bar(&mut buf, stride, w, h, 29.7, 2);
+        draw_info_bar(&mut buf, stride, w, h, 29.7, 1, 1);
     }
 
     #[test]

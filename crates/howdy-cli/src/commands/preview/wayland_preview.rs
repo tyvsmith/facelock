@@ -28,7 +28,7 @@ use wayland_client::{
     Connection, QueueHandle,
 };
 
-use howdy_core::ipc::{DaemonRequest, DaemonResponse};
+use howdy_core::ipc::{DaemonRequest, DaemonResponse, PreviewFace};
 
 use super::render;
 use crate::ipc_client;
@@ -38,7 +38,7 @@ const MAX_WIDTH: u32 = 640;
 const MAX_HEIGHT: u32 = 480;
 
 /// Run the Wayland layer-shell preview.
-pub fn run(socket_path: &str) -> anyhow::Result<()> {
+pub fn run(socket_path: &str, user: &str) -> anyhow::Result<()> {
     // Catch Ctrl+C so we can clean up the camera
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGINT, std::sync::Arc::clone(&stop))
@@ -84,6 +84,7 @@ pub fn run(socket_path: &str) -> anyhow::Result<()> {
         keyboard_focus: false,
         pointer: None,
         socket_path: socket_path.to_string(),
+        user: user.to_string(),
         fps: 0.0,
         frame_count: 0,
         fps_frame_count: 0,
@@ -122,6 +123,7 @@ struct PreviewState {
     keyboard_focus: bool,
     pointer: Option<wl_pointer::WlPointer>,
     socket_path: String,
+    user: String,
     fps: f32,
     frame_count: u64,
     fps_frame_count: u64,
@@ -134,14 +136,17 @@ impl PreviewState {
         let height = self.height;
         let stride = width as i32 * 4;
         let socket_path = self.socket_path.clone();
+        let user = self.user.clone();
 
-        // Request a frame from the daemon before borrowing the pool
-        let frame_result =
-            ipc_client::send_request(&socket_path, &DaemonRequest::PreviewFrame);
+        // Request a frame with detection from the daemon
+        let frame_result = ipc_client::send_request(
+            &socket_path,
+            &DaemonRequest::PreviewDetectFrame { user },
+        );
 
         // Update FPS tracking
         let fps = match &frame_result {
-            Ok(DaemonResponse::Frame { .. }) => {
+            Ok(DaemonResponse::DetectFrame { .. } | DaemonResponse::Frame { .. }) => {
                 self.frame_count += 1;
                 self.fps_frame_count += 1;
                 let now = Instant::now();
@@ -170,8 +175,11 @@ impl PreviewState {
 
         // Render into the canvas
         match frame_result {
+            Ok(DaemonResponse::DetectFrame { jpeg_data, faces }) => {
+                render_frame(&jpeg_data, canvas, width, height, fps, &faces);
+            }
             Ok(DaemonResponse::Frame { jpeg_data }) => {
-                render_frame(&jpeg_data, canvas, width, height, fps);
+                render_frame(&jpeg_data, canvas, width, height, fps, &[]);
             }
             Ok(DaemonResponse::Error { message }) => {
                 tracing::warn!("daemon error: {message}");
@@ -209,6 +217,7 @@ fn render_frame(
     width: u32,
     height: u32,
     fps: f32,
+    faces: &[PreviewFace],
 ) {
     let stride = width * 4;
 
@@ -218,9 +227,7 @@ fn render_frame(
             let offset_x = (width.saturating_sub(disp_w)) / 2;
             let offset_y = (height.saturating_sub(disp_h)) / 2;
 
-            // Clear canvas to black using bulk fill
-            // XRGB8888: [B=0, G=0, R=0, X=0xFF] but since B/G/R are all 0,
-            // we can memset to 0 then fix up alpha — or just fill directly.
+            // Clear canvas to black
             for chunk in canvas.chunks_exact_mut(4) {
                 chunk.copy_from_slice(&[0, 0, 0, 0xFF]);
             }
@@ -249,7 +256,31 @@ fn render_frame(
                 }
             }
 
-            render::draw_info_bar(canvas, stride, width, height, fps, 0);
+            // Draw detection bounding boxes scaled to display coordinates
+            let scale_x = disp_w as f32 / img_w as f32;
+            let scale_y = disp_h as f32 / img_h as f32;
+
+            for face in faces {
+                let bx = offset_x + (face.x * scale_x) as u32;
+                let by = offset_y + (face.y * scale_y) as u32;
+                let bw = (face.width * scale_x) as u32;
+                let bh = (face.height * scale_y) as u32;
+                render::draw_detection_box(
+                    canvas,
+                    stride,
+                    height,
+                    bx,
+                    by,
+                    bw,
+                    bh,
+                    face.similarity,
+                    face.recognized,
+                );
+            }
+
+            let recognized = faces.iter().filter(|f| f.recognized).count() as u32;
+            let unrecognized = faces.len() as u32 - recognized;
+            render::draw_info_bar(canvas, stride, width, height, fps, recognized, unrecognized);
         }
         Err(e) => {
             tracing::warn!("JPEG decode failed: {e}");

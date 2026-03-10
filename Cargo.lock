@@ -1275,6 +1275,7 @@ dependencies = [
  "howdy-core",
  "image",
  "indicatif",
+ "libc",
  "notify-rust",
  "reqwest",
  "serde",

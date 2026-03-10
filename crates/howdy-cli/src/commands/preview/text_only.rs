@@ -11,7 +11,7 @@ use crate::ipc_client;
 ///
 /// Requests frames from the daemon and prints detection info as JSON lines
 /// to stdout. Useful for SSH sessions, non-Wayland environments, and testing.
-pub fn run(socket_path: &str) -> anyhow::Result<()> {
+pub fn run(socket_path: &str, user: &str) -> anyhow::Result<()> {
     eprintln!("Text-only preview mode. Press Ctrl+C to stop.\n");
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -26,17 +26,21 @@ pub fn run(socket_path: &str) -> anyhow::Result<()> {
     let stdout = std::io::stdout();
 
     while !stop.load(Ordering::Relaxed) {
-        let response = match ipc_client::send_request(socket_path, &DaemonRequest::PreviewFrame) {
+        let response = match ipc_client::send_request(
+            socket_path,
+            &DaemonRequest::PreviewDetectFrame {
+                user: user.to_string(),
+            },
+        ) {
             Ok(r) => r,
             Err(_) => break,
         };
 
         match response {
-            DaemonResponse::Frame { jpeg_data } => {
+            DaemonResponse::DetectFrame { jpeg_data, faces } => {
                 frame_count += 1;
                 fps_frame_count += 1;
 
-                // Compute FPS every second
                 let now = Instant::now();
                 let elapsed = now.duration_since(last_fps_time).as_secs_f32();
                 if elapsed >= 1.0 {
@@ -45,8 +49,9 @@ pub fn run(socket_path: &str) -> anyhow::Result<()> {
                     last_fps_time = now;
                 }
 
-                // Decode JPEG to get dimensions
                 let (width, height) = jpeg_dimensions(&jpeg_data);
+                let recognized = faces.iter().filter(|f| f.recognized).count();
+                let unrecognized = faces.len() - recognized;
 
                 let output = serde_json::json!({
                     "frame": frame_count,
@@ -54,6 +59,44 @@ pub fn run(socket_path: &str) -> anyhow::Result<()> {
                     "jpeg_size": jpeg_data.len(),
                     "width": width,
                     "height": height,
+                    "recognized": recognized,
+                    "unrecognized": unrecognized,
+                    "faces": faces.iter().map(|f| serde_json::json!({
+                        "x": f.x, "y": f.y,
+                        "width": f.width, "height": f.height,
+                        "confidence": (f.confidence * 1000.0).round() / 1000.0,
+                        "similarity": (f.similarity * 1000.0).round() / 1000.0,
+                        "recognized": f.recognized,
+                    })).collect::<Vec<_>>(),
+                });
+
+                let mut handle = stdout.lock();
+                if writeln!(handle, "{output}").is_err() {
+                    break;
+                }
+            }
+            DaemonResponse::Frame { jpeg_data } => {
+                frame_count += 1;
+                fps_frame_count += 1;
+
+                let now = Instant::now();
+                let elapsed = now.duration_since(last_fps_time).as_secs_f32();
+                if elapsed >= 1.0 {
+                    current_fps = fps_frame_count as f32 / elapsed;
+                    fps_frame_count = 0;
+                    last_fps_time = now;
+                }
+
+                let (width, height) = jpeg_dimensions(&jpeg_data);
+                let output = serde_json::json!({
+                    "frame": frame_count,
+                    "fps": (current_fps * 10.0).round() / 10.0,
+                    "jpeg_size": jpeg_data.len(),
+                    "width": width,
+                    "height": height,
+                    "recognized": 0,
+                    "unrecognized": 0,
+                    "faces": [],
                 });
 
                 let mut handle = stdout.lock();
@@ -71,9 +114,8 @@ pub fn run(socket_path: &str) -> anyhow::Result<()> {
         }
     }
 
-    // Tell the daemon to release the camera
     let _ = ipc_client::send_request(socket_path, &DaemonRequest::ReleaseCamera);
-    let _ = start; // suppress unused warning
+    let _ = start;
     Ok(())
 }
 

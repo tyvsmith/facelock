@@ -28,6 +28,7 @@ wayland-client = { version = "0.31", optional = true }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 xkbcommon = { version = "0.8", optional = true }
 signal-hook = "0.3"
+libc = "0.2"
 
 [features]
 default = ["wayland"]

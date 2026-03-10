@@ -63,6 +63,32 @@ impl FaceStore {
         Ok(model_id)
     }
 
+    /// Add an embedding to an existing model. Used during enrollment to store
+    /// multiple embeddings (from different angles) under a single model.
+    pub fn add_embedding(&self, model_id: u32, embedding: &FaceEmbedding) -> Result<()> {
+        let bytes: &[u8] = bytemuck::cast_slice(embedding.as_slice());
+        self.conn
+            .execute(
+                "INSERT INTO face_embeddings (model_id, embedding) VALUES (?1, ?2)",
+                params![model_id, bytes],
+            )
+            .map_err(map_err)?;
+        Ok(())
+    }
+
+    /// Remove any existing model with the given user+label, if present.
+    /// Returns true if a model was removed.
+    pub fn remove_model_by_label(&self, user: &str, label: &str) -> Result<bool> {
+        let affected = self
+            .conn
+            .execute(
+                "DELETE FROM face_models WHERE user = ?1 AND label = ?2",
+                params![user, label],
+            )
+            .map_err(map_err)?;
+        Ok(affected > 0)
+    }
+
     /// Get all embeddings for a user as (model_id, embedding) pairs.
     pub fn get_user_embeddings(&self, user: &str) -> Result<Vec<(u32, FaceEmbedding)>> {
         let mut stmt = self
@@ -282,6 +308,33 @@ mod tests {
                 "bit-exact mismatch at index {i}"
             );
         }
+    }
+
+    #[test]
+    fn test_add_embedding_to_model() {
+        let store = FaceStore::open_memory().unwrap();
+        let emb1 = test_embedding();
+        let mut emb2 = test_embedding();
+        emb2[0] = 99.0;
+
+        let id = store.add_model("alice", "front", &emb1).unwrap();
+        store.add_embedding(id, &emb2).unwrap();
+
+        let results = store.get_user_embeddings("alice").unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].1[0], emb1[0]);
+        assert_eq!(results[1].1[0], emb2[0]);
+    }
+
+    #[test]
+    fn test_remove_model_by_label() {
+        let store = FaceStore::open_memory().unwrap();
+        let emb = test_embedding();
+        store.add_model("alice", "front", &emb).unwrap();
+        assert!(store.remove_model_by_label("alice", "front").unwrap());
+        assert!(!store.has_models("alice").unwrap());
+        // Removing again returns false
+        assert!(!store.remove_model_by_label("alice", "front").unwrap());
     }
 
     #[test]
