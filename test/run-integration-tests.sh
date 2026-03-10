@@ -29,31 +29,10 @@ run_test() {
 echo "=== Integration Tests (with camera) ==="
 echo ""
 
-# Write container config with correct paths
-# device.path omitted — daemon auto-detects the camera
-cat > /etc/visage/config.toml <<'CONF'
-[device]
-max_height = 480
-
-[recognition]
-threshold = 0.45
-timeout_secs = 5
-
-[daemon]
-socket_path = "/tmp/visage.sock"
-model_dir = "/models"
-
-[storage]
-db_path = "/tmp/visage-test.db"
-
-[security]
-disabled = false
-require_ir = false
-require_frame_variance = false
-
-[snapshots]
-dir = "/tmp/visage-snapshots"
-CONF
+# Use the installed config (written by Containerfile), override socket path
+# to a writable location since /run/visage may not exist without systemd
+sed -i 's|socket_path.*|socket_path = "/tmp/visage.sock"|' /etc/visage/config.toml
+sed -i 's|db_path.*|db_path = "/tmp/visage-test.db"|' /etc/visage/config.toml 2>/dev/null || true
 
 # Start daemon in background
 visage daemon &

@@ -1,7 +1,7 @@
 FROM archlinux:latest
 
 # Install dependencies
-RUN pacman -Syu --noconfirm pam sudo base-devel libxkbcommon && pacman -Scc --noconfirm
+RUN pacman -Syu --noconfirm pam sudo base-devel libxkbcommon just && pacman -Scc --noconfirm
 
 # Build pamtester from upstream source
 RUN curl -sL https://sourceforge.net/projects/pamtester/files/pamtester/0.1.2/pamtester-0.1.2.tar.gz/download | tar xz -C /tmp && \
@@ -12,23 +12,45 @@ RUN curl -sL https://sourceforge.net/projects/pamtester/files/pamtester/0.1.2/pa
 # Create test user
 RUN useradd -m testuser && echo "testuser:test" | chpasswd
 
-# Copy built artifacts
-COPY target/release/libpam_visage.so /lib/security/pam_visage.so
-COPY target/release/visage /usr/bin/visage
+# Copy the repo (pre-built binaries in target/release/)
+COPY . /build
+WORKDIR /build
+
+# Install using the real install path
+RUN just install-files
+
+# Copy models to the configured model_dir for integration tests
+RUN cp models/*.onnx /var/lib/visage/models/ 2>/dev/null || true
+RUN cp models/manifest.toml /var/lib/visage/models/ 2>/dev/null || true
+
+# Override config for container testing (use /var/lib paths, not /tmp dev paths)
+RUN cat > /etc/visage/config.toml <<'EOF'
+[device]
+max_height = 480
+
+[recognition]
+threshold = 0.45
+timeout_secs = 5
+
+[daemon]
+model_dir = "/var/lib/visage/models"
+
+[security]
+disabled = false
+require_ir = false
+require_frame_variance = false
+EOF
+
+# Visage-test PAM config for pamtester
 COPY test/pam.d/visage-test /etc/pam.d/visage-test
-
-# Create config directory and copy dev config
-RUN mkdir -p /etc/visage
-COPY dev/config.toml /etc/visage/config.toml
-
-# Copy models for integration tests
-COPY models/*.onnx /models/
-COPY models/manifest.toml /models/manifest.toml
 
 # Copy test scripts
 COPY test/run-container-tests.sh /run-tests.sh
 COPY test/run-integration-tests.sh /run-integration-tests.sh
 COPY test/run-oneshot-tests.sh /run-oneshot-tests.sh
 RUN chmod +x /run-tests.sh /run-integration-tests.sh /run-oneshot-tests.sh
+
+# Clean up build dir to save image size
+RUN rm -rf /build
 
 CMD ["/run-tests.sh"]

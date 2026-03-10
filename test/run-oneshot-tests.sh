@@ -29,31 +29,11 @@ run_test() {
 echo "=== Oneshot Mode Tests (fully daemonless, with camera) ==="
 echo ""
 
-# Write oneshot config — NO daemon anywhere
-cat > /etc/visage/config.toml <<'CONF'
-[device]
-max_height = 480
-
-[recognition]
-threshold = 0.45
-timeout_secs = 5
-
-[daemon]
-mode = "oneshot"
-socket_path = "/tmp/visage.sock"
-model_dir = "/models"
-
-[storage]
-db_path = "/tmp/visage-test.db"
-
-[security]
-disabled = false
-require_ir = false
-require_frame_variance = false
-
-[snapshots]
-dir = "/tmp/visage-snapshots"
-CONF
+# Use installed config, set oneshot mode and writable paths
+sed -i 's|socket_path.*|socket_path = "/tmp/visage.sock"|' /etc/visage/config.toml
+sed -i 's|db_path.*|db_path = "/tmp/visage-test.db"|' /etc/visage/config.toml 2>/dev/null || true
+# Force oneshot mode — no daemon for these tests
+sed -i '/^\[daemon\]/a mode = "oneshot"' /etc/visage/config.toml
 
 # Verify no daemon is running
 run_test "No daemon socket exists" \

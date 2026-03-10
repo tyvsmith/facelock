@@ -84,10 +84,18 @@ test-shell: build-release
     podman run --rm -it $devices visage-pam-test /bin/bash
 
 # Build release and install to system (requires root)
-install: build-release
+install: build-release install-files
+
+# Install pre-built binaries to system (requires root, no build)
+install-files:
     #!/usr/bin/env bash
     set -euo pipefail
     PAM_LINE="auth  sufficient  pam_visage.so"
+
+    # Verify binaries exist
+    for f in target/release/visage target/release/libpam_visage.so; do
+        [ -f "$f" ] || { echo "Error: $f not found. Run 'just build-release' first."; exit 1; }
+    done
 
     # Create visage system group
     getent group visage >/dev/null || groupadd -r visage
