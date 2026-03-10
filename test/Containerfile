@@ -1,7 +1,13 @@
 FROM archlinux:latest
 
 # Install dependencies
-RUN pacman -Syu --noconfirm pam pamtester sudo && pacman -Scc --noconfirm
+RUN pacman -Syu --noconfirm pam sudo base-devel && pacman -Scc --noconfirm
+
+# Build pamtester from upstream source
+RUN curl -sL https://sourceforge.net/projects/pamtester/files/pamtester/0.1.2/pamtester-0.1.2.tar.gz/download | tar xz -C /tmp && \
+    cd /tmp/pamtester-0.1.2 && \
+    ./configure --prefix=/usr CFLAGS="-Wno-implicit-function-declaration" && make && make install && \
+    rm -rf /tmp/pamtester-0.1.2
 
 # Create test user
 RUN useradd -m testuser && echo "testuser:test" | chpasswd
