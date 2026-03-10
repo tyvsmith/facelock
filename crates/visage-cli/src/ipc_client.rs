@@ -18,18 +18,8 @@ pub fn should_use_direct(config: &visage_core::Config) -> bool {
     if config.daemon.mode == "oneshot" {
         return true;
     }
-    // Daemon mode — check if socket exists (quick check avoids probe connection noise)
-    if std::path::Path::new(&config.daemon.socket_path).exists() {
-        return false;
-    }
-
-    eprintln!(
-        "Warning: daemon not available at {}. Running directly (slower).",
-        config.daemon.socket_path
-    );
-    eprintln!("  To silence this: set daemon.mode = \"oneshot\" in config,");
-    eprintln!("  or start the daemon: visage-daemon &\n");
-    true
+    // Daemon mode — check if socket exists, fall back silently to direct mode
+    !std::path::Path::new(&config.daemon.socket_path).exists()
 }
 
 /// Connect to the daemon socket and send a request, returning the response.
