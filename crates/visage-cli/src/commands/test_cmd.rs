@@ -11,15 +11,20 @@ use crate::notifications::{notify_if_enabled, NotifyEvent};
 pub fn run(user: Option<String>) -> anyhow::Result<()> {
     let config = Config::load().context("failed to load config")?;
 
-    // Check models exist
+    // Check models exist — offer to run setup if missing
     let model_dir = std::path::Path::new(&config.daemon.model_dir);
-    if !model_dir.join(&config.recognition.detector_model).exists()
-        || !model_dir.join(&config.recognition.embedder_model).exists()
-    {
-        anyhow::bail!(
-            "Face recognition models not found.\n\
-             Run `sudo visage setup` to download them."
-        );
+    let detector = model_dir.join(&config.recognition.detector_model);
+    let embedder = model_dir.join(&config.recognition.embedder_model);
+    if !detector.exists() || !embedder.exists() {
+        println!("Face recognition models not found.");
+        if crate::ipc_client::confirm("Download models now?")? {
+            crate::commands::setup::run()?;
+            if !detector.exists() || !embedder.exists() {
+                anyhow::bail!("Models still not found after setup.");
+            }
+        } else {
+            anyhow::bail!("Models required. Run `visage setup` to download them.");
+        }
     }
 
     let user = ipc_client::resolve_user(user.as_deref());
