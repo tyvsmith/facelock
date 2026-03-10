@@ -1,13 +1,13 @@
 # visage build automation
 # Usage: just <recipe>
 
-# Build all crates in release mode
+# Build in debug mode (development)
 build:
-    cargo build --release
-
-# Build in debug mode
-build-debug:
     cargo build --workspace
+
+# Build in release mode (for install)
+build-release:
+    cargo build --release --workspace
 
 # Run all unit tests
 test:
@@ -33,7 +33,7 @@ fmt:
 check: test lint fmt-check
 
 # Run container PAM smoke tests
-test-pam: build
+test-pam: build-release
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -f test/Containerfile ]; then
@@ -45,7 +45,7 @@ test-pam: build
     fi
 
 # Run end-to-end integration tests in container (requires camera)
-test-integration: build
+test-integration: build-release
     #!/usr/bin/env bash
     set -euo pipefail
     podman build -t visage-pam-test -f test/Containerfile .
@@ -56,7 +56,7 @@ test-integration: build
     podman run --rm $devices visage-pam-test /run-integration-tests.sh
 
 # Run oneshot (daemonless) end-to-end tests in container (requires camera)
-test-oneshot: build
+test-oneshot: build-release
     #!/usr/bin/env bash
     set -euo pipefail
     podman build -t visage-pam-test -f test/Containerfile .
@@ -67,7 +67,7 @@ test-oneshot: build
     podman run --rm $devices visage-pam-test /run-oneshot-tests.sh
 
 # Open interactive shell in PAM test container (requires camera)
-test-shell: build
+test-shell: build-release
     #!/usr/bin/env bash
     set -euo pipefail
     podman build -t visage-pam-test -f test/Containerfile .
@@ -83,8 +83,8 @@ test-shell: build
     echo "  pamtester visage-test testuser authenticate"
     podman run --rm -it $devices visage-pam-test /bin/bash
 
-# Install binaries, PAM module, config, and systemd service (requires root)
-install: build
+# Build release and install to system (requires root)
+install: build-release
     #!/usr/bin/env bash
     set -euo pipefail
 
