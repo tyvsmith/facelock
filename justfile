@@ -87,11 +87,12 @@ test-shell: build-release
 install: build-release
     #!/usr/bin/env bash
     set -euo pipefail
+    PAM_LINE="auth  sufficient  pam_visage.so"
 
-    # Create visage system group if it doesn't exist
+    # Create visage system group
     getent group visage >/dev/null || groupadd -r visage
 
-    # Install binary (unified)
+    # Binaries
     install -Dm755 target/release/visage /usr/bin/visage
     install -Dm755 target/release/libpam_visage.so /lib/security/pam_visage.so
 
@@ -103,33 +104,60 @@ install: build-release
     install -Dm644 systemd/visage-daemon.service /usr/lib/systemd/system/visage-daemon.service
     install -Dm644 systemd/visage-daemon.socket /usr/lib/systemd/system/visage-daemon.socket
 
-    # Directories with restricted permissions (biometric data protection)
-    # Order matters: parent first with restrictive perms, then children
+    # Directories
     install -dm750 -o root -g visage /var/lib/visage
     install -dm755 -o root -g root /var/lib/visage/models
     install -dm750 -o root -g visage /var/log/visage
     install -dm750 -o root -g visage /var/log/visage/snapshots
     install -dm755 -o root -g visage /run/visage
 
-    # Set model file permissions if models exist
-    [ -d /var/lib/visage/models ] && chmod 644 /var/lib/visage/models/*.onnx 2>/dev/null || true
+    # Enable socket activation (if systemd present)
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload
+        systemctl enable --now visage-daemon.socket 2>/dev/null || true
+        echo "Socket activation enabled."
+    fi
 
-    # Set database permissions if exists
+    # Add to /etc/pam.d/sudo (if not already present)
+    if [ -f /etc/pam.d/sudo ] && ! grep -qF "$PAM_LINE" /etc/pam.d/sudo; then
+        cp /etc/pam.d/sudo /etc/pam.d/sudo.visage-backup
+        sed -i "0,/^auth/{s/^auth/${PAM_LINE}\nauth/}" /etc/pam.d/sudo
+        echo "Added face auth to /etc/pam.d/sudo (backup: /etc/pam.d/sudo.visage-backup)"
+    fi
+
+    # Fix permissions on existing data
+    [ -d /var/lib/visage/models ] && chmod 644 /var/lib/visage/models/*.onnx 2>/dev/null || true
     [ -f /var/lib/visage/visage.db ] && chown root:visage /var/lib/visage/visage.db && chmod 640 /var/lib/visage/visage.db || true
 
-    echo "Installation complete."
-    echo "Next steps:"
-    echo "  1. Edit /etc/visage/config.toml (optional — camera auto-detected)"
-    echo "  2. Run: sudo visage setup              (downloads ONNX models)"
-    echo "  3. Run: sudo systemctl enable --now visage-daemon.socket"
-    echo "  4. Run: sudo visage enroll             (capture your face)"
-    echo "  5. Run: sudo visage test               (verify recognition)"
+    echo ""
+    echo "Installed. Two steps remaining:"
+    echo "  1. sudo visage setup       (download face recognition models)"
+    echo "  2. sudo visage enroll      (register your face)"
 
-# Uninstall binaries only (keeps config and data)
+# Uninstall (requires root)
 uninstall:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PAM_LINE="auth  sufficient  pam_visage.so"
+
+    # Stop and disable daemon
+    systemctl stop visage-daemon.socket visage-daemon 2>/dev/null || true
+    systemctl disable visage-daemon.socket visage-daemon 2>/dev/null || true
+
+    # Remove PAM line
+    if [ -f /etc/pam.d/sudo ]; then
+        sed -i "\|^${PAM_LINE}$|d" /etc/pam.d/sudo
+        echo "Removed face auth from /etc/pam.d/sudo"
+    fi
+
+    # Remove binaries and units
     rm -f /usr/bin/visage /lib/security/pam_visage.so
     rm -f /usr/lib/systemd/system/visage-daemon.service
-    @echo "Binaries and service removed. Config and data preserved in /etc/visage and /var/lib/visage."
+    rm -f /usr/lib/systemd/system/visage-daemon.socket
+    systemctl daemon-reload 2>/dev/null || true
+
+    echo "Uninstalled. Config and data preserved in /etc/visage and /var/lib/visage."
+    echo "To remove all data: rm -rf /etc/visage /var/lib/visage /var/log/visage"
 
 # Clean build artifacts
 clean:

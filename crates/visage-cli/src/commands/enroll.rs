@@ -8,6 +8,19 @@ use crate::ipc_client;
 
 pub fn run(user: Option<String>, label: Option<String>) -> anyhow::Result<()> {
     let config = Config::load().context("failed to load config")?;
+
+    // Check models exist before doing anything else
+    let model_dir = std::path::Path::new(&config.daemon.model_dir);
+    let detector = model_dir.join(&config.recognition.detector_model);
+    let embedder = model_dir.join(&config.recognition.embedder_model);
+    if !detector.exists() || !embedder.exists() {
+        anyhow::bail!(
+            "Face recognition models not found in {}.\n\
+             Run `sudo visage setup` to download them.",
+            config.daemon.model_dir
+        );
+    }
+
     let user = ipc_client::resolve_user(user.as_deref());
 
     let label = label.unwrap_or_else(|| {

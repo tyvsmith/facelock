@@ -1,3 +1,5 @@
+PAM_LINE="auth  sufficient  pam_visage.so"
+
 post_install() {
     systemd-sysusers
     systemd-tmpfiles --create
@@ -7,22 +9,31 @@ post_install() {
     chown root:visage /var/log/visage 2>/dev/null || true
     chown root:visage /var/log/visage/snapshots 2>/dev/null || true
 
-    echo "==> visage installed."
-    echo "==> Next steps:"
-    echo "    1. Edit /etc/visage/config.toml (optional — camera auto-detected)"
-    echo "    2. Run: sudo visage setup              (download ONNX models)"
-    echo "    3. Run: sudo systemctl enable --now visage-daemon.socket"
-    echo "    4. Run: sudo visage enroll             (capture your face)"
-    echo "    5. Run: sudo visage test               (verify recognition)"
-    echo "    6. Add to PAM config (see docs/testing-safety.md first):"
-    echo "       auth  sufficient  pam_visage.so"
+    # Enable socket activation
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable --now visage-daemon.socket 2>/dev/null || true
+
+    # Add to /etc/pam.d/sudo (if not already present)
+    if [ -f /etc/pam.d/sudo ]; then
+        if ! grep -qF "$PAM_LINE" /etc/pam.d/sudo; then
+            cp /etc/pam.d/sudo /etc/pam.d/sudo.visage-backup
+            # Prepend before first auth line
+            sed -i "0,/^auth/{s/^auth/${PAM_LINE}\nauth/}" /etc/pam.d/sudo
+            echo "==> Added face authentication to /etc/pam.d/sudo"
+            echo "==> Backup at /etc/pam.d/sudo.visage-backup"
+        fi
+    fi
+
+    echo ""
+    echo "==> visage installed. Two steps remaining:"
+    echo "    1. sudo visage setup       (download face recognition models)"
+    echo "    2. sudo visage enroll      (register your face)"
 }
 
 post_upgrade() {
     systemd-sysusers
     systemd-tmpfiles --create
 
-    # Ensure ownership after upgrade
     chown root:visage /var/lib/visage 2>/dev/null || true
     chown root:visage /var/log/visage 2>/dev/null || true
     chown root:visage /var/log/visage/snapshots 2>/dev/null || true
@@ -38,9 +49,16 @@ pre_remove() {
     # Stop and disable daemon
     systemctl stop visage-daemon.socket visage-daemon 2>/dev/null || true
     systemctl disable visage-daemon.socket visage-daemon 2>/dev/null || true
+
+    # Remove PAM line from sudo
+    if [ -f /etc/pam.d/sudo ]; then
+        sed -i "\|^${PAM_LINE}$|d" /etc/pam.d/sudo
+        echo "==> Removed face authentication from /etc/pam.d/sudo"
+    fi
 }
 
 post_remove() {
-    echo "==> Config and data preserved in /etc/visage and /var/lib/visage."
+    echo "==> Config preserved in /etc/visage/"
+    echo "==> Face data preserved in /var/lib/visage/"
     echo "==> To remove all data: rm -rf /etc/visage /var/lib/visage /var/log/visage"
 }

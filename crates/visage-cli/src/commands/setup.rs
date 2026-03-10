@@ -90,7 +90,7 @@ pub fn run() -> anyhow::Result<()> {
         }
     }
 
-    println!("\nSetup complete.");
+    println!("\nSetup complete. Run `visage enroll` to register your face.");
     Ok(())
 }
 
