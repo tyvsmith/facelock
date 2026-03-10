@@ -3535,7 +3535,10 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "visage-camera",
  "visage-core",
+ "visage-face",
+ "visage-store",
  "wayland-client",
  "xkbcommon",
 ]

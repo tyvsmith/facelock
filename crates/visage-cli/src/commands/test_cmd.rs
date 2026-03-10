@@ -16,8 +16,44 @@ pub fn run(user: Option<String>) -> anyhow::Result<()> {
     println!("Testing face recognition for user '{user}'...");
     println!("Look at the camera.");
 
-    // Fire scanning notification (non-blocking, errors silently ignored)
     notify_if_enabled(notif_config, &NotifyEvent::Scanning);
+
+    if config.daemon.mode == "oneshot" {
+        let start = Instant::now();
+        match crate::direct::authenticate(&config, &user) {
+            Ok(true) => {
+                let elapsed = start.elapsed();
+                println!("Matched in {:.2}s", elapsed.as_secs_f64());
+                notify_if_enabled(
+                    notif_config,
+                    &NotifyEvent::Success {
+                        label: None,
+                        similarity: 0.0,
+                    },
+                );
+            }
+            Ok(false) => {
+                let elapsed = start.elapsed();
+                println!("No match after {:.1}s", elapsed.as_secs_f64());
+                notify_if_enabled(
+                    notif_config,
+                    &NotifyEvent::Failure {
+                        reason: "no match".to_string(),
+                    },
+                );
+            }
+            Err(e) => {
+                notify_if_enabled(
+                    notif_config,
+                    &NotifyEvent::Failure {
+                        reason: e.to_string(),
+                    },
+                );
+                return Err(e);
+            }
+        }
+        return Ok(());
+    }
 
     let request = DaemonRequest::Authenticate {
         user: user.clone(),

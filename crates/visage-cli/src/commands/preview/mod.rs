@@ -27,6 +27,16 @@ pub fn run(text_only: bool, user: Option<String>) -> anyhow::Result<()> {
     let socket_path = config.daemon.socket_path.clone();
     let user = resolve_user(user)?;
 
+    if config.daemon.mode == "oneshot" {
+        if !text_only {
+            eprintln!(
+                "Graphical preview requires the daemon. In oneshot mode, use --text-only.\n\
+                 Falling back to text-only mode.\n"
+            );
+        }
+        return text_only::run_direct(&config, &user);
+    }
+
     if text_only {
         return text_only::run(&socket_path, &user);
     }

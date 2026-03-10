@@ -7,6 +7,10 @@ use crate::ipc_client;
 pub fn run() -> anyhow::Result<()> {
     let config = Config::load().context("failed to load config")?;
 
+    if config.daemon.mode == "oneshot" {
+        return crate::direct::list_devices_direct();
+    }
+
     let response = ipc_client::send_request(&config.daemon.socket_path, &DaemonRequest::ListDevices)
         .context("failed to query daemon — is visage-daemon running?")?;
 
@@ -61,6 +65,5 @@ pub fn run() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    // Device listing requires a running daemon, so no unit tests here.
-    // Integration tests are in the daemon crate.
+    // Device listing requires hardware or a running daemon.
 }

@@ -10,7 +10,6 @@ pub fn run(user: Option<String>, label: Option<String>) -> anyhow::Result<()> {
     let config = Config::load().context("failed to load config")?;
     let user = ipc_client::resolve_user(user.as_deref());
 
-    // Generate default label: YYYY-MM-DD-N
     let label = label.unwrap_or_else(|| {
         let date = Local::now().format("%Y-%m-%d").to_string();
         format!("{date}-1")
@@ -18,6 +17,14 @@ pub fn run(user: Option<String>, label: Option<String>) -> anyhow::Result<()> {
 
     println!("Enrolling face for user '{user}' with label '{label}'...");
     println!("Look at the camera. Slowly turn your head left and right.");
+
+    if config.daemon.mode == "oneshot" {
+        let (model_id, embedding_count) = crate::direct::enroll(&config, &user, &label)?;
+        println!(
+            "\nFace enrolled successfully!\n  Model ID: {model_id}\n  Embeddings: {embedding_count}\n  Label: {label}"
+        );
+        return Ok(());
+    }
 
     let request = DaemonRequest::Enroll {
         user: user.clone(),
@@ -34,8 +41,6 @@ pub fn run(user: Option<String>, label: Option<String>) -> anyhow::Result<()> {
             println!(
                 "\nFace enrolled successfully!\n  Model ID: {model_id}\n  Embeddings: {embedding_count}\n  Label: {label}"
             );
-
-            // Check if user has many models and warn
             check_model_count(&config, &user)?;
         }
         other => {

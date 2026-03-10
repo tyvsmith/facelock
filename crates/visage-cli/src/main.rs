@@ -1,4 +1,5 @@
 mod commands;
+pub mod direct;
 mod ipc_client;
 pub mod notifications;
 

@@ -18,6 +18,17 @@ pub fn run(model_id: u32, user: Option<String>, yes: bool) -> anyhow::Result<()>
         }
     }
 
+    if config.daemon.mode == "oneshot" {
+        let store = crate::direct::open_store(&config)?;
+        let removed = store.remove_model(&user, model_id).map_err(|e| anyhow::anyhow!("{e}"))?;
+        if removed {
+            println!("Removed face model #{model_id} for user '{user}'.");
+        } else {
+            println!("Model #{model_id} not found for user '{user}'.");
+        }
+        return Ok(());
+    }
+
     let request = DaemonRequest::RemoveModel {
         user: user.clone(),
         model_id,

@@ -11,26 +11,31 @@ pub fn run(user: Option<String>, json: bool) -> anyhow::Result<()> {
     let config = Config::load().context("failed to load config")?;
     let user = ipc_client::resolve_user(user.as_deref());
 
-    let request = DaemonRequest::ListModels {
-        user: user.clone(),
-    };
+    let models = fetch_models(&config, &user)?;
 
-    let response = ipc_client::send_request(&config.daemon.socket_path, &request)?;
-
-    match response {
-        DaemonResponse::Models(models) => {
-            if json {
-                print_json(&models);
-            } else {
-                print_table(&user, &models);
-            }
-        }
-        other => {
-            anyhow::bail!("unexpected response from daemon: {other:?}");
-        }
+    if json {
+        print_json(&models);
+    } else {
+        print_table(&user, &models);
     }
 
     Ok(())
+}
+
+fn fetch_models(config: &Config, user: &str) -> anyhow::Result<Vec<FaceModelInfo>> {
+    if config.daemon.mode == "oneshot" {
+        let store = crate::direct::open_store(config)?;
+        return store.list_models(user).map_err(|e| anyhow::anyhow!("{e}"));
+    }
+
+    let request = DaemonRequest::ListModels {
+        user: user.to_string(),
+    };
+    let response = ipc_client::send_request(&config.daemon.socket_path, &request)?;
+    match response {
+        DaemonResponse::Models(models) => Ok(models),
+        other => anyhow::bail!("unexpected response from daemon: {other:?}"),
+    }
 }
 
 fn print_table(user: &str, models: &[FaceModelInfo]) {
@@ -52,7 +57,6 @@ fn print_table(user: &str, models: &[FaceModelInfo]) {
 }
 
 fn print_json(models: &[FaceModelInfo]) {
-    // Manual JSON output to avoid adding serde_json dependency
     println!("[");
     for (i, model) in models.iter().enumerate() {
         let comma = if i + 1 < models.len() { "," } else { "" };
@@ -78,7 +82,6 @@ mod tests {
     #[test]
     fn format_timestamp_valid() {
         let formatted = format_timestamp(1700000000);
-        // Should produce a date string, not just the raw number
         assert!(
             formatted.contains("2023"),
             "expected 2023 in {formatted}"
@@ -88,7 +91,6 @@ mod tests {
     #[test]
     fn format_timestamp_zero() {
         let formatted = format_timestamp(0);
-        // Should produce 1970 date (or 1969 depending on timezone)
         assert!(
             formatted.contains("1970") || formatted.contains("1969"),
             "expected 1970 or 1969 (timezone-dependent) in {formatted}"
