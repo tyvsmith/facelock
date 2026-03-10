@@ -23,7 +23,7 @@ pub fn run(user: Option<String>, json: bool) -> anyhow::Result<()> {
 }
 
 fn fetch_models(config: &Config, user: &str) -> anyhow::Result<Vec<FaceModelInfo>> {
-    if config.daemon.mode == "oneshot" {
+    if ipc_client::should_use_direct(config) {
         let store = crate::direct::open_store(config)?;
         return store.list_models(user).map_err(|e| anyhow::anyhow!("{e}"));
     }

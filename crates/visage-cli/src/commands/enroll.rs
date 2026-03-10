@@ -18,7 +18,7 @@ pub fn run(user: Option<String>, label: Option<String>) -> anyhow::Result<()> {
     println!("Enrolling face for user '{user}' with label '{label}'...");
     println!("Look at the camera. Slowly turn your head left and right.");
 
-    if config.daemon.mode == "oneshot" {
+    if ipc_client::should_use_direct(&config) {
         let (model_id, embedding_count) = crate::direct::enroll(&config, &user, &label)?;
         println!(
             "\nFace enrolled successfully!\n  Model ID: {model_id}\n  Embeddings: {embedding_count}\n  Label: {label}"

@@ -18,7 +18,7 @@ pub fn run(model_id: u32, user: Option<String>, yes: bool) -> anyhow::Result<()>
         }
     }
 
-    if config.daemon.mode == "oneshot" {
+    if ipc_client::should_use_direct(&config) {
         let store = crate::direct::open_store(&config)?;
         let removed = store.remove_model(&user, model_id).map_err(|e| anyhow::anyhow!("{e}"))?;
         if removed {

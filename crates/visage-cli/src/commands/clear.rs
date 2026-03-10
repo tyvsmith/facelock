@@ -18,7 +18,7 @@ pub fn run(user: Option<String>, yes: bool) -> anyhow::Result<()> {
         }
     }
 
-    if config.daemon.mode == "oneshot" {
+    if ipc_client::should_use_direct(&config) {
         let store = crate::direct::open_store(&config)?;
         let count = store.clear_user(&user).map_err(|e| anyhow::anyhow!("{e}"))?;
         println!("Removed {count} face model(s) for user '{user}'.");

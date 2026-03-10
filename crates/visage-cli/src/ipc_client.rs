@@ -11,6 +11,27 @@ const CONNECT_TIMEOUT_SECS: u64 = 5;
 /// Default read/write timeout for IPC.
 const IO_TIMEOUT_SECS: u64 = 30;
 
+/// Check whether we should use direct (daemonless) mode.
+/// Returns true if config says "oneshot" OR if the daemon socket isn't reachable.
+/// When falling back from daemon mode, logs a warning.
+pub fn should_use_direct(config: &visage_core::Config) -> bool {
+    if config.daemon.mode == "oneshot" {
+        return true;
+    }
+    // Daemon mode — check if socket exists (quick check avoids probe connection noise)
+    if std::path::Path::new(&config.daemon.socket_path).exists() {
+        return false;
+    }
+
+    eprintln!(
+        "Warning: daemon not available at {}. Running directly (slower).",
+        config.daemon.socket_path
+    );
+    eprintln!("  To silence this: set daemon.mode = \"oneshot\" in config,");
+    eprintln!("  or start the daemon: visage-daemon &\n");
+    true
+}
+
 /// Connect to the daemon socket and send a request, returning the response.
 pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
     let mut stream = connect(socket_path)?;

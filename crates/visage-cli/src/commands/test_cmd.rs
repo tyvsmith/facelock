@@ -18,7 +18,7 @@ pub fn run(user: Option<String>) -> anyhow::Result<()> {
 
     notify_if_enabled(notif_config, &NotifyEvent::Scanning);
 
-    if config.daemon.mode == "oneshot" {
+    if ipc_client::should_use_direct(&config) {
         let start = Instant::now();
         match crate::direct::authenticate(&config, &user) {
             Ok(true) => {

@@ -7,6 +7,8 @@ mod wayland_preview;
 use anyhow::Context;
 use visage_core::Config;
 
+use crate::ipc_client;
+
 fn resolve_user(user: Option<String>) -> anyhow::Result<String> {
     match user {
         Some(u) => Ok(u),
@@ -27,7 +29,7 @@ pub fn run(text_only: bool, user: Option<String>) -> anyhow::Result<()> {
     let socket_path = config.daemon.socket_path.clone();
     let user = resolve_user(user)?;
 
-    if config.daemon.mode == "oneshot" {
+    if ipc_client::should_use_direct(&config) {
         if !text_only {
             eprintln!(
                 "Graphical preview requires the daemon. In oneshot mode, use --text-only.\n\

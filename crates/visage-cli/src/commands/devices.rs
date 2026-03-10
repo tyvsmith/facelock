@@ -7,7 +7,7 @@ use crate::ipc_client;
 pub fn run() -> anyhow::Result<()> {
     let config = Config::load().context("failed to load config")?;
 
-    if config.daemon.mode == "oneshot" {
+    if ipc_client::should_use_direct(&config) {
         return crate::direct::list_devices_direct();
     }
 
