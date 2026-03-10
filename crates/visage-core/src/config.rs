@@ -154,8 +154,6 @@ pub struct SecurityConfig {
     pub require_frame_variance: bool,
     #[serde(default = "default_min_auth_frames")]
     pub min_auth_frames: u32,
-    #[serde(default = "default_true")]
-    pub detection_notice: bool,
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
 }
@@ -187,7 +185,6 @@ impl Default for SecurityConfig {
             require_ir: true,
             require_frame_variance: true,
             min_auth_frames: default_min_auth_frames(),
-            detection_notice: true,
             rate_limit: RateLimitConfig::default(),
         }
     }

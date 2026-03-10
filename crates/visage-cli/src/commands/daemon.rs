@@ -23,6 +23,8 @@ type ProductionHandler = Handler<Camera<'static>, FaceEngine>;
 type CameraFactory = Box<dyn Fn(&Config) -> Result<Camera<'static>, String>>;
 
 pub fn run(config_path: Option<String>) -> anyhow::Result<()> {
+    crate::ipc_client::require_root("sudo visage daemon")?;
+
     // Load config
     let config = match config_path {
         Some(ref p) => Config::load_from(Path::new(p)),

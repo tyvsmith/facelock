@@ -86,7 +86,7 @@ pub fn run(user: String, config_path: Option<String>) -> i32 {
         Ok(true) => {}
         Ok(false) => {
             info!(user = %user, "no enrolled models");
-            return 1;
+            return 2;
         }
         Err(e) => {
             error!("storage: {e}");

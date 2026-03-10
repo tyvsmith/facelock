@@ -14,6 +14,7 @@ pub fn run(user: Option<String>, label: Option<String>) -> anyhow::Result<()> {
     let detector = model_dir.join(&config.recognition.detector_model);
     let embedder = model_dir.join(&config.recognition.embedder_model);
     if !detector.exists() || !embedder.exists() {
+        ipc_client::require_root("sudo visage setup")?;
         println!("Face recognition models not found in {}.", config.daemon.model_dir);
         if ipc_client::confirm("Download models now?")? {
             crate::commands::setup::run()?;
@@ -37,6 +38,7 @@ pub fn run(user: Option<String>, label: Option<String>) -> anyhow::Result<()> {
     println!("Look at the camera. Slowly turn your head left and right.");
 
     if ipc_client::should_use_direct(&config) {
+        ipc_client::require_root("sudo visage enroll")?;
         let (model_id, embedding_count) = crate::direct::enroll(&config, &user, &label)?;
         println!(
             "\nFace enrolled successfully!\n  Model ID: {model_id}\n  Embeddings: {embedding_count}\n  Label: {label}"

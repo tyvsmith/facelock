@@ -22,6 +22,12 @@ const PAM_SUCCESS: libc::c_int = 0;
 const PAM_AUTH_ERR: libc::c_int = 7;
 const PAM_IGNORE: libc::c_int = 25;
 
+// PAM conversation message styles
+const PAM_TEXT_INFO: libc::c_int = 4;
+
+// PAM item types for conversation
+const PAM_CONV: libc::c_int = 5;
+
 // Syslog constants
 const LOG_AUTH: libc::c_int = 4 << 3; // LOG_AUTH facility
 const LOG_INFO: libc::c_int = 6;
@@ -50,6 +56,8 @@ struct PamConfig {
     security: PamSecurityConfig,
     #[serde(default)]
     recognition: PamRecognitionConfig,
+    #[serde(default)]
+    notification: PamNotificationConfig,
 }
 
 #[derive(Deserialize)]
@@ -82,9 +90,6 @@ struct PamSecurityConfig {
     abort_if_ssh: bool,
     #[serde(default = "default_true")]
     abort_if_lid_closed: bool,
-    #[serde(default = "default_true")]
-    #[allow(dead_code)]
-    detection_notice: bool,
     #[serde(default)]
     pam_policy: Option<PamPolicyConfig>,
 }
@@ -95,9 +100,20 @@ impl Default for PamSecurityConfig {
             disabled: false,
             abort_if_ssh: true,
             abort_if_lid_closed: true,
-            detection_notice: true,
             pam_policy: None,
         }
+    }
+}
+
+#[derive(Deserialize)]
+struct PamNotificationConfig {
+    #[serde(default = "default_true")]
+    enabled: bool,
+}
+
+impl Default for PamNotificationConfig {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }
 
@@ -218,6 +234,91 @@ unsafe fn pam_get_user(pamh: *mut libc::c_void) -> Option<String> {
     }
     let cstr = unsafe { CStr::from_ptr(user_ptr) };
     cstr.to_str().ok().map(|s| s.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// PAM conversation (user feedback)
+// ---------------------------------------------------------------------------
+
+/// PAM message structure for the conversation function.
+#[repr(C)]
+struct PamMessage {
+    msg_style: libc::c_int,
+    msg: *const libc::c_char,
+}
+
+/// PAM response structure returned by the conversation function.
+#[repr(C)]
+struct PamResponse {
+    resp: *mut libc::c_char,
+    resp_retcode: libc::c_int,
+}
+
+/// PAM conversation structure obtained via pam_get_item(PAM_CONV).
+#[repr(C)]
+struct PamConv {
+    conv: Option<
+        unsafe extern "C" fn(
+            num_msg: libc::c_int,
+            msg: *mut *const PamMessage,
+            resp: *mut *mut PamResponse,
+            appdata_ptr: *mut libc::c_void,
+        ) -> libc::c_int,
+    >,
+    appdata_ptr: *mut libc::c_void,
+}
+
+/// Send an informational text message to the user via PAM conversation.
+/// Fire-and-forget: errors are silently ignored.
+unsafe fn pam_info(pamh: *mut libc::c_void, message: &str) {
+    let msg_cstr = match CString::new(message) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    // Get the conversation function
+    let mut conv_ptr: *const libc::c_void = std::ptr::null();
+    {
+        unsafe extern "C" {
+            safe fn pam_get_item(
+                pamh: *mut libc::c_void,
+                item_type: libc::c_int,
+                item: *mut *const libc::c_void,
+            ) -> libc::c_int;
+        }
+        let ret = pam_get_item(pamh, PAM_CONV, &mut conv_ptr);
+        if ret != PAM_SUCCESS || conv_ptr.is_null() {
+            return;
+        }
+    }
+
+    let conv = unsafe { &*(conv_ptr as *const PamConv) };
+    let conv_fn = match conv.conv {
+        Some(f) => f,
+        None => return,
+    };
+
+    let pam_msg = PamMessage {
+        msg_style: PAM_TEXT_INFO,
+        msg: msg_cstr.as_ptr(),
+    };
+    let msg_ptr: *const PamMessage = &pam_msg;
+    let mut resp_ptr: *mut PamResponse = std::ptr::null_mut();
+
+    unsafe {
+        let _ = conv_fn(1, &msg_ptr as *const _ as *mut _, &mut resp_ptr, conv.appdata_ptr);
+    }
+
+    // Free response if conversation allocated one (unlikely for TEXT_INFO)
+    if !resp_ptr.is_null() {
+        unsafe {
+            let resp = &*resp_ptr;
+            if !resp.resp.is_null() {
+                libc::free(resp.resp.cast());
+            }
+            libc::free(resp_ptr.cast());
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -625,19 +726,32 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
         }
     };
 
-    // 4. Oneshot mode: run visage-auth directly, skip the socket
-    if config.daemon.mode == "oneshot" {
-        return run_oneshot_auth(&service, &user, &config);
+    // 4. Display scanning notice
+    if config.notification.enabled {
+        unsafe { pam_info(pamh, "Identifying face...") };
     }
 
-    // 5. Daemon mode: connect to daemon socket, fall back to oneshot if unavailable
+    // 5. Oneshot mode: run visage-auth directly, skip the socket
+    if config.daemon.mode == "oneshot" {
+        let result = run_oneshot_auth(&service, &user, &config);
+        if result == PAM_SUCCESS && config.notification.enabled {
+            unsafe { pam_info(pamh, "Face recognized.") };
+        }
+        return result;
+    }
+
+    // 6. Daemon mode: connect to daemon socket, fall back to oneshot if unavailable
     let socket_path = &config.daemon.socket_path;
     let stream = UnixStream::connect(socket_path);
     let mut stream = match stream {
         Ok(s) => s,
         Err(_) => {
             // Daemon not available — fall back to oneshot mode
-            return run_oneshot_auth(&service, &user, &config);
+            let result = run_oneshot_auth(&service, &user, &config);
+            if result == PAM_SUCCESS && config.notification.enabled {
+                unsafe { pam_info(pamh, "Face recognized.") };
+            }
+            return result;
         }
     };
 
@@ -691,16 +805,25 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
                 &user,
                 LOG_INFO,
             );
+            if config.notification.enabled {
+                unsafe { pam_info(pamh, "Face recognized.") };
+            }
             PAM_SUCCESS
         }
         Ok(AuthResponse::NoMatch { similarity }) => {
-            log_auth(
-                &service,
-                &format!("no_match (similarity={similarity:.3})"),
-                &user,
-                LOG_INFO,
-            );
-            PAM_AUTH_ERR
+            if similarity == 0.0 {
+                // similarity 0.0 means no enrolled faces — skip face auth entirely
+                log_auth(&service, "no_enrolled_faces", &user, LOG_INFO);
+                PAM_IGNORE
+            } else {
+                log_auth(
+                    &service,
+                    &format!("no_match (similarity={similarity:.3})"),
+                    &user,
+                    LOG_INFO,
+                );
+                PAM_AUTH_ERR
+            }
         }
         Ok(AuthResponse::Error { message }) => {
             // Map specific daemon errors to appropriate PAM codes
@@ -854,6 +977,25 @@ mod tests {
         match parse_auth_response(&data).unwrap() {
             AuthResponse::NoMatch { similarity } => {
                 assert!((similarity - 0.2).abs() < 1e-5);
+            }
+            _ => panic!("expected NoMatch"),
+        }
+    }
+
+    #[test]
+    fn test_parse_auth_response_no_match_zero_similarity() {
+        // AuthResult(matched=false, model_id=None, label=None, similarity=0.0)
+        // similarity 0.0 means no enrolled faces
+        let data = vec![
+            0x00, // variant 0: AuthResult
+            0x00, // matched = false
+            0x00, // model_id = None
+            0x00, // label = None
+            0x00, 0x00, 0x00, 0x00, // similarity = 0.0 (f32 LE)
+        ];
+        match parse_auth_response(&data).unwrap() {
+            AuthResponse::NoMatch { similarity } => {
+                assert_eq!(similarity, 0.0);
             }
             _ => panic!("expected NoMatch"),
         }

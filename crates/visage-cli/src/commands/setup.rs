@@ -35,6 +35,8 @@ struct ModelEntry {
 }
 
 pub fn run() -> anyhow::Result<()> {
+    crate::ipc_client::require_root("sudo visage setup")?;
+
     println!("visage setup: preparing system...\n");
 
     // Load config (or use defaults for paths)
@@ -56,12 +58,25 @@ pub fn run() -> anyhow::Result<()> {
 
     let model_dir = Path::new(&config.daemon.model_dir);
 
-    // 3. Check and download required models
-    let required: Vec<&ModelEntry> = manifest.models.iter().filter(|m| !m.optional).collect();
+    // 3. Check and download needed models:
+    //    - All non-optional models (defaults)
+    //    - Any model whose filename matches the current config (user switched to optional models)
+    let configured_detector = &config.recognition.detector_model;
+    let configured_embedder = &config.recognition.embedder_model;
 
-    println!("Checking {} required model(s)...\n", required.len());
+    let needed: Vec<&ModelEntry> = manifest
+        .models
+        .iter()
+        .filter(|m| {
+            !m.optional
+                || m.filename == *configured_detector
+                || m.filename == *configured_embedder
+        })
+        .collect();
 
-    for entry in &required {
+    println!("Checking {} model(s)...\n", needed.len());
+
+    for entry in &needed {
         let model_path = model_dir.join(&entry.filename);
         let status = check_model(&model_path, &entry.sha256)?;
 

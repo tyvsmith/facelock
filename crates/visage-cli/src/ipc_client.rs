@@ -2,12 +2,51 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use nix::unistd::Uid;
 use visage_core::ipc::{
     DaemonRequest, DaemonResponse, decode_response, encode_request, recv_message, send_message,
 };
 
 /// Default read/write timeout for IPC.
 const IO_TIMEOUT_SECS: u64 = 30;
+
+/// Check if running as root; if not, offer to re-exec via sudo.
+///
+/// `hint` is a human-readable description like "sudo visage setup".
+/// If stdin is a TTY, prompts the user and re-execs. Otherwise bails
+/// with an actionable error message.
+pub fn require_root(hint: &str) -> anyhow::Result<()> {
+    if Uid::current().is_root() {
+        return Ok(());
+    }
+
+    let is_tty = unsafe { libc::isatty(0) } != 0;
+
+    // Non-interactive: just bail with instructions
+    if !is_tty {
+        bail!("Root required.\n  Run: {hint}");
+    }
+
+    // Interactive: offer to re-exec with sudo
+    eprint!("Root required. Re-run with sudo? [Y/n] ");
+    let mut input = String::new();
+    std::io::stdin()
+        .read_line(&mut input)
+        .context("failed to read input")?;
+    let answer = input.trim().to_lowercase();
+    if answer == "n" || answer == "no" {
+        bail!("Root required.\n  Run: {hint}");
+    }
+
+    // Re-exec with sudo, preserving all arguments
+    let args: Vec<String> = std::env::args().collect();
+    let status = std::process::Command::new("sudo")
+        .args(&args)
+        .status()
+        .context("failed to execute sudo")?;
+
+    std::process::exit(status.code().unwrap_or(1));
+}
 
 /// Check whether we should use direct (daemonless) mode.
 /// Returns true if config says "oneshot" OR if the daemon socket isn't reachable.

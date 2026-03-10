@@ -45,7 +45,7 @@ The CLI silently falls back to direct mode when the daemon socket doesn't exist,
 |------|---------|----------|
 | 0 | Face matched | PAM_SUCCESS |
 | 1 | No match / timeout / dark | PAM_AUTH_ERR |
-| 2 | Error | PAM_IGNORE |
+| 2 | Error / no enrolled faces | PAM_IGNORE |
 
 ## Filesystem Paths
 

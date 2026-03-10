@@ -16,6 +16,7 @@ pub fn run(user: Option<String>) -> anyhow::Result<()> {
     let detector = model_dir.join(&config.recognition.detector_model);
     let embedder = model_dir.join(&config.recognition.embedder_model);
     if !detector.exists() || !embedder.exists() {
+        crate::ipc_client::require_root("sudo visage setup")?;
         println!("Face recognition models not found.");
         if crate::ipc_client::confirm("Download models now?")? {
             crate::commands::setup::run()?;
@@ -36,6 +37,7 @@ pub fn run(user: Option<String>) -> anyhow::Result<()> {
     notify_if_enabled(notif_config, &NotifyEvent::Scanning);
 
     if ipc_client::should_use_direct(&config) {
+        ipc_client::require_root("sudo visage test")?;
         let start = Instant::now();
         match crate::direct::authenticate(&config, &user) {
             Ok(true) => {

@@ -341,7 +341,9 @@ abort_if_lid_closed = true   # Refuse if laptop lid closed
 require_ir = true            # CRITICAL: refuse RGB-only cameras (anti-spoof)
 require_frame_variance = true # Reject static images (photo defense)
 min_auth_frames = 3          # Minimum frames before accepting (variance check)
-detection_notice = true      # Show "Identifying face..." on login screen
+
+[notification]
+enabled = true               # Show "Identifying face..." on login screen
 
 [security.pam_policy]
 allowed_services = ["sudo", "polkit-1"]

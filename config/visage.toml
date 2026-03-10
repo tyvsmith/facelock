@@ -151,10 +151,6 @@
 # Default: 3
 # min_auth_frames = 3
 
-# Show "Identifying face..." notification during authentication.
-# Default: true
-# detection_notice = true
-
 # Rate limiting — prevents brute-force attempts.
 # [security.rate_limit]
 # max_attempts = 5   # Max auth attempts per user per window (default: 5)
@@ -165,7 +161,8 @@
 
 [notification]
 
-# Show desktop notifications (via D-Bus) for auth events.
+# Enable notifications: desktop (D-Bus) for CLI, text messages for PAM.
+# When true, PAM shows "Identifying face..." and "Face recognized." prompts.
 # Default: true
 # enabled = true
 
