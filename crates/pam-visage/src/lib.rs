@@ -630,19 +630,14 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
         return run_oneshot_auth(&service, &user, &config);
     }
 
-    // 5. Daemon mode: connect to daemon socket
+    // 5. Daemon mode: connect to daemon socket, fall back to oneshot if unavailable
     let socket_path = &config.daemon.socket_path;
     let stream = UnixStream::connect(socket_path);
     let mut stream = match stream {
         Ok(s) => s,
-        Err(e) => {
-            log_auth(
-                &service,
-                &format!("error: daemon_unavailable: {e}"),
-                &user,
-                LOG_WARNING,
-            );
-            return PAM_IGNORE;
+        Err(_) => {
+            // Daemon not available — fall back to oneshot mode
+            return run_oneshot_auth(&service, &user, &config);
         }
     };
 
