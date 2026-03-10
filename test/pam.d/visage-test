@@ -1,0 +1,2 @@
+auth  sufficient  pam_visage.so
+auth  required    pam_deny.so

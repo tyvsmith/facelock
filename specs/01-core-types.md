@@ -1,6 +1,6 @@
 # Spec 01: Core Types, Config, and IPC Protocol
 
-**Phase**: 1 (Foundation) | **Crate**: howdy-core | **Depends on**: 00
+**Phase**: 1 (Foundation) | **Crate**: visage-core | **Depends on**: 00
 
 ## Goal
 
@@ -117,15 +117,15 @@ pub struct RecognitionConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonConfig {
     #[serde(default = "default_socket")]
-    pub socket_path: String,       // Default: "/run/howdy/howdy.sock"
+    pub socket_path: String,       // Default: "/run/visage/visage.sock"
     #[serde(default = "default_model_dir")]
-    pub model_dir: String,         // Default: "/var/lib/howdy/models"
+    pub model_dir: String,         // Default: "/var/lib/visage/models"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
     #[serde(default = "default_db_path")]
-    pub db_path: String,           // Default: "/var/lib/howdy/howdy.db"
+    pub db_path: String,           // Default: "/var/lib/visage/visage.db"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,7 +144,7 @@ pub struct SecurityConfig {
 // ... NotificationConfig, SnapshotConfig, DebugConfig with similar patterns
 ```
 
-**Config loading**: Check `HOWDY_CONFIG` env var first, then `/etc/howdy/config.toml`.
+**Config loading**: Check `VISAGE_CONFIG` env var first, then `/etc/visage/config.toml`.
 
 **Validation**: Reject empty `device.path`, `threshold` outside 0.0-1.0, `rotation` not in {0, 90, 180, 270}, `timeout_secs` of 0.
 
@@ -152,7 +152,7 @@ pub struct SecurityConfig {
 
 ```rust
 #[derive(Debug, thiserror::Error)]
-pub enum HowdyError {
+pub enum VisageError {
     #[error("config error: {0}")]
     Config(#[from] ConfigError),
     #[error("camera error: {0}")]
@@ -225,7 +225,7 @@ pub fn recv_message<R: Read>(reader: &mut R) -> Result<Vec<u8>> {
     reader.read_exact(&mut len_buf)?;
     let len = u32::from_le_bytes(len_buf) as usize;
     if len > MAX_MESSAGE_SIZE {
-        return Err(HowdyError::Ipc(format!("message too large: {} bytes", len)));
+        return Err(VisageError::Ipc(format!("message too large: {} bytes", len)));
     }
     let mut buf = vec![0u8; len];
     reader.read_exact(&mut buf)?;
@@ -236,14 +236,14 @@ pub fn recv_message<R: Read>(reader: &mut R) -> Result<Vec<u8>> {
 ### `paths.rs` -- Path Constants
 
 ```rust
-pub const DEFAULT_CONFIG_PATH: &str = "/etc/howdy/config.toml";
-pub const DEFAULT_SOCKET_PATH: &str = "/run/howdy/howdy.sock";
-pub const DEFAULT_MODEL_DIR: &str = "/var/lib/howdy/models";
-pub const DEFAULT_DB_PATH: &str = "/var/lib/howdy/howdy.db";
-pub const DEFAULT_SNAPSHOT_DIR: &str = "/var/log/howdy/snapshots";
+pub const DEFAULT_CONFIG_PATH: &str = "/etc/visage/config.toml";
+pub const DEFAULT_SOCKET_PATH: &str = "/run/visage/visage.sock";
+pub const DEFAULT_MODEL_DIR: &str = "/var/lib/visage/models";
+pub const DEFAULT_DB_PATH: &str = "/var/lib/visage/visage.db";
+pub const DEFAULT_SNAPSHOT_DIR: &str = "/var/log/visage/snapshots";
 
 pub fn config_path() -> PathBuf {
-    std::env::var("HOWDY_CONFIG")
+    std::env::var("VISAGE_CONFIG")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(DEFAULT_CONFIG_PATH))
 }
@@ -255,7 +255,7 @@ pub fn config_path() -> PathBuf {
 - Config parsing: valid minimal, valid full, missing optional sections, validation errors
 - IPC round-trip: serialize Request, deserialize, verify equality
 - IPC large payload: PreviewFrame with JPEG data
-- `HOWDY_CONFIG` env var respected
+- `VISAGE_CONFIG` env var respected
 
 ## Acceptance Criteria
 
@@ -264,11 +264,11 @@ pub fn config_path() -> PathBuf {
 3. Config loads from TOML with serde defaults
 4. Config validates and rejects invalid input with clear errors
 5. IPC send/recv round-trips correctly
-6. `HOWDY_CONFIG` env var works
+6. `VISAGE_CONFIG` env var works
 
 ## Verification
 
 ```bash
-cargo test -p howdy-core
-cargo clippy -p howdy-core
+cargo test -p visage-core
+cargo clippy -p visage-core
 ```

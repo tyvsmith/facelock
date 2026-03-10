@@ -1,0 +1,46 @@
+post_install() {
+    systemd-sysusers
+    systemd-tmpfiles --create
+
+    # Set ownership on data directories
+    chown root:visage /var/lib/visage 2>/dev/null || true
+    chown root:visage /var/log/visage 2>/dev/null || true
+    chown root:visage /var/log/visage/snapshots 2>/dev/null || true
+
+    echo "==> visage installed."
+    echo "==> Next steps:"
+    echo "    1. Edit /etc/visage/config.toml (optional — camera auto-detected)"
+    echo "    2. Run: sudo visage setup              (download ONNX models)"
+    echo "    3. Run: sudo systemctl enable --now visage-daemon.socket"
+    echo "    4. Run: sudo visage enroll             (capture your face)"
+    echo "    5. Run: sudo visage test               (verify recognition)"
+    echo "    6. Add to PAM config (see docs/testing-safety.md first):"
+    echo "       auth  sufficient  pam_visage.so"
+}
+
+post_upgrade() {
+    systemd-sysusers
+    systemd-tmpfiles --create
+
+    # Ensure ownership after upgrade
+    chown root:visage /var/lib/visage 2>/dev/null || true
+    chown root:visage /var/log/visage 2>/dev/null || true
+    chown root:visage /var/log/visage/snapshots 2>/dev/null || true
+
+    # Restart daemon if running
+    if systemctl is-active --quiet visage-daemon; then
+        echo "==> Restarting visage-daemon..."
+        systemctl restart visage-daemon
+    fi
+}
+
+pre_remove() {
+    # Stop and disable daemon
+    systemctl stop visage-daemon.socket visage-daemon 2>/dev/null || true
+    systemctl disable visage-daemon.socket visage-daemon 2>/dev/null || true
+}
+
+post_remove() {
+    echo "==> Config and data preserved in /etc/visage and /var/lib/visage."
+    echo "==> To remove all data: rm -rf /etc/visage /var/lib/visage /var/log/visage"
+}

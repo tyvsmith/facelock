@@ -1,6 +1,6 @@
 # Spec 07: CLI Tool
 
-**Phase**: 4 (Interfaces) | **Crate**: howdy-cli | **Depends on**: 01 (IPC protocol) | **Parallel with**: 06
+**Phase**: 4 (Interfaces) | **Crate**: visage-cli | **Depends on**: 01 (IPC protocol) | **Parallel with**: 06
 
 ## Goal
 
@@ -8,7 +8,7 @@ User-facing CLI for face management, diagnostics, and model setup. Communicates 
 
 ## Dependencies
 
-- `howdy-core` (config, types, IPC protocol)
+- `visage-core` (config, types, IPC protocol)
 - `clap` (derive macros)
 - `indicatif` (progress bars for download)
 - `reqwest` (blocking, for model download)
@@ -19,7 +19,7 @@ User-facing CLI for face management, diagnostics, and model setup. Communicates 
 ## CLI Structure
 
 ```
-howdy <command>
+visage <command>
 
 Commands:
   setup           Download models and create directories
@@ -36,7 +36,7 @@ Commands:
 
 ## Commands
 
-### `howdy setup`
+### `visage setup`
 
 First-time setup. Requires root or appropriate permissions.
 
@@ -47,7 +47,7 @@ First-time setup. Requires root or appropriate permissions.
 5. Verify SHA256 after download
 6. Report status
 
-### `howdy enroll [--user USER] [--label LABEL]`
+### `visage enroll [--user USER] [--label LABEL]`
 
 1. Resolve user: `--user` flag > `SUDO_USER` env > `DOAS_USER` > current user
 2. Generate label from `YYYY-MM-DD-N` if not provided
@@ -57,7 +57,7 @@ First-time setup. Requires root or appropriate permissions.
 6. Receive response: show model ID and snapshot count
 7. Warn if user has > 5 models
 
-### `howdy remove <ID> [--user USER] [-y|--yes]`
+### `visage remove <ID> [--user USER] [-y|--yes]`
 
 1. Resolve user
 2. Confirm unless `--yes`
@@ -65,7 +65,7 @@ First-time setup. Requires root or appropriate permissions.
 4. Send `RemoveModel { user, model_id }`
 5. Print confirmation
 
-### `howdy clear [--user USER] [-y|--yes]`
+### `visage clear [--user USER] [-y|--yes]`
 
 1. Resolve user
 2. Confirm ("Remove ALL face models for user 'ty'? [y/N]")
@@ -73,14 +73,14 @@ First-time setup. Requires root or appropriate permissions.
 4. Send `ClearModels { user }`
 5. Print count removed
 
-### `howdy list [--user USER] [--json]`
+### `visage list [--user USER] [--json]`
 
 1. Resolve user
 2. Connect to daemon
 3. Send `ListModels { user }`
 4. Display as table (ID, Label, Created) or JSON
 
-### `howdy test [--user USER]`
+### `visage test [--user USER]`
 
 1. Resolve user
 2. Connect to daemon
@@ -89,16 +89,16 @@ First-time setup. Requires root or appropriate permissions.
    - Match: "Matched model #1 (similarity: 0.87) in 0.23s"
    - No match: "No match (best: 0.31) after 5.0s"
 
-### `howdy preview`
+### `visage preview`
 
 Delegate to spec 08 (Wayland preview window). If `--text-only`, print detection results to stdout.
 
-### `howdy config [--edit]`
+### `visage config [--edit]`
 
 1. If `--edit`: open config file in `$EDITOR` (fallback: nano, vi)
 2. Otherwise: print config file path and contents
 
-### `howdy status`
+### `visage status`
 
 Check system health without requiring daemon:
 
@@ -106,10 +106,10 @@ Check system health without requiring daemon:
 2. Daemon: socket exists? Ping responds?
 3. Camera: device exists? VIDEO_CAPTURE capable?
 4. Models: model files exist? checksums match?
-5. PAM: `/lib/security/pam_howdy.so` exists? `/etc/pam.d/sudo` contains howdy?
+5. PAM: `/lib/security/pam_visage.so` exists? `/etc/pam.d/sudo` contains visage?
 6. Display status table with pass/fail indicators
 
-### `howdy devices`
+### `visage devices`
 
 1. Enumerate V4L2 devices
 2. Display table: path, name, driver, formats, resolutions
@@ -152,7 +152,7 @@ fn resolve_user(flag: Option<&str>) -> String {
 ## Verification
 
 ```bash
-cargo build -p howdy-cli
-cargo test -p howdy-cli
-cargo run --bin howdy -- --help
+cargo build -p visage-cli
+cargo test -p visage-cli
+cargo run --bin visage -- --help
 ```

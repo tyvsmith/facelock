@@ -1,20 +1,20 @@
-# AGENTS.md - howdy-rust
+# AGENTS.md - visage
 
 ## Project Overview
 
-Rust rewrite of howdy (Linux face authentication via PAM). Read `README.md` for architecture. Implementation specs are in `specs/`.
+Rust rewrite of visage (Linux face authentication via PAM). Read `README.md` for architecture. Implementation specs are in `specs/`.
 
 ## Repository Structure
 
 Cargo workspace with 8 crates:
-- `crates/howdy-core/` -- shared library (config, types, errors, IPC protocol)
-- `crates/howdy-camera/` -- V4L2 camera capture and preprocessing
-- `crates/howdy-face/` -- ONNX inference pipeline (SCRFD + ArcFace)
-- `crates/howdy-store/` -- SQLite face embedding storage
-- `crates/howdy-daemon/` -- persistent daemon (camera + models + auth)
-- `crates/howdy-cli/` -- user-facing CLI tool
-- `crates/pam-howdy/` -- PAM module (cdylib, thin IPC client)
-- `crates/howdy-bench/` -- benchmark and calibration tooling
+- `crates/visage-core/` -- shared library (config, types, errors, IPC protocol)
+- `crates/visage-camera/` -- V4L2 camera capture and preprocessing
+- `crates/visage-face/` -- ONNX inference pipeline (SCRFD + ArcFace)
+- `crates/visage-store/` -- SQLite face embedding storage
+- `crates/visage-daemon/` -- persistent daemon (camera + models + auth)
+- `crates/visage-cli/` -- user-facing CLI tool
+- `crates/pam-visage/` -- PAM module (cdylib, thin IPC client)
+- `crates/visage-bench/` -- benchmark and calibration tooling
 
 ## Build & Verify
 
@@ -22,7 +22,7 @@ Cargo workspace with 8 crates:
 cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
-cargo run --bin howdy -- --help
+cargo run --bin visage -- --help
 ```
 
 ## Mandatory Reading Order
@@ -40,7 +40,7 @@ Before making product changes, read:
 - Do not invent architecture outside documented contracts.
 - Do not silently change binary names, paths, config keys, database schema, or auth semantics.
 - If a cross-spec contract must change, update `docs/contracts.md` in the same change and explain why.
-- Keep the PAM module free of heavy dependencies (no ort, no v4l, no howdy-core).
+- Keep the PAM module free of heavy dependencies (no ort, no v4l, no visage-core).
 - Keep all inference local. No cloud services, no runtime model downloads in auth path.
 - Prefer minimal dependencies and clear crate boundaries.
 
@@ -53,7 +53,7 @@ Before making product changes, read:
 - All IPC messages must have size limits. Never allocate unbounded buffers from network input.
 - Socket access must verify peer credentials via `SO_PEERCRED`, not just filesystem permissions.
 - PAM module must log all auth attempts to syslog (success, failure, error, timeout).
-- Database and model files must have restrictive permissions (640/644, root:howdy ownership).
+- Database and model files must have restrictive permissions (640/644, root:visage ownership).
 - Never store embeddings in world-readable locations. Embeddings are biometric data.
 - Rate limiting must be enforced in the daemon (default: 5 attempts per user per 60 seconds).
 
@@ -67,14 +67,14 @@ Before making product changes, read:
 
 ## Dependency Rules
 
-- **howdy-core**: `serde`, `toml`, `bincode`, `thiserror`, `tracing`
-- **howdy-camera**: `howdy-core`, `v4l`, `image`
-- **howdy-face**: `howdy-core`, `ort`, `ndarray`, `image`
-- **howdy-store**: `howdy-core`, `rusqlite` (bundled), `bytemuck`
-- **howdy-daemon**: `howdy-core`, `howdy-camera`, `howdy-face`, `howdy-store`, `signal-hook`, `tracing-subscriber`
-- **howdy-cli**: `howdy-core`, `clap`, `smithay-client-toolkit`, `indicatif`, `reqwest` (blocking), `anyhow`, `notify-rust`, `tracing-subscriber`
-- **pam-howdy**: `libc`, `toml`, `serde` ONLY. Must stay tiny. No howdy-core dependency.
-- **howdy-bench**: `howdy-core`, `howdy-camera`, `howdy-face`, `howdy-store`
+- **visage-core**: `serde`, `toml`, `bincode`, `thiserror`, `tracing`
+- **visage-camera**: `visage-core`, `v4l`, `image`
+- **visage-face**: `visage-core`, `ort`, `ndarray`, `image`
+- **visage-store**: `visage-core`, `rusqlite` (bundled), `bytemuck`
+- **visage-daemon**: `visage-core`, `visage-camera`, `visage-face`, `visage-store`, `signal-hook`, `tracing-subscriber`
+- **visage-cli**: `visage-core`, `clap`, `smithay-client-toolkit`, `indicatif`, `reqwest` (blocking), `anyhow`, `notify-rust`, `tracing-subscriber`
+- **pam-visage**: `libc`, `toml`, `serde` ONLY. Must stay tiny. No visage-core dependency.
+- **visage-bench**: `visage-core`, `visage-camera`, `visage-face`, `visage-store`
 
 ## Implementation Order
 
@@ -103,28 +103,28 @@ Specs must be implemented in dependency order. See `docs/delivery-roadmap.md`.
 **Phase 1 (single agent):**
 ```
 Read specs/00-workspace.md and specs/01-core-types.md. Execute them in order.
-The project root is /home/ty/Code/howdy-rust. Create the Cargo workspace and
-all crate scaffolds first, then implement core types, config (with HOWDY_CONFIG
+The project root is /home/ty/Code/visage. Create the Cargo workspace and
+all crate scaffolds first, then implement core types, config (with VISAGE_CONFIG
 env var support), and IPC protocol. Run `cargo build --workspace` to verify.
 ```
 
 **Phase 2 (3 parallel agents in worktrees):**
 ```
-Agent A: "Read specs/02-camera.md. Implement howdy-camera. Run cargo build -p howdy-camera && cargo test -p howdy-camera."
-Agent B: "Read specs/03-face-engine.md. Implement howdy-face. Run cargo build -p howdy-face && cargo test -p howdy-face."
-Agent C: "Read specs/04-face-store.md. Implement howdy-store. Run cargo build -p howdy-store && cargo test -p howdy-store."
+Agent A: "Read specs/02-camera.md. Implement visage-camera. Run cargo build -p visage-camera && cargo test -p visage-camera."
+Agent B: "Read specs/03-face-engine.md. Implement visage-face. Run cargo build -p visage-face && cargo test -p visage-face."
+Agent C: "Read specs/04-face-store.md. Implement visage-store. Run cargo build -p visage-store && cargo test -p visage-store."
 ```
 
 **Phase 3 (single agent):**
 ```
-Read specs/05-daemon.md and all prior specs for context. Implement howdy-daemon.
-Run cargo build -p howdy-daemon to verify.
+Read specs/05-daemon.md and all prior specs for context. Implement visage-daemon.
+Run cargo build -p visage-daemon to verify.
 ```
 
 **Phase 4 (2 parallel agents in worktrees):**
 ```
-Agent A: "Read specs/06-pam-module.md. Implement pam-howdy. Run cargo build -p pam-howdy."
-Agent B: "Read specs/07-cli.md. Implement howdy-cli. Run cargo build -p howdy-cli."
+Agent A: "Read specs/06-pam-module.md. Implement pam-visage. Run cargo build -p pam-visage."
+Agent B: "Read specs/07-cli.md. Implement visage-cli. Run cargo build -p visage-cli."
 ```
 
 ### Blocking and Escalation
@@ -154,7 +154,7 @@ cargo test --workspace -- --ignored
 
 ### Tier 3 -- PAM Module Testing (Container Only)
 Build container, install PAM module, test with `pamtester`.
-**NEVER** install `pam_howdy.so` or edit `/etc/pam.d/*` on the host until validated.
+**NEVER** install `pam_visage.so` or edit `/etc/pam.d/*` on the host until validated.
 
 ### Tier 4 -- Host PAM Installation (After Tier 3 Passes)
 Keep a root shell open. Start with `/etc/pam.d/sudo` only. Back up before editing.
@@ -162,7 +162,7 @@ Keep a root shell open. Start with `/etc/pam.d/sudo` only. Back up before editin
 ### General Rules
 - Mark hardware-dependent tests with `#[ignore]` so `cargo test` passes without devices
 - PAM tests are NEVER automated on the host -- always containerized first
-- `HOWDY_CONFIG` env var must be supported for rootless development
+- `VISAGE_CONFIG` env var must be supported for rootless development
 
 ## Ownership Model
 

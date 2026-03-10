@@ -1,0 +1,11 @@
+[package]
+name = "visage-camera"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+visage-core = { path = "../visage-core" }
+v4l = "0.14"
+image = "0.25"

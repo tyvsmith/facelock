@@ -1,6 +1,6 @@
 # Model manifest — URLs, checksums, and metadata for ONNX models
 #
-# TODO: Once howdy-rust has its own GitHub repo, upload model files to a
+# TODO: Once visage has its own GitHub repo, upload model files to a
 # GitHub Release (e.g. v0.1.0-models) and update the URLs below to point
 # to your own repo's releases. See docs/TODO-model-hosting.md for details.
 

@@ -46,7 +46,7 @@ Phase 4 (Interfaces)     Phase 5 (Polish)           Phase 6 (Validation)
 
 **Entry**: Phase 1 complete
 **Exit**: Each crate builds and passes unit tests independently
-**Why parallel**: These three crates are independent -- they only depend on howdy-core types.
+**Why parallel**: These three crates are independent -- they only depend on visage-core types.
 
 ### Phase 3: Integration (Sequential, Single Agent)
 

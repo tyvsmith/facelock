@@ -1,6 +1,6 @@
 # Spec 11: Benchmarks & Calibration
 
-**Phase**: 6 (Validation) | **Crate**: howdy-bench | **Depends on**: all prior
+**Phase**: 6 (Validation) | **Crate**: visage-bench | **Depends on**: all prior
 
 ## Goal
 
@@ -8,12 +8,12 @@ Benchmark tooling to measure auth latency, preview performance, and face matchin
 
 ## Dependencies
 
-- `howdy-core`, `howdy-camera`, `howdy-face`, `howdy-store`
+- `visage-core`, `visage-camera`, `visage-face`, `visage-store`
 
 ## Benchmark Commands
 
 ```
-howdy-bench <command>
+visage-bench <command>
 
 Commands:
   cold-auth       Measure cold auth latency (daemon startup + first auth)
@@ -87,6 +87,6 @@ Use `templates/benchmark-report.md` template:
 ## Verification
 
 ```bash
-cargo build -p howdy-bench
-cargo run --bin howdy-bench -- --help
+cargo build -p visage-bench
+cargo run --bin visage-bench -- --help
 ```

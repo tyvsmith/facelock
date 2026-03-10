@@ -1,4 +1,4 @@
-# howdy-rust build automation
+# visage build automation
 # Usage: just <recipe>
 
 # Build all crates in release mode
@@ -32,53 +32,66 @@ fmt:
 # Run all checks (test + lint + format)
 check: test lint fmt-check
 
+# Run container PAM smoke tests
+test-pam: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -f test/Containerfile ]; then
+        podman build -t visage-pam-test -f test/Containerfile .
+        podman run --rm visage-pam-test
+    else
+        echo "No test/Containerfile found"
+        exit 1
+    fi
+
 # Install binaries, PAM module, config, and systemd service (requires root)
 install: build
     #!/usr/bin/env bash
     set -euo pipefail
 
-    # Create howdy system group if it doesn't exist
-    getent group howdy >/dev/null || groupadd -r howdy
+    # Create visage system group if it doesn't exist
+    getent group visage >/dev/null || groupadd -r visage
 
     # Install binaries
-    install -Dm755 target/release/howdy /usr/bin/howdy
-    install -Dm755 target/release/howdy-daemon /usr/bin/howdy-daemon
-    install -Dm755 target/release/libpam_howdy.so /lib/security/pam_howdy.so
+    install -Dm755 target/release/visage /usr/bin/visage
+    install -Dm755 target/release/visage-daemon /usr/bin/visage-daemon
+    install -Dm755 target/release/libpam_visage.so /lib/security/pam_visage.so
 
     # Config (don't overwrite existing)
-    install -Dm644 config/howdy.toml /etc/howdy/config.toml.default
-    [ -f /etc/howdy/config.toml ] || cp /etc/howdy/config.toml.default /etc/howdy/config.toml
+    install -Dm644 config/visage.toml /etc/visage/config.toml.default
+    [ -f /etc/visage/config.toml ] || cp /etc/visage/config.toml.default /etc/visage/config.toml
 
-    # systemd service
-    install -Dm644 systemd/howdy-daemon.service /usr/lib/systemd/system/howdy-daemon.service
+    # systemd units
+    install -Dm644 systemd/visage-daemon.service /usr/lib/systemd/system/visage-daemon.service
+    install -Dm644 systemd/visage-daemon.socket /usr/lib/systemd/system/visage-daemon.socket
 
     # Directories with restricted permissions (biometric data protection)
     # Order matters: parent first with restrictive perms, then children
-    install -dm750 -o root -g howdy /var/lib/howdy
-    install -dm755 -o root -g root /var/lib/howdy/models
-    install -dm750 -o root -g howdy /var/log/howdy
-    install -dm750 -o root -g howdy /var/log/howdy/snapshots
-    install -dm755 -o root -g howdy /run/howdy
+    install -dm750 -o root -g visage /var/lib/visage
+    install -dm755 -o root -g root /var/lib/visage/models
+    install -dm750 -o root -g visage /var/log/visage
+    install -dm750 -o root -g visage /var/log/visage/snapshots
+    install -dm755 -o root -g visage /run/visage
 
     # Set model file permissions if models exist
-    [ -d /var/lib/howdy/models ] && chmod 644 /var/lib/howdy/models/*.onnx 2>/dev/null || true
+    [ -d /var/lib/visage/models ] && chmod 644 /var/lib/visage/models/*.onnx 2>/dev/null || true
 
     # Set database permissions if exists
-    [ -f /var/lib/howdy/howdy.db ] && chown root:howdy /var/lib/howdy/howdy.db && chmod 640 /var/lib/howdy/howdy.db || true
+    [ -f /var/lib/visage/visage.db ] && chown root:visage /var/lib/visage/visage.db && chmod 640 /var/lib/visage/visage.db || true
 
     echo "Installation complete."
     echo "Next steps:"
-    echo "  1. Edit /etc/howdy/config.toml (set device.path to your IR camera)"
-    echo "  2. Run: sudo howdy setup              (downloads ONNX models)"
-    echo "  3. Run: sudo systemctl enable --now howdy-daemon"
-    echo "  4. Run: sudo howdy enroll             (capture your face)"
-    echo "  5. Run: sudo howdy test               (verify recognition)"
+    echo "  1. Edit /etc/visage/config.toml (optional — camera auto-detected)"
+    echo "  2. Run: sudo visage setup              (downloads ONNX models)"
+    echo "  3. Run: sudo systemctl enable --now visage-daemon.socket"
+    echo "  4. Run: sudo visage enroll             (capture your face)"
+    echo "  5. Run: sudo visage test               (verify recognition)"
 
 # Uninstall binaries only (keeps config and data)
 uninstall:
-    rm -f /usr/bin/howdy /usr/bin/howdy-daemon /lib/security/pam_howdy.so
-    rm -f /usr/lib/systemd/system/howdy-daemon.service
-    @echo "Binaries and service removed. Config and data preserved in /etc/howdy and /var/lib/howdy."
+    rm -f /usr/bin/visage /usr/bin/visage-daemon /lib/security/pam_visage.so
+    rm -f /usr/lib/systemd/system/visage-daemon.service
+    @echo "Binaries and service removed. Config and data preserved in /etc/visage and /var/lib/visage."
 
 # Clean build artifacts
 clean:
@@ -86,12 +99,12 @@ clean:
 
 # Show installed file locations
 show-paths:
-    @echo "Binary:   /usr/bin/howdy"
-    @echo "Daemon:   /usr/bin/howdy-daemon"
-    @echo "PAM:      /lib/security/pam_howdy.so"
-    @echo "Config:   /etc/howdy/config.toml"
-    @echo "Models:   /var/lib/howdy/models/"
-    @echo "Database: /var/lib/howdy/howdy.db"
-    @echo "Socket:   /run/howdy/howdy.sock"
-    @echo "Service:  /usr/lib/systemd/system/howdy-daemon.service"
-    @echo "Logs:     /var/log/howdy/"
+    @echo "Binary:   /usr/bin/visage"
+    @echo "Daemon:   /usr/bin/visage-daemon"
+    @echo "PAM:      /lib/security/pam_visage.so"
+    @echo "Config:   /etc/visage/config.toml"
+    @echo "Models:   /var/lib/visage/models/"
+    @echo "Database: /var/lib/visage/visage.db"
+    @echo "Socket:   /run/visage/visage.sock"
+    @echo "Service:  /usr/lib/systemd/system/visage-daemon.service"
+    @echo "Logs:     /var/log/visage/"

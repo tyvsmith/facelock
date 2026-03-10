@@ -1,6 +1,6 @@
 # Spec 06: PAM Module
 
-**Phase**: 4 (Interfaces) | **Crate**: pam-howdy | **Depends on**: 01 (IPC protocol) | **Parallel with**: 07
+**Phase**: 4 (Interfaces) | **Crate**: pam-visage | **Depends on**: 01 (IPC protocol) | **Parallel with**: 07
 
 ## Goal
 
@@ -8,9 +8,9 @@ Minimal PAM shared library that connects to the daemon via Unix socket IPC and r
 
 ## Dependencies
 
-**STRICT**: `libc`, `toml`, `serde` ONLY. No howdy-core, no ort, no v4l, no rusqlite.
+**STRICT**: `libc`, `toml`, `serde` ONLY. No visage-core, no ort, no v4l, no rusqlite.
 
-The PAM module must stay tiny (~200KB). It reads a minimal config subset and speaks the IPC protocol directly (reimplemented in ~50 lines, not imported from howdy-core).
+The PAM module must stay tiny (~200KB). It reads a minimal config subset and speaks the IPC protocol directly (reimplemented in ~50 lines, not imported from visage-core).
 
 ## Source File
 
@@ -81,7 +81,7 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
     //    Error -> log "error: <msg>" + return 25 (PAM_IGNORE)
     //    Timeout -> log "timeout" + return 7 (PAM_AUTH_ERR)
 
-    // ALL outcomes logged to syslog: pam_howdy(<service>): <result> for user <username>
+    // ALL outcomes logged to syslog: pam_visage(<service>): <result> for user <username>
 }
 ```
 
@@ -188,10 +188,10 @@ serde = { version = "1", features = ["derive"] }
 
 ## Tests
 
-- Build verification: `cargo build -p pam-howdy --release`
-- Symbol check: `nm -D target/release/libpam_howdy.so | grep pam_sm_authenticate`
-- Size check: `stat -c%s target/release/libpam_howdy.so` (should be < 500KB)
-- Dependency check: `ldd target/release/libpam_howdy.so` (minimal deps)
+- Build verification: `cargo build -p pam-visage --release`
+- Symbol check: `nm -D target/release/libpam_visage.so | grep pam_sm_authenticate`
+- Size check: `stat -c%s target/release/libpam_visage.so` (should be < 500KB)
+- Dependency check: `ldd target/release/libpam_visage.so` (minimal deps)
 - Container tests: see spec 12 and `docs/testing-safety.md`
 
 ## Audit Logging
@@ -203,12 +203,12 @@ use libc::{openlog, syslog, closelog, LOG_AUTH, LOG_INFO, LOG_WARNING};
 
 fn log_auth(service: &str, result: &str, user: &str) {
     // Writes to /var/log/auth.log or journald
-    // Format: pam_howdy(sudo): success for user ty
+    // Format: pam_visage(sudo): success for user ty
     unsafe {
-        let ident = std::ffi::CString::new("pam_howdy").unwrap();
+        let ident = std::ffi::CString::new("pam_visage").unwrap();
         openlog(ident.as_ptr(), 0, LOG_AUTH);
         let msg = std::ffi::CString::new(
-            format!("pam_howdy({}): {} for user {}", service, result, user)
+            format!("pam_visage({}): {} for user {}", service, result, user)
         ).unwrap();
         syslog(LOG_INFO, msg.as_ptr());
         closelog();
@@ -227,12 +227,12 @@ fn log_auth(service: &str, result: &str, user: &str) {
 7. No panics (catch_unwind wrapper)
 8. No heavy dependencies (no ort, no v4l, no rusqlite)
 9. All auth attempts logged to syslog with service name, result, and username
-10. Syslog entries visible in `journalctl -t pam_howdy`
+10. Syslog entries visible in `journalctl -t pam_visage`
 
 ## Verification
 
 ```bash
-cargo build -p pam-howdy --release
-nm -D target/release/libpam_howdy.so | grep pam_sm
-stat -c%s target/release/libpam_howdy.so
+cargo build -p pam-visage --release
+nm -D target/release/libpam_visage.so | grep pam_sm
+stat -c%s target/release/libpam_visage.so
 ```

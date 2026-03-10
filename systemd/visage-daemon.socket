@@ -1,0 +1,10 @@
+[Unit]
+Description=Visage Face Authentication Socket
+
+[Socket]
+ListenStream=/run/visage/visage.sock
+SocketMode=0660
+SocketGroup=visage
+
+[Install]
+WantedBy=sockets.target

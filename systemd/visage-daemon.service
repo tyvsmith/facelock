@@ -1,0 +1,49 @@
+[Unit]
+Description=Visage Face Authentication Daemon
+Documentation=https://github.com/user/visage
+After=local-fs.target visage-daemon.socket
+Requires=visage-daemon.socket
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/visage-daemon
+Restart=on-failure
+RestartSec=3
+
+# Runtime directory (created automatically with correct ownership)
+RuntimeDirectory=visage
+RuntimeDirectoryMode=0755
+
+# Filesystem isolation
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/visage /run/visage /var/log/visage
+PrivateTmp=yes
+
+# Device access (cameras only)
+DeviceAllow=/dev/video* rw
+DevicePolicy=closed
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+SystemCallFilter=@system-service @io-event
+SystemCallArchitectures=native
+ProtectProc=invisible
+ProcSubset=pid
+
+# Resource limits
+LimitNOFILE=1024
+LimitNPROC=64
+
+[Install]
+WantedBy=multi-user.target

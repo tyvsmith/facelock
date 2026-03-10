@@ -1,12 +1,12 @@
 # Spec 08: Preview Window
 
-**Phase**: 5 (Polish) | **Crate**: howdy-cli | **Depends on**: 07 | **Parallel with**: 09, 10
+**Phase**: 5 (Polish) | **Crate**: visage-cli | **Depends on**: 07 | **Parallel with**: 09, 10
 
 ## Goal
 
-Live camera preview in a Wayland layer-shell overlay window with real-time face detection visualization. Invoked via `howdy preview`.
+Live camera preview in a Wayland layer-shell overlay window with real-time face detection visualization. Invoked via `visage preview`.
 
-## Dependencies (added to howdy-cli)
+## Dependencies (added to visage-cli)
 
 - `smithay-client-toolkit` (Wayland client, layer-shell)
 - `wayland-client` (Wayland protocol)
@@ -78,6 +78,6 @@ If Wayland not available or `zwlr_layer_shell_v1` not supported:
 ## Verification
 
 ```bash
-cargo build -p howdy-cli
-# Manual: cargo run --bin howdy -- preview
+cargo build -p visage-cli
+# Manual: cargo run --bin visage -- preview
 ```

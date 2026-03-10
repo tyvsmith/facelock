@@ -13,14 +13,14 @@ RUN curl -sL https://sourceforge.net/projects/pamtester/files/pamtester/0.1.2/pa
 RUN useradd -m testuser && echo "testuser:test" | chpasswd
 
 # Copy built artifacts
-COPY target/release/libpam_howdy.so /lib/security/pam_howdy.so
-COPY target/release/howdy-daemon /usr/bin/howdy-daemon
-COPY target/release/howdy /usr/bin/howdy
-COPY test/pam.d/howdy-test /etc/pam.d/howdy-test
+COPY target/release/libpam_visage.so /lib/security/pam_visage.so
+COPY target/release/visage-daemon /usr/bin/visage-daemon
+COPY target/release/visage /usr/bin/visage
+COPY test/pam.d/visage-test /etc/pam.d/visage-test
 
 # Create config directory and copy dev config
-RUN mkdir -p /etc/howdy
-COPY dev/config.toml /etc/howdy/config.toml
+RUN mkdir -p /etc/visage
+COPY dev/config.toml /etc/visage/config.toml
 
 # Copy test script
 COPY test/run-container-tests.sh /run-tests.sh

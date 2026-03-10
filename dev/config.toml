@@ -7,11 +7,11 @@ threshold = 0.50
 timeout_secs = 5
 
 [daemon]
-socket_path = "/tmp/howdy-dev.sock"
+socket_path = "/tmp/visage-dev.sock"
 model_dir = "./models"
 
 [storage]
-db_path = "/tmp/howdy-dev.db"
+db_path = "/tmp/visage-dev.db"
 
 [security]
 disabled = false
@@ -19,7 +19,7 @@ require_ir = true
 require_frame_variance = true
 
 [snapshots]
-dir = "/tmp/howdy-dev-snapshots"
+dir = "/tmp/visage-dev-snapshots"
 
 [debug]
 verbose = true

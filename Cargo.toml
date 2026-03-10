@@ -1,14 +1,16 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/howdy-core",
-    "crates/howdy-camera",
-    "crates/howdy-face",
-    "crates/howdy-store",
-    "crates/howdy-daemon",
-    "crates/howdy-cli",
-    "crates/pam-howdy",
-    "crates/howdy-bench",
+    "crates/visage-core",
+    "crates/visage-camera",
+    "crates/visage-face",
+    "crates/visage-store",
+    "crates/visage-daemon",
+    "crates/visage-cli",
+    "crates/pam-visage",
+    "crates/visage-bench",
+    "crates/visage-test-support",
+    "crates/visage-tpm",
 ]
 
 [workspace.package]

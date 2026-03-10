@@ -1,10 +1,10 @@
-# howdy-rust: Facial Authentication for Linux
+# visage: Facial Authentication for Linux
 
-A modern, performant rewrite of [howdy](https://github.com/boltgolt/howdy) in Rust. Provides Windows Hello-style facial authentication via Linux PAM.
+A modern, performant rewrite of [visage](https://github.com/boltgolt/visage) in Rust. Provides Windows Hello-style facial authentication via Linux PAM.
 
 ## Why Rewrite?
 
-The original howdy suffers from:
+The original visage suffers from:
 - Python dependency conflicts and virtualenv fragility
 - 2-3 second cold-start latency (spawns Python per auth)
 - Complex dlib/OpenCV/GTK dependency chain
@@ -20,13 +20,13 @@ This rewrite eliminates all of that: zero Python, ~200ms auth via persistent dae
                     +--------+---------+
                              |
                     +--------v---------+
-                    |  pam_howdy.so    |   Thin IPC client (~200KB cdylib)
+                    |  pam_visage.so    |   Thin IPC client (~200KB cdylib)
                     |  (connect to     |   No ONNX, no camera, no heavy deps
                     |   daemon socket) |   Returns PAM_IGNORE if daemon down
                     +--------+---------+
                              | Unix socket IPC
                     +--------v-------------------------------------------+
-                    |  howdy-daemon                                       |
+                    |  visage-daemon                                       |
                     |  (persistent, holds models + camera in memory)      |
                     |                                                     |
                     |  +------------+  +----------+  +---------+         |
@@ -41,14 +41,14 @@ This rewrite eliminates all of that: zero Python, ~200ms auth via persistent dae
                     +----------------------------------------------------+
                              ^
                     +--------+---------+
-                    |  howdy-cli       |   User-facing CLI (enroll, test,
+                    |  visage-cli       |   User-facing CLI (enroll, test,
                     |  (IPC client)    |   preview, config, status)
                     +------------------+
 ```
 
 ### Why Daemon?
 
-A persistent daemon keeps ONNX models loaded in memory, achieving ~200ms auth latency vs 2-3s cold start. This was the original howdy's most frustrating UX problem.
+A persistent daemon keeps ONNX models loaded in memory, achieving ~200ms auth latency vs 2-3s cold start. This was the original visage's most frustrating UX problem.
 
 - PAM module stays thin (~200KB) -- just an IPC client
 - If daemon crashes or isn't running, PAM returns PAM_IGNORE (graceful fallback to password)
@@ -57,7 +57,7 @@ A persistent daemon keeps ONNX models loaded in memory, achieving ~200ms auth la
 
 ### Why Not Subprocess (OpenCode) or In-Process (Codex)?
 
-- **Subprocess** (original howdy pattern): 2-3s cold start per auth -- the #1 complaint about howdy
+- **Subprocess** (original visage pattern): 2-3s cold start per auth -- the #1 complaint about visage
 - **In-process** (PAM loads ONNX directly): A segfault in ONNX Runtime would crash PAM, potentially locking out the user
 
 The daemon provides both speed and crash isolation.
@@ -66,14 +66,14 @@ The daemon provides both speed and crash isolation.
 
 | Crate | Type | Purpose |
 |-------|------|---------|
-| `howdy-core` | lib | Config, types, error handling, IPC protocol |
-| `howdy-camera` | lib | V4L2 camera capture and frame preprocessing |
-| `howdy-face` | lib | ONNX inference pipeline (SCRFD + ArcFace) |
-| `howdy-store` | lib | SQLite face embedding storage |
-| `howdy-daemon` | bin | Persistent daemon owning camera + models |
-| `pam-howdy` | cdylib | Thin PAM module, IPC client to daemon |
-| `howdy-cli` | bin | User-facing CLI tool |
-| `howdy-bench` | bin | Benchmark and calibration tooling |
+| `visage-core` | lib | Config, types, error handling, IPC protocol |
+| `visage-camera` | lib | V4L2 camera capture and frame preprocessing |
+| `visage-face` | lib | ONNX inference pipeline (SCRFD + ArcFace) |
+| `visage-store` | lib | SQLite face embedding storage |
+| `visage-daemon` | bin | Persistent daemon owning camera + models |
+| `pam-visage` | cdylib | Thin PAM module, IPC client to daemon |
+| `visage-cli` | bin | User-facing CLI tool |
+| `visage-bench` | bin | Benchmark and calibration tooling |
 
 ## Technology Choices
 
@@ -93,7 +93,7 @@ The daemon provides both speed and crash isolation.
 
 ## Configuration
 
-TOML config at `/etc/howdy/config.toml`:
+TOML config at `/etc/visage/config.toml`:
 
 ```toml
 [device]
@@ -106,11 +106,11 @@ timeout_secs = 5           # Max seconds to attempt recognition
 max_height = 480           # Downscale frames for faster processing
 
 [daemon]
-socket_path = "/run/howdy/howdy.sock"
-model_dir = "/var/lib/howdy/models"
+socket_path = "/run/visage/visage.sock"
+model_dir = "/var/lib/visage/models"
 
 [storage]
-db_path = "/var/lib/howdy/howdy.db"
+db_path = "/var/lib/visage/visage.db"
 
 [security]
 abort_if_ssh = true
@@ -128,10 +128,10 @@ on_failure = true
 [snapshots]
 save_failed = false
 save_successful = false
-dir = "/var/log/howdy/snapshots"
+dir = "/var/log/visage/snapshots"
 ```
 
-Supports `HOWDY_CONFIG` env var override for rootless development.
+Supports `VISAGE_CONFIG` env var override for rootless development.
 
 ## Face Recognition Pipeline
 
@@ -156,7 +156,7 @@ Camera Frame (RGB)
 
 ## Models
 
-Downloaded during `howdy setup` from HuggingFace (InsightFace):
+Downloaded during `visage setup` from HuggingFace (InsightFace):
 - **SCRFD** (`scrfd_2.5g_bnkps.onnx`): ~3MB face detection with keypoints
 - **ArcFace** (`w600k_r50.onnx`): ~166MB face embedding network
 
@@ -164,7 +164,7 @@ Optional higher-accuracy models:
 - **SCRFD 10G** (`scrfd_10g_bnkps.onnx`): ~16MB, higher accuracy
 - **ArcFace R100** (`w600k_r100.onnx`): ~249MB, 99.77% LFW accuracy
 
-Stored in `/var/lib/howdy/models/` with SHA-256 integrity verification.
+Stored in `/var/lib/visage/models/` with SHA-256 integrity verification.
 
 ## Reading Order for Agents
 
@@ -200,7 +200,7 @@ Phase 6 (Validation):   11-benchmarks, 12-integration-tests  (sequential)
 - Frame variance check rejects static photo attacks
 - Model integrity verified at load time (SHA256)
 - All auth attempts logged to syslog/journald
-- Socket access restricted to root + howdy group with peer credential checks
+- Socket access restricted to root + visage group with peer credential checks
 - Database file permissions restrict biometric data access
 
 ## Source Plans

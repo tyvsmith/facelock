@@ -1243,102 +1243,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "howdy-bench"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "howdy-camera",
- "howdy-core",
- "howdy-face",
- "howdy-store",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "howdy-camera"
-version = "0.1.0"
-dependencies = [
- "howdy-core",
- "image",
- "v4l",
-]
-
-[[package]]
-name = "howdy-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "howdy-core",
- "image",
- "indicatif",
- "libc",
- "notify-rust",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "signal-hook",
- "smithay-client-toolkit",
- "toml",
- "tracing",
- "tracing-subscriber",
- "wayland-client",
- "xkbcommon",
-]
-
-[[package]]
-name = "howdy-core"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "serde",
- "thiserror",
- "toml",
- "tracing",
-]
-
-[[package]]
-name = "howdy-daemon"
-version = "0.1.0"
-dependencies = [
- "howdy-camera",
- "howdy-core",
- "howdy-face",
- "howdy-store",
- "image",
- "nix",
- "signal-hook",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "howdy-face"
-version = "0.1.0"
-dependencies = [
- "howdy-core",
- "image",
- "ndarray 0.16.1",
- "ort",
- "serde",
- "sha2",
- "toml",
-]
-
-[[package]]
-name = "howdy-store"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "howdy-core",
- "rusqlite",
-]
-
-[[package]]
 name = "http"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2244,7 +2148,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pam-howdy"
+name = "pam-visage"
 version = "0.1.0"
 dependencies = [
  "libc",
@@ -3587,6 +3491,119 @@ name = "virtue"
 version = "0.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
+
+[[package]]
+name = "visage-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "tracing",
+ "tracing-subscriber",
+ "visage-camera",
+ "visage-core",
+ "visage-face",
+ "visage-store",
+]
+
+[[package]]
+name = "visage-camera"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "v4l",
+ "visage-core",
+]
+
+[[package]]
+name = "visage-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "image",
+ "indicatif",
+ "libc",
+ "notify-rust",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "signal-hook",
+ "smithay-client-toolkit",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "visage-core",
+ "wayland-client",
+ "xkbcommon",
+]
+
+[[package]]
+name = "visage-core"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "thiserror",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "visage-daemon"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "nix",
+ "signal-hook",
+ "tracing",
+ "tracing-subscriber",
+ "visage-camera",
+ "visage-core",
+ "visage-face",
+ "visage-store",
+ "visage-test-support",
+ "visage-tpm",
+]
+
+[[package]]
+name = "visage-face"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "ndarray 0.16.1",
+ "ort",
+ "serde",
+ "sha2",
+ "toml",
+ "visage-core",
+]
+
+[[package]]
+name = "visage-store"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "rusqlite",
+ "visage-core",
+]
+
+[[package]]
+name = "visage-test-support"
+version = "0.1.0"
+dependencies = [
+ "visage-core",
+]
+
+[[package]]
+name = "visage-tpm"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "visage-core",
+]
 
 [[package]]
 name = "want"

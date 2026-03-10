@@ -30,7 +30,7 @@ echo "=== Integration Tests (with camera) ==="
 echo ""
 
 # Write container config with correct paths
-cat > /etc/howdy/config.toml <<'CONF'
+cat > /etc/visage/config.toml <<'CONF'
 [device]
 path = "/dev/video2"
 max_height = 480
@@ -40,11 +40,11 @@ threshold = 0.45
 timeout_secs = 5
 
 [daemon]
-socket_path = "/tmp/howdy.sock"
+socket_path = "/tmp/visage.sock"
 model_dir = "/models"
 
 [storage]
-db_path = "/tmp/howdy-test.db"
+db_path = "/tmp/visage-test.db"
 
 [security]
 disabled = false
@@ -52,41 +52,41 @@ require_ir = false
 require_frame_variance = false
 
 [snapshots]
-dir = "/tmp/howdy-snapshots"
+dir = "/tmp/visage-snapshots"
 CONF
 
 # Start daemon in background
-howdy-daemon &
+visage-daemon &
 DAEMON_PID=$!
 sleep 2
 
 # Verify daemon is running
 run_test "Daemon responds to ping" \
-    "howdy status"
+    "visage status"
 
 # Test device listing
 run_test "Device listing works" \
-    "howdy devices"
+    "visage devices"
 
 # Test enrollment (will capture faces from camera)
 run_test "Enroll a face" \
-    "howdy enroll --user testuser --label test-face"
+    "visage enroll --user testuser --label test-face"
 
 # Test listing enrolled models
 run_test "List enrolled models" \
-    "howdy list --user testuser"
+    "visage list --user testuser"
 
 # Test authentication via CLI
 run_test "Authenticate enrolled face (CLI)" \
-    "howdy test --user testuser"
+    "visage test --user testuser"
 
 # Test authentication via PAM (the real auth path)
 run_test "Authenticate enrolled face (PAM)" \
-    "pamtester howdy-test testuser authenticate"
+    "pamtester visage-test testuser authenticate"
 
 # Clean up
 run_test "Clear enrolled models" \
-    "howdy clear --user testuser --yes"
+    "visage clear --user testuser --yes"
 
 # Stop daemon
 kill $DAEMON_PID 2>/dev/null || true

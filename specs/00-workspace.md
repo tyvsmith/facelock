@@ -11,13 +11,13 @@ Establish the Cargo workspace with 8 crate scaffolds, dev configuration, and pro
 ### Workspace Structure
 
 ```
-howdy-rust/
+visage/
 ├── Cargo.toml                    # Workspace definition
 ├── CLAUDE.md                     # Agent instructions (copy from AGENTS.md)
 ├── dev/
 │   └── config.toml               # Development config (local paths, no root)
 ├── crates/
-│   ├── howdy-core/               # Library: config, types, errors, IPC
+│   ├── visage-core/               # Library: config, types, errors, IPC
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
@@ -26,14 +26,14 @@ howdy-rust/
 │   │       ├── types.rs          # Stub
 │   │       ├── ipc.rs            # Stub
 │   │       └── paths.rs          # Stub
-│   ├── howdy-camera/             # Library: V4L2 capture
+│   ├── visage-camera/             # Library: V4L2 capture
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── capture.rs        # Stub
 │   │       ├── preprocess.rs     # Stub
 │   │       └── device.rs         # Stub
-│   ├── howdy-face/               # Library: ONNX inference
+│   ├── visage-face/               # Library: ONNX inference
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
@@ -41,20 +41,20 @@ howdy-rust/
 │   │       ├── embedder.rs       # Stub
 │   │       ├── align.rs          # Stub
 │   │       └── models.rs         # Stub
-│   ├── howdy-store/              # Library: SQLite storage
+│   ├── visage-store/              # Library: SQLite storage
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── db.rs             # Stub
 │   │       └── migrations.rs     # Stub
-│   ├── howdy-daemon/             # Binary: persistent daemon
+│   ├── visage-daemon/             # Binary: persistent daemon
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── main.rs
 │   │       ├── handler.rs        # Stub
 │   │       ├── auth.rs           # Stub
 │   │       └── enroll.rs         # Stub
-│   ├── howdy-cli/                # Binary: CLI tool
+│   ├── visage-cli/                # Binary: CLI tool
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── main.rs
@@ -69,20 +69,20 @@ howdy-rust/
 │   │           ├── preview.rs    # Stub
 │   │           ├── config.rs     # Stub
 │   │           └── status.rs     # Stub
-│   ├── pam-howdy/                # cdylib: PAM module
+│   ├── pam-visage/                # cdylib: PAM module
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       └── lib.rs
-│   └── howdy-bench/              # Binary: benchmarks
+│   └── visage-bench/              # Binary: benchmarks
 │       ├── Cargo.toml
 │       └── src/
 │           └── main.rs
 ├── models/
 │   └── manifest.toml             # Model URLs, checksums, metadata
 ├── config/
-│   └── howdy.toml                # Default config template
+│   └── visage.toml                # Default config template
 ├── systemd/
-│   └── howdy-daemon.service      # systemd service unit
+│   └── visage-daemon.service      # systemd service unit
 └── .gitignore
 ```
 
@@ -92,14 +92,14 @@ howdy-rust/
 [workspace]
 resolver = "2"
 members = [
-    "crates/howdy-core",
-    "crates/howdy-camera",
-    "crates/howdy-face",
-    "crates/howdy-store",
-    "crates/howdy-daemon",
-    "crates/howdy-cli",
-    "crates/pam-howdy",
-    "crates/howdy-bench",
+    "crates/visage-core",
+    "crates/visage-camera",
+    "crates/visage-face",
+    "crates/visage-store",
+    "crates/visage-daemon",
+    "crates/visage-cli",
+    "crates/pam-visage",
+    "crates/visage-bench",
 ]
 
 [workspace.package]
@@ -120,28 +120,28 @@ bincode = "2.0.0-rc.3"
 ### Key Points
 
 - Edition 2024, Rust 1.85 minimum
-- pam-howdy uses `crate-type = ["cdylib"]`
+- pam-visage uses `crate-type = ["cdylib"]`
 - Shared workspace dependencies minimize duplication
-- Dev config uses local paths (`/tmp/howdy-dev.sock`, `./models`, `/tmp/howdy-dev.db`)
+- Dev config uses local paths (`/tmp/visage-dev.sock`, `./models`, `/tmp/visage-dev.db`)
 - `.gitignore`: `/target`, `*.onnx`, `*.dat`, `dev/*.db`
 
 ### systemd Service Unit
 
 ```ini
 [Unit]
-Description=Howdy Face Authentication Daemon
+Description=Visage Face Authentication Daemon
 After=local-fs.target
 
 [Service]
 Type=notify
-ExecStart=/usr/bin/howdy-daemon
+ExecStart=/usr/bin/visage-daemon
 Restart=on-failure
 RestartSec=3
 
 # Filesystem isolation
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/lib/howdy /run/howdy /var/log/howdy
+ReadWritePaths=/var/lib/visage /run/visage /var/log/visage
 PrivateTmp=yes
 
 # Device access
@@ -170,7 +170,7 @@ WantedBy=multi-user.target
 3. `cargo clippy --workspace` succeeds
 4. All 8 crates exist with proper Cargo.toml
 5. `dev/config.toml` exists with local paths
-6. `cargo run --bin howdy -- --help` shows stubbed commands
+6. `cargo run --bin visage -- --help` shows stubbed commands
 7. `.gitignore` covers target, ONNX files, dev DB
 
 ## Verification
@@ -179,5 +179,5 @@ WantedBy=multi-user.target
 cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace
-cargo run --bin howdy -- --help
+cargo run --bin visage -- --help
 ```

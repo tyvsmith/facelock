@@ -1,6 +1,6 @@
 # Spec 04: Face Store (SQLite)
 
-**Phase**: 2 (Components) | **Crate**: howdy-store | **Depends on**: 01 | **Parallel with**: 02, 03
+**Phase**: 2 (Components) | **Crate**: visage-store | **Depends on**: 01 | **Parallel with**: 02, 03
 
 ## Goal
 
@@ -8,7 +8,7 @@ Persistent storage for face embeddings using SQLite. Supports CRUD operations, m
 
 ## Dependencies
 
-- `howdy-core` (for `FaceEmbedding`, `FaceModelInfo`, `HowdyError`)
+- `visage-core` (for `FaceEmbedding`, `FaceModelInfo`, `VisageError`)
 - `rusqlite` with `bundled` feature (statically linked SQLite)
 - `bytemuck` with `derive` feature (zero-copy embedding serialization)
 
@@ -128,6 +128,6 @@ embedding.copy_from_slice(floats);
 ## Verification
 
 ```bash
-cargo test -p howdy-store
-cargo clippy -p howdy-store
+cargo test -p visage-store
+cargo clippy -p visage-store
 ```

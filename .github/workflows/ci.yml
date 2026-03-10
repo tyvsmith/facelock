@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  build-and-test:
+    name: Build, Test, Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libv4l-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libpam0g-dev \
+            clang
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Run clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace
+
+  container-pam-test:
+    name: Container PAM Smoke Test
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libv4l-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libpam0g-dev \
+            clang \
+            podman
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release --workspace
+
+      - name: Build container
+        run: |
+          if [ -f test/Containerfile ]; then
+            podman build -t visage-pam-test -f test/Containerfile .
+          else
+            echo "No Containerfile found, skipping container build"
+            exit 0
+          fi
+
+      - name: Run container PAM tests
+        run: |
+          if [ -f test/Containerfile ]; then
+            podman run --rm visage-pam-test
+          else
+            echo "No Containerfile, skipping"
+          fi

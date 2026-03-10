@@ -1,0 +1,10 @@
+# Runtime directory for visage daemon socket
+d /run/visage 0755 root visage -
+
+# Data directory (biometric data - restricted)
+d /var/lib/visage 0750 root visage -
+d /var/lib/visage/models 0755 root root -
+
+# Log directory (auth snapshots - restricted)
+d /var/log/visage 0750 root visage -
+d /var/log/visage/snapshots 0750 root visage -

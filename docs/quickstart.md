@@ -18,7 +18,7 @@ Models are ~170MB total and gitignored. Two options:
 
 **Option A: Use the CLI** (downloads automatically)
 ```bash
-HOWDY_CONFIG=dev/config.toml cargo run --bin howdy -- setup
+VISAGE_CONFIG=dev/config.toml cargo run --bin visage -- setup
 ```
 
 **Option B: Manual download**
@@ -40,16 +40,16 @@ sha256sum models/*.onnx
 ## 3. Configure for Development
 
 The repo includes `dev/config.toml` which uses temp paths and disables security
-checks that require an IR camera. Set `HOWDY_CONFIG` in your shell — every
+checks that require an IR camera. Set `VISAGE_CONFIG` in your shell — every
 command (daemon, CLI, bench) reads it:
 
 ```bash
-export HOWDY_CONFIG=dev/config.toml
+export VISAGE_CONFIG=dev/config.toml
 ```
 
 Find your camera and update `dev/config.toml` if needed:
 ```bash
-cargo run --bin howdy -- devices
+cargo run --bin visage -- devices
 # Update device.path in dev/config.toml to match (e.g. /dev/video2)
 ```
 
@@ -58,28 +58,28 @@ cargo run --bin howdy -- devices
 The daemon must be running for the CLI to work. Start it in the background:
 
 ```bash
-cargo run --bin howdy-daemon &
+cargo run --bin visage-daemon &
 ```
 
 Check it's running:
 ```bash
-cargo run --bin howdy -- status
+cargo run --bin visage -- status
 ```
 
 ## 5. Enroll and Test
 
 ```bash
 # Enroll your face (look at the camera)
-cargo run --bin howdy -- enroll
+cargo run --bin visage -- enroll
 
 # Test recognition
-cargo run --bin howdy -- test
+cargo run --bin visage -- test
 
 # Live camera preview with detection overlay (Wayland)
-cargo run --bin howdy -- preview
+cargo run --bin visage -- preview
 
 # List enrolled face models
-cargo run --bin howdy -- list
+cargo run --bin visage -- list
 ```
 
 Stop the daemon when done:
@@ -111,8 +111,8 @@ Tests the PAM module inside a container — safe, never touches your host PAM co
 cargo build --workspace --release
 
 # Build and run the test container
-podman build -f test/Containerfile -t howdy-test .
-podman run --rm howdy-test
+podman build -f test/Containerfile -t visage-test .
+podman run --rm visage-test
 ```
 
 This verifies:
@@ -132,9 +132,9 @@ bash test/run-tests.sh
 ### Benchmarks
 
 ```bash
-cargo run --bin howdy-bench -- model-load    # ONNX load time
-cargo run --bin howdy-bench -- report        # full benchmark report
-cargo run --bin howdy-bench -- --help        # all subcommands
+cargo run --bin visage-bench -- model-load    # ONNX load time
+cargo run --bin visage-bench -- report        # full benchmark report
+cargo run --bin visage-bench -- --help        # all subcommands
 ```
 
 ## Installing on Your System (PAM)
@@ -155,24 +155,24 @@ sudo -i
 cargo build --workspace --release
 
 # Install binaries
-sudo install -m 755 target/release/howdy /usr/bin/howdy
-sudo install -m 755 target/release/howdy-daemon /usr/bin/howdy-daemon
-sudo install -m 755 target/release/libpam_howdy.so /lib/security/pam_howdy.so
+sudo install -m 755 target/release/visage /usr/bin/visage
+sudo install -m 755 target/release/visage-daemon /usr/bin/visage-daemon
+sudo install -m 755 target/release/libpam_visage.so /lib/security/pam_visage.so
 
 # Create directories and config
-sudo mkdir -p /etc/howdy /var/lib/howdy/models /run/howdy /var/log/howdy/snapshots
-sudo cp dev/config.toml /etc/howdy/config.toml
-# Edit /etc/howdy/config.toml — set device.path, enable security.require_ir, etc.
+sudo mkdir -p /etc/visage /var/lib/visage/models /run/visage /var/log/visage/snapshots
+sudo cp dev/config.toml /etc/visage/config.toml
+# Edit /etc/visage/config.toml — set device.path, enable security.require_ir, etc.
 
 # Copy models
-sudo cp models/*.onnx /var/lib/howdy/models/
+sudo cp models/*.onnx /var/lib/visage/models/
 
 # Back up your sudo PAM config
 sudo cp /etc/pam.d/sudo /etc/pam.d/sudo.bak
 
-# Add howdy to sudo (ONLY sudo first, never system-auth)
+# Add visage to sudo (ONLY sudo first, never system-auth)
 # Add this line at the TOP of /etc/pam.d/sudo:
-#   auth  sufficient  pam_howdy.so
+#   auth  sufficient  pam_visage.so
 
 # Test in a NEW terminal (keep root shell open!)
 sudo echo "it works"
@@ -190,11 +190,11 @@ perfectly. Never close your root shell until you've verified everything works.
 
 | What | Path |
 |------|------|
-| Config | `dev/config.toml` (via `HOWDY_CONFIG`) |
-| Socket | `/tmp/howdy-dev.sock` |
-| Database | `/tmp/howdy-dev.db` |
+| Config | `dev/config.toml` (via `VISAGE_CONFIG`) |
+| Socket | `/tmp/visage-dev.sock` |
+| Database | `/tmp/visage-dev.db` |
 | Models | `./models/` |
-| Snapshots | `/tmp/howdy-dev-snapshots/` |
+| Snapshots | `/tmp/visage-dev-snapshots/` |
 
 Security checks disabled for development:
 - `require_ir = false` — allows RGB webcams

@@ -4,7 +4,7 @@
 
 ## The Golden Rule
 
-**Never install `pam_howdy.so` on the host or edit `/etc/pam.d/*` until validated in both container and VM.** A broken PAM module can lock you out of sudo, login, and su.
+**Never install `pam_visage.so` on the host or edit `/etc/pam.d/*` until validated in both container and VM.** A broken PAM module can lock you out of sudo, login, and su.
 
 ## Testing Tiers
 
@@ -49,8 +49,8 @@ Build container, install PAM module inside, test with `pamtester`.
 FROM archlinux:latest
 RUN pacman -Syu --noconfirm pam pamtester sudo
 RUN useradd -m testuser && echo "testuser:test" | chpasswd
-COPY target/release/libpam_howdy.so /lib/security/pam_howdy.so
-COPY test/pam.d/howdy-test /etc/pam.d/howdy-test
+COPY target/release/libpam_visage.so /lib/security/pam_visage.so
+COPY test/pam.d/visage-test /etc/pam.d/visage-test
 ```
 
 Test cases:
@@ -61,7 +61,7 @@ Test cases:
 5. Falls through to password when face fails
 6. Works with sudo integration (daemon running in container)
 
-Run: `podman build -f test/Containerfile -t howdy-test . && podman run howdy-test`
+Run: `podman build -f test/Containerfile -t visage-test . && podman run visage-test`
 
 ### Tier 4: VM Testing (Disposable VM with Snapshots)
 
@@ -79,7 +79,7 @@ Or virtual V4L2 device for deterministic tests.
 Safety checklist:
 1. Open a root shell in a separate terminal (keep it open throughout)
 2. Back up: `sudo cp /etc/pam.d/sudo /etc/pam.d/sudo.bak`
-3. Add ONLY to `/etc/pam.d/sudo`: `auth sufficient pam_howdy.so`
+3. Add ONLY to `/etc/pam.d/sudo`: `auth sufficient pam_visage.so`
 4. Test in a NEW terminal: `sudo echo test`
 5. If it hangs or fails, revert with the root shell: `cp /etc/pam.d/sudo.bak /etc/pam.d/sudo`
 6. NEVER modify `/etc/pam.d/system-auth` or `/etc/pam.d/login` until sudo works perfectly
@@ -89,15 +89,15 @@ Emergency recovery (if locked out):
 
 ## Development Safety
 
-### HOWDY_CONFIG Environment Variable
+### VISAGE_CONFIG Environment Variable
 
-All crates must support `HOWDY_CONFIG` env var, checked before `/etc/howdy/config.toml`:
+All crates must support `VISAGE_CONFIG` env var, checked before `/etc/visage/config.toml`:
 
 ```rust
 fn config_path() -> PathBuf {
-    std::env::var("HOWDY_CONFIG")
+    std::env::var("VISAGE_CONFIG")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/etc/howdy/config.toml"))
+        .unwrap_or_else(|_| PathBuf::from("/etc/visage/config.toml"))
 }
 ```
 
@@ -110,11 +110,11 @@ Create `dev/config.toml` with local paths (no root required):
 path = "/dev/video2"
 
 [daemon]
-socket_path = "/tmp/howdy-dev.sock"
+socket_path = "/tmp/visage-dev.sock"
 model_dir = "./models"
 
 [storage]
-db_path = "/tmp/howdy-dev.db"
+db_path = "/tmp/visage-dev.db"
 
 [security]
 abort_if_ssh = false
@@ -124,12 +124,12 @@ abort_if_lid_closed = false
 ### Dev Workflow (No Root Required)
 
 ```bash
-export HOWDY_CONFIG=dev/config.toml
+export VISAGE_CONFIG=dev/config.toml
 cargo build --workspace
-cargo run --bin howdy-daemon &    # starts with dev config
-cargo run --bin howdy -- setup    # downloads models to ./models
-cargo run --bin howdy -- enroll   # captures face
-cargo run --bin howdy -- test     # tests recognition
+cargo run --bin visage-daemon &    # starts with dev config
+cargo run --bin visage -- setup    # downloads models to ./models
+cargo run --bin visage -- enroll   # captures face
+cargo run --bin visage -- test     # tests recognition
 ```
 
 ## CI Test Script
@@ -148,11 +148,11 @@ echo "=== Build Check ==="
 cargo build --workspace --release
 
 echo "=== PAM Symbol Verification ==="
-nm -D target/release/libpam_howdy.so | grep -q pam_sm_authenticate
-nm -D target/release/libpam_howdy.so | grep -q pam_sm_setcred
+nm -D target/release/libpam_visage.so | grep -q pam_sm_authenticate
+nm -D target/release/libpam_visage.so | grep -q pam_sm_setcred
 
 echo "=== PAM Size Check ==="
-size=$(stat -c%s target/release/libpam_howdy.so)
+size=$(stat -c%s target/release/libpam_visage.so)
 if [ "$size" -gt 1048576 ]; then
     echo "WARNING: PAM module is ${size} bytes (>1MB)"
 fi
@@ -166,4 +166,4 @@ echo "=== All automated checks passed ==="
 - `test/Containerfile` -- PAM container test image (spec 12)
 - `test/run-tests.sh` -- CI test script (spec 12)
 - `test/run-container-tests.sh` -- container PAM tests (spec 12)
-- `test/pam.d/howdy-test` -- test PAM config for container (spec 12)
+- `test/pam.d/visage-test` -- test PAM config for container (spec 12)

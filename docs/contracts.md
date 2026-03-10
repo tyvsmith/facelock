@@ -6,24 +6,24 @@ Stable contracts that agents must not change without orchestrator approval and e
 
 | Binary | Package | Purpose |
 |--------|---------|---------|
-| `howdy` | howdy-cli | User-facing CLI |
-| `howdy-daemon` | howdy-daemon | Persistent authentication daemon |
-| `pam_howdy.so` | pam-howdy | PAM authentication module |
+| `visage` | visage-cli | User-facing CLI |
+| `visage-daemon` | visage-daemon | Persistent authentication daemon |
+| `pam_visage.so` | pam-visage | PAM authentication module |
 
 ## Filesystem Paths
 
 | Path | Owner | Purpose |
 |------|-------|---------|
-| `/etc/howdy/config.toml` | root | System configuration |
-| `/var/lib/howdy/howdy.db` | root | SQLite face embedding database |
-| `/var/lib/howdy/models/` | root | ONNX model files |
-| `/var/log/howdy/snapshots/` | root | Auth snapshot images |
-| `/run/howdy/howdy.sock` | howdy-daemon | Unix domain socket |
-| `/usr/bin/howdy` | package | CLI binary |
-| `/usr/bin/howdy-daemon` | package | Daemon binary |
-| `/lib/security/pam_howdy.so` | package | PAM module |
+| `/etc/visage/config.toml` | root | System configuration |
+| `/var/lib/visage/visage.db` | root | SQLite face embedding database |
+| `/var/lib/visage/models/` | root | ONNX model files |
+| `/var/log/visage/snapshots/` | root | Auth snapshot images |
+| `/run/visage/visage.sock` | visage-daemon | Unix domain socket |
+| `/usr/bin/visage` | package | CLI binary |
+| `/usr/bin/visage-daemon` | package | Daemon binary |
+| `/lib/security/pam_visage.so` | package | PAM module |
 
-All paths overridable via config. `HOWDY_CONFIG` env var overrides config file location for development.
+All paths overridable via config. `VISAGE_CONFIG` env var overrides config file location for development.
 
 ## Config Schema
 
@@ -124,13 +124,13 @@ Optional higher-accuracy models:
 
 | Path | Owner | Mode | Rationale |
 |------|-------|------|-----------|
-| `/etc/howdy/config.toml` | root:root | 644 | Config readable by all, writable by root |
-| `/var/lib/howdy/howdy.db` | root:howdy | 640 | Biometric data, restricted read |
-| `/var/lib/howdy/models/*.onnx` | root:root | 644 | Models readable by daemon |
-| `/var/lib/howdy/models/` | root:root | 755 | Directory listing |
-| `/run/howdy/howdy.sock` | root:howdy | 660 | IPC restricted to root + howdy group |
-| `/lib/security/pam_howdy.so` | root:root | 755 | PAM module |
-| `/var/log/howdy/` | root:howdy | 750 | Auth snapshots, restricted |
+| `/etc/visage/config.toml` | root:root | 644 | Config readable by all, writable by root |
+| `/var/lib/visage/visage.db` | root:visage | 640 | Biometric data, restricted read |
+| `/var/lib/visage/models/*.onnx` | root:root | 644 | Models readable by daemon |
+| `/var/lib/visage/models/` | root:root | 755 | Directory listing |
+| `/run/visage/visage.sock` | root:visage | 660 | IPC restricted to root + visage group |
+| `/lib/security/pam_visage.so` | root:root | 755 | PAM module |
+| `/var/log/visage/` | root:visage | 750 | Auth snapshots, restricted |
 
 ## Anti-Spoofing Contract
 
@@ -144,7 +144,7 @@ Optional higher-accuracy models:
 ## Audit Logging Contract
 
 All PAM authentication attempts must be logged to syslog (LOG_AUTH facility):
-- Format: `pam_howdy(<service>): <result> for user <username>`
+- Format: `pam_visage(<service>): <result> for user <username>`
 - Results: `success`, `no_match`, `timeout`, `error: <reason>`, `rate_limited`, `disabled`, `ir_required`
 - Daemon must also log auth attempts with timestamps and similarity scores via tracing
 

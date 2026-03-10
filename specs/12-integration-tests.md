@@ -8,9 +8,9 @@ Comprehensive integration testing across all tiers. Validates the full system wo
 
 ## Test Categories
 
-### IPC Round-Trip Tests (howdy-core)
+### IPC Round-Trip Tests (visage-core)
 
-Location: `crates/howdy-core/tests/ipc_integration.rs`
+Location: `crates/visage-core/tests/ipc_integration.rs`
 
 - Serialize/deserialize all DaemonRequest variants
 - Serialize/deserialize all DaemonResponse variants
@@ -18,9 +18,9 @@ Location: `crates/howdy-core/tests/ipc_integration.rs`
 - Timeout: socket pair without send, verify recv_message times out
 - Malformed: truncated message, corrupt bincode
 
-### Store Lifecycle Tests (howdy-store)
+### Store Lifecycle Tests (visage-store)
 
-Location: `crates/howdy-store/tests/store_integration.rs`
+Location: `crates/visage-store/tests/store_integration.rs`
 
 - Full lifecycle: add -> list -> retrieve -> remove
 - Multi-user: alice and bob with separate models
@@ -28,9 +28,9 @@ Location: `crates/howdy-store/tests/store_integration.rs`
 - Concurrent access: two FaceStore instances on same file
 - Schema migration: open old DB, verify migration runs
 
-### Face Engine Tests (howdy-face, #[ignore])
+### Face Engine Tests (visage-face, #[ignore])
 
-Location: `crates/howdy-face/tests/engine_integration.rs`
+Location: `crates/visage-face/tests/engine_integration.rs`
 
 Requires downloaded ONNX models + test images in `tests/fixtures/`.
 
@@ -41,9 +41,9 @@ Requires downloaded ONNX models + test images in `tests/fixtures/`.
 - Embedding L2 norm = 1.0
 - NMS produces fewer detections than raw output
 
-### Daemon Integration Tests (howdy-daemon, #[ignore])
+### Daemon Integration Tests (visage-daemon, #[ignore])
 
-Location: `crates/howdy-daemon/tests/daemon_integration.rs`
+Location: `crates/visage-daemon/tests/daemon_integration.rs`
 
 - Start test daemon (temp dir for socket, DB)
 - Ping -> Ok
@@ -53,30 +53,30 @@ Location: `crates/howdy-daemon/tests/daemon_integration.rs`
 - RemoveModel -> Removed
 - Shutdown -> Ok, daemon exits
 
-### CLI Smoke Tests (howdy-cli)
+### CLI Smoke Tests (visage-cli)
 
-Location: `crates/howdy-cli/tests/cli_smoke.rs`
+Location: `crates/visage-cli/tests/cli_smoke.rs`
 
-- `howdy --help` exits 0
-- `howdy --version` exits 0
-- `howdy status` runs without daemon (reports daemon as down)
-- `howdy devices` runs without camera (may show empty list)
-- `howdy config` shows config path
+- `visage --help` exits 0
+- `visage --version` exits 0
+- `visage status` runs without daemon (reports daemon as down)
+- `visage devices` runs without camera (may show empty list)
+- `visage config` shows config path
 
 ### PAM Module Verification
 
 Automated checks (in CI):
 ```bash
 # Symbol exports
-nm -D target/release/libpam_howdy.so | grep -q pam_sm_authenticate
-nm -D target/release/libpam_howdy.so | grep -q pam_sm_setcred
+nm -D target/release/libpam_visage.so | grep -q pam_sm_authenticate
+nm -D target/release/libpam_visage.so | grep -q pam_sm_setcred
 
 # Size check
-size=$(stat -c%s target/release/libpam_howdy.so)
+size=$(stat -c%s target/release/libpam_visage.so)
 [ "$size" -lt 1048576 ]  # < 1MB
 
 # Dependency check (should be minimal)
-ldd target/release/libpam_howdy.so
+ldd target/release/libpam_visage.so
 ```
 
 ### PAM Container Tests
@@ -89,11 +89,11 @@ RUN pacman -Syu --noconfirm pam pamtester sudo
 RUN useradd -m testuser && echo "testuser:test" | chpasswd
 
 # Copy built artifacts
-COPY target/release/libpam_howdy.so /lib/security/pam_howdy.so
-COPY target/release/howdy-daemon /usr/bin/howdy-daemon
-COPY target/release/howdy /usr/bin/howdy
-COPY test/pam.d/howdy-test /etc/pam.d/howdy-test
-COPY dev/config.toml /etc/howdy/config.toml
+COPY target/release/libpam_visage.so /lib/security/pam_visage.so
+COPY target/release/visage-daemon /usr/bin/visage-daemon
+COPY target/release/visage /usr/bin/visage
+COPY test/pam.d/visage-test /etc/pam.d/visage-test
+COPY dev/config.toml /etc/visage/config.toml
 
 # Test script
 COPY test/run-container-tests.sh /run-tests.sh
@@ -102,15 +102,15 @@ CMD ["/run-tests.sh"]
 ```
 
 Container test cases:
-1. Module loads: `pamtester howdy-test testuser authenticate` returns (doesn't crash)
+1. Module loads: `pamtester visage-test testuser authenticate` returns (doesn't crash)
 2. PAM_IGNORE when daemon not running: exit code indicates fallthrough
 3. Missing config: returns PAM_IGNORE
 4. Disabled config: returns PAM_IGNORE
 5. With daemon running: Ping works, auth attempted
 
-Test PAM config (`test/pam.d/howdy-test`):
+Test PAM config (`test/pam.d/visage-test`):
 ```
-auth  sufficient  pam_howdy.so
+auth  sufficient  pam_visage.so
 auth  required    pam_permit.so
 ```
 
@@ -119,7 +119,7 @@ auth  required    pam_permit.so
 - `test/Containerfile`
 - `test/run-tests.sh` (CI script, Tier 1 + build + PAM symbol check)
 - `test/run-container-tests.sh` (container PAM tests)
-- `test/pam.d/howdy-test`
+- `test/pam.d/visage-test`
 - `tests/fixtures/` (test images for face engine tests)
 
 ## Acceptance Criteria
@@ -139,5 +139,5 @@ auth  required    pam_permit.so
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 bash test/run-tests.sh
-podman build -f test/Containerfile -t howdy-test . && podman run howdy-test
+podman build -f test/Containerfile -t visage-test . && podman run visage-test
 ```
