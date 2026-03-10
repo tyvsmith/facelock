@@ -18,6 +18,7 @@ pub enum DaemonRequest {
     PreviewFrame,
     /// Preview with face detection + recognition against the given user's models.
     PreviewDetectFrame { user: String },
+    ListDevices,
     ReleaseCamera,
     Ping,
     Shutdown,
@@ -39,6 +40,24 @@ pub struct PreviewFace {
     pub recognized: bool,
 }
 
+/// Information about a V4L2 video device, returned via IPC.
+#[derive(Debug, Clone, Encode, Decode)]
+pub struct IpcDeviceInfo {
+    pub path: String,
+    pub name: String,
+    pub driver: String,
+    pub is_ir: bool,
+    pub formats: Vec<IpcFormatInfo>,
+}
+
+/// A supported pixel format with available resolutions.
+#[derive(Debug, Clone, Encode, Decode)]
+pub struct IpcFormatInfo {
+    pub fourcc: String,
+    pub description: String,
+    pub sizes: Vec<(u32, u32)>,
+}
+
 #[derive(Debug, Clone, Encode, Decode)]
 pub enum DaemonResponse {
     AuthResult(MatchResult),
@@ -51,6 +70,7 @@ pub enum DaemonResponse {
         jpeg_data: Vec<u8>,
         faces: Vec<PreviewFace>,
     },
+    Devices(Vec<IpcDeviceInfo>),
     Ok,
     Error { message: String },
 }

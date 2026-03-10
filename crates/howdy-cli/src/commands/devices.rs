@@ -1,81 +1,66 @@
-use std::fs;
-use std::path::Path;
+use anyhow::Context;
+use howdy_core::ipc::{DaemonRequest, DaemonResponse};
+use howdy_core::Config;
+
+use crate::ipc_client;
 
 pub fn run() -> anyhow::Result<()> {
-    println!("Available video devices:\n");
+    let config = Config::load().context("failed to load config")?;
 
-    let mut found = false;
+    let response = ipc_client::send_request(&config.daemon.socket_path, &DaemonRequest::ListDevices)
+        .context("failed to query daemon — is howdy-daemon running?")?;
 
-    // Enumerate /dev/video* devices
-    let dev_dir = Path::new("/dev");
-    if let Ok(entries) = fs::read_dir(dev_dir) {
-        let mut video_devices: Vec<_> = entries
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with("video")
-            })
-            .collect();
-
-        video_devices.sort_by_key(|e| e.file_name());
-
-        for entry in &video_devices {
-            let path = entry.path();
-            let name = read_sysfs_name(&path);
-            let driver = read_sysfs_driver(&path);
-
-            println!("  {}", path.display());
-            if let Some(name) = &name {
-                println!("    Name:   {name}");
+    match response {
+        DaemonResponse::Devices(devices) => {
+            if devices.is_empty() {
+                println!("No video devices found.");
+                println!("Check that your camera is connected and the v4l2 module is loaded.");
+                return Ok(());
             }
-            if let Some(driver) = &driver {
-                println!("    Driver: {driver}");
+
+            println!("Available video devices:\n");
+            for dev in &devices {
+                let ir_tag = if dev.is_ir { " [IR]" } else { "" };
+                println!("  {}{ir_tag}", dev.path);
+                println!("    Name:    {}", dev.name);
+                println!("    Driver:  {}", dev.driver);
+
+                if !dev.formats.is_empty() {
+                    println!("    Formats:");
+                    for fmt in &dev.formats {
+                        let sizes: Vec<String> = fmt
+                            .sizes
+                            .iter()
+                            .map(|(w, h)| format!("{w}x{h}"))
+                            .collect();
+                        println!(
+                            "      {} ({}) — {}",
+                            fmt.fourcc.trim(),
+                            fmt.description,
+                            if sizes.is_empty() {
+                                "no sizes reported".to_string()
+                            } else {
+                                sizes.join(", ")
+                            }
+                        );
+                    }
+                }
+                println!();
             }
-            println!();
-            found = true;
         }
-    }
-
-    if !found {
-        println!("  No video devices found.");
-        println!("  Check that your camera is connected and the v4l2 module is loaded.");
+        DaemonResponse::Error { message } => {
+            anyhow::bail!("daemon error: {message}");
+        }
+        _ => {
+            anyhow::bail!("unexpected response from daemon");
+        }
     }
 
     Ok(())
 }
 
-/// Try to read the device name from sysfs.
-fn read_sysfs_name(dev_path: &Path) -> Option<String> {
-    let dev_name = dev_path.file_name()?.to_string_lossy();
-    let sysfs_path = format!("/sys/class/video4linux/{dev_name}/name");
-    fs::read_to_string(sysfs_path).ok().map(|s| s.trim().to_string())
-}
-
-/// Try to read the driver name from sysfs.
-fn read_sysfs_driver(dev_path: &Path) -> Option<String> {
-    let dev_name = dev_path.file_name()?.to_string_lossy();
-    // The driver is typically a symlink under the device directory
-    let sysfs_path = format!("/sys/class/video4linux/{dev_name}/device/driver");
-    let driver_link = fs::read_link(sysfs_path).ok()?;
-    driver_link
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn read_sysfs_name_nonexistent() {
-        let result = read_sysfs_name(Path::new("/dev/nonexistent_device"));
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn read_sysfs_driver_nonexistent() {
-        let result = read_sysfs_driver(Path::new("/dev/nonexistent_device"));
-        assert!(result.is_none());
-    }
+    // Device listing requires a running daemon, so no unit tests here.
+    // Integration tests are in the daemon crate.
 }

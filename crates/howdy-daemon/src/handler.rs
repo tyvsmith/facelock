@@ -2,7 +2,8 @@ use std::time::{Duration, Instant};
 
 use howdy_camera::Camera;
 use howdy_core::config::Config;
-use howdy_core::ipc::{DaemonRequest, DaemonResponse, PreviewFace};
+use howdy_camera::{is_ir_camera, list_devices};
+use howdy_core::ipc::{DaemonRequest, DaemonResponse, IpcDeviceInfo, IpcFormatInfo, PreviewFace};
 use howdy_face::FaceEngine;
 use howdy_store::FaceStore;
 use image::codecs::jpeg::JpegEncoder;
@@ -164,6 +165,32 @@ impl Handler {
                 Ok(_) => DaemonResponse::Removed,
                 Err(e) => DaemonResponse::Error {
                     message: format!("storage error: {e}"),
+                },
+            },
+
+            DaemonRequest::ListDevices => match list_devices() {
+                Ok(devices) => DaemonResponse::Devices(
+                    devices
+                        .iter()
+                        .map(|d| IpcDeviceInfo {
+                            path: d.path.clone(),
+                            name: d.name.clone(),
+                            driver: d.driver.clone(),
+                            is_ir: is_ir_camera(d),
+                            formats: d
+                                .formats
+                                .iter()
+                                .map(|f| IpcFormatInfo {
+                                    fourcc: f.fourcc.clone(),
+                                    description: f.description.clone(),
+                                    sizes: f.sizes.clone(),
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                ),
+                Err(e) => DaemonResponse::Error {
+                    message: format!("device enumeration error: {e}"),
                 },
             },
 
