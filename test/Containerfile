@@ -22,8 +22,13 @@ COPY test/pam.d/visage-test /etc/pam.d/visage-test
 RUN mkdir -p /etc/visage
 COPY dev/config.toml /etc/visage/config.toml
 
-# Copy test script
+# Copy models for integration tests
+COPY models/*.onnx /models/
+COPY models/manifest.toml /models/manifest.toml
+
+# Copy test scripts
 COPY test/run-container-tests.sh /run-tests.sh
-RUN chmod +x /run-tests.sh
+COPY test/run-integration-tests.sh /run-integration-tests.sh
+RUN chmod +x /run-tests.sh /run-integration-tests.sh
 
 CMD ["/run-tests.sh"]

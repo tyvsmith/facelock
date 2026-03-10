@@ -30,9 +30,9 @@ echo "=== Integration Tests (with camera) ==="
 echo ""
 
 # Write container config with correct paths
+# device.path omitted — daemon auto-detects the camera
 cat > /etc/visage/config.toml <<'CONF'
 [device]
-path = "/dev/video2"
 max_height = 480
 
 [recognition]
