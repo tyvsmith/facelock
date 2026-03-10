@@ -80,7 +80,8 @@ mod tests {
     fn full_pipeline_requires_models() {
         // This test requires actual ONNX model files
         let config = RecognitionConfig::default();
-        let model_dir = Path::new("/usr/share/visage/models");
+        let model_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../models");
+        let model_dir = model_dir.as_path();
         let mut engine = FaceEngine::load(&config, model_dir).unwrap();
 
         let frame = Frame {
