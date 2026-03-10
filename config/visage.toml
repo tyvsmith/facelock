@@ -13,6 +13,7 @@
 # nms_threshold = 0.4    # Non-maximum suppression threshold
 
 [daemon]
+# mode = "daemon"        # "daemon" (default) or "oneshot" (no daemon needed)
 # socket_path = "/run/visage/visage.sock"
 # model_dir = "/var/lib/visage/models"
 # idle_timeout_secs = 0  # Socket-activated idle shutdown (0 = disabled)

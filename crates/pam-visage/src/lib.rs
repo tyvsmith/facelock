@@ -56,12 +56,16 @@ struct PamConfig {
 struct PamDaemonConfig {
     #[serde(default = "default_socket")]
     socket_path: String,
+    /// "daemon" (default) or "oneshot"
+    #[serde(default = "default_mode")]
+    mode: String,
 }
 
 impl Default for PamDaemonConfig {
     fn default() -> Self {
         Self {
             socket_path: default_socket(),
+            mode: default_mode(),
         }
     }
 }
@@ -121,6 +125,10 @@ fn default_socket() -> String {
 
 fn default_timeout() -> u32 {
     DEFAULT_TIMEOUT_SECS
+}
+
+fn default_mode() -> String {
+    "daemon".to_string()
 }
 
 fn default_true() -> bool {
@@ -460,6 +468,95 @@ fn load_config() -> Result<PamConfig, String> {
 }
 
 // ---------------------------------------------------------------------------
+// One-shot authentication (daemonless)
+// ---------------------------------------------------------------------------
+
+const VISAGE_AUTH_BIN: &str = "/usr/bin/visage-auth";
+
+/// Run visage-auth as a subprocess for daemonless authentication.
+/// Exit codes: 0 = matched, 1 = no match, 2+ = error.
+fn run_oneshot_auth(service: &str, user: &str, config: &PamConfig) -> libc::c_int {
+    use std::process::Command;
+
+    let timeout_secs = config.recognition.timeout_secs as u64 + 3; // buffer for model load
+
+    // Resolve config path (same logic as load_config)
+    let config_path = std::env::var("VISAGE_CONFIG")
+        .unwrap_or_else(|_| DEFAULT_CONFIG_PATH.to_string());
+
+    let result = Command::new(VISAGE_AUTH_BIN)
+        .arg("--user")
+        .arg(user)
+        .arg("--config")
+        .arg(&config_path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn();
+
+    let mut child = match result {
+        Ok(c) => c,
+        Err(e) => {
+            log_auth(
+                service,
+                &format!("error: oneshot_spawn: {e}"),
+                user,
+                LOG_WARNING,
+            );
+            return PAM_IGNORE;
+        }
+    };
+
+    // Wait with timeout
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(timeout_secs);
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let code = status.code().unwrap_or(2);
+                return match code {
+                    0 => {
+                        log_auth(service, "success (oneshot)", user, LOG_INFO);
+                        PAM_SUCCESS
+                    }
+                    1 => {
+                        log_auth(service, "no_match (oneshot)", user, LOG_INFO);
+                        PAM_AUTH_ERR
+                    }
+                    _ => {
+                        log_auth(
+                            service,
+                            &format!("error: oneshot_exit={code}"),
+                            user,
+                            LOG_WARNING,
+                        );
+                        PAM_IGNORE
+                    }
+                };
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    log_auth(service, "timeout (oneshot)", user, LOG_WARNING);
+                    return PAM_AUTH_ERR;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => {
+                log_auth(
+                    service,
+                    &format!("error: oneshot_wait: {e}"),
+                    user,
+                    LOG_WARNING,
+                );
+                return PAM_IGNORE;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Core authentication logic
 // ---------------------------------------------------------------------------
 
@@ -521,7 +618,12 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
         }
     };
 
-    // 4. Connect to daemon socket
+    // 4. Oneshot mode: run visage-auth directly, skip the socket
+    if config.daemon.mode == "oneshot" {
+        return run_oneshot_auth(&service, &user, &config);
+    }
+
+    // 5. Daemon mode: connect to daemon socket
     let socket_path = &config.daemon.socket_path;
     let stream = UnixStream::connect(socket_path);
     let mut stream = match stream {

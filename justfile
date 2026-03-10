@@ -55,6 +55,17 @@ test-integration: build
     done
     podman run --rm $devices visage-pam-test /run-integration-tests.sh
 
+# Run oneshot (daemonless) end-to-end tests in container (requires camera)
+test-oneshot: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build -t visage-pam-test -f test/Containerfile .
+    devices=""
+    for d in /dev/video*; do
+        [ -e "$d" ] && devices="$devices --device $d"
+    done
+    podman run --rm $devices visage-pam-test /run-oneshot-tests.sh
+
 # Open interactive shell in PAM test container (requires camera)
 test-shell: build
     #!/usr/bin/env bash

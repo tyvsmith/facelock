@@ -9,6 +9,10 @@ license.workspace = true
 name = "visage-daemon"
 path = "src/main.rs"
 
+[[bin]]
+name = "visage-auth"
+path = "src/auth_oneshot.rs"
+
 [dependencies]
 visage-core = { path = "../visage-core" }
 visage-camera = { path = "../visage-camera" }

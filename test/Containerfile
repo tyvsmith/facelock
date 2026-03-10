@@ -16,6 +16,7 @@ RUN useradd -m testuser && echo "testuser:test" | chpasswd
 COPY target/release/libpam_visage.so /lib/security/pam_visage.so
 COPY target/release/visage-daemon /usr/bin/visage-daemon
 COPY target/release/visage /usr/bin/visage
+COPY target/release/visage-auth /usr/bin/visage-auth
 COPY test/pam.d/visage-test /etc/pam.d/visage-test
 
 # Create config directory and copy dev config
@@ -29,6 +30,7 @@ COPY models/manifest.toml /models/manifest.toml
 # Copy test scripts
 COPY test/run-container-tests.sh /run-tests.sh
 COPY test/run-integration-tests.sh /run-integration-tests.sh
-RUN chmod +x /run-tests.sh /run-integration-tests.sh
+COPY test/run-oneshot-tests.sh /run-oneshot-tests.sh
+RUN chmod +x /run-tests.sh /run-integration-tests.sh /run-oneshot-tests.sh
 
 CMD ["/run-tests.sh"]

@@ -86,6 +86,10 @@ pub struct DaemonConfig {
     pub model_dir: String,
     #[serde(default)]
     pub idle_timeout_secs: u64,
+    /// "daemon" (default) or "oneshot". In oneshot mode the PAM module
+    /// runs visage-auth directly instead of connecting to the daemon socket.
+    #[serde(default = "default_mode")]
+    pub mode: String,
 }
 
 impl Default for DaemonConfig {
@@ -94,6 +98,7 @@ impl Default for DaemonConfig {
             socket_path: default_socket(),
             model_dir: default_model_dir(),
             idle_timeout_secs: 0,
+            mode: default_mode(),
         }
     }
 }
@@ -263,6 +268,9 @@ fn default_max_attempts() -> u32 {
 }
 fn default_window_secs() -> u64 {
     60
+}
+fn default_mode() -> String {
+    "daemon".to_string()
 }
 fn default_pcr_indices() -> Vec<u32> {
     vec![0, 1, 2, 3, 7]
