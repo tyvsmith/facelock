@@ -101,8 +101,6 @@ abort_if_lid_closed = false
 max_attempts = 5
 window_secs = 60
 
-[debug]
-verbose = true
 "#
     )
 }

@@ -30,8 +30,6 @@ pub struct Config {
     #[serde(default)]
     pub snapshots: SnapshotConfig,
     #[serde(default)]
-    pub debug: DebugConfig,
-    #[serde(default)]
     pub tpm: TpmConfig,
 }
 
@@ -78,6 +76,17 @@ impl Default for RecognitionConfig {
     }
 }
 
+/// How the PAM module reaches the face engine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DaemonMode {
+    /// Connect to a running visage-daemon via Unix socket.
+    #[default]
+    Daemon,
+    /// Run visage-auth per PAM call (no daemon needed).
+    Oneshot,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonConfig {
     #[serde(default = "default_socket")]
@@ -86,10 +95,8 @@ pub struct DaemonConfig {
     pub model_dir: String,
     #[serde(default)]
     pub idle_timeout_secs: u64,
-    /// "daemon" (default) or "oneshot". In oneshot mode the PAM module
-    /// runs visage-auth directly instead of connecting to the daemon socket.
-    #[serde(default = "default_mode")]
-    pub mode: String,
+    #[serde(default)]
+    pub mode: DaemonMode,
 }
 
 impl Default for DaemonConfig {
@@ -98,7 +105,7 @@ impl Default for DaemonConfig {
             socket_path: default_socket(),
             model_dir: default_model_dir(),
             idle_timeout_secs: 0,
-            mode: default_mode(),
+            mode: DaemonMode::default(),
         }
     }
 }
@@ -200,12 +207,6 @@ pub struct SnapshotConfig {
     pub dir: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct DebugConfig {
-    #[serde(default)]
-    pub verbose: bool,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TpmConfig {
     #[serde(default)]
@@ -268,9 +269,6 @@ fn default_max_attempts() -> u32 {
 }
 fn default_window_secs() -> u64 {
     60
-}
-fn default_mode() -> String {
-    "daemon".to_string()
 }
 fn default_pcr_indices() -> Vec<u32> {
     vec![0, 1, 2, 3, 7]
@@ -390,8 +388,6 @@ enabled = false
 enabled = true
 dir = "/tmp/snaps"
 
-[debug]
-verbose = true
 "#;
         let config = Config::parse(toml).unwrap();
         assert_eq!(config.device.path.as_deref(), Some("/dev/video2"));
@@ -402,7 +398,6 @@ verbose = true
         assert_eq!(config.daemon.socket_path, "/tmp/test.sock");
         assert!(!config.security.require_ir);
         assert_eq!(config.security.min_auth_frames, 5);
-        assert!(config.debug.verbose);
     }
 
     #[test]

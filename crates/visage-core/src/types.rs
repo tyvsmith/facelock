@@ -64,6 +64,38 @@ pub fn cosine_similarity(a: &FaceEmbedding, b: &FaceEmbedding) -> f32 {
     a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
 }
 
+/// Threshold below which consecutive embeddings are considered "varied enough"
+/// to rule out a static photo attack.
+pub const FRAME_VARIANCE_THRESHOLD: f32 = 0.998;
+
+/// Check that matched embeddings show sufficient variance (anti-photo-attack).
+/// Compares first vs last embedding — real faces produce micro-movements.
+pub fn check_frame_variance(embeddings: &[FaceEmbedding]) -> bool {
+    if embeddings.len() < 2 {
+        return false;
+    }
+    let sim = cosine_similarity(&embeddings[0], &embeddings[embeddings.len() - 1]);
+    sim < FRAME_VARIANCE_THRESHOLD
+}
+
+/// Find the best cosine similarity between an embedding and a set of stored embeddings.
+/// Returns (best_similarity, matching_model_id).
+pub fn best_match(
+    embedding: &FaceEmbedding,
+    stored: &[(u32, FaceEmbedding)],
+) -> (f32, Option<u32>) {
+    let mut best_sim: f32 = 0.0;
+    let mut best_id: Option<u32> = None;
+    for (model_id, stored_emb) in stored {
+        let sim = cosine_similarity(embedding, stored_emb);
+        if sim > best_sim {
+            best_sim = sim;
+            best_id = Some(*model_id);
+        }
+    }
+    (best_sim, best_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

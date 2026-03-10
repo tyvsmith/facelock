@@ -5,6 +5,6 @@ pub mod paths;
 pub mod traits;
 pub mod types;
 
-pub use config::Config;
+pub use config::{Config, DaemonMode};
 pub use error::{VisageError, Result};
 pub use traits::{CameraSource, FaceProcessor};

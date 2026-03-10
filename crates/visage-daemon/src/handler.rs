@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use visage_core::config::Config;
 use visage_core::ipc::{DaemonRequest, DaemonResponse, PreviewFace};
 use visage_core::traits::{CameraSource, FaceProcessor};
-use visage_core::types::cosine_similarity;
+use visage_core::types::best_match;
 use visage_store::FaceStore;
 use image::codecs::jpeg::JpegEncoder;
 use tracing::{debug, info};
@@ -15,13 +15,7 @@ use crate::rate_limit::RateLimiter;
 /// Type alias for the camera factory closure.
 type CameraFactory<C> = Box<dyn Fn(&Config) -> Result<C, String>>;
 
-/// Safety net: release camera if no request has used it for this long.
-/// This is only a fallback for crashed clients — normal release is via
-/// the explicit ReleaseCamera command.
 const CAMERA_DEBOUNCE: Duration = Duration::from_secs(10);
-
-/// Estimated JPEG size for a 640x480 frame at quality 60.
-/// Pre-allocating avoids repeated heap growth during encoding.
 const JPEG_BUF_CAPACITY: usize = 128 * 1024;
 
 pub struct Handler<C: CameraSource, E: FaceProcessor> {
@@ -60,31 +54,6 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         }
     }
 
-    /// Create a handler with a pre-opened camera (for testing).
-    #[cfg(test)]
-    pub fn with_camera(
-        config: Config,
-        camera: C,
-        engine: E,
-        store: FaceStore,
-        rate_limiter: RateLimiter,
-        device_is_ir: bool,
-    ) -> Self {
-        Self {
-            config,
-            engine,
-            store,
-            rate_limiter,
-            device_is_ir,
-            shutdown_requested: false,
-            camera: Some(camera),
-            camera_factory: None,
-            camera_last_used: Instant::now(),
-            jpeg_buf: Vec::with_capacity(JPEG_BUF_CAPACITY),
-        }
-    }
-
-    /// Release the camera if it hasn't been used recently (debounce safety net).
     pub fn maybe_release_camera(&mut self) {
         if self.camera.is_some() && self.camera_last_used.elapsed() > CAMERA_DEBOUNCE {
             debug!("releasing camera (debounce)");
@@ -92,7 +61,7 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         }
     }
 
-    fn acquire_camera(&mut self) -> Result<&mut C, DaemonResponse> {
+    fn acquire_camera(&mut self) -> Result<(), DaemonResponse> {
         if self.camera.is_none() {
             debug!("opening camera");
             if let Some(ref factory) = self.camera_factory {
@@ -107,7 +76,7 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
             }
         }
         self.camera_last_used = Instant::now();
-        Ok(self.camera.as_mut().unwrap())
+        Ok(())
     }
 
     fn release_camera(&mut self) {
@@ -145,36 +114,33 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                     return resp;
                 }
 
-                let camera = match self.acquire_camera() {
-                    Ok(c) => c as *mut C,
-                    Err(resp) => return resp,
-                };
-                // SAFETY: pointer valid for duration of this call; no other
-                // access to self.camera occurs during authenticate().
-                let camera = unsafe { &mut *camera };
+                if let Err(resp) = self.acquire_camera() {
+                    return resp;
+                }
+
+                // Split borrows: take camera out, run auth, put it back
+                let mut camera = self.camera.take().unwrap();
                 let result = auth::authenticate(
-                    camera,
+                    &mut camera,
                     &mut self.engine,
                     &self.store,
                     &self.config,
                     &user,
-                    self.device_is_ir,
                 );
-                // Auth is a one-shot operation — release camera when done
-                self.release_camera();
+                // Release camera after auth (one-shot operation)
+                drop(camera);
                 result
             }
 
             DaemonRequest::Enroll { user, label } => {
-                let camera = match self.acquire_camera() {
-                    Ok(c) => c as *mut C,
-                    Err(resp) => return resp,
-                };
-                let camera = unsafe { &mut *camera };
+                if let Err(resp) = self.acquire_camera() {
+                    return resp;
+                }
+
+                let mut camera = self.camera.take().unwrap();
                 let result =
-                    enroll::enroll(camera, &mut self.engine, &self.store, &self.config, &user, &label);
-                // Enroll is a one-shot operation — release camera when done
-                self.release_camera();
+                    enroll::enroll(&mut camera, &mut self.engine, &self.store, &self.config, &user, &label);
+                drop(camera);
                 result
             }
 
@@ -201,19 +167,13 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                 },
             },
 
-            DaemonRequest::ListDevices => {
-                // ListDevices uses V4L2 directly; in tests this won't be called.
-                // We return an empty list if no real camera subsystem is available.
-                DaemonResponse::Devices(Vec::new())
-            }
+            DaemonRequest::ListDevices => DaemonResponse::Devices(Vec::new()),
 
-            // Preview keeps the camera open across frames — the client
-            // sends ReleaseCamera when the preview window closes.
             DaemonRequest::PreviewFrame => {
-                let camera = match self.acquire_camera() {
-                    Ok(c) => c,
-                    Err(resp) => return resp,
-                };
+                if let Err(resp) = self.acquire_camera() {
+                    return resp;
+                }
+                let camera = self.camera.as_mut().unwrap();
                 match camera.capture_rgb_only() {
                     Ok(frame) => self.encode_frame_response(&frame.rgb, frame.width, frame.height),
                     Err(e) => DaemonResponse::Error {
@@ -222,14 +182,13 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                 }
             }
 
-            // Preview with face detection + recognition.
             DaemonRequest::PreviewDetectFrame { user } => {
-                let camera = match self.acquire_camera() {
-                    Ok(c) => c as *mut C,
-                    Err(resp) => return resp,
-                };
-                let camera = unsafe { &mut *camera };
-                match camera.capture() {
+                if let Err(resp) = self.acquire_camera() {
+                    return resp;
+                }
+                // Take camera for split borrow, put back after
+                let mut camera = self.camera.take().unwrap();
+                let result = match camera.capture() {
                     Ok(frame) => {
                         let faces = self.detect_and_match(&frame, &user);
                         self.jpeg_buf.clear();
@@ -242,7 +201,7 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                             image::ExtendedColorType::Rgb8,
                         ) {
                             Ok(()) => DaemonResponse::DetectFrame {
-                                jpeg_data: self.jpeg_buf.clone(),
+                                jpeg_data: std::mem::take(&mut self.jpeg_buf),
                                 faces,
                             },
                             Err(e) => DaemonResponse::Error {
@@ -253,7 +212,9 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                     Err(e) => DaemonResponse::Error {
                         message: format!("capture error: {e}"),
                     },
-                }
+                };
+                self.camera = Some(camera);
+                result
             }
         }
     }
@@ -263,7 +224,7 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         let mut encoder = JpegEncoder::new_with_quality(&mut self.jpeg_buf, 60);
         match encoder.encode(rgb, width, height, image::ExtendedColorType::Rgb8) {
             Ok(()) => DaemonResponse::Frame {
-                jpeg_data: self.jpeg_buf.clone(),
+                jpeg_data: std::mem::take(&mut self.jpeg_buf),
             },
             Err(e) => DaemonResponse::Error {
                 message: format!("JPEG encode error: {e}"),
@@ -284,22 +245,13 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
             }
         };
 
-        let stored = self
-            .store
-            .get_user_embeddings(user)
-            .unwrap_or_default();
+        let stored = self.store.get_user_embeddings(user).unwrap_or_default();
         let threshold = self.config.recognition.threshold;
 
         detections
             .into_iter()
             .map(|(det, embedding)| {
-                let mut best_sim: f32 = 0.0;
-                for (_model_id, stored_emb) in &stored {
-                    let sim = cosine_similarity(&embedding, stored_emb);
-                    if sim > best_sim {
-                        best_sim = sim;
-                    }
-                }
+                let (best_sim, _) = best_match(&embedding, &stored);
                 PreviewFace {
                     x: det.bbox.x,
                     y: det.bbox.y,
@@ -311,13 +263,5 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                 }
             })
             .collect()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn shutdown_flag_set() {
-        assert!(true);
     }
 }

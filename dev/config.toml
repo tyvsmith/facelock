@@ -24,6 +24,3 @@ require_frame_variance = true
 
 [snapshots]
 dir = "/tmp/visage-dev-snapshots"
-
-[debug]
-verbose = true

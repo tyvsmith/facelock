@@ -3,7 +3,7 @@ use std::time::Instant;
 use visage_core::config::Config;
 use visage_core::ipc::DaemonResponse;
 use visage_core::traits::{CameraSource, FaceProcessor};
-use visage_core::types::{cosine_similarity, FaceEmbedding, MatchResult};
+use visage_core::types::{best_match, check_frame_variance, FaceEmbedding, MatchResult};
 use visage_store::FaceStore;
 use tracing::{debug, info, warn};
 
@@ -81,12 +81,10 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
     store: &FaceStore,
     config: &Config,
     user: &str,
-    _device_is_ir: bool,
 ) -> DaemonResponse {
     let start = Instant::now();
-    let verbose = config.debug.verbose;
 
-    // Load user embeddings
+    // Load user embeddings + build label lookup
     let stored = match store.get_user_embeddings(user) {
         Ok(v) => v,
         Err(e) => {
@@ -95,20 +93,22 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
             };
         }
     };
+    let models = store.list_models(user).unwrap_or_default();
+    let label_for = |id: u32| -> Option<String> {
+        models.iter().find(|m| m.id == id).map(|m| m.label.clone())
+    };
 
     let deadline =
         Instant::now() + std::time::Duration::from_secs(config.recognition.timeout_secs as u64);
     let threshold = config.recognition.threshold;
     let mut best_similarity: f32 = 0.0;
-    // Store one embedding per matched frame (not per stored-embedding pair)
-    let mut matched_frame_embeddings: Vec<FaceEmbedding> = Vec::new();
+    let mut matched_frame_embeddings: Vec<FaceEmbedding> =
+        Vec::with_capacity(config.security.min_auth_frames as usize);
     let mut dark_count: u32 = 0;
     let mut frame_count: u32 = 0;
     let mut best_model_id: Option<u32> = None;
-    let mut best_label: Option<String> = None;
 
     while Instant::now() < deadline {
-        // Capture frame
         let frame = match camera.capture() {
             Ok(f) => f,
             Err(e) => {
@@ -118,16 +118,12 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
         };
         frame_count += 1;
 
-        // Skip dark frames
         if C::is_dark(&frame) {
             dark_count += 1;
-            if verbose {
-                debug!(frame = frame_count, "dark frame, skipping");
-            }
+            debug!(frame = frame_count, "dark frame, skipping");
             continue;
         }
 
-        // Run face engine
         let faces = match engine.process(&frame) {
             Ok(f) => f,
             Err(e) => {
@@ -137,35 +133,17 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
         };
 
         if faces.is_empty() {
-            if verbose {
-                debug!(frame = frame_count, "no faces detected");
-            }
+            debug!(frame = frame_count, "no faces detected");
             continue;
         }
 
-        // Matching (IR texture check skipped in generic path — only applies to real cameras)
         let mut frame_matched = false;
         for (_det, embedding) in &faces {
-            // Compare against all stored embeddings, track best for this frame
-            let mut frame_best_sim: f32 = 0.0;
-            for (model_id, stored_emb) in &stored {
-                let sim = cosine_similarity(embedding, stored_emb);
-                if sim > frame_best_sim {
-                    frame_best_sim = sim;
-                }
-                if sim > best_similarity {
-                    best_similarity = sim;
-                    best_model_id = Some(*model_id);
-                    best_label = store
-                        .list_models(user)
-                        .ok()
-                        .and_then(|models| {
-                            models
-                                .into_iter()
-                                .find(|m| m.id == *model_id)
-                                .map(|m| m.label)
-                        });
-                }
+            let (frame_best_sim, frame_best_id) = best_match(embedding, &stored);
+
+            if frame_best_sim > best_similarity {
+                best_similarity = frame_best_sim;
+                best_model_id = frame_best_id;
             }
 
             if frame_best_sim >= threshold && !frame_matched {
@@ -173,53 +151,40 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
                 frame_matched = true;
             }
 
-            if verbose {
-                let variance_info = if matched_frame_embeddings.len() >= 2 {
-                    let first = &matched_frame_embeddings[0];
-                    let last = &matched_frame_embeddings[matched_frame_embeddings.len() - 1];
-                    format!(", variance={:.4}", 1.0 - cosine_similarity(first, last))
-                } else {
-                    String::new()
-                };
-                debug!(
-                    frame = frame_count,
-                    "similarity={:.4}, matched_frames={}{variance_info}",
-                    frame_best_sim,
-                    matched_frame_embeddings.len(),
-                );
-            }
+            debug!(
+                frame = frame_count,
+                similarity = format!("{frame_best_sim:.4}"),
+                matched_frames = matched_frame_embeddings.len(),
+                "face comparison"
+            );
         }
 
         // Frame variance check
         if config.security.require_frame_variance {
-            if matched_frame_embeddings.len() >= config.security.min_auth_frames as usize {
-                if check_frame_variance(&matched_frame_embeddings) {
-                    let duration = start.elapsed();
-                    info!(
-                        user,
-                        similarity = format!("{:.4}", best_similarity),
-                        frames = frame_count,
-                        matched = matched_frame_embeddings.len(),
-                        duration_ms = duration.as_millis() as u64,
-                        "authentication succeeded"
-                    );
-                    return DaemonResponse::AuthResult(MatchResult {
-                        matched: true,
-                        model_id: best_model_id,
-                        label: best_label,
-                        similarity: best_similarity,
-                    });
-                }
-                if verbose {
-                    debug!("frame variance check failed, continuing");
-                }
+            if matched_frame_embeddings.len() >= config.security.min_auth_frames as usize
+                && check_frame_variance(&matched_frame_embeddings)
+            {
+                let duration = start.elapsed();
+                info!(
+                    user,
+                    similarity = format!("{best_similarity:.4}"),
+                    frames = frame_count,
+                    matched = matched_frame_embeddings.len(),
+                    duration_ms = duration.as_millis() as u64,
+                    "authentication succeeded"
+                );
+                return DaemonResponse::AuthResult(MatchResult {
+                    matched: true,
+                    model_id: best_model_id,
+                    label: best_model_id.and_then(&label_for),
+                    similarity: best_similarity,
+                });
             }
         } else if best_similarity >= threshold {
-            // No variance check required, accept on first match
             let duration = start.elapsed();
             info!(
                 user,
-                similarity = format!("{:.4}", best_similarity),
+                similarity = format!("{best_similarity:.4}"),
                 frames = frame_count,
                 duration_ms = duration.as_millis() as u64,
                 "authentication succeeded (no variance check)"
@@ -227,7 +192,7 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
             return DaemonResponse::AuthResult(MatchResult {
                 matched: true,
                 model_id: best_model_id,
-                label: best_label,
+                label: best_model_id.and_then(&label_for),
                 similarity: best_similarity,
             });
         }
@@ -249,7 +214,7 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
 
     info!(
         user,
-        similarity = format!("{:.4}", best_similarity),
+        similarity = format!("{best_similarity:.4}"),
         frames = frame_count,
         matched = matched_frame_embeddings.len(),
         duration_ms = duration.as_millis() as u64,
@@ -262,24 +227,6 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
         label: None,
         similarity: best_similarity,
     })
-}
-
-/// Check that matched embeddings have sufficient variance.
-/// Real faces produce micro-movements causing slight embedding variation.
-/// A static photo produces near-identical embeddings.
-///
-/// Compares the first embedding against all others and requires at least
-/// one pair to differ enough (similarity < 0.998). This is more forgiving
-/// than requiring all consecutive pairs to differ, which fails on low-res
-/// IR cameras where frame-to-frame variation is minimal.
-fn check_frame_variance(embeddings: &[FaceEmbedding]) -> bool {
-    if embeddings.len() < 2 {
-        return false;
-    }
-    let first = &embeddings[0];
-    let last = &embeddings[embeddings.len() - 1];
-    let sim = cosine_similarity(first, last);
-    sim < 0.998
 }
 
 fn is_ssh_session() -> bool {
@@ -298,7 +245,6 @@ mod tests {
 
     #[test]
     fn ssh_detection_with_env_vars() {
-        // Save and clear
         let old_conn = std::env::var("SSH_CONNECTION").ok();
         let old_tty = std::env::var("SSH_TTY").ok();
         unsafe {
@@ -316,7 +262,6 @@ mod tests {
         assert!(is_ssh_session());
         unsafe { std::env::remove_var("SSH_TTY") };
 
-        // Restore
         if let Some(v) = old_conn {
             unsafe { std::env::set_var("SSH_CONNECTION", v) };
         }
@@ -326,44 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn frame_variance_identical_embeddings_rejected() {
-        let emb = [0.5f32; 512];
-        let embeddings = vec![emb, emb, emb];
-        assert!(!check_frame_variance(&embeddings));
-    }
-
-    #[test]
-    fn frame_variance_different_embeddings_accepted() {
-        // Create two slightly different L2-normalized vectors
-        let val = 1.0 / (512.0f32).sqrt();
-        let mut emb1 = [val; 512];
-        let mut emb2 = [val; 512];
-        // Perturb emb2 enough to drop below 0.998 similarity
-        emb2[0] += 0.1;
-        emb2[1] -= 0.1;
-        // Re-normalize
-        let norm: f32 = emb2.iter().map(|x| x * x).sum::<f32>().sqrt();
-        for x in &mut emb2 {
-            *x /= norm;
-        }
-        let norm1: f32 = emb1.iter().map(|x| x * x).sum::<f32>().sqrt();
-        for x in &mut emb1 {
-            *x /= norm1;
-        }
-        assert!(check_frame_variance(&[emb1, emb2]));
-    }
-
-    #[test]
-    fn frame_variance_needs_at_least_two() {
-        let emb = [0.5f32; 512];
-        assert!(!check_frame_variance(&[emb]));
-        assert!(!check_frame_variance(&[]));
-    }
-
-    #[test]
     fn lid_closed_returns_false_on_missing_file() {
-        // /proc/acpi/button/lid/LID0/state likely doesn't exist in CI
-        // so this should return false (not panic)
         let _result = is_lid_closed();
     }
 }

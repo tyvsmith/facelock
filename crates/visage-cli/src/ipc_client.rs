@@ -6,8 +6,6 @@ use visage_core::ipc::{
     DaemonRequest, DaemonResponse, decode_response, encode_request, recv_message, send_message,
 };
 
-/// Default connection timeout for IPC.
-const CONNECT_TIMEOUT_SECS: u64 = 5;
 /// Default read/write timeout for IPC.
 const IO_TIMEOUT_SECS: u64 = 30;
 
@@ -15,7 +13,7 @@ const IO_TIMEOUT_SECS: u64 = 30;
 /// Returns true if config says "oneshot" OR if the daemon socket isn't reachable.
 /// When falling back from daemon mode, logs a warning.
 pub fn should_use_direct(config: &visage_core::Config) -> bool {
-    if config.daemon.mode == "oneshot" {
+    if config.daemon.mode == visage_core::DaemonMode::Oneshot {
         return true;
     }
     // Daemon mode — check if socket exists, fall back silently to direct mode
@@ -55,11 +53,6 @@ fn connect(socket_path: &str) -> anyhow::Result<UnixStream> {
     stream
         .set_write_timeout(Some(Duration::from_secs(IO_TIMEOUT_SECS)))
         .context("failed to set write timeout")?;
-
-    // Use connect timeout indirectly: the connect call above will fail
-    // if the daemon isn't listening. For explicit timeout we'd need
-    // nonblocking connect, but for a CLI tool the default is sufficient.
-    let _ = CONNECT_TIMEOUT_SECS;
 
     Ok(stream)
 }

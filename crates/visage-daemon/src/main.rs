@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use visage_camera::{Camera, auto_detect_device, is_ir_camera, validate_device};
 use visage_core::config::Config;
 use visage_core::ipc::{decode_request, encode_response, recv_message, send_message};
-use visage_core::traits::CameraSource;
+use visage_core::traits::{CameraSource, FaceProcessor};
 use visage_face::FaceEngine;
 use visage_store::FaceStore;
 use tracing::{error, info, warn};
@@ -49,13 +49,7 @@ fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| {
-                    if config.debug.verbose {
-                        "visage_daemon=debug".into()
-                    } else {
-                        "visage_daemon=info".into()
-                    }
-                }),
+                .unwrap_or_else(|_| "visage_daemon=info".into()),
         )
         .with_target(true)
         .init();
@@ -344,7 +338,7 @@ fn is_in_visage_group(uid: u32) -> bool {
     false
 }
 
-fn handle_connection<C: CameraSource, E: visage_core::traits::FaceProcessor>(
+fn handle_connection<C: CameraSource, E: FaceProcessor>(
     handler: &mut Handler<C, E>,
     stream: std::os::unix::net::UnixStream,
 ) -> visage_core::Result<()> {

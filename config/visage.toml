@@ -37,9 +37,6 @@
 # enabled = false
 # dir = "/var/log/visage/snapshots"
 
-[debug]
-# verbose = false
-
 # [tpm]
 # seal_database = false       # Encrypt embeddings at rest with TPM
 # pcr_binding = false         # Verify system integrity at startup
