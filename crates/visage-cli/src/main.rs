@@ -7,6 +7,7 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 use commands::bench::BenchCommand;
+use commands::TpmCommand;
 
 #[derive(Parser)]
 #[command(name = "visage", about = "Linux face authentication", version)]
@@ -18,7 +19,26 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Download models and create directories
-    Setup,
+    Setup {
+        /// Install and enable systemd units
+        #[arg(long)]
+        systemd: bool,
+        /// Used with --systemd: disable and stop systemd units instead
+        #[arg(long, requires = "systemd")]
+        disable: bool,
+        /// Install or manage PAM module configuration
+        #[arg(long)]
+        pam: bool,
+        /// Target PAM service (default: sudo)
+        #[arg(long, default_value = "sudo")]
+        service: String,
+        /// Remove the PAM line instead of adding it
+        #[arg(long)]
+        remove: bool,
+        /// Skip confirmation for sensitive services
+        #[arg(short, long)]
+        yes: bool,
+    },
     /// Capture and store a face
     Enroll {
         /// Username to enroll (default: current user)
@@ -102,6 +122,11 @@ enum Commands {
         #[command(subcommand)]
         command: BenchCommand,
     },
+    /// TPM integration status and management
+    Tpm {
+        #[command(subcommand)]
+        command: TpmCommand,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -124,7 +149,22 @@ fn main() -> anyhow::Result<()> {
                 .init();
 
             match other {
-                Commands::Setup => commands::setup::run(),
+                Commands::Setup {
+                    systemd,
+                    disable,
+                    pam,
+                    service,
+                    remove,
+                    yes,
+                } => {
+                    if systemd {
+                        commands::setup::run_systemd(disable)
+                    } else if pam {
+                        commands::setup::run_pam(&service, remove, yes)
+                    } else {
+                        commands::setup::run()
+                    }
+                }
                 Commands::Enroll { user, label } => commands::enroll::run(user, label),
                 Commands::Remove {
                     model_id,
@@ -139,6 +179,7 @@ fn main() -> anyhow::Result<()> {
                 Commands::Status => commands::status::run(),
                 Commands::Devices => commands::devices::run(),
                 Commands::Bench { command } => commands::bench::run(command),
+                Commands::Tpm { command } => commands::tpm::run(command),
                 // Already handled above
                 Commands::Daemon { .. } | Commands::Auth { .. } => unreachable!(),
             }

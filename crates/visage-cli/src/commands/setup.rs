@@ -1,12 +1,17 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::process::Command;
 
 use anyhow::{Context, bail};
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 
 use visage_core::Config;
+
+/// Embedded systemd unit files.
+const SERVICE_UNIT: &str = include_str!("../../../../systemd/visage-daemon.service");
+const SOCKET_UNIT: &str = include_str!("../../../../systemd/visage-daemon.socket");
 
 /// Embedded model manifest (same source as visage-face).
 const MANIFEST_TOML: &str = include_str!("../../../../models/manifest.toml");
@@ -222,6 +227,140 @@ fn download_model(entry: &ModelEntry, dest: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+// --- PAM installation ---
+
+const PAM_LINE: &str = "auth  sufficient  pam_visage.so";
+const PAM_MODULE_PATH: &str = "/lib/security/pam_visage.so";
+const SENSITIVE_SERVICES: &[&str] = &["system-auth", "login", "sshd"];
+
+pub fn run_pam(service: &str, remove: bool, yes: bool) -> anyhow::Result<()> {
+    // 1. Check root
+    if !nix::unistd::Uid::current().is_root() {
+        bail!("PAM configuration requires root. Run with sudo.");
+    }
+
+    if remove {
+        pam_remove(service)
+    } else {
+        pam_install(service, yes)
+    }
+}
+
+fn pam_install(service: &str, yes: bool) -> anyhow::Result<()> {
+    // 2. Check PAM module exists
+    if !Path::new(PAM_MODULE_PATH).exists() {
+        bail!(
+            "PAM module not found at {PAM_MODULE_PATH}.\n\
+             Install it first: cargo build --release -p pam-visage && \
+             sudo cp target/release/libpam_visage.so {PAM_MODULE_PATH}"
+        );
+    }
+
+    // 3. Refuse sensitive services without --yes
+    if SENSITIVE_SERVICES.contains(&service) && !yes {
+        bail!(
+            "Refusing to modify '{service}' without --yes flag.\n\
+             This is a sensitive PAM service. Use: visage setup --pam --service {service} --yes"
+        );
+    }
+
+    let pam_path = format!("/etc/pam.d/{service}");
+    let pam_file = Path::new(&pam_path);
+
+    if !pam_file.exists() {
+        bail!("PAM service file not found: {pam_path}");
+    }
+
+    // Read existing content
+    let content = fs::read_to_string(pam_file)
+        .with_context(|| format!("failed to read {pam_path}"))?;
+
+    // Check idempotency
+    if content.lines().any(|line| line.trim() == PAM_LINE) {
+        println!("PAM line already present in {pam_path}. Nothing to do.");
+        return Ok(());
+    }
+
+    // 4. Create backup (always, before any modification)
+    let backup_path = format!("{pam_path}.visage-backup");
+    fs::copy(pam_file, &backup_path)
+        .with_context(|| format!("failed to back up {pam_path} to {backup_path}"))?;
+    println!("Backed up {pam_path} -> {backup_path}");
+
+    // 5. Prepend PAM line before first auth line
+    let mut new_lines: Vec<String> = Vec::new();
+    let mut inserted = false;
+
+    for line in content.lines() {
+        if !inserted && line.trim_start().starts_with("auth") {
+            new_lines.push(PAM_LINE.to_string());
+            inserted = true;
+        }
+        new_lines.push(line.to_string());
+    }
+
+    if !inserted {
+        // No auth line found; append at the top
+        new_lines.insert(0, PAM_LINE.to_string());
+    }
+
+    // Preserve trailing newline
+    let mut output = new_lines.join("\n");
+    if content.ends_with('\n') {
+        output.push('\n');
+    }
+
+    fs::write(pam_file, &output)
+        .with_context(|| format!("failed to write {pam_path}"))?;
+
+    println!("Installed visage PAM line into {pam_path}");
+    println!("\nTo rollback:");
+    println!("  sudo cp {backup_path} {pam_path}");
+    println!("  # or: sudo visage setup --pam --remove --service {service}");
+
+    Ok(())
+}
+
+fn pam_remove(service: &str) -> anyhow::Result<()> {
+    let pam_path = format!("/etc/pam.d/{service}");
+    let pam_file = Path::new(&pam_path);
+
+    if !pam_file.exists() {
+        bail!("PAM service file not found: {pam_path}");
+    }
+
+    let content = fs::read_to_string(pam_file)
+        .with_context(|| format!("failed to read {pam_path}"))?;
+
+    let original_count = content.lines().count();
+    let new_lines: Vec<&str> = content
+        .lines()
+        .filter(|line| line.trim() != PAM_LINE)
+        .collect();
+
+    if new_lines.len() == original_count {
+        println!("No visage PAM line found in {pam_path}. Nothing to remove.");
+    } else {
+        let mut output = new_lines.join("\n");
+        if content.ends_with('\n') {
+            output.push('\n');
+        }
+
+        fs::write(pam_file, &output)
+            .with_context(|| format!("failed to write {pam_path}"))?;
+        println!("Removed visage PAM line from {pam_path}");
+    }
+
+    // Offer backup restore
+    let backup_path = format!("{pam_path}.visage-backup");
+    if Path::new(&backup_path).exists() {
+        println!("Backup exists at {backup_path}");
+        println!("To restore: sudo cp {backup_path} {pam_path}");
+    }
+
+    Ok(())
+}
+
 fn verify_after_download(path: &Path, expected_sha256: &str, name: &str) -> anyhow::Result<()> {
     if expected_sha256.is_empty() {
         return Ok(());
@@ -236,6 +375,78 @@ fn verify_after_download(path: &Path, expected_sha256: &str, name: &str) -> anyh
         // Remove the bad file
         fs::remove_file(path).ok();
         bail!("SHA256 verification failed for {name}: expected {expected_sha256}, got {hex}");
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// systemd unit installation
+// ---------------------------------------------------------------------------
+
+const SYSTEMD_UNIT_DIR: &str = "/usr/lib/systemd/system";
+const SERVICE_FILENAME: &str = "visage-daemon.service";
+const SOCKET_FILENAME: &str = "visage-daemon.socket";
+
+fn check_systemd() -> anyhow::Result<()> {
+    if !Path::new("/run/systemd/system").exists() {
+        bail!("systemd not found — use manual daemon management or oneshot mode");
+    }
+    Ok(())
+}
+
+fn check_root() -> anyhow::Result<()> {
+    let uid = unsafe { libc::getuid() };
+    if uid != 0 {
+        bail!("this command must be run as root (try: sudo visage setup --systemd)");
+    }
+    Ok(())
+}
+
+fn run_cmd(program: &str, args: &[&str]) -> anyhow::Result<()> {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to execute {program}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("{program} {} failed: {stderr}", args.join(" "));
+    }
+    Ok(())
+}
+
+pub fn run_systemd(disable: bool) -> anyhow::Result<()> {
+    check_root()?;
+    check_systemd()?;
+
+    if disable {
+        println!("Disabling visage-daemon systemd units...");
+        run_cmd("systemctl", &["disable", "--now", SOCKET_FILENAME, "visage-daemon"])?;
+        println!("visage-daemon socket and service disabled and stopped.");
+    } else {
+        println!("Installing visage-daemon systemd units...");
+
+        let unit_dir = Path::new(SYSTEMD_UNIT_DIR);
+        fs::create_dir_all(unit_dir)
+            .with_context(|| format!("failed to create {SYSTEMD_UNIT_DIR}"))?;
+
+        let service_path = unit_dir.join(SERVICE_FILENAME);
+        fs::write(&service_path, SERVICE_UNIT)
+            .with_context(|| format!("failed to write {}", service_path.display()))?;
+        println!("  Wrote {}", service_path.display());
+
+        let socket_path = unit_dir.join(SOCKET_FILENAME);
+        fs::write(&socket_path, SOCKET_UNIT)
+            .with_context(|| format!("failed to write {}", socket_path.display()))?;
+        println!("  Wrote {}", socket_path.display());
+
+        run_cmd("systemctl", &["daemon-reload"])?;
+        println!("  systemctl daemon-reload done.");
+
+        run_cmd("systemctl", &["enable", "--now", SOCKET_FILENAME])?;
+        println!("  systemctl enable --now {SOCKET_FILENAME} done.");
+
+        println!("\nvisage-daemon socket activation is now enabled.");
     }
 
     Ok(())
@@ -273,6 +484,66 @@ mod tests {
         assert!(matches!(status, ModelStatus::Present));
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn pam_insert_before_first_auth_line() {
+        let original = "\
+#%PAM-1.0
+auth    include   system-local-login
+auth    include   system-login
+account include   system-login
+";
+        // Simulate the insertion logic
+        let mut new_lines: Vec<String> = Vec::new();
+        let mut inserted = false;
+        for line in original.lines() {
+            if !inserted && line.trim_start().starts_with("auth") {
+                new_lines.push(PAM_LINE.to_string());
+                inserted = true;
+            }
+            new_lines.push(line.to_string());
+        }
+        let mut output = new_lines.join("\n");
+        if original.ends_with('\n') {
+            output.push('\n');
+        }
+
+        assert!(inserted);
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines[0], "#%PAM-1.0");
+        assert_eq!(lines[1], PAM_LINE);
+        assert_eq!(lines[2], "auth    include   system-local-login");
+    }
+
+    #[test]
+    fn pam_idempotent_detection() {
+        let content = format!(
+            "#%PAM-1.0\n{PAM_LINE}\nauth    include   system-login\n"
+        );
+        let already_present = content.lines().any(|line| line.trim() == PAM_LINE);
+        assert!(already_present);
+    }
+
+    #[test]
+    fn pam_remove_filters_line() {
+        let content = format!(
+            "#%PAM-1.0\n{PAM_LINE}\nauth    include   system-login\naccount include   system-login\n"
+        );
+        let new_lines: Vec<&str> = content
+            .lines()
+            .filter(|line| line.trim() != PAM_LINE)
+            .collect();
+        assert_eq!(new_lines.len(), 3);
+        assert!(!new_lines.iter().any(|l| l.trim() == PAM_LINE));
+    }
+
+    #[test]
+    fn sensitive_services_detected() {
+        assert!(SENSITIVE_SERVICES.contains(&"system-auth"));
+        assert!(SENSITIVE_SERVICES.contains(&"login"));
+        assert!(SENSITIVE_SERVICES.contains(&"sshd"));
+        assert!(!SENSITIVE_SERVICES.contains(&"sudo"));
     }
 
     #[test]

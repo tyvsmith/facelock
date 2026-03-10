@@ -11,3 +11,12 @@ pub mod remove;
 pub mod setup;
 pub mod status;
 pub mod test_cmd;
+pub mod tpm;
+
+use clap::Subcommand;
+
+#[derive(Subcommand)]
+pub enum TpmCommand {
+    /// Report TPM availability and configuration
+    Status,
+}
