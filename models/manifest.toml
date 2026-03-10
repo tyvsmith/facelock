@@ -1,13 +1,9 @@
 # Model manifest — URLs, checksums, and metadata for ONNX models
-#
-# TODO: Once visage has its own GitHub repo, upload model files to a
-# GitHub Release (e.g. v0.1.0-models) and update the URLs below to point
-# to your own repo's releases. See docs/TODO-model-hosting.md for details.
 
 [[models]]
 name = "scrfd_2.5g"
 filename = "scrfd_2.5g_bnkps.onnx"
-purpose = "Face detection + 5-point landmarks"
+purpose = "Face detection + 5-point landmarks (default)"
 size_mb = 3
 sha256 = "bc24bb349491481c3ca793cf89306723162c280cb284c5a5e49df3760bf5c2ce"
 url = "https://github.com/visomaster/visomaster-assets/releases/download/v0.1.0/scrfd_2.5g_bnkps.onnx"
@@ -15,25 +11,25 @@ url = "https://github.com/visomaster/visomaster-assets/releases/download/v0.1.0/
 [[models]]
 name = "arcface_r50"
 filename = "w600k_r50.onnx"
-purpose = "512-D face embedding"
+purpose = "512-D face embedding (default)"
 size_mb = 166
 sha256 = "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43"
 url = "https://github.com/visomaster/visomaster-assets/releases/download/v0.1.0/w600k_r50.onnx"
 
 [[models]]
 name = "scrfd_10g"
-filename = "scrfd_10g_bnkps.onnx"
+filename = "det_10g.onnx"
 purpose = "Higher accuracy face detection"
-size_mb = 16
-sha256 = ""
-url = ""
+size_mb = 17
+sha256 = "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91"
+url = "https://github.com/visomaster/visomaster-assets/releases/download/v0.1.0/det_10g.onnx"
 optional = true
 
 [[models]]
 name = "arcface_r100"
-filename = "w600k_r100.onnx"
-purpose = "Higher accuracy 512-D face embedding (99.77% LFW)"
+filename = "glintr100.onnx"
+purpose = "Higher accuracy 512-D face embedding (R100 backbone)"
 size_mb = 249
-sha256 = ""
-url = ""
+sha256 = "4ab1d6435d639628a6f3e5008dd4f929edf4c4124b1a7169e1048f9fef534cdf"
+url = "https://huggingface.co/LPDoctor/insightface/resolve/main/models/antelopev2/glintr100.onnx"
 optional = true
