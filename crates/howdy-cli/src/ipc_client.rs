@@ -61,7 +61,17 @@ pub fn resolve_user(flag: Option<&str>) -> String {
         .or_else(|| std::env::var("SUDO_USER").ok())
         .or_else(|| std::env::var("DOAS_USER").ok())
         .unwrap_or_else(|| {
-            std::env::var("USER").unwrap_or_else(|_| "unknown".into())
+            std::env::var("USER").ok().unwrap_or_else(|| {
+                // Fall back to getpwuid if $USER is not set (e.g. in containers)
+                let uid = unsafe { libc::getuid() };
+                let pw = unsafe { libc::getpwuid(uid) };
+                if pw.is_null() {
+                    "unknown".into()
+                } else {
+                    let cstr = unsafe { std::ffi::CStr::from_ptr((*pw).pw_name) };
+                    cstr.to_str().unwrap_or("unknown").to_string()
+                }
+            })
         })
 }
 

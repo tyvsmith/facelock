@@ -41,7 +41,7 @@ timeout_secs = 5
 
 [daemon]
 socket_path = "/tmp/howdy.sock"
-model_dir = "/usr/share/howdy/models"
+model_dir = "/models"
 
 [storage]
 db_path = "/tmp/howdy-test.db"
@@ -76,9 +76,13 @@ run_test "Enroll a face" \
 run_test "List enrolled models" \
     "howdy list --user testuser"
 
-# Test authentication
-run_test "Authenticate enrolled face" \
+# Test authentication via CLI
+run_test "Authenticate enrolled face (CLI)" \
     "howdy test --user testuser"
+
+# Test authentication via PAM (the real auth path)
+run_test "Authenticate enrolled face (PAM)" \
+    "pamtester howdy-test testuser authenticate"
 
 # Clean up
 run_test "Clear enrolled models" \
