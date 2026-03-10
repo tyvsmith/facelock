@@ -3,7 +3,7 @@ path = "/dev/video2"
 max_height = 480
 
 [recognition]
-threshold = 0.45
+threshold = 0.50
 timeout_secs = 5
 
 [daemon]
@@ -15,8 +15,11 @@ db_path = "/tmp/howdy-dev.db"
 
 [security]
 disabled = false
-require_ir = false
-require_frame_variance = false
+require_ir = true
+require_frame_variance = true
 
 [snapshots]
 dir = "/tmp/howdy-dev-snapshots"
+
+[debug]
+verbose = true

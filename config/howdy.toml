@@ -2,7 +2,7 @@
 # Copy to /etc/howdy/config.toml and edit
 
 [device]
-path = "/dev/video2"   # Required: camera device path
+path = "/dev/video0"   # Required: camera device path
 # max_height = 480     # Max frame height (downscale if larger)
 # rotation = 0         # Frame rotation: 0, 90, 180, 270
 
