@@ -11,6 +11,10 @@
 # timeout_secs = 5       # Auth timeout in seconds
 # detection_confidence = 0.5  # Minimum face detection confidence
 # nms_threshold = 0.4    # Non-maximum suppression threshold
+# detector_model = "scrfd_2.5g_bnkps.onnx"   # or "scrfd_10g_bnkps.onnx"
+# embedder_model = "w600k_r50.onnx"           # or "w600k_r100.onnx"
+# execution_provider = "cpu"  # "cpu", "cuda", "tensorrt"
+# threads = 4            # Number of ORT intra-op inference threads
 
 [daemon]
 # mode = "daemon"        # "daemon" (default) or "oneshot" (no daemon needed)

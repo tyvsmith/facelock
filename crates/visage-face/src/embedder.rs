@@ -14,12 +14,16 @@ pub struct FaceEmbedder {
 
 impl FaceEmbedder {
     /// Load an ArcFace ONNX model from the given path.
-    pub fn load(model_path: &Path) -> Result<Self> {
+    ///
+    /// `threads` controls the number of intra-op threads for ORT inference.
+    pub fn load(model_path: &Path, threads: u32) -> Result<Self> {
+        // TODO: Add CUDA/TensorRT execution provider setup here once the ort
+        // crate version is pinned and GPU feature flags are added.
         let session = Session::builder()
             .map_err(|e| VisageError::Embedding(format!("Failed to create session builder: {e}")))?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|e| VisageError::Embedding(format!("Failed to set optimization level: {e}")))?
-            .with_intra_threads(4)
+            .with_intra_threads(threads as usize)
             .map_err(|e| VisageError::Embedding(format!("Failed to set intra threads: {e}")))?
             .commit_from_file(model_path)
             .map_err(|e| {

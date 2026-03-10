@@ -63,6 +63,16 @@ pub struct RecognitionConfig {
     pub detection_confidence: f32,
     #[serde(default = "default_nms")]
     pub nms_threshold: f32,
+    #[serde(default = "default_detector_model")]
+    pub detector_model: String,
+    #[serde(default = "default_embedder_model")]
+    pub embedder_model: String,
+    /// ORT execution provider: "cpu", "cuda", or "tensorrt".
+    #[serde(default = "default_execution_provider")]
+    pub execution_provider: String,
+    /// Number of intra-op threads for ORT inference.
+    #[serde(default = "default_threads")]
+    pub threads: u32,
 }
 
 impl Default for RecognitionConfig {
@@ -72,6 +82,10 @@ impl Default for RecognitionConfig {
             timeout_secs: default_timeout(),
             detection_confidence: default_confidence(),
             nms_threshold: default_nms(),
+            detector_model: default_detector_model(),
+            embedder_model: default_embedder_model(),
+            execution_provider: default_execution_provider(),
+            threads: default_threads(),
         }
     }
 }
@@ -276,6 +290,18 @@ fn default_pcr_indices() -> Vec<u32> {
 fn default_tcti() -> String {
     "device:/dev/tpmrm0".to_string()
 }
+fn default_detector_model() -> String {
+    "scrfd_2.5g_bnkps.onnx".to_string()
+}
+fn default_embedder_model() -> String {
+    "w600k_r50.onnx".to_string()
+}
+fn default_execution_provider() -> String {
+    "cpu".to_string()
+}
+fn default_threads() -> u32 {
+    4
+}
 
 impl Config {
     /// Load config from the default path (respects `VISAGE_CONFIG` env var).
@@ -455,6 +481,31 @@ path = "/dev/video0"
         assert_eq!(config.storage.db_path, paths::DEFAULT_DB_PATH);
         assert!(config.security.abort_if_ssh);
         assert!(!config.snapshots.enabled);
+    }
+
+    #[test]
+    fn recognition_gpu_config_defaults() {
+        let toml = r#"
+[device]
+path = "/dev/video0"
+"#;
+        let config = Config::parse(toml).unwrap();
+        assert_eq!(config.recognition.execution_provider, "cpu");
+        assert_eq!(config.recognition.threads, 4);
+    }
+
+    #[test]
+    fn recognition_gpu_config_custom() {
+        let toml = r#"
+[device]
+path = "/dev/video0"
+[recognition]
+execution_provider = "cuda"
+threads = 8
+"#;
+        let config = Config::parse(toml).unwrap();
+        assert_eq!(config.recognition.execution_provider, "cuda");
+        assert_eq!(config.recognition.threads, 8);
     }
 
     #[test]

@@ -37,15 +37,16 @@ impl FaceEngine {
             }
         }
 
-        let detector_path = model_dir.join("scrfd_2.5g_bnkps.onnx");
-        let embedder_path = model_dir.join("w600k_r50.onnx");
+        let detector_path = model_dir.join(&config.detector_model);
+        let embedder_path = model_dir.join(&config.embedder_model);
 
         let detector = FaceDetector::load(
             &detector_path,
             config.detection_confidence,
             config.nms_threshold,
+            config.threads,
         )?;
-        let embedder = FaceEmbedder::load(&embedder_path)?;
+        let embedder = FaceEmbedder::load(&embedder_path, config.threads)?;
 
         Ok(Self { detector, embedder })
     }

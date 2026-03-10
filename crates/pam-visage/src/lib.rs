@@ -59,6 +59,9 @@ struct PamDaemonConfig {
     /// "daemon" (default) or "oneshot"
     #[serde(default = "default_mode")]
     mode: String,
+    /// Path to the visage binary for oneshot mode
+    #[serde(default = "default_auth_bin")]
+    auth_bin: String,
 }
 
 impl Default for PamDaemonConfig {
@@ -66,6 +69,7 @@ impl Default for PamDaemonConfig {
         Self {
             socket_path: default_socket(),
             mode: default_mode(),
+            auth_bin: default_auth_bin(),
         }
     }
 }
@@ -129,6 +133,10 @@ fn default_timeout() -> u32 {
 
 fn default_mode() -> String {
     "daemon".to_string()
+}
+
+fn default_auth_bin() -> String {
+    "/usr/bin/visage".to_string()
 }
 
 fn default_true() -> bool {
@@ -471,9 +479,7 @@ fn load_config() -> Result<PamConfig, String> {
 // One-shot authentication (daemonless)
 // ---------------------------------------------------------------------------
 
-const VISAGE_AUTH_BIN: &str = "/usr/bin/visage";
-
-/// Run visage-auth as a subprocess for daemonless authentication.
+/// Run visage auth as a subprocess for daemonless authentication.
 /// Exit codes: 0 = matched, 1 = no match, 2+ = error.
 fn run_oneshot_auth(service: &str, user: &str, config: &PamConfig) -> libc::c_int {
     use std::process::Command;
@@ -484,7 +490,7 @@ fn run_oneshot_auth(service: &str, user: &str, config: &PamConfig) -> libc::c_in
     let config_path = std::env::var("VISAGE_CONFIG")
         .unwrap_or_else(|_| DEFAULT_CONFIG_PATH.to_string());
 
-    let result = Command::new(VISAGE_AUTH_BIN)
+    let result = Command::new(&config.daemon.auth_bin)
         .arg("auth")
         .arg("--user")
         .arg(user)
