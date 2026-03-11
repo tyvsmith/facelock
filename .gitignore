@@ -2,3 +2,4 @@
 *.onnx
 *.dat
 dev/*.db
+.worktrees/
