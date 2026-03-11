@@ -11,3 +11,4 @@ toml = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 bincode = { workspace = true }
+subtle = "2"

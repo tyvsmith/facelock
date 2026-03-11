@@ -80,20 +80,38 @@ pub fn check_frame_variance(embeddings: &[FaceEmbedding]) -> bool {
 
 /// Find the best cosine similarity between an embedding and a set of stored embeddings.
 /// Returns (best_similarity, matching_model_id).
+///
+/// Always iterates ALL stored embeddings to prevent timing side-channels
+/// from revealing which model matched. Uses constant-time conditional
+/// selection via the `subtle` crate.
 pub fn best_match(
     embedding: &FaceEmbedding,
     stored: &[(u32, FaceEmbedding)],
 ) -> (f32, Option<u32>) {
-    let mut best_sim: f32 = 0.0;
-    let mut best_id: Option<u32> = None;
-    for (model_id, stored_emb) in stored {
+    use subtle::{ConditionallySelectable, ConstantTimeGreater};
+
+    let mut best_sim_bits: u32 = 0u32; // f32 bits for 0.0
+    let mut best_id: u32 = u32::MAX; // sentinel for "no match"
+
+    for (id, stored_emb) in stored {
         let sim = cosine_similarity(embedding, stored_emb);
-        if sim > best_sim {
-            best_sim = sim;
-            best_id = Some(*model_id);
-        }
+        let sim_bits = sim.to_bits();
+
+        // Constant-time: is sim > best_sim?
+        // For positive IEEE 754 floats, bit comparison preserves ordering.
+        let is_greater = sim_bits.ct_gt(&best_sim_bits);
+
+        best_sim_bits = u32::conditional_select(&best_sim_bits, &sim_bits, is_greater);
+        best_id = u32::conditional_select(&best_id, id, is_greater);
     }
-    (best_sim, best_id)
+
+    let best_sim = f32::from_bits(best_sim_bits);
+    let matched_id = if best_id == u32::MAX {
+        None
+    } else {
+        Some(best_id)
+    };
+    (best_sim, matched_id)
 }
 
 #[cfg(test)]
@@ -125,6 +143,44 @@ mod tests {
         }
         let result = cosine_similarity(&a, &b);
         assert!(result.abs() < 1e-5, "orthogonal vectors should have similarity ~0.0, got {result}");
+    }
+
+    #[test]
+    fn best_match_finds_correct_match_regardless_of_position() {
+        // Create a target embedding
+        let mut target: FaceEmbedding = [0.0; 512];
+        target[0] = 1.0; // unit vector along dim 0
+
+        // Create stored embeddings with the best match at different positions
+        let mut stored: Vec<(u32, FaceEmbedding)> = Vec::new();
+        for i in 0..5 {
+            let mut emb: FaceEmbedding = [0.0; 512];
+            emb[i + 1] = 1.0; // orthogonal to target (similarity ~0)
+            stored.push((i as u32, emb));
+        }
+
+        // Put exact match first
+        stored[0].1 = target;
+        let (sim1, id1) = best_match(&target, &stored);
+        assert!(sim1 > 0.99, "should find match when first");
+        assert_eq!(id1, Some(0));
+
+        // Put exact match last
+        stored[0].1 = [0.0; 512];
+        stored[0].1[1] = 1.0;
+        stored[4].1 = target;
+        let (sim2, id2) = best_match(&target, &stored);
+        assert!(sim2 > 0.99, "should find match when last");
+        assert_eq!(id2, Some(4));
+    }
+
+    #[test]
+    fn best_match_empty_stored_returns_no_match() {
+        let target: FaceEmbedding = [0.1; 512];
+        let stored: Vec<(u32, FaceEmbedding)> = vec![];
+        let (sim, id) = best_match(&target, &stored);
+        assert_eq!(sim, 0.0);
+        assert_eq!(id, None);
     }
 
     #[test]
