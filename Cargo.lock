@@ -1059,6 +1059,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "serde",
+ "subtle",
  "thiserror 2.0.18",
  "toml",
  "tracing",
