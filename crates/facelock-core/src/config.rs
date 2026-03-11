@@ -52,6 +52,12 @@ pub struct DeviceConfig {
     /// Range: 0-255. Default: 10.
     #[serde(default = "default_dark_pixel_value")]
     pub dark_pixel_value: u8,
+    /// Enable IR emitter control. When true, attempts to activate IR LED
+    /// emitters when camera opens and deactivate when camera closes.
+    /// Most cameras auto-enable emitters during streaming; enable this
+    /// only if your camera requires explicit control.
+    #[serde(default)]
+    pub ir_emitter: bool,
 }
 
 impl Default for DeviceConfig {
@@ -63,6 +69,7 @@ impl Default for DeviceConfig {
             warmup_frames: default_warmup_frames(),
             dark_threshold: default_dark_threshold(),
             dark_pixel_value: default_dark_pixel_value(),
+            ir_emitter: false,
         }
     }
 }

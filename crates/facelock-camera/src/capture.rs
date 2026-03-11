@@ -10,6 +10,7 @@ use v4l::io::traits::CaptureStream;
 use v4l::video::Capture;
 use v4l::Device;
 
+use crate::ir_emitter;
 use crate::preprocess;
 
 /// A V4L2 camera for frame capture.
@@ -21,6 +22,10 @@ pub struct Camera<'a> {
     #[allow(dead_code)]
     dark_threshold: f32,
     rotation: u16,
+    /// Device path, stored for IR emitter cleanup on drop.
+    device_path: String,
+    /// Whether the IR emitter was activated and should be disabled on drop.
+    ir_emitter_active: bool,
 }
 
 impl<'a> Camera<'a> {
@@ -92,6 +97,26 @@ impl<'a> Camera<'a> {
         let stream = Stream::with_buffers(&dev, Type::VideoCapture, 4)
             .map_err(|e| FacelockError::Camera(format!("failed to create stream: {e}")))?;
 
+        // Attempt to enable IR emitter if configured
+        let ir_emitter_active = if config.ir_emitter {
+            match ir_emitter::enable_emitter(&device_path) {
+                Ok(true) => {
+                    tracing::info!("IR emitter enabled on {device_path}");
+                    true
+                }
+                Ok(false) => {
+                    tracing::debug!("no controllable IR emitter on {device_path}");
+                    false
+                }
+                Err(e) => {
+                    tracing::warn!("failed to enable IR emitter on {device_path}: {e}");
+                    false
+                }
+            }
+        } else {
+            false
+        };
+
         Ok(Camera {
             stream,
             width,
@@ -99,6 +124,8 @@ impl<'a> Camera<'a> {
             format: format_str,
             dark_threshold: 0.4,
             rotation: config.rotation,
+            device_path,
+            ir_emitter_active,
         })
     }
 
@@ -242,6 +269,19 @@ pub fn is_dark_with_config(frame: &Frame, threshold: f32, dark_value: u8) -> boo
     mean < 20.0
 }
 
+impl Drop for Camera<'_> {
+    fn drop(&mut self) {
+        if self.ir_emitter_active {
+            match ir_emitter::disable_emitter(&self.device_path) {
+                Ok(_) => tracing::debug!("IR emitter disabled on {}", self.device_path),
+                Err(e) => {
+                    tracing::warn!("failed to disable IR emitter on {}: {e}", self.device_path)
+                }
+            }
+        }
+    }
+}
+
 impl CameraSource for Camera<'_> {
     fn capture(&mut self) -> Result<Frame> {
         Camera::capture(self)
@@ -370,6 +410,7 @@ mod tests {
             warmup_frames: 5,
             dark_threshold: 0.6,
             dark_pixel_value: 10,
+            ir_emitter: false,
         };
         let mut cam = Camera::open(&config).expect("failed to open camera");
         let frame = cam.capture().expect("failed to capture frame");

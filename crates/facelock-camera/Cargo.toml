@@ -9,3 +9,4 @@ license.workspace = true
 facelock-core = { path = "../facelock-core" }
 v4l = "0.14"
 image = "0.25"
+tracing = { workspace = true }

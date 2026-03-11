@@ -1,5 +1,6 @@
 pub mod capture;
 pub mod device;
+pub mod ir_emitter;
 pub mod preprocess;
 
 pub use capture::{Camera, is_dark_with_config};
