@@ -273,6 +273,7 @@ mod tests {
             path: Some("/dev/video0".into()),
             max_height: 480,
             rotation: 0,
+            warmup_frames: 5,
         };
         let mut cam = Camera::open(&config).expect("failed to open camera");
         let frame = cam.capture().expect("failed to capture frame");

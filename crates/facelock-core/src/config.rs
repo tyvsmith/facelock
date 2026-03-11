@@ -41,6 +41,9 @@ pub struct DeviceConfig {
     pub max_height: u32,
     #[serde(default)]
     pub rotation: u16,
+    /// Number of frames to discard after camera open for AGC/AE stabilization.
+    #[serde(default = "default_warmup_frames")]
+    pub warmup_frames: u32,
 }
 
 impl Default for DeviceConfig {
@@ -49,6 +52,7 @@ impl Default for DeviceConfig {
             path: None,
             max_height: default_max_height(),
             rotation: 0,
+            warmup_frames: default_warmup_frames(),
         }
     }
 }
@@ -315,6 +319,9 @@ impl Default for TpmConfig {
 // Default value functions
 fn default_max_height() -> u32 {
     480
+}
+fn default_warmup_frames() -> u32 {
+    5
 }
 fn default_threshold() -> f32 {
     0.80
@@ -642,5 +649,37 @@ path = "/dev/video0"
         assert!(!config.tpm.pcr_binding);
         assert_eq!(config.tpm.pcr_indices, vec![0, 1, 2, 3, 7]);
         assert_eq!(config.tpm.tcti, "device:/dev/tpmrm0");
+    }
+
+    #[test]
+    fn warmup_frames_default() {
+        let toml = r#"
+[device]
+path = "/dev/video0"
+"#;
+        let config = Config::parse(toml).unwrap();
+        assert_eq!(config.device.warmup_frames, 5);
+    }
+
+    #[test]
+    fn warmup_frames_custom() {
+        let toml = r#"
+[device]
+path = "/dev/video0"
+warmup_frames = 10
+"#;
+        let config = Config::parse(toml).unwrap();
+        assert_eq!(config.device.warmup_frames, 10);
+    }
+
+    #[test]
+    fn warmup_frames_zero() {
+        let toml = r#"
+[device]
+path = "/dev/video0"
+warmup_frames = 0
+"#;
+        let config = Config::parse(toml).unwrap();
+        assert_eq!(config.device.warmup_frames, 0);
     }
 }
