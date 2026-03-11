@@ -849,6 +849,7 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
             let result = run_oneshot_auth(&service, &user, &config);
             if result == PAM_SUCCESS && config.notification.enabled {
                 unsafe { pam_info(pamh, "Face recognized.") };
+                send_desktop_notification(&user, "Visage", "Face recognized.", "security-high");
             }
             return result;
         }
@@ -905,6 +906,7 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
             let result = run_oneshot_auth(&service, &user, &config);
             if result == PAM_SUCCESS && config.notification.enabled {
                 unsafe { pam_info(pamh, "Face recognized.") };
+                send_desktop_notification(&user, "Visage", "Face recognized.", "security-high");
             }
             return result;
         }

@@ -96,21 +96,6 @@ pub fn send_notification(event: &NotifyEvent) {
     }
 }
 
-/// Send a desktop notification targeted at a specific user.
-///
-/// Use this when the caller knows the target user but may not be running as that
-/// user (e.g., daemon handling an auth request for "ty" while running as root).
-pub fn send_notification_for_user(user: &str, event: &NotifyEvent) {
-    debug!(?event, user, "sending desktop notification for user");
-
-    if nix::unistd::Uid::current().is_root() {
-        send_as_user(user, event);
-    } else {
-        // If we're already the target user, send directly
-        send_notification(event);
-    }
-}
-
 /// Send notification as a specific user by dropping privileges with setpriv.
 ///
 /// Uses setpriv instead of runuser/su because those tools open PAM sessions,

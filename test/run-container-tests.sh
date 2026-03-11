@@ -59,6 +59,47 @@ run_test "pam_sm_setcred symbol exists" \
     "nm -D /lib/security/pam_visage.so | grep -q pam_sm_setcred" \
     0
 
+# --- Spec 28: Privilege enforcement ---
+
+run_test "visage setup requires root" \
+    "su -s /bin/bash testuser -c 'visage setup 2>&1' | grep -q 'Root required'" \
+    0
+
+run_test "visage daemon requires root" \
+    "su -s /bin/bash testuser -c 'visage daemon 2>&1' | grep -q 'Root required'" \
+    0
+
+# --- Spec 29: Smart PAM skip (no enrolled faces) ---
+
+# In oneshot mode with no enrolled faces, visage auth should exit 2 (PAM_IGNORE)
+run_test "visage auth exits 2 when no faces enrolled" \
+    "visage auth --user testuser --config /etc/visage/config.toml; test \$? -eq 2" \
+    0
+
+# pamtester should pass through (PAM_IGNORE from face → pam_deny catches it)
+# The key: it should be FAST (no camera timeout)
+run_test "No enrolled faces: pamtester completes quickly" \
+    "timeout 3 pamtester visage-test testuser authenticate 2>&1; test \$? -ne 124" \
+    0
+
+# --- Spec 30: PAM conversation messages ---
+
+# When notification.enabled = true (default), "Identifying face..." should appear
+run_test "PAM shows 'Identifying face...' text" \
+    "pamtester visage-test testuser authenticate 2>&1 | grep -q 'Identifying face'" \
+    0
+
+# When notification.enabled = false, no text message
+run_test "PAM respects notification.enabled=false" \
+    "sed -i '/^\[notification\]/,/^\[/{s/.*enabled.*/enabled = false/}' /etc/visage/config.toml 2>/dev/null || (echo -e '\n[notification]\nenabled = false' >> /etc/visage/config.toml); pamtester visage-test testuser authenticate 2>&1 | grep -qv 'Identifying face'; sed -i '/enabled = false/d' /etc/visage/config.toml" \
+    0
+
+# --- Spec 29: Smart PAM with oneshot config ---
+
+run_test "Oneshot mode: no enrolled faces returns quickly" \
+    "sed -i '/^\[daemon\]/a mode = \"oneshot\"' /etc/visage/config.toml; timeout 3 pamtester visage-test testuser authenticate 2>&1; rc=\$?; sed -i '/^mode = \"oneshot\"/d' /etc/visage/config.toml; test \$rc -ne 124" \
+    0
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 
