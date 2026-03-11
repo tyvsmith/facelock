@@ -2398,6 +2398,7 @@ dependencies = [
  "libc",
  "serde",
  "toml",
+ "zbus",
 ]
 
 [[package]]

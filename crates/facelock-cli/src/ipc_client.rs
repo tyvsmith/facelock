@@ -1,14 +1,11 @@
-use std::os::unix::net::UnixStream;
-use std::time::Duration;
-
 use anyhow::{Context, bail};
 use nix::unistd::Uid;
-use facelock_core::ipc::{
-    DaemonRequest, DaemonResponse, decode_response, encode_request, recv_message, send_message,
-};
+use zbus::blocking::Connection;
+use zbus::blocking::Proxy;
 
-/// Default read/write timeout for IPC.
-const IO_TIMEOUT_SECS: u64 = 30;
+use facelock_core::dbus_interface::*;
+use facelock_core::ipc::{DaemonRequest, DaemonResponse, PreviewFace, IpcDeviceInfo};
+use facelock_core::types::{FaceModelInfo, MatchResult};
 
 /// Check if running as root; if not, offer to re-exec via sudo.
 ///
@@ -49,51 +46,140 @@ pub fn require_root(hint: &str) -> anyhow::Result<()> {
 }
 
 /// Check whether we should use direct (daemonless) mode.
-/// Returns true if config says "oneshot" OR if the daemon socket isn't reachable.
+/// Returns true if config says "oneshot" OR if the D-Bus service isn't available.
 /// When falling back from daemon mode, logs a warning.
 pub fn should_use_direct(config: &facelock_core::Config) -> bool {
     if config.daemon.mode == facelock_core::DaemonMode::Oneshot {
         return true;
     }
-    // Daemon mode — check if socket exists, fall back silently to direct mode
-    !std::path::Path::new(&config.daemon.socket_path).exists()
-}
-
-/// Connect to the daemon socket and send a request, returning the response.
-pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
-    let mut stream = connect(socket_path)?;
-
-    let encoded = encode_request(request).context("failed to encode IPC request")?;
-    send_message(&mut stream, &encoded).context("failed to send IPC message")?;
-
-    let response_data = recv_message(&mut stream).context("failed to receive IPC response")?;
-    let response = decode_response(&response_data).context("failed to decode IPC response")?;
-
-    // Check for error responses
-    if let DaemonResponse::Error { ref message } = response {
-        bail!("daemon error: {message}");
+    // Daemon mode -- check if D-Bus service is available
+    match Connection::system() {
+        Ok(conn) => {
+            let proxy = zbus::blocking::fdo::DBusProxy::new(&conn);
+            match proxy {
+                Ok(p) => {
+                    match BUS_NAME.try_into() {
+                        Ok(name) => !p.name_has_owner(name).unwrap_or(false),
+                        Err(_) => true,
+                    }
+                }
+                Err(_) => true,
+            }
+        }
+        Err(_) => true,
     }
-
-    Ok(response)
 }
 
-/// Connect to the daemon Unix socket with timeouts.
-fn connect(socket_path: &str) -> anyhow::Result<UnixStream> {
-    let stream = UnixStream::connect(socket_path).with_context(|| {
-        format!(
-            "failed to connect to daemon at {socket_path}\n\
-             Is the daemon running? Try: facelock status"
-        )
-    })?;
+/// Create a blocking D-Bus proxy to the daemon.
+fn create_proxy() -> anyhow::Result<Proxy<'static>> {
+    let connection = Connection::system()
+        .map_err(|e| anyhow::anyhow!("D-Bus connection failed: {e}"))?;
 
-    stream
-        .set_read_timeout(Some(Duration::from_secs(IO_TIMEOUT_SECS)))
-        .context("failed to set read timeout")?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(IO_TIMEOUT_SECS)))
-        .context("failed to set write timeout")?;
+    let proxy = Proxy::new_owned(
+        connection,
+        BUS_NAME,
+        OBJECT_PATH,
+        INTERFACE_NAME,
+    ).map_err(|e| anyhow::anyhow!("D-Bus proxy failed: {e}"))?;
 
-    Ok(stream)
+    Ok(proxy)
+}
+
+/// Send a request to the daemon via D-Bus, translating to/from the old
+/// DaemonRequest/DaemonResponse types used by the command layer.
+pub fn send_request(_socket_path: &str, request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
+    let proxy = create_proxy()?;
+
+    match request {
+        DaemonRequest::Authenticate { user } => {
+            let result: AuthResult = proxy.call("Authenticate", &(user.as_str(),))
+                .context("D-Bus Authenticate call failed")?;
+            Ok(DaemonResponse::AuthResult(MatchResult {
+                matched: result.matched,
+                model_id: if result.model_id >= 0 { Some(result.model_id as u32) } else { None },
+                label: if result.label.is_empty() { None } else { Some(result.label) },
+                similarity: result.similarity as f32,
+            }))
+        }
+        DaemonRequest::Enroll { user, label } => {
+            let result: (u32, u32) = proxy.call("Enroll", &(user.as_str(), label.as_str()))
+                .context("D-Bus Enroll call failed")?;
+            Ok(DaemonResponse::Enrolled {
+                model_id: result.0,
+                embedding_count: result.1,
+            })
+        }
+        DaemonRequest::ListModels { user } => {
+            let models: Vec<ModelInfo> = proxy.call("ListModels", &(user.as_str(),))
+                .context("D-Bus ListModels call failed")?;
+            Ok(DaemonResponse::Models(
+                models.into_iter().map(|m| FaceModelInfo {
+                    id: m.id,
+                    user: m.user,
+                    label: m.label,
+                    created_at: m.created_at,
+                }).collect()
+            ))
+        }
+        DaemonRequest::RemoveModel { user, model_id } => {
+            let _: bool = proxy.call("RemoveModel", &(user.as_str(), *model_id))
+                .context("D-Bus RemoveModel call failed")?;
+            Ok(DaemonResponse::Removed)
+        }
+        DaemonRequest::ClearModels { user } => {
+            let _: u32 = proxy.call("ClearModels", &(user.as_str(),))
+                .context("D-Bus ClearModels call failed")?;
+            Ok(DaemonResponse::Removed)
+        }
+        DaemonRequest::PreviewFrame => {
+            let jpeg_data: Vec<u8> = proxy.call("PreviewFrame", &())
+                .context("D-Bus PreviewFrame call failed")?;
+            Ok(DaemonResponse::Frame { jpeg_data })
+        }
+        DaemonRequest::PreviewDetectFrame { user } => {
+            let result: (Vec<u8>, Vec<PreviewFaceInfo>) = proxy.call("PreviewDetectFrame", &(user.as_str(),))
+                .context("D-Bus PreviewDetectFrame call failed")?;
+            let (jpeg_data, face_infos) = result;
+            let faces = face_infos.into_iter().map(|f| PreviewFace {
+                x: f.x as f32,
+                y: f.y as f32,
+                width: f.width as f32,
+                height: f.height as f32,
+                confidence: f.confidence as f32,
+                similarity: f.similarity as f32,
+                recognized: f.recognized,
+            }).collect();
+            Ok(DaemonResponse::DetectFrame { jpeg_data, faces })
+        }
+        DaemonRequest::ListDevices => {
+            let devices: Vec<DeviceInfo> = proxy.call("ListDevices", &())
+                .context("D-Bus ListDevices call failed")?;
+            Ok(DaemonResponse::Devices(
+                devices.into_iter().map(|d| IpcDeviceInfo {
+                    path: d.path,
+                    name: d.name,
+                    driver: d.driver,
+                    is_ir: d.is_ir,
+                    formats: vec![],
+                }).collect()
+            ))
+        }
+        DaemonRequest::ReleaseCamera => {
+            let _: () = proxy.call("ReleaseCamera", &())
+                .context("D-Bus ReleaseCamera call failed")?;
+            Ok(DaemonResponse::Ok)
+        }
+        DaemonRequest::Ping => {
+            let _: bool = proxy.call("Ping", &())
+                .context("D-Bus Ping call failed")?;
+            Ok(DaemonResponse::Ok)
+        }
+        DaemonRequest::Shutdown => {
+            let _: () = proxy.call("Shutdown", &())
+                .context("D-Bus Shutdown call failed")?;
+            Ok(DaemonResponse::Ok)
+        }
+    }
 }
 
 /// Resolve the target user for commands.

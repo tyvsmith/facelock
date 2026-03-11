@@ -12,3 +12,4 @@ crate-type = ["cdylib"]
 libc = "0.2"
 toml = { workspace = true }
 serde = { workspace = true }
+zbus = { version = "5", features = ["blocking"] }
