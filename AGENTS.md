@@ -59,7 +59,7 @@ cargo run --bin facelock -- --help
 
 | Crate | Dependencies |
 |-------|-------------|
-| facelock-core | serde, toml, bincode, thiserror, tracing |
+| facelock-core | serde, toml, bincode, thiserror, tracing, subtle |
 | facelock-camera | facelock-core, v4l, image |
 | facelock-face | facelock-core, ort, ndarray, image |
 | facelock-store | facelock-core, rusqlite (bundled), bytemuck |
