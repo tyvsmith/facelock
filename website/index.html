@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Facelock - Face Authentication for Linux</title>
+  <meta name="description" content="A modern face authentication system for Linux PAM. Windows Hello-style facial auth with IR anti-spoofing, local ONNX inference, and ~50ms latency.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav" aria-label="Main navigation">
+    <div class="container">
+      <a href="#" class="nav-brand">Facelock</a>
+      <ul class="nav-links">
+        <li><a href="#how-it-works">How It Works</a></li>
+        <li><a href="#features">Features</a></li>
+        <li><a href="#security">Security</a></li>
+        <li><a href="#install">Install</a></li>
+        <li><a href="docs/quickstart.html">Docs</a></li>
+        <li><a href="https://github.com/username/facelock">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="container">
+      <div class="hero-badge">Open Source / MIT + Apache 2.0</div>
+      <h1><span class="accent">Facelock</span></h1>
+      <p class="hero-tagline">Face authentication for Linux. Windows Hello-style facial recognition with IR anti-spoofing, local inference, and sub-100ms latency.</p>
+
+      <div class="hero-actions">
+        <a href="docs/quickstart.html" class="btn btn-primary">Get Started</a>
+        <a href="https://github.com/username/facelock" class="btn btn-secondary">View on GitHub</a>
+      </div>
+
+      <div class="terminal">
+        <div class="terminal-bar">
+          <span class="terminal-dot red"></span>
+          <span class="terminal-dot yellow"></span>
+          <span class="terminal-dot green"></span>
+          <span class="terminal-title">facelock</span>
+        </div>
+        <div class="terminal-body">
+          <div><span class="prompt">$</span> <span class="command">sudo facelock enroll</span></div>
+          <div><span class="output">Detecting camera...</span></div>
+          <div><span class="output">Found: </span><span class="highlight">Integrated IR Camera (/dev/video2)</span></div>
+          <div><span class="output">Look at the camera. Capturing 5 frames...</span></div>
+          <div><span class="output">Frame 1/5 </span><span class="success">detected</span><span class="output"> (confidence: 0.97)</span></div>
+          <div><span class="output">Frame 2/5 </span><span class="success">detected</span><span class="output"> (confidence: 0.98)</span></div>
+          <div><span class="output">Frame 3/5 </span><span class="success">detected</span><span class="output"> (confidence: 0.96)</span></div>
+          <div><span class="output">Frame 4/5 </span><span class="success">detected</span><span class="output"> (confidence: 0.97)</span></div>
+          <div><span class="output">Frame 5/5 </span><span class="success">detected</span><span class="output"> (confidence: 0.98)</span></div>
+          <div><span class="success">Enrolled face model "default" for user ty</span></div>
+          <div>&nbsp;</div>
+          <div><span class="prompt">$</span> <span class="command">sudo facelock test</span></div>
+          <div><span class="output">Authenticating...</span></div>
+          <div><span class="success">Match</span><span class="output"> (similarity: 0.92, latency: 47ms)</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How It Works -->
+  <section id="how-it-works">
+    <div class="container">
+      <div class="section-header center">
+        <div class="section-label">How It Works</div>
+        <h2 class="section-title">Three-stage recognition pipeline</h2>
+        <p class="section-desc">SCRFD detection finds faces, affine alignment normalizes geometry, and ArcFace produces a 512-dimensional embedding for cosine similarity matching.</p>
+      </div>
+
+      <div class="pipeline">
+        <div class="pipeline-step">
+          <div class="pipeline-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+          </div>
+          <h3>Camera Capture</h3>
+          <p>V4L2 frame acquisition with auto-detection. Prefers IR cameras for anti-spoofing. CLAHE enhancement for consistent lighting.</p>
+        </div>
+
+        <div class="pipeline-step">
+          <div class="pipeline-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><circle cx="15.5" cy="8.5" r="1.5"></circle><path d="M9 15c.83.67 1.83 1 3 1s2.17-.33 3-1"></path></svg>
+          </div>
+          <h3>Face Detection</h3>
+          <p>SCRFD neural network locates faces and extracts 5-point landmarks. Affine alignment produces a normalized 112x112 crop.</p>
+        </div>
+
+        <div class="pipeline-step">
+          <div class="pipeline-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+          </div>
+          <h3>Embedding Match</h3>
+          <p>ArcFace produces a 512-dim L2-normalized vector. Cosine similarity against stored embeddings determines match or reject.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section id="features">
+    <div class="container">
+      <div class="section-header center">
+        <div class="section-label">Features</div>
+        <h2 class="section-title">Built for security and performance</h2>
+        <p class="section-desc">A complete face authentication stack written in Rust, designed for the Linux PAM ecosystem.</p>
+      </div>
+
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          </div>
+          <h3>IR Anti-Spoofing</h3>
+          <p>Enforces infrared cameras by default. Phone screens and printed photos lack IR skin texture, blocking the most common attack vector.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          </div>
+          <h3>~50ms Latency</h3>
+          <p>Persistent daemon keeps ONNX models and camera warm. Authentication completes in under 50 milliseconds after initial load.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path></svg>
+          </div>
+          <h3>Local-Only Inference</h3>
+          <p>All processing happens on-device with ONNX Runtime. No cloud services, no network requests, no telemetry. Your biometrics never leave the machine.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          </div>
+          <h3>PAM Integration</h3>
+          <p>Drop-in PAM module for sudo, polkit, and login. Installs as a single <code>pam_facelock.so</code> with one line in your PAM config.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+          </div>
+          <h3>TPM Encryption</h3>
+          <p>Optional TPM 2.0 support for encrypting face embeddings at rest. Hardware-bound keys ensure biometric data stays protected.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+          </div>
+          <h3>Daemon + Oneshot</h3>
+          <p>Choose persistent daemon mode for speed or oneshot mode for simplicity. The CLI auto-detects which mode is available.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Security -->
+  <section id="security">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-label">Security</div>
+        <h2 class="section-title">Defense in depth</h2>
+        <p class="section-desc">Multiple independent layers protect against spoofing, tampering, and unauthorized access.</p>
+      </div>
+
+      <div class="security-grid">
+        <div class="security-item">
+          <div class="security-marker">IR</div>
+          <div>
+            <h4>IR Camera Enforcement</h4>
+            <p>Enabled by default. Rejects RGB cameras that are trivially spoofed with a printed photo. IR captures skin texture invisible to screens.</p>
+          </div>
+        </div>
+
+        <div class="security-item">
+          <div class="security-marker">FV</div>
+          <div>
+            <h4>Frame Variance</h4>
+            <p>Requires micro-movement between consecutive frames. Static photos produce near-identical embeddings and are rejected automatically.</p>
+          </div>
+        </div>
+
+        <div class="security-item">
+          <div class="security-marker">RL</div>
+          <div>
+            <h4>Rate Limiting</h4>
+            <p>5 attempts per user per 60 seconds by default. Prevents brute-force and rapid-retry attacks against the daemon.</p>
+          </div>
+        </div>
+
+        <div class="security-item">
+          <div class="security-marker">MV</div>
+          <div>
+            <h4>Model Verification</h4>
+            <p>ONNX model files are SHA256-verified at every load. Tampered models are rejected before any inference runs.</p>
+          </div>
+        </div>
+
+        <div class="security-item">
+          <div class="security-marker">SC</div>
+          <div>
+            <h4>Socket Credentials</h4>
+            <p>Unix socket uses SO_PEERCRED to verify connecting process UID. Only root and facelock group members can communicate with the daemon.</p>
+          </div>
+        </div>
+
+        <div class="security-item">
+          <div class="security-marker">AL</div>
+          <div>
+            <h4>Audit Logging</h4>
+            <p>Every authentication attempt is logged to syslog with user, service, and outcome. Full audit trail in journald or /var/log/auth.log.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Install -->
+  <section id="install">
+    <div class="container">
+      <div class="section-header center">
+        <div class="section-label">Quick Install</div>
+        <h2 class="section-title">Up and running in minutes</h2>
+        <p class="section-desc">Build from source, download models, enroll your face, and enable PAM authentication.</p>
+      </div>
+
+      <div class="install-block">
+        <div class="install-tabs">
+          <span class="install-tab active">Arch Linux</span>
+        </div>
+        <div class="terminal">
+          <div class="terminal-bar">
+            <span class="terminal-dot red"></span>
+            <span class="terminal-dot yellow"></span>
+            <span class="terminal-dot green"></span>
+            <span class="terminal-title">terminal</span>
+          </div>
+          <div class="terminal-body">
+            <div><span class="comment"># Build and install the package</span></div>
+            <div><span class="prompt">$</span> <span class="command">cd dist && makepkg -si</span></div>
+            <div>&nbsp;</div>
+            <div><span class="comment"># Download face detection models (~170MB)</span></div>
+            <div><span class="prompt">$</span> <span class="command">sudo facelock setup</span></div>
+            <div>&nbsp;</div>
+            <div><span class="comment"># Enroll your face</span></div>
+            <div><span class="prompt">$</span> <span class="command">sudo facelock enroll</span></div>
+            <div>&nbsp;</div>
+            <div><span class="comment"># Test recognition</span></div>
+            <div><span class="prompt">$</span> <span class="command">sudo facelock test</span></div>
+            <div>&nbsp;</div>
+            <div><span class="comment"># Enable daemon with socket activation</span></div>
+            <div><span class="prompt">$</span> <span class="command">sudo facelock setup --systemd</span></div>
+            <div>&nbsp;</div>
+            <div><span class="comment"># Install PAM module for sudo</span></div>
+            <div><span class="prompt">$</span> <span class="command">sudo facelock setup --pam</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Comparison -->
+  <section id="comparison">
+    <div class="container">
+      <div class="section-header center">
+        <div class="section-label">Comparison</div>
+        <h2 class="section-title">Facelock vs Howdy</h2>
+        <p class="section-desc">Facelock is a ground-up rewrite of the Howdy concept, built in Rust with security as a first-class concern.</p>
+      </div>
+
+      <div class="comparison-wrap">
+        <table class="comparison-table">
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th>Facelock</th>
+              <th>Howdy</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Language</td>
+              <td>Rust</td>
+              <td>Python</td>
+            </tr>
+            <tr>
+              <td>Daemon mode</td>
+              <td><span class="check">Yes (~50ms auth)</span></td>
+              <td><span class="cross">No (process per auth)</span></td>
+            </tr>
+            <tr>
+              <td>IR enforcement</td>
+              <td><span class="check">Default on</span></td>
+              <td><span class="cross">Not enforced</span></td>
+            </tr>
+            <tr>
+              <td>Frame variance check</td>
+              <td><span class="check">Default on</span></td>
+              <td><span class="cross">No</span></td>
+            </tr>
+            <tr>
+              <td>TPM encryption</td>
+              <td><span class="check">Optional</span></td>
+              <td><span class="cross">No</span></td>
+            </tr>
+            <tr>
+              <td>Model verification</td>
+              <td><span class="check">SHA256 at every load</span></td>
+              <td><span class="cross">No</span></td>
+            </tr>
+            <tr>
+              <td>Rate limiting</td>
+              <td><span class="check">5/user/60s</span></td>
+              <td><span class="cross">No</span></td>
+            </tr>
+            <tr>
+              <td>Socket activation</td>
+              <td><span class="check">systemd socket unit</span></td>
+              <td><span class="cross">No</span></td>
+            </tr>
+            <tr>
+              <td>PAM module size</td>
+              <td>~600KB (no heavy deps)</td>
+              <td>Full Python runtime</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <p class="footer-text">Facelock -- Dual-licensed under MIT or Apache 2.0</p>
+      <ul class="footer-links">
+        <li><a href="https://github.com/username/facelock">GitHub</a></li>
+        <li><a href="docs/introduction.html">Documentation</a></li>
+        <li><a href="docs/security.html">Security</a></li>
+        <li><a href="docs/contributing.html">Contributing</a></li>
+      </ul>
+    </div>
+  </footer>
+
+</body>
+</html>

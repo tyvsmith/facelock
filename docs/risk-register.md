@@ -32,7 +32,7 @@
 **Mitigation**:
 - Format preference chain: GREY > YUYV > MJPG > RGB (covers most IR cameras)
 - Explicit device path in config (don't auto-pick)
-- `visage devices` command to enumerate and diagnose
+- `facelock devices` command to enumerate and diagnose
 - Graceful error messages for unsupported formats
 
 **Exit Criteria**: Works with at least 2 different IR camera models.
@@ -56,10 +56,10 @@
 **Risk**: Camera access requires `video` group, daemon needs root for `/var/lib`, PAM runs as root.
 
 **Mitigation**:
-- Daemon runs as root (or dedicated `visage` user with video group + directory access)
+- Daemon runs as root (or dedicated `facelock` user with video group + directory access)
 - PAM module runs in PAM context (already root)
 - CLI enrollment requires root (or sudo) for daemon communication
-- `VISAGE_CONFIG` env var for rootless development
+- `FACELOCK_CONFIG` env var for rootless development
 - Document permission model clearly
 
 **Exit Criteria**: Installation docs cover permissions. Dev workflow doesn't require root.
@@ -81,7 +81,7 @@
 **Risk**: Unix socket permissions could allow unauthorized users to trigger auth or enroll faces.
 
 **Mitigation**:
-- Socket permissions: 0o660, owned by root:visage group
+- Socket permissions: 0o660, owned by root:facelock group
 - Peer credential verification via SO_PEERCRED on every connection
 - PAM module connects as root (PAM context)
 - CLI requires root/sudo for write operations
@@ -111,7 +111,7 @@
 **Impact**: High -- permanent compromise of biometric identity.
 
 **Mitigation**:
-- Database file permissions: 640, root:visage ownership
+- Database file permissions: 640, root:facelock ownership
 - Embeddings never transmitted over network
 - No cloud services, all processing local
 - Document biometric data handling in user-facing docs
@@ -129,6 +129,6 @@
 - SHA256 verification at model load time (not just download)
 - Model files owned by root (644 permissions)
 - Manifest with checksums compiled into binary (can't be tampered without recompiling)
-- `visage status` reports model integrity
+- `facelock status` reports model integrity
 
 **Exit Criteria**: SHA256 verified on every daemon start. Tampered model test in integration suite.

@@ -1,4 +1,6 @@
-# Visage: Face Authentication for Linux
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
+
+# Facelock: Face Authentication for Linux
 
 A modern face authentication system for Linux PAM. Provides Windows Hello-style facial auth with IR anti-spoofing, configurable as a persistent daemon or daemonless one-shot.
 
@@ -6,9 +8,9 @@ A modern face authentication system for Linux PAM. Provides Windows Hello-style 
 
 ```bash
 cargo build --workspace
-VISAGE_CONFIG=dev/config.toml cargo run --bin visage -- setup    # download models
-VISAGE_CONFIG=dev/config.toml cargo run --bin visage -- enroll   # capture face
-VISAGE_CONFIG=dev/config.toml cargo run --bin visage -- test     # verify recognition
+FACELOCK_CONFIG=dev/config.toml cargo run --bin facelock -- setup    # download models
+FACELOCK_CONFIG=dev/config.toml cargo run --bin facelock -- enroll   # capture face
+FACELOCK_CONFIG=dev/config.toml cargo run --bin facelock -- test     # verify recognition
 ```
 
 No daemon needed — the CLI auto-falls back to direct mode when no daemon is running.
@@ -19,43 +21,43 @@ No daemon needed — the CLI auto-falls back to direct mode when no daemon is ru
 |------|--------|-------------|---------|
 | **Daemon** | `mode = "daemon"` (default) | PAM → socket → persistent daemon | ~50ms warm |
 | **Socket activation** | systemd `.socket` unit | systemd starts daemon on demand | ~700ms cold |
-| **Oneshot** | `mode = "oneshot"` | PAM → `visage auth` subprocess | ~700ms |
+| **Oneshot** | `mode = "oneshot"` | PAM → `facelock auth` subprocess | ~700ms |
 
 The CLI works in all modes — it connects to the daemon if available, otherwise operates directly.
 
 ## Architecture
 
 ```
-visage (unified binary)
-├── visage setup          Download models, install systemd/PAM
-├── visage enroll         Capture and store a face
-├── visage test           Test recognition
-├── visage list           List enrolled models
-├── visage preview        Live camera preview
-├── visage daemon         Run persistent daemon
-├── visage auth           One-shot auth (PAM helper)
-├── visage devices        List cameras
-├── visage tpm status     TPM status
-└── visage bench          Benchmarks
+facelock (unified binary)
+├── facelock setup          Download models, install systemd/PAM
+├── facelock enroll         Capture and store a face
+├── facelock test           Test recognition
+├── facelock list           List enrolled models
+├── facelock preview        Live camera preview
+├── facelock daemon         Run persistent daemon
+├── facelock auth           One-shot auth (PAM helper)
+├── facelock devices        List cameras
+├── facelock tpm status     TPM status
+└── facelock bench          Benchmarks
 
-pam_visage.so (PAM module, ~600KB)
+pam_facelock.so (PAM module, ~600KB)
 ├── daemon mode → socket IPC to daemon
-└── oneshot mode → fork/exec visage auth
+└── oneshot mode → fork/exec facelock auth
 ```
 
 ### Crates
 
 | Crate | Type | Purpose |
 |-------|------|---------|
-| `visage-core` | lib | Config, types, errors, IPC protocol, traits |
-| `visage-camera` | lib | V4L2 capture, auto-detection, preprocessing |
-| `visage-face` | lib | ONNX inference (SCRFD detection + ArcFace embedding) |
-| `visage-store` | lib | SQLite face embedding storage |
-| `visage-daemon` | lib | Auth/enroll logic, rate limiting, request handler |
-| `visage-cli` | bin | All CLI commands, daemon runner, direct mode |
-| `pam-visage` | cdylib | PAM module (libc + toml + serde only) |
-| `visage-tpm` | lib | Optional TPM encryption (feature-gated) |
-| `visage-test-support` | lib | Mock camera/engine for testing |
+| `facelock-core` | lib | Config, types, errors, IPC protocol, traits |
+| `facelock-camera` | lib | V4L2 capture, auto-detection, preprocessing |
+| `facelock-face` | lib | ONNX inference (SCRFD detection + ArcFace embedding) |
+| `facelock-store` | lib | SQLite face embedding storage |
+| `facelock-daemon` | lib | Auth/enroll logic, rate limiting, request handler |
+| `facelock-cli` | bin | All CLI commands, daemon runner, direct mode |
+| `pam-facelock` | cdylib | PAM module (libc + toml + serde only) |
+| `facelock-tpm` | lib | Optional TPM encryption (feature-gated) |
+| `facelock-test-support` | lib | Mock camera/engine for testing |
 
 ### Face Recognition Pipeline
 
@@ -89,7 +91,7 @@ All keys are optional. Camera is auto-detected if `device.path` is omitted.
 # require_frame_variance = true  # reject photo attacks
 ```
 
-Full reference: `config/visage.toml`. Override path: `VISAGE_CONFIG` env var.
+Full reference: `config/facelock.toml`. Override path: `FACELOCK_CONFIG` env var.
 
 ## Installation
 
@@ -98,10 +100,10 @@ See [docs/quickstart.md](docs/quickstart.md) for full instructions.
 ```bash
 # Arch Linux
 cd dist && makepkg -si
-sudo visage setup
-sudo visage setup --systemd   # enable socket activation
-sudo visage enroll
-sudo visage setup --pam       # install to /etc/pam.d/sudo
+sudo facelock setup
+sudo facelock setup --systemd   # enable socket activation
+sudo facelock enroll
+sudo facelock setup --pam       # install to /etc/pam.d/sudo
 ```
 
 ## Testing
@@ -127,3 +129,10 @@ See [docs/testing-safety.md](docs/testing-safety.md) before editing PAM config o
 - systemd service hardening (ProtectSystem=strict, NoNewPrivileges, etc.)
 
 See [docs/security.md](docs/security.md) for the full threat model.
+
+## License
+
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE), at your option.
+
+The ONNX face models used by Facelock are licensed separately under the InsightFace
+non-commercial research license. See [models/NOTICE.md](models/NOTICE.md) for details.

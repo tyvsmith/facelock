@@ -1,6 +1,6 @@
 # Spec 11: Benchmarks & Calibration
 
-**Phase**: 6 (Validation) | **Crate**: visage-bench | **Depends on**: all prior
+**Phase**: 6 (Validation) | **Crate**: facelock-bench | **Depends on**: all prior
 
 ## Goal
 
@@ -8,12 +8,12 @@ Benchmark tooling to measure auth latency, preview performance, and face matchin
 
 ## Dependencies
 
-- `visage-core`, `visage-camera`, `visage-face`, `visage-store`
+- `facelock-core`, `facelock-camera`, `facelock-face`, `facelock-store`
 
 ## Benchmark Commands
 
 ```
-visage-bench <command>
+facelock-bench <command>
 
 Commands:
   cold-auth       Measure cold auth latency (daemon startup + first auth)
@@ -87,6 +87,6 @@ Use `templates/benchmark-report.md` template:
 ## Verification
 
 ```bash
-cargo build -p visage-bench
-cargo run --bin visage-bench -- --help
+cargo build -p facelock-bench
+cargo run --bin facelock-bench -- --help
 ```

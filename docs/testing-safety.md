@@ -4,7 +4,7 @@
 
 ## The Golden Rule
 
-**Never install `pam_visage.so` on the host or edit `/etc/pam.d/*` until validated in container.** A broken PAM module can lock you out of sudo, login, and su.
+**Never install `pam_facelock.so` on the host or edit `/etc/pam.d/*` until validated in container.** A broken PAM module can lock you out of sudo, login, and su.
 
 ## Testing Tiers
 
@@ -51,7 +51,7 @@ Disposable VM with snapshots. USB camera passthrough for real hardware testing. 
 Safety checklist:
 1. Open root shell in separate terminal — **keep it open**
 2. `sudo cp /etc/pam.d/sudo /etc/pam.d/sudo.bak`
-3. `sudo visage setup --pam --service sudo`
+3. `sudo facelock setup --pam --service sudo`
 4. Test in NEW terminal: `sudo echo test`
 5. If broken, revert from root shell: `sudo cp /etc/pam.d/sudo.bak /etc/pam.d/sudo`
 6. **Never** modify `system-auth` or `login` until sudo works perfectly
@@ -62,33 +62,33 @@ Emergency recovery: boot from USB, mount partition, remove PAM line, reboot.
 
 ### Setup
 ```bash
-export VISAGE_CONFIG=dev/config.toml
+export FACELOCK_CONFIG=dev/config.toml
 cargo build --workspace
-cargo run --bin visage -- setup       # download models
+cargo run --bin facelock -- setup       # download models
 ```
 
 ### No-Daemon Development
 All CLI commands work without a daemon — the CLI falls back to direct mode silently:
 ```bash
-visage enroll
-visage test
-visage list
-visage devices
+facelock enroll
+facelock test
+facelock list
+facelock devices
 ```
 
 ### Daemon Development
 ```bash
-visage daemon &
-visage enroll       # uses daemon (faster for repeated commands)
-visage test
+facelock daemon &
+facelock enroll       # uses daemon (faster for repeated commands)
+facelock test
 kill %1             # stop daemon
 ```
 
 ### Logging
 Control via `RUST_LOG` environment variable:
 ```bash
-RUST_LOG=visage_daemon=debug visage daemon    # verbose daemon
-RUST_LOG=visage_cli=debug visage test         # verbose CLI
+RUST_LOG=facelock_daemon=debug facelock daemon    # verbose daemon
+RUST_LOG=facelock_cli=debug facelock test         # verbose CLI
 ```
 
 ## Dev Config
@@ -100,11 +100,11 @@ RUST_LOG=visage_cli=debug visage test         # verbose CLI
 max_height = 480
 
 [daemon]
-socket_path = "/tmp/visage-dev.sock"
+socket_path = "/tmp/facelock-dev.sock"
 model_dir = "./models"
 
 [storage]
-db_path = "/tmp/visage-dev.db"
+db_path = "/tmp/facelock-dev.db"
 
 [security]
 require_ir = true
@@ -128,7 +128,7 @@ Local full CI: `bash test/run-tests.sh`
 | `test/run-container-tests.sh` | PAM smoke tests |
 | `test/run-integration-tests.sh` | E2E with camera (daemon) |
 | `test/run-oneshot-tests.sh` | E2E with camera (oneshot) |
-| `test/pam.d/visage-test` | Test PAM config |
+| `test/pam.d/facelock-test` | Test PAM config |
 
 ## Just Recipes
 

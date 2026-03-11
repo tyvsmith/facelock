@@ -30,42 +30,42 @@ echo "=== Integration Tests (with camera) ==="
 echo ""
 
 # Use the installed config (written by Containerfile), override socket path
-# to a writable location since /run/visage may not exist without systemd
-sed -i 's|socket_path.*|socket_path = "/tmp/visage.sock"|' /etc/visage/config.toml
-sed -i 's|db_path.*|db_path = "/tmp/visage-test.db"|' /etc/visage/config.toml 2>/dev/null || true
+# to a writable location since /run/facelock may not exist without systemd
+sed -i 's|socket_path.*|socket_path = "/tmp/facelock.sock"|' /etc/facelock/config.toml
+sed -i 's|db_path.*|db_path = "/tmp/facelock-test.db"|' /etc/facelock/config.toml 2>/dev/null || true
 
 # Start daemon in background
-visage daemon &
+facelock daemon &
 DAEMON_PID=$!
 sleep 2
 
 # Verify daemon is running
 run_test "Daemon responds to ping" \
-    "visage status"
+    "facelock status"
 
 # Test device listing
 run_test "Device listing works" \
-    "visage devices"
+    "facelock devices"
 
 # Test enrollment (will capture faces from camera)
 run_test "Enroll a face" \
-    "visage enroll --user testuser --label test-face"
+    "facelock enroll --user testuser --label test-face"
 
 # Test listing enrolled models
 run_test "List enrolled models" \
-    "visage list --user testuser"
+    "facelock list --user testuser"
 
 # Test authentication via CLI
 run_test "Authenticate enrolled face (CLI)" \
-    "visage test --user testuser"
+    "facelock test --user testuser"
 
 # Test authentication via PAM (the real auth path)
 run_test "Authenticate enrolled face (PAM)" \
-    "pamtester visage-test testuser authenticate"
+    "pamtester facelock-test testuser authenticate"
 
 # Clean up
 run_test "Clear enrolled models" \
-    "visage clear --user testuser --yes"
+    "facelock clear --user testuser --yes"
 
 # Stop daemon
 kill $DAEMON_PID 2>/dev/null || true

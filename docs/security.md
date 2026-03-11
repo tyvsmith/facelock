@@ -2,12 +2,12 @@
 
 ## Threat Model
 
-visage is a **local biometric authentication system**. The threat model assumes:
+facelock is a **local biometric authentication system**. The threat model assumes:
 
 - **Attacker has physical access** to the machine (the entire point of face auth is physical-presence scenarios like unlocking a laptop)
 - **Attacker may have a photo or video** of the enrolled user
 - **Attacker does not have root** (if they do, game over regardless)
-- **Attacker cannot modify files** in `/etc/visage/`, `/var/lib/visage/`, or `/lib/security/`
+- **Attacker cannot modify files** in `/etc/facelock/`, `/var/lib/facelock/`, or `/lib/security/`
 
 ## Attack Vectors & Mitigations
 
@@ -51,7 +51,7 @@ if config.security.require_ir && !is_ir_camera(&device_info) {
 
 **Rationale**: Phone screens and printed photos do not emit infrared light correctly. An IR camera sees a flat, textureless surface where a real face would have depth and skin texture in IR. This single check eliminates the vast majority of spoofing attacks.
 
-**Limitation**: IR camera detection by format/name is heuristic. Some cameras report YUYV but are actually IR. The `visage devices` command should display whether each camera is detected as IR.
+**Limitation**: IR camera detection by format/name is heuristic. Some cameras report YUYV but are actually IR. The `facelock devices` command should display whether each camera is detected as IR.
 
 #### B. Frame Variance Check (Required)
 
@@ -123,9 +123,9 @@ impl FaceEngine {
         for model in &manifest.default_models() {
             let path = model_dir.join(&model.filename);
             if !verify_model(&path, &model.sha256)? {
-                return Err(VisageError::Detection(format!(
+                return Err(FacelockError::Detection(format!(
                     "Model integrity check failed for {}. Expected SHA256: {}. \
-                     Re-run `visage setup` to re-download.",
+                     Re-run `facelock setup` to re-download.",
                     model.filename, model.sha256
                 )));
             }
@@ -139,9 +139,9 @@ impl FaceEngine {
 
 ```bash
 # Models owned by root, not writable by others
-chown -R root:root /var/lib/visage/models
-chmod 755 /var/lib/visage/models
-chmod 644 /var/lib/visage/models/*.onnx
+chown -R root:root /var/lib/facelock/models
+chmod 755 /var/lib/facelock/models
+chmod 644 /var/lib/facelock/models/*.onnx
 ```
 
 ### 3. Embedding / Database Security
@@ -153,9 +153,9 @@ chmod 644 /var/lib/visage/models/*.onnx
 #### A. Database File Permissions (Required)
 
 ```bash
-# Database owned by root, readable only by root and visage group
-chown root:visage /var/lib/visage/visage.db
-chmod 640 /var/lib/visage/visage.db
+# Database owned by root, readable only by root and facelock group
+chown root:facelock /var/lib/facelock/facelock.db
+chmod 640 /var/lib/facelock/facelock.db
 ```
 
 #### B. Embedding Sensitivity Warning (Required)
@@ -184,10 +184,10 @@ let socket_path = &config.daemon.socket_path;
 let _ = std::fs::remove_file(socket_path);
 // Bind
 let listener = UnixListener::bind(socket_path)?;
-// Set permissions: owner (root) + group (visage) only
+// Set permissions: owner (root) + group (facelock) only
 std::fs::set_permissions(socket_path, Permissions::from_mode(0o660))?;
 // Set ownership
-nix::unistd::chown(socket_path, Some(Uid::from_raw(0)), Some(gid_of("visage")))?;
+nix::unistd::chown(socket_path, Some(Uid::from_raw(0)), Some(gid_of("facelock")))?;
 ```
 
 #### B. Peer Credential Verification (Required)
@@ -201,9 +201,9 @@ fn verify_peer(stream: &UnixStream) -> Result<()> {
     let cred = getsockopt(stream.as_raw_fd(), PeerCredentials)?;
     let peer_uid = cred.uid();
 
-    // Only root (PAM context) and members of visage group can connect
-    if peer_uid != 0 && !is_in_visage_group(peer_uid) {
-        return Err(VisageError::Daemon("unauthorized connection".into()));
+    // Only root (PAM context) and members of facelock group can connect
+    if peer_uid != 0 && !is_in_facelock_group(peer_uid) {
+        return Err(FacelockError::Daemon("unauthorized connection".into()));
     }
     Ok(())
 }
@@ -222,7 +222,7 @@ pub fn recv_message<R: Read>(reader: &mut R) -> Result<Vec<u8>> {
     // Reject messages larger than 10MB (generous for JPEG preview frames)
     const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
     if len > MAX_MESSAGE_SIZE {
-        return Err(VisageError::Ipc(format!("message too large: {} bytes", len)));
+        return Err(FacelockError::Ipc(format!("message too large: {} bytes", len)));
     }
 
     let mut buf = vec![0u8; len];
@@ -269,8 +269,8 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
     let result = do_auth(user, service);
 
     // Log to syslog (PAM convention)
-    // Format: pam_visage(service): auth result for user
-    syslog(LOG_AUTH | severity, "pam_visage({}): {} for user {}",
+    // Format: pam_facelock(service): auth result for user
+    syslog(LOG_AUTH | severity, "pam_facelock({}): {} for user {}",
            service, result_str, user);
 
     result
@@ -314,7 +314,7 @@ The systemd unit should include:
 # Already present:
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/lib/visage /run/visage /var/log/visage
+ReadWritePaths=/var/lib/facelock /run/facelock /var/log/facelock
 DeviceAllow=/dev/video* rw
 
 # Add these:

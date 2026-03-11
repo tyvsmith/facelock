@@ -1,0 +1,19 @@
+[Unit]
+Description=Facelock Face Authentication Daemon
+Documentation=https://github.com/user/facelock
+After=local-fs.target facelock-daemon.socket
+Requires=facelock-daemon.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/facelock daemon
+StandardOutput=journal
+StandardError=journal
+Restart=on-failure
+RestartSec=3
+
+# Resource limits
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target

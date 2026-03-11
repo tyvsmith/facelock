@@ -1,16 +1,16 @@
-# Maintainer: visage contributors
-pkgname=visage
+# Maintainer: facelock contributors
+pkgname=facelock
 pkgver=0.1.0
 pkgrel=1
 pkgdesc="Face authentication for Linux"
 arch=('x86_64')
-url="https://github.com/user/visage"
-license=('MIT')
+url="https://github.com/user/facelock"
+license=('MIT' 'Apache-2.0')
 depends=('pam' 'gcc-libs')
 makedepends=('rust' 'cargo' 'clang')
 optdepends=('tpm2-tss: TPM2 support for embedding encryption')
-backup=('etc/visage/config.toml')
-install=visage.install
+backup=('etc/facelock/config.toml')
+install=facelock.install
 
 build() {
     cd "$srcdir/$pkgname-$pkgver"
@@ -21,30 +21,31 @@ package() {
     cd "$srcdir/$pkgname-$pkgver"
 
     # Binary (unified)
-    install -Dm755 target/release/visage "$pkgdir/usr/bin/visage"
+    install -Dm755 target/release/facelock "$pkgdir/usr/bin/facelock"
 
     # PAM module (Arch uses /usr/lib/security/)
-    install -Dm755 target/release/libpam_visage.so "$pkgdir/usr/lib/security/pam_visage.so"
+    install -Dm755 target/release/libpam_facelock.so "$pkgdir/usr/lib/security/pam_facelock.so"
 
     # Configuration
-    install -Dm644 config/visage.toml "$pkgdir/etc/visage/config.toml"
+    install -Dm644 config/facelock.toml "$pkgdir/etc/facelock/config.toml"
 
     # systemd units
-    install -Dm644 systemd/visage-daemon.service "$pkgdir/usr/lib/systemd/system/visage-daemon.service"
-    install -Dm644 systemd/visage-daemon.socket "$pkgdir/usr/lib/systemd/system/visage-daemon.socket"
+    install -Dm644 systemd/facelock-daemon.service "$pkgdir/usr/lib/systemd/system/facelock-daemon.service"
+    install -Dm644 systemd/facelock-daemon.socket "$pkgdir/usr/lib/systemd/system/facelock-daemon.socket"
 
-    # sysusers.d for visage group
-    install -Dm644 dist/visage.sysusers "$pkgdir/usr/lib/sysusers.d/visage.conf"
+    # sysusers.d for facelock group
+    install -Dm644 dist/facelock.sysusers "$pkgdir/usr/lib/sysusers.d/facelock.conf"
 
     # tmpfiles.d for runtime directories
-    install -Dm644 dist/visage.tmpfiles "$pkgdir/usr/lib/tmpfiles.d/visage.conf"
+    install -Dm644 dist/facelock.tmpfiles "$pkgdir/usr/lib/tmpfiles.d/facelock.conf"
 
     # Data directories
-    install -dm750 "$pkgdir/var/lib/visage"
-    install -dm755 "$pkgdir/var/lib/visage/models"
-    install -dm750 "$pkgdir/var/log/visage"
-    install -dm750 "$pkgdir/var/log/visage/snapshots"
+    install -dm750 "$pkgdir/var/lib/facelock"
+    install -dm755 "$pkgdir/var/lib/facelock/models"
+    install -dm750 "$pkgdir/var/log/facelock"
+    install -dm750 "$pkgdir/var/log/facelock/snapshots"
 
-    # License
-    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE" 2>/dev/null || true
+    # Licenses
+    install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+    install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
 }

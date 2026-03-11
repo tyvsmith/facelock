@@ -1,22 +1,22 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/visage-core",
-    "crates/visage-camera",
-    "crates/visage-face",
-    "crates/visage-store",
-    "crates/visage-daemon",
-    "crates/visage-cli",
-    "crates/pam-visage",
-    "crates/visage-test-support",
-    "crates/visage-tpm",
+    "crates/facelock-core",
+    "crates/facelock-camera",
+    "crates/facelock-face",
+    "crates/facelock-store",
+    "crates/facelock-daemon",
+    "crates/facelock-cli",
+    "crates/pam-facelock",
+    "crates/facelock-test-support",
+    "crates/facelock-tpm",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -26,6 +26,7 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 bincode = "2.0.0-rc.3"
+tss-esapi = "8.0.0-alpha.2"
 
 [profile.release]
 lto = true

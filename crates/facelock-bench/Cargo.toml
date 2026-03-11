@@ -1,0 +1,20 @@
+[package]
+name = "facelock-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "facelock-bench"
+path = "src/main.rs"
+
+[dependencies]
+facelock-core = { path = "../facelock-core" }
+facelock-camera = { path = "../facelock-camera" }
+facelock-face = { path = "../facelock-face" }
+facelock-store = { path = "../facelock-store" }
+clap = { version = "4", features = ["derive"] }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

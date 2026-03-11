@@ -1,4 +1,4 @@
-# visage build automation
+# facelock build automation
 # Usage: just <recipe>
 
 # Build in debug mode (development)
@@ -37,8 +37,8 @@ test-pam: build-release
     #!/usr/bin/env bash
     set -euo pipefail
     if [ -f test/Containerfile ]; then
-        podman build -t visage-pam-test -f test/Containerfile .
-        podman run --rm visage-pam-test
+        podman build -t facelock-pam-test -f test/Containerfile .
+        podman run --rm facelock-pam-test
     else
         echo "No test/Containerfile found"
         exit 1
@@ -48,40 +48,40 @@ test-pam: build-release
 test-integration: build-release
     #!/usr/bin/env bash
     set -euo pipefail
-    podman build -t visage-pam-test -f test/Containerfile .
+    podman build -t facelock-pam-test -f test/Containerfile .
     devices=""
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
     done
-    podman run --rm $devices visage-pam-test /run-integration-tests.sh
+    podman run --rm $devices facelock-pam-test /run-integration-tests.sh
 
 # Run oneshot (daemonless) end-to-end tests in container (requires camera)
 test-oneshot: build-release
     #!/usr/bin/env bash
     set -euo pipefail
-    podman build -t visage-pam-test -f test/Containerfile .
+    podman build -t facelock-pam-test -f test/Containerfile .
     devices=""
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
     done
-    podman run --rm $devices visage-pam-test /run-oneshot-tests.sh
+    podman run --rm $devices facelock-pam-test /run-oneshot-tests.sh
 
 # Open interactive shell in PAM test container (requires camera)
 test-shell: build-release
     #!/usr/bin/env bash
     set -euo pipefail
-    podman build -t visage-pam-test -f test/Containerfile .
+    podman build -t facelock-pam-test -f test/Containerfile .
     devices=""
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
     done
     echo "Starting interactive shell. Try:"
-    echo "  visage daemon &"
+    echo "  facelock daemon &"
     echo "  sleep 2"
-    echo "  visage enroll --user testuser --label myface"
-    echo "  visage test --user testuser"
-    echo "  pamtester visage-test testuser authenticate"
-    podman run --rm -it $devices visage-pam-test /bin/bash
+    echo "  facelock enroll --user testuser --label myface"
+    echo "  facelock test --user testuser"
+    echo "  pamtester facelock-test testuser authenticate"
+    podman run --rm -it $devices facelock-pam-test /bin/bash
 
 # Build release and install to system
 # Run as: just install (builds as you, installs as root)
@@ -92,74 +92,79 @@ install: build-release
 install-files:
     #!/usr/bin/env bash
     set -euo pipefail
-    PAM_LINE="auth  sufficient  pam_visage.so"
+    PAM_LINE="auth  sufficient  pam_facelock.so"
 
     # Verify binaries exist
-    for f in target/release/visage target/release/libpam_visage.so; do
+    for f in target/release/facelock target/release/libpam_facelock.so; do
         [ -f "$f" ] || { echo "Error: $f not found. Run 'just build-release' first."; exit 1; }
     done
 
-    # Create visage system group and add the installing user
-    getent group visage >/dev/null || groupadd -r visage
+    # Create facelock system group and add the installing user
+    getent group facelock >/dev/null || groupadd -r facelock
     REAL_USER="${SUDO_USER:-${DOAS_USER:-}}"
-    if [ -n "$REAL_USER" ] && ! id -nG "$REAL_USER" 2>/dev/null | grep -qw visage; then
-        usermod -aG visage "$REAL_USER"
-        echo "Added $REAL_USER to visage group (log out and back in to take effect)."
+    if [ -n "$REAL_USER" ] && ! id -nG "$REAL_USER" 2>/dev/null | grep -qw facelock; then
+        usermod -aG facelock "$REAL_USER"
+        echo "Added $REAL_USER to facelock group (log out and back in to take effect)."
     fi
 
     # Binaries
-    install -Dm755 target/release/visage /usr/bin/visage
-    install -Dm755 target/release/libpam_visage.so /lib/security/pam_visage.so
+    install -Dm755 target/release/facelock /usr/bin/facelock
+    install -Dm755 target/release/libpam_facelock.so /lib/security/pam_facelock.so
 
     # Config (don't overwrite existing)
-    install -Dm644 config/visage.toml /etc/visage/config.toml.default
-    [ -f /etc/visage/config.toml ] || cp /etc/visage/config.toml.default /etc/visage/config.toml
+    install -Dm644 config/facelock.toml /etc/facelock/config.toml.default
+    [ -f /etc/facelock/config.toml ] || cp /etc/facelock/config.toml.default /etc/facelock/config.toml
 
     # systemd units
-    install -Dm644 systemd/visage-daemon.service /usr/lib/systemd/system/visage-daemon.service
-    install -Dm644 systemd/visage-daemon.socket /usr/lib/systemd/system/visage-daemon.socket
+    install -Dm644 systemd/facelock-daemon.service /usr/lib/systemd/system/facelock-daemon.service
+    install -Dm644 systemd/facelock-daemon.socket /usr/lib/systemd/system/facelock-daemon.socket
 
     # Directories
-    install -dm770 -o root -g visage /var/lib/visage
-    install -dm755 -o root -g root /var/lib/visage/models
-    install -dm750 -o root -g visage /var/log/visage
-    install -dm750 -o root -g visage /var/log/visage/snapshots
-    install -dm755 -o root -g visage /run/visage
+    install -dm770 -o root -g facelock /var/lib/facelock
+    install -dm755 -o root -g root /var/lib/facelock/models
+    install -dm750 -o root -g facelock /var/log/facelock
+    install -dm750 -o root -g facelock /var/log/facelock/snapshots
+    install -dm755 -o root -g facelock /run/facelock
 
     # Enable socket activation (if systemd present)
     if [ -d /run/systemd/system ]; then
-        systemctl stop visage-daemon.service visage-daemon.socket 2>/dev/null || true
+        systemctl stop facelock-daemon.service facelock-daemon.socket 2>/dev/null || true
         systemctl daemon-reload
-        systemctl reset-failed visage-daemon.service 2>/dev/null || true
-        systemctl enable --now visage-daemon.socket 2>/dev/null || true
+        systemctl reset-failed facelock-daemon.service 2>/dev/null || true
+        systemctl enable --now facelock-daemon.socket 2>/dev/null || true
         echo "Socket activation enabled."
     fi
 
     # Add to /etc/pam.d/sudo (if not already present)
     if [ -f /etc/pam.d/sudo ] && ! grep -qF "$PAM_LINE" /etc/pam.d/sudo; then
-        cp /etc/pam.d/sudo /etc/pam.d/sudo.visage-backup
+        cp /etc/pam.d/sudo /etc/pam.d/sudo.facelock-backup
         sed -i "0,/^auth/{s/^auth/${PAM_LINE}\nauth/}" /etc/pam.d/sudo
-        echo "Added face auth to /etc/pam.d/sudo (backup: /etc/pam.d/sudo.visage-backup)"
+        echo "Added face auth to /etc/pam.d/sudo (backup: /etc/pam.d/sudo.facelock-backup)"
     fi
 
     # Fix permissions on existing data
-    [ -d /var/lib/visage/models ] && chmod 644 /var/lib/visage/models/*.onnx 2>/dev/null || true
-    [ -f /var/lib/visage/visage.db ] && chown root:visage /var/lib/visage/visage.db && chmod 640 /var/lib/visage/visage.db || true
+    [ -d /var/lib/facelock/models ] && chmod 644 /var/lib/facelock/models/*.onnx 2>/dev/null || true
+    [ -f /var/lib/facelock/facelock.db ] && chown root:facelock /var/lib/facelock/facelock.db && chmod 640 /var/lib/facelock/facelock.db || true
 
     echo ""
     echo "Installed. Two steps remaining:"
-    echo "  1. sudo visage setup       (download face recognition models)"
-    echo "  2. sudo visage enroll      (register your face)"
+    echo "  1. sudo facelock setup       (download face recognition models)"
+    echo "  2. sudo facelock enroll      (register your face)"
 
-# Uninstall (requires root)
+# Uninstall from system
+# Run as: just uninstall (elevates to root, preserving PATH)
 uninstall:
+    sudo env PATH="$PATH" just uninstall-files
+
+# Uninstall files from system (requires root, called by uninstall)
+uninstall-files:
     #!/usr/bin/env bash
     set -euo pipefail
-    PAM_LINE="auth  sufficient  pam_visage.so"
+    PAM_LINE="auth  sufficient  pam_facelock.so"
 
     # Stop and disable daemon
-    systemctl stop visage-daemon.socket visage-daemon 2>/dev/null || true
-    systemctl disable visage-daemon.socket visage-daemon 2>/dev/null || true
+    systemctl stop facelock-daemon.socket facelock-daemon 2>/dev/null || true
+    systemctl disable facelock-daemon.socket facelock-daemon 2>/dev/null || true
 
     # Remove PAM line
     if [ -f /etc/pam.d/sudo ]; then
@@ -168,13 +173,13 @@ uninstall:
     fi
 
     # Remove binaries and units
-    rm -f /usr/bin/visage /lib/security/pam_visage.so
-    rm -f /usr/lib/systemd/system/visage-daemon.service
-    rm -f /usr/lib/systemd/system/visage-daemon.socket
+    rm -f /usr/bin/facelock /lib/security/pam_facelock.so
+    rm -f /usr/lib/systemd/system/facelock-daemon.service
+    rm -f /usr/lib/systemd/system/facelock-daemon.socket
     systemctl daemon-reload 2>/dev/null || true
 
-    echo "Uninstalled. Config and data preserved in /etc/visage and /var/lib/visage."
-    echo "To remove all data: rm -rf /etc/visage /var/lib/visage /var/log/visage"
+    echo "Uninstalled. Config and data preserved in /etc/facelock and /var/lib/facelock."
+    echo "To remove all data: rm -rf /etc/facelock /var/lib/facelock /var/log/facelock"
 
 # Clean build artifacts
 clean:
@@ -182,11 +187,11 @@ clean:
 
 # Show installed file locations
 show-paths:
-    @echo "Binary:   /usr/bin/visage"
-    @echo "PAM:      /lib/security/pam_visage.so"
-    @echo "Config:   /etc/visage/config.toml"
-    @echo "Models:   /var/lib/visage/models/"
-    @echo "Database: /var/lib/visage/visage.db"
-    @echo "Socket:   /run/visage/visage.sock"
-    @echo "Service:  /usr/lib/systemd/system/visage-daemon.service"
-    @echo "Logs:     /var/log/visage/"
+    @echo "Binary:   /usr/bin/facelock"
+    @echo "PAM:      /lib/security/pam_facelock.so"
+    @echo "Config:   /etc/facelock/config.toml"
+    @echo "Models:   /var/lib/facelock/models/"
+    @echo "Database: /var/lib/facelock/facelock.db"
+    @echo "Socket:   /run/facelock/facelock.sock"
+    @echo "Service:  /usr/lib/systemd/system/facelock-daemon.service"
+    @echo "Logs:     /var/log/facelock/"

@@ -11,12 +11,12 @@ echo "=== Build Release ==="
 cargo build --workspace --release
 
 echo "=== PAM Symbol Verification ==="
-if [ -f target/release/libpam_visage.so ]; then
-    nm -D target/release/libpam_visage.so | grep -q pam_sm_authenticate && echo "  pam_sm_authenticate: OK"
-    nm -D target/release/libpam_visage.so | grep -q pam_sm_setcred && echo "  pam_sm_setcred: OK"
+if [ -f target/release/libpam_facelock.so ]; then
+    nm -D target/release/libpam_facelock.so | grep -q pam_sm_authenticate && echo "  pam_sm_authenticate: OK"
+    nm -D target/release/libpam_facelock.so | grep -q pam_sm_setcred && echo "  pam_sm_setcred: OK"
 
     echo "=== PAM Size Check ==="
-    size=$(stat -c%s target/release/libpam_visage.so)
+    size=$(stat -c%s target/release/libpam_facelock.so)
     echo "  PAM module size: ${size} bytes"
     if [ "$size" -gt 1048576 ]; then
         echo "  WARNING: PAM module is ${size} bytes (>1MB)"
@@ -25,9 +25,9 @@ if [ -f target/release/libpam_visage.so ]; then
     fi
 
     echo "=== PAM Dependency Check ==="
-    ldd target/release/libpam_visage.so
+    ldd target/release/libpam_facelock.so
 else
-    echo "  SKIP: libpam_visage.so not found (release build may not have completed)"
+    echo "  SKIP: libpam_facelock.so not found (release build may not have completed)"
 fi
 
 echo ""

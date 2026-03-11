@@ -1,6 +1,6 @@
 # Spec 02: Camera Capture
 
-**Phase**: 2 (Components) | **Crate**: visage-camera | **Depends on**: 01 | **Parallel with**: 03, 04
+**Phase**: 2 (Components) | **Crate**: facelock-camera | **Depends on**: 01 | **Parallel with**: 03, 04
 
 ## Goal
 
@@ -8,7 +8,7 @@ V4L2 camera capture with format conversion, preprocessing, and IR normalization.
 
 ## Dependencies
 
-- `visage-core` (for `Frame`, `VisageError`)
+- `facelock-core` (for `Frame`, `FacelockError`)
 - `v4l` 0.14+ (V4L2 bindings)
 - `image` (JPEG decoding, resize)
 
@@ -120,7 +120,7 @@ pub fn is_ir_camera(device: &DeviceInfo) -> bool {
 }
 ```
 
-This is a heuristic. The `visage devices` command should display the IR detection result for each camera so users can verify.
+This is a heuristic. The `facelock devices` command should display the IR detection result for each camera so users can verify.
 
 ### IR Texture Validation
 
@@ -164,6 +164,6 @@ pub fn check_ir_texture(gray: &[u8], bbox: &BoundingBox, width: u32) -> bool {
 ## Verification
 
 ```bash
-cargo test -p visage-camera
-cargo clippy -p visage-camera
+cargo test -p facelock-camera
+cargo clippy -p facelock-camera
 ```

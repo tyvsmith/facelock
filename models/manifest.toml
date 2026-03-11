@@ -1,4 +1,11 @@
-# Model manifest — URLs, checksums, and metadata for ONNX models
+# Model manifest -- URLs, checksums, and metadata for ONNX models
+#
+# For official releases, models are also attached to the GitHub release
+# tagged `v0.1.0-models`. To use the self-hosted URLs instead of the
+# upstream sources below, replace the url fields with:
+#   https://github.com/username/facelock/releases/download/v0.1.0-models/<filename>
+#
+# The sha256 checksums remain the same regardless of hosting source.
 
 [[models]]
 name = "scrfd_2.5g"

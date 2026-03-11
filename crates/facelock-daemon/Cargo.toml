@@ -1,0 +1,29 @@
+[package]
+name = "facelock-daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "facelock_daemon"
+path = "src/lib.rs"
+
+[dependencies]
+facelock-core = { path = "../facelock-core" }
+facelock-camera = { path = "../facelock-camera" }
+facelock-face = { path = "../facelock-face" }
+facelock-store = { path = "../facelock-store" }
+signal-hook = "0.3"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+nix = { version = "0.29", features = ["socket", "user", "fs"] }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+facelock-tpm = { path = "../facelock-tpm", optional = true }
+bytemuck = { version = "1", features = ["derive"] }
+
+[features]
+tpm = ["dep:facelock-tpm", "facelock-tpm/tpm"]
+
+[dev-dependencies]
+facelock-test-support = { path = "../facelock-test-support" }

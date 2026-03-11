@@ -1,8 +1,8 @@
-# AGENTS.md — Visage
+# AGENTS.md — Facelock
 
 ## Project Overview
 
-Visage is a Linux face authentication PAM module written in Rust. Single unified binary (`visage`) handles CLI, daemon, one-shot auth, and benchmarks. The PAM module (`pam_visage.so`) is a thin client that either connects to the daemon or spawns `visage auth`.
+Facelock is a Linux face authentication PAM module written in Rust. Single unified binary (`facelock`) handles CLI, daemon, one-shot auth, and benchmarks. The PAM module (`pam_facelock.so`) is a thin client that either connects to the daemon or spawns `facelock auth`.
 
 ## Repository Structure
 
@@ -10,15 +10,15 @@ Cargo workspace with 9 crates:
 
 | Crate | Type | Purpose |
 |-------|------|---------|
-| `visage-core` | lib | Config, types, errors, IPC protocol, traits |
-| `visage-camera` | lib | V4L2 capture, auto-detection, preprocessing |
-| `visage-face` | lib | ONNX inference (SCRFD + ArcFace) |
-| `visage-store` | lib | SQLite face embedding storage |
-| `visage-daemon` | lib | Auth/enroll logic, rate limiting, handler |
-| `visage-cli` | bin | Unified CLI (`visage` binary) |
-| `pam-visage` | cdylib | PAM module (libc + toml + serde only) |
-| `visage-tpm` | lib | Optional TPM encryption |
-| `visage-test-support` | lib | Mocks and fixtures for testing |
+| `facelock-core` | lib | Config, types, errors, IPC protocol, traits |
+| `facelock-camera` | lib | V4L2 capture, auto-detection, preprocessing |
+| `facelock-face` | lib | ONNX inference (SCRFD + ArcFace) |
+| `facelock-store` | lib | SQLite face embedding storage |
+| `facelock-daemon` | lib | Auth/enroll logic, rate limiting, handler |
+| `facelock-cli` | bin | Unified CLI (`facelock` binary) |
+| `pam-facelock` | cdylib | PAM module (libc + toml + serde only) |
+| `facelock-tpm` | lib | Optional TPM encryption |
+| `facelock-test-support` | lib | Mocks and fixtures for testing |
 
 ## Build & Verify
 
@@ -26,13 +26,13 @@ Cargo workspace with 9 crates:
 cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
-cargo run --bin visage -- --help
+cargo run --bin facelock -- --help
 ```
 
 ## Core Rules
 
 - Do not change binary names, paths, config keys, database schema, or auth semantics without updating `docs/contracts.md`.
-- Keep the PAM module free of heavy dependencies (no ort, no v4l, no visage-core).
+- Keep the PAM module free of heavy dependencies (no ort, no v4l, no facelock-core).
 - Keep all inference local. No cloud services, no runtime model downloads in the auth path.
 - Prefer minimal dependencies and clear crate boundaries.
 
@@ -45,7 +45,7 @@ cargo run --bin visage -- --help
 - IPC messages have size limits (10MB max). Never allocate unbounded buffers.
 - Socket access verified via `SO_PEERCRED`.
 - PAM module logs all auth attempts to syslog.
-- Database and model files have restrictive permissions (640/644, root:visage).
+- Database and model files have restrictive permissions (640/644, root:facelock).
 - Rate limiting enforced in daemon (5 attempts/user/60s default).
 
 ## Code Style
@@ -59,14 +59,14 @@ cargo run --bin visage -- --help
 
 | Crate | Dependencies |
 |-------|-------------|
-| visage-core | serde, toml, bincode, thiserror, tracing |
-| visage-camera | visage-core, v4l, image |
-| visage-face | visage-core, ort, ndarray, image |
-| visage-store | visage-core, rusqlite (bundled), bytemuck |
-| visage-daemon | visage-core, visage-camera, visage-face, visage-store, signal-hook |
-| visage-cli | visage-core + all above, clap, reqwest, notify-rust |
-| pam-visage | **libc, toml, serde ONLY** |
-| visage-tpm | visage-core, tracing |
+| facelock-core | serde, toml, bincode, thiserror, tracing |
+| facelock-camera | facelock-core, v4l, image |
+| facelock-face | facelock-core, ort, ndarray, image |
+| facelock-store | facelock-core, rusqlite (bundled), bytemuck |
+| facelock-daemon | facelock-core, facelock-camera, facelock-face, facelock-store, signal-hook |
+| facelock-cli | facelock-core + all above, clap, reqwest, notify-rust |
+| pam-facelock | **libc, toml, serde ONLY** |
+| facelock-tpm | facelock-core, tracing |
 
 ## Testing Strategy
 
@@ -80,10 +80,10 @@ cargo run --bin visage -- --help
 | 4 | VM testing | Disposable VM with snapshots |
 | 5 | Host PAM | After tiers 3-4, with root shell backup |
 
-**Never** install `pam_visage.so` or edit `/etc/pam.d/*` on the host until container tests pass.
+**Never** install `pam_facelock.so` or edit `/etc/pam.d/*` on the host until container tests pass.
 
 ## Workspace Conventions
 
 - Version declared once in root `Cargo.toml`, inherited via `version.workspace = true`.
-- Inter-crate deps use relative paths (`path = "../visage-core"`).
+- Inter-crate deps use relative paths (`path = "../facelock-core"`).
 - Release profile: LTO + single codegen unit + strip.

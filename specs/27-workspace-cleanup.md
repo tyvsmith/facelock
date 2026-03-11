@@ -20,20 +20,20 @@ license = "MIT"
 ### All crate `Cargo.toml` files
 
 Replace `version = "0.1.0"` with `version.workspace = true` in every crate:
-- visage-core
-- visage-camera
-- visage-face
-- visage-store
-- visage-daemon
-- visage-cli
-- pam-visage
-- visage-bench
-- visage-test-support
-- visage-tpm
+- facelock-core
+- facelock-camera
+- facelock-face
+- facelock-store
+- facelock-daemon
+- facelock-cli
+- pam-facelock
+- facelock-bench
+- facelock-test-support
+- facelock-tpm
 
 ### Inter-crate path references
 
-Keep relative paths (`path = "../visage-core"`). This is idiomatic Cargo workspace convention. Absolute paths from repo root are not supported by Cargo.
+Keep relative paths (`path = "../facelock-core"`). This is idiomatic Cargo workspace convention. Absolute paths from repo root are not supported by Cargo.
 
 ## Acceptance
 

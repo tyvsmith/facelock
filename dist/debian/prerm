@@ -1,0 +1,29 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|purge)
+        # Stop and disable systemd units
+        if [ -d /run/systemd/system ]; then
+            systemctl stop facelock-daemon.socket facelock-daemon 2>/dev/null || true
+            systemctl disable facelock-daemon.socket facelock-daemon 2>/dev/null || true
+        fi
+
+        # Remove PAM configuration via pam-auth-update
+        if [ -x /usr/sbin/pam-auth-update ]; then
+            pam-auth-update --remove facelock 2>/dev/null || true
+        fi
+        ;;
+
+    upgrade|deconfigure)
+        ;;
+
+    *)
+        echo "prerm called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

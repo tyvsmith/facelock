@@ -1,0 +1,11 @@
+[package]
+name = "facelock-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+facelock-core = { path = "../facelock-core" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+bytemuck = { version = "1", features = ["derive"] }

@@ -2,26 +2,26 @@
 
 ## Scope
 
-Add `visage setup --pam` to safely install the PAM module into system PAM config.
+Add `facelock setup --pam` to safely install the PAM module into system PAM config.
 
 ## Command Behavior
 
 ```
-visage setup --pam [--service sudo] [--remove] [--yes]
+facelock setup --pam [--service sudo] [--remove] [--yes]
 ```
 
 ### Install (default)
 1. Check for root
-2. Check `pam_visage.so` exists at `/lib/security/pam_visage.so`
+2. Check `pam_facelock.so` exists at `/lib/security/pam_facelock.so`
 3. Target service: `--service` flag (default: `sudo`)
 4. Refuse to touch `system-auth`, `login`, or `sshd` without explicit `--yes`
-5. Back up `/etc/pam.d/<service>` → `/etc/pam.d/<service>.visage-backup`
-6. Prepend `auth  sufficient  pam_visage.so` as first auth line
+5. Back up `/etc/pam.d/<service>` → `/etc/pam.d/<service>.facelock-backup`
+6. Prepend `auth  sufficient  pam_facelock.so` as first auth line
 7. Print confirmation and rollback instructions
 
 ### Remove (`--remove`)
 1. Check for root
-2. Remove the `auth sufficient pam_visage.so` line from `/etc/pam.d/<service>`
+2. Remove the `auth sufficient pam_facelock.so` line from `/etc/pam.d/<service>`
 3. If backup exists, offer to restore it
 
 ### Safety
@@ -33,9 +33,9 @@ visage setup --pam [--service sudo] [--remove] [--yes]
 
 ## Implementation
 
-### `crates/visage-cli/src/commands/setup.rs`
+### `crates/facelock-cli/src/commands/setup.rs`
 
-Add `--pam` flag. Parse the target PAM file, find the auth stack, prepend the visage line.
+Add `--pam` flag. Parse the target PAM file, find the auth stack, prepend the facelock line.
 
 PAM file parsing: look for lines starting with `auth` and insert before the first one. Handle both `common-auth` includes and direct auth lines.
 
@@ -48,9 +48,9 @@ PAM file parsing: look for lines starting with `auth` and insert before the firs
 
 ## Acceptance
 
-- `sudo visage setup --pam` installs to `/etc/pam.d/sudo` with backup
-- `sudo visage setup --pam --remove` removes cleanly
-- `sudo visage setup --pam --service login --yes` works for other services
+- `sudo facelock setup --pam` installs to `/etc/pam.d/sudo` with backup
+- `sudo facelock setup --pam --remove` removes cleanly
+- `sudo facelock setup --pam --service login --yes` works for other services
 - Idempotent
 - Never modifies without backup
 - Container-tested

@@ -1,0 +1,44 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Create facelock group and directories
+        systemd-sysusers 2>/dev/null || true
+        systemd-tmpfiles --create 2>/dev/null || true
+
+        # Set ownership on data directories
+        chown root:facelock /var/lib/facelock 2>/dev/null || true
+        chown root:facelock /var/log/facelock 2>/dev/null || true
+        chown root:facelock /var/log/facelock/snapshots 2>/dev/null || true
+
+        # Enable socket activation
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload 2>/dev/null || true
+            systemctl enable facelock-daemon.socket 2>/dev/null || true
+            systemctl start facelock-daemon.socket 2>/dev/null || true
+        fi
+
+        # Configure PAM via pam-auth-update (Debian/Ubuntu)
+        if [ -x /usr/sbin/pam-auth-update ]; then
+            pam-auth-update --package 2>/dev/null || true
+        fi
+
+        echo ""
+        echo "facelock installed. Two steps remaining:"
+        echo "  1. sudo facelock setup       (download face recognition models)"
+        echo "  2. sudo facelock enroll      (register your face)"
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

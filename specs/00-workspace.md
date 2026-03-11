@@ -11,13 +11,13 @@ Establish the Cargo workspace with 8 crate scaffolds, dev configuration, and pro
 ### Workspace Structure
 
 ```
-visage/
+facelock/
 ├── Cargo.toml                    # Workspace definition
 ├── CLAUDE.md                     # Agent instructions (copy from AGENTS.md)
 ├── dev/
 │   └── config.toml               # Development config (local paths, no root)
 ├── crates/
-│   ├── visage-core/               # Library: config, types, errors, IPC
+│   ├── facelock-core/               # Library: config, types, errors, IPC
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
@@ -26,14 +26,14 @@ visage/
 │   │       ├── types.rs          # Stub
 │   │       ├── ipc.rs            # Stub
 │   │       └── paths.rs          # Stub
-│   ├── visage-camera/             # Library: V4L2 capture
+│   ├── facelock-camera/             # Library: V4L2 capture
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── capture.rs        # Stub
 │   │       ├── preprocess.rs     # Stub
 │   │       └── device.rs         # Stub
-│   ├── visage-face/               # Library: ONNX inference
+│   ├── facelock-face/               # Library: ONNX inference
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
@@ -41,20 +41,20 @@ visage/
 │   │       ├── embedder.rs       # Stub
 │   │       ├── align.rs          # Stub
 │   │       └── models.rs         # Stub
-│   ├── visage-store/              # Library: SQLite storage
+│   ├── facelock-store/              # Library: SQLite storage
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── db.rs             # Stub
 │   │       └── migrations.rs     # Stub
-│   ├── visage-daemon/             # Binary: persistent daemon
+│   ├── facelock-daemon/             # Binary: persistent daemon
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── main.rs
 │   │       ├── handler.rs        # Stub
 │   │       ├── auth.rs           # Stub
 │   │       └── enroll.rs         # Stub
-│   ├── visage-cli/                # Binary: CLI tool
+│   ├── facelock-cli/                # Binary: CLI tool
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── main.rs
@@ -69,20 +69,20 @@ visage/
 │   │           ├── preview.rs    # Stub
 │   │           ├── config.rs     # Stub
 │   │           └── status.rs     # Stub
-│   ├── pam-visage/                # cdylib: PAM module
+│   ├── pam-facelock/                # cdylib: PAM module
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       └── lib.rs
-│   └── visage-bench/              # Binary: benchmarks
+│   └── facelock-bench/              # Binary: benchmarks
 │       ├── Cargo.toml
 │       └── src/
 │           └── main.rs
 ├── models/
 │   └── manifest.toml             # Model URLs, checksums, metadata
 ├── config/
-│   └── visage.toml                # Default config template
+│   └── facelock.toml                # Default config template
 ├── systemd/
-│   └── visage-daemon.service      # systemd service unit
+│   └── facelock-daemon.service      # systemd service unit
 └── .gitignore
 ```
 
@@ -92,14 +92,14 @@ visage/
 [workspace]
 resolver = "2"
 members = [
-    "crates/visage-core",
-    "crates/visage-camera",
-    "crates/visage-face",
-    "crates/visage-store",
-    "crates/visage-daemon",
-    "crates/visage-cli",
-    "crates/pam-visage",
-    "crates/visage-bench",
+    "crates/facelock-core",
+    "crates/facelock-camera",
+    "crates/facelock-face",
+    "crates/facelock-store",
+    "crates/facelock-daemon",
+    "crates/facelock-cli",
+    "crates/pam-facelock",
+    "crates/facelock-bench",
 ]
 
 [workspace.package]
@@ -120,28 +120,28 @@ bincode = "2.0.0-rc.3"
 ### Key Points
 
 - Edition 2024, Rust 1.85 minimum
-- pam-visage uses `crate-type = ["cdylib"]`
+- pam-facelock uses `crate-type = ["cdylib"]`
 - Shared workspace dependencies minimize duplication
-- Dev config uses local paths (`/tmp/visage-dev.sock`, `./models`, `/tmp/visage-dev.db`)
+- Dev config uses local paths (`/tmp/facelock-dev.sock`, `./models`, `/tmp/facelock-dev.db`)
 - `.gitignore`: `/target`, `*.onnx`, `*.dat`, `dev/*.db`
 
 ### systemd Service Unit
 
 ```ini
 [Unit]
-Description=Visage Face Authentication Daemon
+Description=Facelock Face Authentication Daemon
 After=local-fs.target
 
 [Service]
 Type=notify
-ExecStart=/usr/bin/visage-daemon
+ExecStart=/usr/bin/facelock-daemon
 Restart=on-failure
 RestartSec=3
 
 # Filesystem isolation
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/lib/visage /run/visage /var/log/visage
+ReadWritePaths=/var/lib/facelock /run/facelock /var/log/facelock
 PrivateTmp=yes
 
 # Device access
@@ -170,7 +170,7 @@ WantedBy=multi-user.target
 3. `cargo clippy --workspace` succeeds
 4. All 8 crates exist with proper Cargo.toml
 5. `dev/config.toml` exists with local paths
-6. `cargo run --bin visage -- --help` shows stubbed commands
+6. `cargo run --bin facelock -- --help` shows stubbed commands
 7. `.gitignore` covers target, ONNX files, dev DB
 
 ## Verification
@@ -179,5 +179,5 @@ WantedBy=multi-user.target
 cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace
-cargo run --bin visage -- --help
+cargo run --bin facelock -- --help
 ```

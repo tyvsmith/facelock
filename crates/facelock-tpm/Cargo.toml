@@ -1,0 +1,18 @@
+[package]
+name = "facelock-tpm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+facelock-core = { path = "../facelock-core" }
+tracing.workspace = true
+tss-esapi = { workspace = true, optional = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = "1"
+
+[features]
+tpm = ["dep:tss-esapi"]

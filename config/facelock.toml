@@ -1,0 +1,224 @@
+# Facelock — Linux face authentication
+#
+# All settings are optional. Facelock auto-detects the camera and uses
+# sensible defaults. Uncomment and edit only what you need to change.
+#
+# Location: /etc/facelock/config.toml
+# Override: set FACELOCK_CONFIG=/path/to/config.toml
+
+
+# ── Camera ──────────────────────────────────────────────────────────
+
+[device]
+
+# Camera device path. When omitted, Facelock auto-detects the best
+# available camera, preferring IR cameras over RGB.
+# path = "/dev/video2"
+
+# Maximum frame height in pixels. Frames taller than this are
+# downscaled to improve processing speed.
+# Default: 480
+# max_height = 480
+
+# Rotate captured frames. Useful for cameras mounted sideways.
+# Values: 0, 90, 180, 270
+# Default: 0
+# rotation = 0
+
+
+# ── Face Recognition ────────────────────────────────────────────────
+
+[recognition]
+
+# Cosine similarity threshold for accepting a face match.
+# Higher values are stricter (fewer false accepts, more false rejects).
+#
+# Range guide (ArcFace cosine similarity):
+#   0.30–0.50  Very loose — high false accept rate, not recommended
+#   0.50–0.65  Loose — convenient but may accept similar-looking people
+#   0.65–0.80  Balanced — good for most setups, low false accept rate
+#   0.80–0.90  Strict — rarely accepts wrong person, may reject on bad angles
+#   0.90+      Very strict — may require near-ideal lighting and pose
+#
+# Tip: run `facelock test` to see your similarity scores, then set the
+# threshold below your typical match score with some margin.
+#
+# Default: 0.80
+# threshold = 0.80
+
+# Maximum seconds to attempt recognition before giving up.
+# Default: 5
+# timeout_secs = 5
+
+# Minimum confidence for the face detector to report a detection.
+# Lower values detect more faces but increase false positives.
+# Default: 0.5
+# detection_confidence = 0.5
+
+# Non-maximum suppression threshold for overlapping detections.
+# Default: 0.4
+# nms_threshold = 0.4
+
+# ONNX model files (must exist in daemon.model_dir).
+#
+# Default models (~170MB total, good accuracy):
+#   detector_model = "scrfd_2.5g_bnkps.onnx"   (3MB,  SCRFD 2.5G)
+#   embedder_model = "w600k_r50.onnx"           (166MB, ArcFace R50)
+#
+# High-accuracy models (~266MB total, ~200ms slower):
+#   detector_model = "det_10g.onnx"             (17MB,  SCRFD 10G)
+#   embedder_model = "glintr100.onnx"           (249MB, ArcFace R100)
+#
+# Run `facelock setup` after changing models to download them.
+# detector_model = "scrfd_2.5g_bnkps.onnx"
+# embedder_model = "w600k_r50.onnx"
+
+# ONNX Runtime execution provider.
+# Values: "cpu", "cuda", "tensorrt"
+# GPU providers require building with --features cuda or --features tensorrt.
+# Default: "cpu"
+# execution_provider = "cpu"
+
+# Number of CPU threads for ONNX inference.
+# Default: 4
+# threads = 4
+
+
+# ── Daemon ──────────────────────────────────────────────────────────
+
+[daemon]
+
+# How the PAM module authenticates.
+#
+# "daemon"  — connects to a persistent daemon via Unix socket (default).
+#             Fast (~50ms) because models stay loaded in memory.
+#             Use with systemd socket activation: systemctl enable facelock-daemon.socket
+#
+# "oneshot" — PAM spawns `facelock auth` per attempt. No daemon needed.
+#             Slower (~700ms) but zero background processes.
+#             Works on any Linux system, no systemd required.
+#
+# The CLI always works regardless of this setting — it silently falls
+# back to direct mode when the daemon isn't running.
+# Default: "daemon"
+# mode = "daemon"
+
+# Unix socket path for daemon IPC (daemon mode only).
+# Default: "/run/facelock/facelock.sock"
+# socket_path = "/run/facelock/facelock.sock"
+
+# Directory containing ONNX model files.
+# Default: "/var/lib/facelock/models"
+# model_dir = "/var/lib/facelock/models"
+
+# Shut down the daemon after this many idle seconds (0 = never).
+# Useful with systemd socket activation — the daemon starts on first
+# connection and stops when idle, saving memory.
+# Default: 0
+# idle_timeout_secs = 0
+
+
+# ── Storage ─────────────────────────────────────────────────────────
+
+[storage]
+
+# SQLite database for face embeddings. Contains biometric data —
+# file permissions should be 640 owned by root:facelock.
+# Default: "/var/lib/facelock/facelock.db"
+# db_path = "/var/lib/facelock/facelock.db"
+
+
+# ── Security ────────────────────────────────────────────────────────
+
+[security]
+
+# Disable face authentication entirely. PAM returns IGNORE,
+# falling through to the next auth method (usually password).
+# Default: false
+# disabled = false
+
+# Refuse face auth when connected via SSH (no camera available).
+# Default: true
+# abort_if_ssh = true
+
+# Refuse face auth when the laptop lid is closed (camera blocked).
+# Default: true
+# abort_if_lid_closed = true
+
+# IMPORTANT: Require an IR camera for authentication. RGB cameras
+# are trivially spoofed with a printed photo. Only set to false
+# for development/testing.
+# Default: true
+# require_ir = true
+
+# Require multiple frames with different embeddings before accepting.
+# Defends against static photo attacks — a real face produces slight
+# variation between frames due to micro-movements.
+# Default: true
+# require_frame_variance = true
+
+# Minimum number of matching frames required before accepting.
+# Only applies when require_frame_variance is true.
+# Default: 3
+# min_auth_frames = 3
+
+# Rate limiting — prevents brute-force attempts.
+# [security.rate_limit]
+# max_attempts = 5   # Max auth attempts per user per window (default: 5)
+# window_secs = 60   # Rate limit window in seconds (default: 60)
+
+
+# ── Notifications ───────────────────────────────────────────────────
+
+[notification]
+
+# Notification mode: controls how auth feedback is delivered.
+#   "off"      — no notifications at all
+#   "terminal" — PAM text prompts only ("Identifying face...", "Face recognized.")
+#   "desktop"  — desktop popups only (via D-Bus/notify-send)
+#   "both"     — terminal text and desktop popups (default)
+# Default: "both"
+# mode = "both"
+
+# Show prompt when scanning starts ("Identifying face..." / "Scanning face...").
+# Default: true
+# notify_prompt = true
+
+# Notify on successful face match.
+# Default: true
+# notify_on_success = true
+
+# Notify on failed face match.
+# Default: true
+# notify_on_failure = true
+
+
+# ── Snapshots ───────────────────────────────────────────────────────
+
+[snapshots]
+
+# Save camera snapshots on auth attempts for debugging or auditing.
+#   "off"     — never save snapshots (default)
+#   "all"     — save on every auth attempt
+#   "failure" — save only on failed auth (debug false rejects / spoofing)
+#   "success" — save only on successful auth (audit trail)
+#
+# Snapshots are saved as JPEG in the configured directory with timestamps.
+# Default: "off"
+# mode = "off"
+
+# Directory for snapshot images.
+# Default: "/var/log/facelock/snapshots"
+# dir = "/var/log/facelock/snapshots"
+
+
+# ── TPM (optional, requires facelock-tpm feature) ────────────────────
+#
+# Encrypt face embeddings at rest using a TPM 2.0 chip.
+# Currently stubs only — not yet functional.
+
+# [tpm]
+# seal_database = false          # Encrypt embeddings with TPM-bound key
+# pcr_binding = false            # Verify boot integrity via PCR values
+# pcr_indices = [0, 1, 2, 3, 7] # PCR registers to check
+# tcti = "device:/dev/tpmrm0"   # TPM communication interface

@@ -30,58 +30,58 @@ echo "=== Oneshot Mode Tests (fully daemonless, with camera) ==="
 echo ""
 
 # Use installed config, set oneshot mode and writable paths
-sed -i 's|socket_path.*|socket_path = "/tmp/visage.sock"|' /etc/visage/config.toml
-sed -i 's|db_path.*|db_path = "/tmp/visage-test.db"|' /etc/visage/config.toml 2>/dev/null || true
+sed -i 's|socket_path.*|socket_path = "/tmp/facelock.sock"|' /etc/facelock/config.toml
+sed -i 's|db_path.*|db_path = "/tmp/facelock-test.db"|' /etc/facelock/config.toml 2>/dev/null || true
 # Force oneshot mode — no daemon for these tests
-sed -i '/^\[daemon\]/a mode = "oneshot"' /etc/visage/config.toml
+sed -i '/^\[daemon\]/a mode = "oneshot"' /etc/facelock/config.toml
 
 # Verify no daemon is running
 run_test "No daemon socket exists" \
-    "test ! -S /tmp/visage.sock" \
+    "test ! -S /tmp/facelock.sock" \
     0
 
 # --- CLI commands in oneshot mode (no daemon) ---
 
 # Device listing
-run_test "visage devices (oneshot)" \
-    "visage devices"
+run_test "facelock devices (oneshot)" \
+    "facelock devices"
 
 # Enrollment (direct, no daemon)
-run_test "visage enroll (oneshot)" \
-    "visage enroll --user testuser --label test-face"
+run_test "facelock enroll (oneshot)" \
+    "facelock enroll --user testuser --label test-face"
 
 # List enrolled models (direct DB access)
-run_test "visage list (oneshot)" \
-    "visage list --user testuser"
+run_test "facelock list (oneshot)" \
+    "facelock list --user testuser"
 
 # Test auth via CLI (direct)
-run_test "visage test (oneshot)" \
-    "visage test --user testuser"
+run_test "facelock test (oneshot)" \
+    "facelock test --user testuser"
 
-# visage auth binary (used by PAM module)
-run_test "visage auth authenticates (oneshot)" \
-    "visage auth --user testuser --config /etc/visage/config.toml"
+# facelock auth binary (used by PAM module)
+run_test "facelock auth authenticates (oneshot)" \
+    "facelock auth --user testuser --config /etc/facelock/config.toml"
 
 # PAM authentication (the real deal — no daemon)
 run_test "pamtester authenticates (oneshot, no daemon)" \
-    "pamtester visage-test testuser authenticate"
+    "pamtester facelock-test testuser authenticate"
 
-# visage auth rejects unknown user
-run_test "visage auth rejects unknown user" \
-    "visage auth --user nobody --config /etc/visage/config.toml" \
+# facelock auth rejects unknown user
+run_test "facelock auth rejects unknown user" \
+    "facelock auth --user nobody --config /etc/facelock/config.toml" \
     1
 
 # Clear models (direct DB access)
-run_test "visage clear (oneshot)" \
-    "visage clear --user testuser --yes"
+run_test "facelock clear (oneshot)" \
+    "facelock clear --user testuser --yes"
 
 # Verify models cleared
-run_test "visage list empty after clear (oneshot)" \
-    "visage list --user testuser 2>&1 | grep -q 'No face models'"
+run_test "facelock list empty after clear (oneshot)" \
+    "facelock list --user testuser 2>&1 | grep -q 'No face models'"
 
 # Still no daemon socket
 run_test "Still no daemon socket" \
-    "test ! -S /tmp/visage.sock" \
+    "test ! -S /tmp/facelock.sock" \
     0
 
 echo ""

@@ -6,7 +6,7 @@ Make ORT execution provider and thread count configurable. Feature-gate GPU prov
 
 ## Changes
 
-### Config (`crates/visage-core/src/config.rs`)
+### Config (`crates/facelock-core/src/config.rs`)
 
 Add to `RecognitionConfig`:
 ```rust
@@ -17,7 +17,7 @@ pub execution_provider: String,  // "cpu" (default), "cuda", "tensorrt", "coreml
 pub threads: u32,  // default: 4
 ```
 
-### Face Engine (`crates/visage-face/src/detector.rs`, `embedder.rs`)
+### Face Engine (`crates/facelock-face/src/detector.rs`, `embedder.rs`)
 
 Pass `execution_provider` and `threads` to ORT session builder:
 ```rust
@@ -32,7 +32,7 @@ match config.execution_provider.as_str() {
 }
 ```
 
-### Cargo features (`crates/visage-face/Cargo.toml`)
+### Cargo features (`crates/facelock-face/Cargo.toml`)
 
 ```toml
 [features]
@@ -41,7 +41,7 @@ cuda = ["ort/cuda"]
 tensorrt = ["ort/tensorrt"]
 ```
 
-Propagate through `visage-daemon` and `visage-cli` Cargo.toml feature flags.
+Propagate through `facelock-daemon` and `facelock-cli` Cargo.toml feature flags.
 
 ### Config template
 

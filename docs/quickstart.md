@@ -17,7 +17,7 @@ cargo build --workspace
 Models are ~170MB total and gitignored.
 
 ```bash
-VISAGE_CONFIG=dev/config.toml cargo run --bin visage -- setup
+FACELOCK_CONFIG=dev/config.toml cargo run --bin facelock -- setup
 ```
 
 Or manually:
@@ -32,7 +32,7 @@ curl -L -o models/w600k_r50.onnx \
 ## 3. Configure for Development
 
 ```bash
-export VISAGE_CONFIG=dev/config.toml
+export FACELOCK_CONFIG=dev/config.toml
 ```
 
 The dev config auto-detects the camera and uses temp paths. No root needed.
@@ -42,18 +42,18 @@ The dev config auto-detects the camera and uses temp paths. No root needed.
 No daemon required — the CLI operates directly when no daemon is running:
 
 ```bash
-visage devices            # list cameras
-visage enroll             # capture face (look at camera)
-visage test               # verify recognition
-visage list               # see enrolled models
-visage preview --text-only  # live detection output
+facelock devices            # list cameras
+facelock enroll             # capture face (look at camera)
+facelock test               # verify recognition
+facelock list               # see enrolled models
+facelock preview --text-only  # live detection output
 ```
 
 To use daemon mode instead:
 ```bash
-visage daemon &           # start daemon in background
-visage enroll             # now uses daemon (faster)
-visage test
+facelock daemon &           # start daemon in background
+facelock enroll             # now uses daemon (faster)
+facelock test
 kill %1                   # stop daemon
 ```
 
@@ -90,39 +90,51 @@ just check                # test + clippy + fmt
 ### Arch Linux
 ```bash
 cd dist && makepkg -si
-sudo visage setup                    # download models
-sudo visage enroll                   # capture face
-sudo visage test                     # verify
-sudo visage setup --systemd          # enable socket activation
-sudo visage setup --pam              # install to /etc/pam.d/sudo
+sudo facelock setup                    # download models
+sudo facelock enroll                   # capture face
+sudo facelock test                     # verify
+sudo facelock setup --systemd          # enable socket activation
+sudo facelock setup --pam              # install to /etc/pam.d/sudo
 ```
+
+### Debian / Ubuntu
+
+Coming soon. Packages are not yet built for Debian-based distributions. In the meantime, use the manual install method below.
+
+### Fedora
+
+Coming soon. Packages are not yet built for Fedora. In the meantime, use the manual install method below.
+
+### NixOS
+
+Coming soon. A Nix flake is not yet available. In the meantime, use the manual install method below.
 
 ### Manual Install
 ```bash
 sudo -i                              # keep this root shell open!
 
 cargo build --workspace --release
-sudo install -m 755 target/release/visage /usr/bin/visage
-sudo install -m 755 target/release/libpam_visage.so /lib/security/pam_visage.so
+sudo install -m 755 target/release/facelock /usr/bin/facelock
+sudo install -m 755 target/release/libpam_facelock.so /lib/security/pam_facelock.so
 
-sudo mkdir -p /etc/visage /var/lib/visage/models /run/visage
-sudo cp config/visage.toml /etc/visage/config.toml
-sudo cp models/*.onnx /var/lib/visage/models/
+sudo mkdir -p /etc/facelock /var/lib/facelock/models /run/facelock
+sudo cp config/facelock.toml /etc/facelock/config.toml
+sudo cp models/*.onnx /var/lib/facelock/models/
 
 # Socket activation (systemd):
-sudo visage setup --systemd
+sudo facelock setup --systemd
 
 # Or oneshot mode (no daemon):
-# Edit /etc/visage/config.toml: daemon.mode = "oneshot"
+# Edit /etc/facelock/config.toml: daemon.mode = "oneshot"
 
 # PAM (start with sudo only):
-sudo visage setup --pam --service sudo
+sudo facelock setup --pam --service sudo
 
 # Test in a NEW terminal:
 sudo echo "it works"
 
 # If anything breaks, revert from root shell:
-# sudo cp /etc/pam.d/sudo.visage-backup /etc/pam.d/sudo
+# sudo cp /etc/pam.d/sudo.facelock-backup /etc/pam.d/sudo
 ```
 
 ## Dev Config Reference
@@ -132,7 +144,7 @@ sudo echo "it works"
 | What | Path |
 |------|------|
 | Camera | Auto-detected |
-| Socket | `/tmp/visage-dev.sock` |
-| Database | `/tmp/visage-dev.db` |
+| Socket | `/tmp/facelock-dev.sock` |
+| Database | `/tmp/facelock-dev.db` |
 | Models | `./models/` |
-| Snapshots | `/tmp/visage-dev-snapshots/` |
+| Snapshots | `/tmp/facelock-dev-snapshots/` |

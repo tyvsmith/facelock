@@ -35,7 +35,7 @@
 
 ### IR Cameras (recommended)
 
-IR cameras provide anti-spoofing protection. Visage auto-detects IR cameras by:
+IR cameras provide anti-spoofing protection. Facelock auto-detects IR cameras by:
 - Device name containing "ir" or "infrared"
 - Supporting GREY or Y16 pixel formats
 
@@ -63,7 +63,7 @@ RGB cameras work with `security.require_ir = false` but provide no anti-spoofing
 
 Full support via socket activation:
 ```bash
-sudo visage setup --systemd
+sudo facelock setup --systemd
 ```
 
 Features:
@@ -82,17 +82,17 @@ mode = "oneshot"
 
 Or manage the daemon manually:
 ```bash
-visage daemon &                    # start
-kill $(pidof visage)               # stop
+facelock daemon &                    # start
+kill $(pidof facelock)               # stop
 ```
 
-For process supervisors (runit, s6, dinit, OpenRC), create a service that runs `visage daemon`. The daemon handles SIGTERM for graceful shutdown.
+For process supervisors (runit, s6, dinit, OpenRC), create a service that runs `facelock daemon`. The daemon handles SIGTERM for graceful shutdown.
 
 ## PAM Stack Compatibility
 
-Visage works with standard Linux-PAM. The module is installed as:
+Facelock works with standard Linux-PAM. The module is installed as:
 ```
-auth  sufficient  pam_visage.so
+auth  sufficient  pam_facelock.so
 ```
 
 ### Tested PAM Services
@@ -127,7 +127,7 @@ auth  sufficient  pam_visage.so
 
 ## ONNX Runtime
 
-Visage uses the `ort` crate (Rust bindings for ONNX Runtime). The runtime binary is downloaded at build time via the `download-binaries` feature.
+Facelock uses the `ort` crate (Rust bindings for ONNX Runtime). The runtime binary is downloaded at build time via the `download-binaries` feature.
 
 ### Execution Providers
 

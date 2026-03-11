@@ -2,11 +2,11 @@
 
 ## Scope
 
-Make model selection configurable. Fill in missing SHA256 hashes for optional models. Let `visage setup` download whichever models are configured.
+Make model selection configurable. Fill in missing SHA256 hashes for optional models. Let `facelock setup` download whichever models are configured.
 
 ## Changes
 
-### Config (`crates/visage-core/src/config.rs`)
+### Config (`crates/facelock-core/src/config.rs`)
 
 Add to `RecognitionConfig`:
 ```rust
@@ -17,7 +17,7 @@ pub detector_model: String,  // default: "scrfd_2.5g_bnkps.onnx"
 pub embedder_model: String,  // default: "w600k_r50.onnx"
 ```
 
-### Face Engine (`crates/visage-face/src/lib.rs`)
+### Face Engine (`crates/facelock-face/src/lib.rs`)
 
 Replace hardcoded filenames in `FaceEngine::load()`:
 ```rust
@@ -33,11 +33,11 @@ Fill in SHA256 hashes for optional models from visomaster releases:
 
 Add download URLs for all 4 models.
 
-### CLI Setup (`crates/visage-cli/src/commands/setup.rs`)
+### CLI Setup (`crates/facelock-cli/src/commands/setup.rs`)
 
-Update `visage setup` to download whichever models are referenced by the current config's `detector_model` and `embedder_model`.
+Update `facelock setup` to download whichever models are referenced by the current config's `detector_model` and `embedder_model`.
 
-### Config template (`config/visage.toml`)
+### Config template (`config/facelock.toml`)
 
 Add commented-out model selection:
 ```toml
@@ -51,5 +51,5 @@ Add commented-out model selection:
 - Config selects model filenames
 - `FaceEngine::load()` uses config, not hardcoded names
 - All 4 models have SHA256 in manifest
-- `visage setup` downloads configured models
+- `facelock setup` downloads configured models
 - Default config works unchanged

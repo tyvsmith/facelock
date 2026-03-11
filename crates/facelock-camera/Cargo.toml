@@ -1,0 +1,11 @@
+[package]
+name = "facelock-camera"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+facelock-core = { path = "../facelock-core" }
+v4l = "0.14"
+image = "0.25"

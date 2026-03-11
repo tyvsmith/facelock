@@ -6,40 +6,40 @@ Stable contracts. Do not change without updating this document.
 
 | Binary | Crate | Purpose |
 |--------|-------|---------|
-| `visage` | visage-cli | Unified CLI (daemon, auth, enroll, test, setup, etc.) |
-| `libpam_visage.so` | pam-visage | PAM authentication module |
+| `facelock` | facelock-cli | Unified CLI (daemon, auth, enroll, test, setup, etc.) |
+| `libpam_facelock.so` | pam-facelock | PAM authentication module |
 
 ## CLI Subcommands
 
 | Command | Purpose |
 |---------|---------|
-| `visage setup` | Download models, create directories |
-| `visage setup --systemd` | Install/enable systemd units |
-| `visage setup --pam` | Install PAM module to `/etc/pam.d/` |
-| `visage enroll` | Capture and store a face |
-| `visage test` | Test face recognition |
-| `visage list` | List enrolled face models |
-| `visage remove <id>` | Remove a specific model |
-| `visage clear` | Remove all models for a user |
-| `visage preview` | Live camera preview |
-| `visage devices` | List V4L2 cameras |
-| `visage status` | Check system status |
-| `visage config` | Show/edit configuration |
-| `visage daemon` | Run persistent daemon |
-| `visage auth --user X` | One-shot auth (PAM helper) |
-| `visage tpm status` | TPM status |
-| `visage bench` | Benchmarks |
+| `facelock setup` | Download models, create directories |
+| `facelock setup --systemd` | Install/enable systemd units |
+| `facelock setup --pam` | Install PAM module to `/etc/pam.d/` |
+| `facelock enroll` | Capture and store a face |
+| `facelock test` | Test face recognition |
+| `facelock list` | List enrolled face models |
+| `facelock remove <id>` | Remove a specific model |
+| `facelock clear` | Remove all models for a user |
+| `facelock preview` | Live camera preview |
+| `facelock devices` | List V4L2 cameras |
+| `facelock status` | Check system status |
+| `facelock config` | Show/edit configuration |
+| `facelock daemon` | Run persistent daemon |
+| `facelock auth --user X` | One-shot auth (PAM helper) |
+| `facelock tpm status` | TPM status |
+| `facelock bench` | Benchmarks |
 
 ## Operating Modes
 
 | Mode | Config | PAM Behavior | CLI Behavior |
 |------|--------|-------------|-------------|
 | Daemon | `daemon.mode = "daemon"` (default) | IPC to daemon socket | Uses daemon if available, falls back to direct |
-| Oneshot | `daemon.mode = "oneshot"` | Spawns `visage auth` | Operates directly (no daemon) |
+| Oneshot | `daemon.mode = "oneshot"` | Spawns `facelock auth` | Operates directly (no daemon) |
 
 The CLI silently falls back to direct mode when the daemon socket doesn't exist, regardless of config mode.
 
-### visage auth Exit Codes
+### facelock auth Exit Codes
 
 | Code | Meaning | PAM Code |
 |------|---------|----------|
@@ -51,15 +51,15 @@ The CLI silently falls back to direct mode when the daemon socket doesn't exist,
 
 | Path | Owner | Mode | Purpose |
 |------|-------|------|---------|
-| `/etc/visage/config.toml` | root:root | 644 | Configuration |
-| `/var/lib/visage/visage.db` | root:visage | 640 | Face embeddings |
-| `/var/lib/visage/models/` | root:root | 755 | ONNX models |
-| `/var/log/visage/snapshots/` | root:visage | 750 | Auth snapshots |
-| `/run/visage/visage.sock` | daemon | 660 | IPC socket (daemon mode) |
-| `/usr/bin/visage` | root:root | 755 | CLI binary |
-| `/lib/security/pam_visage.so` | root:root | 755 | PAM module |
+| `/etc/facelock/config.toml` | root:root | 644 | Configuration |
+| `/var/lib/facelock/facelock.db` | root:facelock | 640 | Face embeddings |
+| `/var/lib/facelock/models/` | root:root | 755 | ONNX models |
+| `/var/log/facelock/snapshots/` | root:facelock | 750 | Auth snapshots |
+| `/run/facelock/facelock.sock` | daemon | 660 | IPC socket (daemon mode) |
+| `/usr/bin/facelock` | root:root | 755 | CLI binary |
+| `/lib/security/pam_facelock.so` | root:root | 755 | PAM module |
 
-All paths overridable via config. `VISAGE_CONFIG` env var overrides config location.
+All paths overridable via config. `FACELOCK_CONFIG` env var overrides config location.
 
 ## Config Schema
 
@@ -136,7 +136,7 @@ PAM module never blocks indefinitely. All operations have timeouts.
 ### Syslog Format
 
 ```
-pam_visage(<service>): <result> for user <username>
+pam_facelock(<service>): <result> for user <username>
 ```
 
 ## Anti-Spoofing

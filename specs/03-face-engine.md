@@ -1,6 +1,6 @@
 # Spec 03: Face Engine (ONNX Inference)
 
-**Phase**: 2 (Components) | **Crate**: visage-face | **Depends on**: 01 | **Parallel with**: 02, 04
+**Phase**: 2 (Components) | **Crate**: facelock-face | **Depends on**: 01 | **Parallel with**: 02, 04
 
 ## Goal
 
@@ -8,7 +8,7 @@ Face detection (SCRFD), alignment (5-point landmarks), and embedding extraction 
 
 ## Dependencies
 
-- `visage-core` (for `Detection`, `BoundingBox`, `Point2D`, `FaceEmbedding`)
+- `facelock-core` (for `Detection`, `BoundingBox`, `Point2D`, `FaceEmbedding`)
 - `ort` 2.0+ (ONNX Runtime, with `download-binaries` feature)
 - `ndarray` (tensor manipulation)
 - `image` (resizing, format conversion)
@@ -162,9 +162,9 @@ impl FaceEngine {
         for model in manifest.default_models() {
             let path = model_dir.join(&model.filename);
             if !verify_model(&path, &model.sha256)? {
-                return Err(VisageError::Detection(format!(
+                return Err(FacelockError::Detection(format!(
                     "Model integrity check failed for {}. Expected SHA256: {}. \
-                     Re-run `visage setup` to re-download.",
+                     Re-run `facelock setup` to re-download.",
                     model.filename, model.sha256
                 )));
             }
@@ -204,6 +204,6 @@ impl FaceEngine {
 ## Verification
 
 ```bash
-cargo test -p visage-face
-cargo clippy -p visage-face
+cargo test -p facelock-face
+cargo clippy -p facelock-face
 ```

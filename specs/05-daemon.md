@@ -1,6 +1,6 @@
 # Spec 05: Daemon
 
-**Phase**: 3 (Integration) | **Crate**: visage-daemon | **Depends on**: 02, 03, 04
+**Phase**: 3 (Integration) | **Crate**: facelock-daemon | **Depends on**: 02, 03, 04
 
 ## Goal
 
@@ -8,10 +8,10 @@ Persistent daemon that owns the camera, ONNX models, and database. Serves authen
 
 ## Dependencies
 
-- `visage-core` (config, types, IPC protocol)
-- `visage-camera` (V4L2 capture)
-- `visage-face` (ONNX inference)
-- `visage-store` (SQLite storage)
+- `facelock-core` (config, types, IPC protocol)
+- `facelock-camera` (V4L2 capture)
+- `facelock-face` (ONNX inference)
+- `facelock-store` (SQLite storage)
 - `signal-hook` (SIGTERM/SIGINT handling)
 - `tracing`, `tracing-subscriber` (structured logging)
 
@@ -30,7 +30,7 @@ Single-threaded, synchronous request/response server. Rationale:
 ```rust
 fn main() {
     // 1. Parse args (--config <path>)
-    // 2. Load config (VISAGE_CONFIG env var or /etc/visage/config.toml)
+    // 2. Load config (FACELOCK_CONFIG env var or /etc/facelock/config.toml)
     // 3. Init tracing (stderr + syslog)
     // 4. Open camera
     // 5. Load ONNX models (FaceEngine)
@@ -82,7 +82,7 @@ pub fn authenticate(
 
 **Authentication algorithm**:
 1. Check pre-conditions:
-   - `security.disabled` -> Error("visage is disabled")
+   - `security.disabled` -> Error("facelock is disabled")
    - `is_ssh_session()` && `abort_if_ssh` -> Error("SSH session detected")
    - `is_lid_closed()` && `abort_if_lid_closed` -> Error("lid closed")
    - `!store.has_models(user)` -> AuthResult { matched: false, similarity: 0.0 }
@@ -151,12 +151,12 @@ pub fn enroll(
 
 ## Socket Management
 
-- Create parent directory if missing (`/run/visage/`)
+- Create parent directory if missing (`/run/facelock/`)
 - Remove stale socket file before binding
 - Set permissions: `std::fs::set_permissions(path, Permissions::from_mode(0o660))`
-- Set ownership: `nix::unistd::chown(path, Some(root), Some(visage_gid))`
+- Set ownership: `nix::unistd::chown(path, Some(root), Some(facelock_gid))`
 - Non-blocking accept with timeout for clean shutdown handling
-- **Peer credential verification**: on every connection, call `getsockopt(SO_PEERCRED)` and verify UID is root (0) or in visage group. Reject unauthorized connections immediately.
+- **Peer credential verification**: on every connection, call `getsockopt(SO_PEERCRED)` and verify UID is root (0) or in facelock group. Reject unauthorized connections immediately.
 - **Message size limit**: reject messages > 10MB in `recv_message()`
 
 ## Rate Limiting
@@ -207,7 +207,7 @@ Note: Full daemon integration tests are in spec 12. This spec focuses on unit-te
 ## Verification
 
 ```bash
-cargo build -p visage-daemon
-cargo test -p visage-daemon
-cargo clippy -p visage-daemon
+cargo build -p facelock-daemon
+cargo test -p facelock-daemon
+cargo clippy -p facelock-daemon
 ```

@@ -1,6 +1,6 @@
 # Spec 04: Face Store (SQLite)
 
-**Phase**: 2 (Components) | **Crate**: visage-store | **Depends on**: 01 | **Parallel with**: 02, 03
+**Phase**: 2 (Components) | **Crate**: facelock-store | **Depends on**: 01 | **Parallel with**: 02, 03
 
 ## Goal
 
@@ -8,7 +8,7 @@ Persistent storage for face embeddings using SQLite. Supports CRUD operations, m
 
 ## Dependencies
 
-- `visage-core` (for `FaceEmbedding`, `FaceModelInfo`, `VisageError`)
+- `facelock-core` (for `FaceEmbedding`, `FaceModelInfo`, `FacelockError`)
 - `rusqlite` with `bundled` feature (statically linked SQLite)
 - `bytemuck` with `derive` feature (zero-copy embedding serialization)
 
@@ -128,6 +128,6 @@ embedding.copy_from_slice(floats);
 ## Verification
 
 ```bash
-cargo test -p visage-store
-cargo clippy -p visage-store
+cargo test -p facelock-store
+cargo clippy -p facelock-store
 ```
