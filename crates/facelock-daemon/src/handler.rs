@@ -15,7 +15,7 @@ use crate::enroll;
 use crate::rate_limit::RateLimiter;
 
 /// Type alias for the camera factory closure.
-type CameraFactory<C> = Box<dyn Fn(&Config) -> Result<C, String>>;
+type CameraFactory<C> = Box<dyn Fn(&Config) -> Result<C, String> + Send + Sync>;
 
 const CAMERA_DEBOUNCE: Duration = Duration::from_secs(10);
 const JPEG_BUF_CAPACITY: usize = 128 * 1024;

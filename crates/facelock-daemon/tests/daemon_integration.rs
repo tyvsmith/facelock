@@ -149,7 +149,7 @@ fn warmup_frames_discarded_on_camera_open() {
     let capture_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counter = capture_count.clone();
 
-    let factory: Box<dyn Fn(&facelock_core::config::Config) -> Result<MockCamera, String>> =
+    let factory: Box<dyn Fn(&facelock_core::config::Config) -> Result<MockCamera, String> + Send + Sync> =
         Box::new(move |_cfg| {
             // Camera with enough frames for warmup + auth
             Ok(MockCamera::bright(64, 64, 20))
@@ -185,7 +185,7 @@ fn warmup_frames_zero_skips_discard() {
         config.security.rate_limit.window_secs,
     );
 
-    let factory: Box<dyn Fn(&facelock_core::config::Config) -> Result<MockCamera, String>> =
+    let factory: Box<dyn Fn(&facelock_core::config::Config) -> Result<MockCamera, String> + Send + Sync> =
         Box::new(move |_cfg| Ok(MockCamera::bright(64, 64, 5)));
 
     let mut handler = Handler::new(config, engine, store, rate_limiter, false, Some(factory));
