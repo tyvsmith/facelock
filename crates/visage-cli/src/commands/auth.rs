@@ -74,7 +74,10 @@ pub fn run(user: String, config_path: Option<String>) -> i32 {
         }
     };
 
-    let store = match FaceStore::open(Path::new(&config.storage.db_path)) {
+    // Open read-only: auth only reads embeddings, doesn't need WAL or migrations.
+    // This allows non-root users (in visage group) to authenticate without
+    // needing write access to the database directory.
+    let store = match FaceStore::open_readonly(Path::new(&config.storage.db_path)) {
         Ok(s) => s,
         Err(e) => {
             error!("database: {e}");

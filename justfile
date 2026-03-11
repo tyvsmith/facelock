@@ -99,8 +99,13 @@ install-files:
         [ -f "$f" ] || { echo "Error: $f not found. Run 'just build-release' first."; exit 1; }
     done
 
-    # Create visage system group
+    # Create visage system group and add the installing user
     getent group visage >/dev/null || groupadd -r visage
+    REAL_USER="${SUDO_USER:-${DOAS_USER:-}}"
+    if [ -n "$REAL_USER" ] && ! id -nG "$REAL_USER" 2>/dev/null | grep -qw visage; then
+        usermod -aG visage "$REAL_USER"
+        echo "Added $REAL_USER to visage group (log out and back in to take effect)."
+    fi
 
     # Binaries
     install -Dm755 target/release/visage /usr/bin/visage
@@ -115,7 +120,7 @@ install-files:
     install -Dm644 systemd/visage-daemon.socket /usr/lib/systemd/system/visage-daemon.socket
 
     # Directories
-    install -dm750 -o root -g visage /var/lib/visage
+    install -dm770 -o root -g visage /var/lib/visage
     install -dm755 -o root -g root /var/lib/visage/models
     install -dm750 -o root -g visage /var/log/visage
     install -dm750 -o root -g visage /var/log/visage/snapshots
@@ -123,7 +128,9 @@ install-files:
 
     # Enable socket activation (if systemd present)
     if [ -d /run/systemd/system ]; then
+        systemctl stop visage-daemon.service visage-daemon.socket 2>/dev/null || true
         systemctl daemon-reload
+        systemctl reset-failed visage-daemon.service 2>/dev/null || true
         systemctl enable --now visage-daemon.socket 2>/dev/null || true
         echo "Socket activation enabled."
     fi

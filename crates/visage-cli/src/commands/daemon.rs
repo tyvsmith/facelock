@@ -337,14 +337,58 @@ fn handle_connection<C: CameraSource, E: FaceProcessor>(
     let data = recv_message(&mut reader)?;
     let request = decode_request(&data)?;
 
+    // Track auth user for post-response notification
+    let auth_user = match &request {
+        visage_core::ipc::DaemonRequest::Authenticate { user } => Some(user.clone()),
+        _ => None,
+    };
+
     // Handle
     let response = handler.handle(request);
+
+    // Send notification for auth results (daemon runs as root, use runuser)
+    if let Some(ref user) = auth_user {
+        if handler.config.notification.enabled {
+            send_auth_notification(&handler.config, &response, user);
+        }
+    }
 
     // Send response
     let resp_data = encode_response(&response)?;
     send_message(&mut writer, &resp_data)?;
 
     Ok(())
+}
+
+/// Send a desktop notification for an authentication result.
+/// Called from the daemon (root context), uses `send_notification` which
+/// drops to the original user via runuser when running as root.
+fn send_auth_notification(
+    config: &Config,
+    response: &visage_core::ipc::DaemonResponse,
+    user: &str,
+) {
+    use crate::notifications::{send_notification_for_user, should_notify, NotifyEvent};
+
+    if let visage_core::ipc::DaemonResponse::AuthResult(result) = response {
+        if result.matched {
+            let event = NotifyEvent::Success {
+                label: result.label.clone(),
+                similarity: result.similarity,
+            };
+            if should_notify(&config.notification, &event) {
+                send_notification_for_user(user, &event);
+            }
+        } else if result.similarity > 0.0 {
+            let event = NotifyEvent::Failure {
+                reason: format!("no match (similarity: {:.2})", result.similarity),
+            };
+            if should_notify(&config.notification, &event) {
+                send_notification_for_user(user, &event);
+            }
+        }
+        // similarity == 0.0 means no enrolled faces, skip notification
+    }
 }
 
 #[cfg(test)]

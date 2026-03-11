@@ -26,6 +26,18 @@ impl FaceStore {
         Ok(Self { conn })
     }
 
+    /// Open database in read-only mode for authentication queries.
+    /// Does not enable WAL or run migrations (avoids needing write access).
+    pub fn open_readonly(db_path: &Path) -> Result<Self> {
+        let conn = rusqlite::Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(map_err)?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;").map_err(map_err)?;
+        Ok(Self { conn })
+    }
+
     /// Open an in-memory database for testing.
     pub fn open_memory() -> Result<Self> {
         let conn = rusqlite::Connection::open_in_memory().map_err(map_err)?;

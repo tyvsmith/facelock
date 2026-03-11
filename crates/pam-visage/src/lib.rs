@@ -322,6 +322,104 @@ unsafe fn pam_info(pamh: *mut libc::c_void, message: &str) {
 }
 
 // ---------------------------------------------------------------------------
+// Desktop notification (fire-and-forget from PAM context)
+// ---------------------------------------------------------------------------
+
+/// Send a desktop notification as the given user via fork+setuid+exec.
+///
+/// This uses raw libc fork/setuid/exec rather than Rust's Command API because:
+/// - The PAM module runs inside sudo/login which may set NO_NEW_PRIVS
+/// - We need to drop from root to the target user for D-Bus access
+/// - The forked child is completely independent (no environment inheritance issues)
+/// - Fire-and-forget: parent doesn't wait for child
+fn send_desktop_notification(user: &str, title: &str, body: &str, icon: &str) {
+    // Resolve user's UID/GID
+    let pw = unsafe { libc::getpwnam(CString::new(user).unwrap_or_default().as_ptr()) };
+    if pw.is_null() {
+        return;
+    }
+    let uid = unsafe { (*pw).pw_uid };
+    let gid = unsafe { (*pw).pw_gid };
+
+    // Check D-Bus bus exists
+    let bus_path = format!("/run/user/{uid}/bus");
+    if std::fs::metadata(&bus_path).is_err() {
+        return;
+    }
+    let bus_addr = format!("unix:path={bus_path}");
+
+    // Fork a child to send the notification
+    let pid = unsafe { libc::fork() };
+    if pid < 0 {
+        return; // fork failed
+    }
+    if pid > 0 {
+        // Parent: don't wait — fire and forget. Reap with SIGCHLD ignore.
+        return;
+    }
+
+    // Child process: drop privileges and exec notify-send
+    // Double-fork to avoid zombie (child exits immediately, grandchild does the work)
+    let pid2 = unsafe { libc::fork() };
+    if pid2 < 0 {
+        unsafe { libc::_exit(1) };
+    }
+    if pid2 > 0 {
+        // First child exits immediately
+        unsafe { libc::_exit(0) };
+    }
+
+    // Grandchild: new session, drop privileges, exec
+    unsafe { libc::setsid() };
+
+    // Set environment for notify-send
+    let dbus_env = CString::new(format!("DBUS_SESSION_BUS_ADDRESS={bus_addr}")).unwrap_or_default();
+    unsafe { libc::putenv(dbus_env.as_ptr() as *mut _) };
+
+    let home_dir = format!("/home/{user}");
+    let home_env = CString::new(format!("HOME={home_dir}")).unwrap_or_default();
+    unsafe { libc::putenv(home_env.as_ptr() as *mut _) };
+
+    let xdg_env = CString::new(format!("XDG_RUNTIME_DIR=/run/user/{uid}")).unwrap_or_default();
+    unsafe { libc::putenv(xdg_env.as_ptr() as *mut _) };
+
+    // Drop privileges: set GID first, then UID
+    unsafe {
+        libc::setgid(gid);
+        libc::initgroups(CString::new(user).unwrap_or_default().as_ptr(), gid);
+        libc::setuid(uid);
+    }
+
+    // Exec notify-send
+    let prog = CString::new("/usr/bin/notify-send").unwrap_or_default();
+    let arg_app = CString::new("--app-name").unwrap_or_default();
+    let arg_app_val = CString::new("Visage").unwrap_or_default();
+    let arg_icon = CString::new("-i").unwrap_or_default();
+    let arg_icon_val = CString::new(icon).unwrap_or_default();
+    let arg_t = CString::new("-t").unwrap_or_default();
+    let arg_t_val = CString::new("3000").unwrap_or_default();
+    let arg_title = CString::new(title).unwrap_or_default();
+    let arg_body = CString::new(body).unwrap_or_default();
+
+    let args: [*const libc::c_char; 10] = [
+        prog.as_ptr(),
+        arg_app.as_ptr(),
+        arg_app_val.as_ptr(),
+        arg_icon.as_ptr(),
+        arg_icon_val.as_ptr(),
+        arg_t.as_ptr(),
+        arg_t_val.as_ptr(),
+        arg_title.as_ptr(),
+        arg_body.as_ptr(),
+        std::ptr::null(),
+    ];
+
+    unsafe { libc::execv(prog.as_ptr(), args.as_ptr()) };
+    // If exec fails, just exit
+    unsafe { libc::_exit(1) };
+}
+
+// ---------------------------------------------------------------------------
 // Environment / hardware checks
 // ---------------------------------------------------------------------------
 
@@ -736,6 +834,7 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
         let result = run_oneshot_auth(&service, &user, &config);
         if result == PAM_SUCCESS && config.notification.enabled {
             unsafe { pam_info(pamh, "Face recognized.") };
+            send_desktop_notification(&user, "Visage", "Face recognized.", "security-high");
         }
         return result;
     }
@@ -755,7 +854,7 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
         }
     };
 
-    // 5. Set socket timeouts
+    // 7. Set socket timeouts
     // Total timeout = recognition timeout + 2s buffer
     let timeout_secs = config.recognition.timeout_secs as u64 + CONNECT_TIMEOUT_SECS;
     let timeout = Duration::from_secs(timeout_secs);
@@ -766,19 +865,27 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
         return PAM_IGNORE;
     }
 
-    // 6. Send Authenticate request
+    // 8. Send Authenticate request
     let request_data = build_auth_request(&user);
     if let Err(e) = send_message(&mut stream, &request_data) {
+        // Daemon connection failed after connect (e.g., daemon crashed under
+        // socket activation). Fall back to oneshot.
         log_auth(
             &service,
-            &format!("error: send: {e}"),
+            &format!("daemon_send_failed: {e}, falling back to oneshot"),
             &user,
             LOG_WARNING,
         );
-        return PAM_IGNORE;
+        drop(stream);
+        let result = run_oneshot_auth(&service, &user, &config);
+        if result == PAM_SUCCESS && config.notification.enabled {
+            unsafe { pam_info(pamh, "Face recognized.") };
+            send_desktop_notification(&user, "Visage", "Face recognized.", "security-high");
+        }
+        return result;
     }
 
-    // 7. Read and parse response
+    // 9. Read and parse response
     let response_data = match recv_message(&mut stream) {
         Ok(d) => d,
         Err(e) => {
@@ -787,13 +894,19 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
                 log_auth(&service, "timeout", &user, LOG_WARNING);
                 return PAM_AUTH_ERR;
             }
+            // Daemon crashed after accepting connection. Fall back to oneshot.
             log_auth(
                 &service,
-                &format!("error: recv: {e}"),
+                &format!("daemon_recv_failed: {e}, falling back to oneshot"),
                 &user,
                 LOG_WARNING,
             );
-            return PAM_IGNORE;
+            drop(stream);
+            let result = run_oneshot_auth(&service, &user, &config);
+            if result == PAM_SUCCESS && config.notification.enabled {
+                unsafe { pam_info(pamh, "Face recognized.") };
+            }
+            return result;
         }
     };
 
@@ -807,6 +920,7 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
             );
             if config.notification.enabled {
                 unsafe { pam_info(pamh, "Face recognized.") };
+                send_desktop_notification(&user, "Visage", "Face recognized.", "security-high");
             }
             PAM_SUCCESS
         }
