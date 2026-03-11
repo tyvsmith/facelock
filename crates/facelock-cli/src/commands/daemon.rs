@@ -7,6 +7,7 @@ use facelock_core::dbus_interface::{
     AuthResult, DeviceInfo, ModelInfo, PreviewFaceInfo, BUS_NAME, OBJECT_PATH,
 };
 use facelock_core::ipc::{DaemonRequest, DaemonResponse};
+use futures_util::StreamExt;
 use facelock_daemon::handler::Handler;
 use facelock_daemon::rate_limit::RateLimiter;
 use facelock_face::FaceEngine;
@@ -383,6 +384,15 @@ async fn run_dbus_server(handler: Arc<Mutex<ProductionHandler>>) -> anyhow::Resu
 
     info!("facelock daemon running on D-Bus system bus as {BUS_NAME}");
 
+    // Spawn a background task to release the camera on system suspend.
+    // Best-effort: if logind is unavailable, log a warning and continue.
+    let handler_for_sleep = handler.clone();
+    tokio::spawn(async move {
+        if let Err(e) = watch_sleep_signals(handler_for_sleep).await {
+            tracing::warn!("failed to watch logind sleep signals: {e}");
+        }
+    });
+
     // Wait for shutdown signal (SIGTERM or SIGINT)
     let mut sigterm =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -400,6 +410,50 @@ async fn run_dbus_server(handler: Arc<Mutex<ProductionHandler>>) -> anyhow::Resu
     }
 
     info!("goodbye");
+    Ok(())
+}
+
+/// Watch for logind `PrepareForSleep` signals.
+///
+/// On suspend (arg=true), release the camera so V4L2 handles don't go stale.
+/// On resume (arg=false), just log — the camera will be re-acquired on demand.
+///
+/// Manual testing:
+/// ```bash
+/// # Start daemon, then:
+/// sudo systemctl suspend
+/// # After resume, check: journalctl -u facelock-daemon --since "5 min ago"
+/// ```
+async fn watch_sleep_signals(
+    handler: Arc<Mutex<ProductionHandler>>,
+) -> anyhow::Result<()> {
+    let connection = zbus::Connection::system().await?;
+    let proxy = zbus::Proxy::new(
+        &connection,
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+    )
+    .await?;
+
+    let mut stream = proxy.receive_signal("PrepareForSleep").await?;
+    info!("watching logind PrepareForSleep signals for camera suspend/resume");
+
+    while let Some(signal) = stream.next().await {
+        let suspending: bool = signal.body().deserialize().unwrap_or(false);
+        if suspending {
+            let handler = handler.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                if let Ok(mut h) = handler.lock() {
+                    h.handle(DaemonRequest::ReleaseCamera);
+                    info!("released camera for suspend");
+                }
+            })
+            .await;
+        } else {
+            info!("resumed from suspend, camera will reacquire on demand");
+        }
+    }
     Ok(())
 }
 
