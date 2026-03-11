@@ -44,6 +44,14 @@ pub struct DeviceConfig {
     /// Number of frames to discard after camera open for AGC/AE stabilization.
     #[serde(default = "default_warmup_frames")]
     pub warmup_frames: u32,
+    /// Percentage of pixels that must be dark (< dark_pixel_value) to reject a frame.
+    /// Range: 0.0 to 1.0. Default: 0.6 (60%).
+    #[serde(default = "default_dark_threshold")]
+    pub dark_threshold: f32,
+    /// Pixel brightness value below which a pixel is considered "dark".
+    /// Range: 0-255. Default: 10.
+    #[serde(default = "default_dark_pixel_value")]
+    pub dark_pixel_value: u8,
 }
 
 impl Default for DeviceConfig {
@@ -53,6 +61,8 @@ impl Default for DeviceConfig {
             max_height: default_max_height(),
             rotation: 0,
             warmup_frames: default_warmup_frames(),
+            dark_threshold: default_dark_threshold(),
+            dark_pixel_value: default_dark_pixel_value(),
         }
     }
 }
@@ -323,6 +333,12 @@ fn default_max_height() -> u32 {
 fn default_warmup_frames() -> u32 {
     5
 }
+fn default_dark_threshold() -> f32 {
+    0.6
+}
+fn default_dark_pixel_value() -> u8 {
+    10
+}
 fn default_threshold() -> f32 {
     0.80
 }
@@ -415,6 +431,12 @@ impl Config {
                     "device.path must not be empty when specified".into(),
                 ));
             }
+        }
+        if !(0.0..=1.0).contains(&self.device.dark_threshold) {
+            return Err(ConfigError::Validation(format!(
+                "device.dark_threshold must be between 0.0 and 1.0, got {}",
+                self.device.dark_threshold
+            )));
         }
         if !(0.0..=1.0).contains(&self.recognition.threshold) {
             return Err(ConfigError::Validation(format!(

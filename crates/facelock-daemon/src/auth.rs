@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use facelock_camera::capture::is_dark_with_config;
 use facelock_core::config::Config;
 use facelock_core::ipc::DaemonResponse;
 use facelock_core::traits::{CameraSource, FaceProcessor};
@@ -118,7 +119,11 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
         };
         frame_count += 1;
 
-        if C::is_dark(&frame) {
+        if is_dark_with_config(
+            &frame,
+            config.device.dark_threshold,
+            config.device.dark_pixel_value,
+        ) {
             dark_count += 1;
             debug!(frame = frame_count, "dark frame, skipping");
             continue;

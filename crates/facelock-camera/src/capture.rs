@@ -215,15 +215,31 @@ impl<'a> Camera<'a> {
         Ok((rgb, width, height))
     }
 
-    /// Check if a frame is too dark (>40% of gray pixels < 10).
+    /// Check if a frame is too dark using default thresholds.
     pub fn is_dark(frame: &Frame) -> bool {
-        if frame.gray.is_empty() {
-            return true;
-        }
-        let dark_count = frame.gray.iter().filter(|&&p| p < 10).count();
-        let ratio = dark_count as f32 / frame.gray.len() as f32;
-        ratio > 0.4
+        is_dark_with_config(frame, 0.6, 10)
     }
+}
+
+/// Check if a frame is too dark to process.
+///
+/// Uses both a per-pixel threshold check and mean brightness:
+/// - If the fraction of pixels below `dark_value` exceeds `threshold`, the frame is dark.
+/// - If the mean brightness is below 20.0, the frame is dark (catches uniformly dim frames).
+pub fn is_dark_with_config(frame: &Frame, threshold: f32, dark_value: u8) -> bool {
+    if frame.gray.is_empty() {
+        return false;
+    }
+    // Per-pixel dark ratio
+    let dark_count = frame.gray.iter().filter(|&&p| p < dark_value).count();
+    let dark_ratio = dark_count as f32 / frame.gray.len() as f32;
+    if dark_ratio >= threshold {
+        return true;
+    }
+    // Mean brightness check (catches uniformly dim frames)
+    let sum: u64 = frame.gray.iter().map(|&p| p as u64).sum();
+    let mean = sum as f32 / frame.gray.len() as f32;
+    mean < 20.0
 }
 
 impl CameraSource for Camera<'_> {
@@ -267,6 +283,84 @@ mod tests {
     }
 
     #[test]
+    fn all_black_frame_is_dark_with_config() {
+        let frame = Frame {
+            rgb: vec![0; 30],
+            gray: vec![0; 10],
+            width: 5,
+            height: 2,
+        };
+        assert!(is_dark_with_config(&frame, 0.6, 10));
+    }
+
+    #[test]
+    fn bright_frame_is_not_dark_with_config() {
+        let frame = Frame {
+            rgb: vec![128; 30],
+            gray: vec![128; 10],
+            width: 5,
+            height: 2,
+        };
+        assert!(!is_dark_with_config(&frame, 0.6, 10));
+    }
+
+    #[test]
+    fn custom_threshold_below_cutoff() {
+        // 50% dark pixels (5/10), 60% threshold = not dark by ratio
+        // but mean = (5*5 + 5*128)/10 = 66.5 > 20 so not dark by mean either
+        let mut gray = vec![128u8; 10];
+        for p in gray.iter_mut().take(5) {
+            *p = 5;
+        }
+        let frame = Frame {
+            rgb: vec![0; 30],
+            gray,
+            width: 5,
+            height: 2,
+        };
+        assert!(!is_dark_with_config(&frame, 0.6, 10));
+    }
+
+    #[test]
+    fn custom_threshold_above_cutoff() {
+        // 70% dark pixels (7/10), 60% threshold = dark by ratio
+        let mut gray = vec![128u8; 10];
+        for p in gray.iter_mut().take(7) {
+            *p = 5;
+        }
+        let frame = Frame {
+            rgb: vec![0; 30],
+            gray,
+            width: 5,
+            height: 2,
+        };
+        assert!(is_dark_with_config(&frame, 0.6, 10));
+    }
+
+    #[test]
+    fn dim_frame_caught_by_mean_brightness() {
+        // All pixels at 15 (above dark_value=10) so ratio=0, but mean=15 < 20
+        let frame = Frame {
+            rgb: vec![0; 30],
+            gray: vec![15; 10],
+            width: 5,
+            height: 2,
+        };
+        assert!(is_dark_with_config(&frame, 0.6, 10));
+    }
+
+    #[test]
+    fn empty_gray_is_not_dark_with_config() {
+        let frame = Frame {
+            rgb: vec![0; 30],
+            gray: vec![],
+            width: 5,
+            height: 2,
+        };
+        assert!(!is_dark_with_config(&frame, 0.6, 10));
+    }
+
+    #[test]
     #[ignore]
     fn camera_open_and_capture() {
         let config = DeviceConfig {
@@ -274,6 +368,8 @@ mod tests {
             max_height: 480,
             rotation: 0,
             warmup_frames: 5,
+            dark_threshold: 0.6,
+            dark_pixel_value: 10,
         };
         let mut cam = Camera::open(&config).expect("failed to open camera");
         let frame = cam.capture().expect("failed to capture frame");

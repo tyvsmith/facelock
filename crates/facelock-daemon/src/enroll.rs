@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use facelock_camera::capture::is_dark_with_config;
 use facelock_core::config::Config;
 use facelock_core::ipc::DaemonResponse;
 use facelock_core::traits::{CameraSource, FaceProcessor};
@@ -55,7 +56,11 @@ pub fn enroll<C: CameraSource, E: FaceProcessor>(
         };
         let capture_ms = capture_start.elapsed().as_millis();
 
-        if C::is_dark(&frame) {
+        if is_dark_with_config(
+            &frame,
+            config.device.dark_threshold,
+            config.device.dark_pixel_value,
+        ) {
             warn!(capture_ms, "skipping dark frame during enroll");
             continue;
         }
