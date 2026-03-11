@@ -166,6 +166,9 @@ pub struct SecurityConfig {
     pub require_ir: bool,
     #[serde(default = "default_true")]
     pub require_frame_variance: bool,
+    /// Require landmark movement between frames to pass liveness check.
+    #[serde(default = "default_true")]
+    pub require_landmark_liveness: bool,
     #[serde(default = "default_min_auth_frames")]
     pub min_auth_frames: u32,
     #[serde(default)]
@@ -198,6 +201,7 @@ impl Default for SecurityConfig {
             suppress_unknown: false,
             require_ir: true,
             require_frame_variance: true,
+            require_landmark_liveness: true,
             min_auth_frames: default_min_auth_frames(),
             rate_limit: RateLimitConfig::default(),
         }
