@@ -29,7 +29,7 @@ RUN cat > /etc/visage/config.toml <<'EOF'
 max_height = 480
 
 [recognition]
-threshold = 0.45
+threshold = 0.80
 timeout_secs = 5
 
 [daemon]

@@ -89,9 +89,9 @@ run_test "PAM shows 'Identifying face...' text" \
     "pamtester visage-test testuser authenticate 2>&1 | grep -q 'Identifying face'" \
     0
 
-# When notification.enabled = false, no text message
-run_test "PAM respects notification.enabled=false" \
-    "sed -i '/^\[notification\]/,/^\[/{s/.*enabled.*/enabled = false/}' /etc/visage/config.toml 2>/dev/null || (echo -e '\n[notification]\nenabled = false' >> /etc/visage/config.toml); pamtester visage-test testuser authenticate 2>&1 | grep -qv 'Identifying face'; sed -i '/enabled = false/d' /etc/visage/config.toml" \
+# When notification mode = off, no text message
+run_test "PAM respects notification mode=off" \
+    "sed -i '/^\[notification\]/,/^\[/{s/.*mode.*/mode = \"off\"/}' /etc/visage/config.toml 2>/dev/null || (echo -e '\n[notification]\nmode = \"off\"' >> /etc/visage/config.toml); pamtester visage-test testuser authenticate 2>&1 | grep -qv 'Identifying face'; sed -i '/mode = \"off\"/d' /etc/visage/config.toml" \
     0
 
 # --- Spec 29: Smart PAM with oneshot config ---

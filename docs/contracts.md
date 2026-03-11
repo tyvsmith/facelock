@@ -74,8 +74,8 @@ TOML format. All keys optional — camera auto-detected, sensible defaults for e
 | `[daemon]` | `mode` (DaemonMode enum), `socket_path`, `model_dir`, `idle_timeout_secs` |
 | `[storage]` | `db_path` |
 | `[security]` | `require_ir`, `require_frame_variance`, `min_auth_frames`, `abort_if_ssh`, `abort_if_lid_closed`, rate_limit sub-section |
-| `[notification]` | `enabled`, `on_success`, `on_failure` |
-| `[snapshots]` | `enabled`, `dir` |
+| `[notification]` | `mode` (off/terminal/desktop/both), `notify_prompt`, `notify_on_success`, `notify_on_failure` |
+| `[snapshots]` | `mode` (off/all/failure/success), `dir` |
 | `[tpm]` | `seal_database`, `pcr_binding`, `pcr_indices`, `tcti` |
 
 ### Camera Auto-Detection

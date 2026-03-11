@@ -190,32 +190,103 @@ impl Default for SecurityConfig {
     }
 }
 
+/// Controls how auth feedback is delivered.
+///
+/// - `"off"` — no notifications at all
+/// - `"terminal"` — PAM conversation text only ("Identifying face...", "Face recognized.")
+/// - `"desktop"` — desktop popups only (via D-Bus/notify-send)
+/// - `"both"` — terminal text and desktop popups (default)
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum NotificationMode {
+    Off,
+    Terminal,
+    Desktop,
+    #[default]
+    Both,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationConfig {
+    #[serde(default)]
+    pub mode: NotificationMode,
+    /// Show prompt text/notification when scanning starts ("Identifying face...")
     #[serde(default = "default_true")]
-    pub enabled: bool,
+    pub notify_prompt: bool,
+    /// Show notification on successful face match
     #[serde(default = "default_true")]
-    pub on_success: bool,
+    pub notify_on_success: bool,
+    /// Show notification on failed face match
     #[serde(default = "default_true")]
-    pub on_failure: bool,
+    pub notify_on_failure: bool,
 }
 
 impl Default for NotificationConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
-            on_success: true,
-            on_failure: true,
+            mode: NotificationMode::Both,
+            notify_prompt: true,
+            notify_on_success: true,
+            notify_on_failure: true,
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+impl NotificationConfig {
+    /// Whether terminal text (PAM conversation) is enabled
+    pub fn terminal(&self) -> bool {
+        matches!(self.mode, NotificationMode::Terminal | NotificationMode::Both)
+    }
+
+    /// Whether desktop popups are enabled
+    pub fn desktop(&self) -> bool {
+        matches!(self.mode, NotificationMode::Desktop | NotificationMode::Both)
+    }
+}
+
+/// When to save camera snapshots.
+///
+/// - `"off"` — never save snapshots (default)
+/// - `"all"` — save on every auth attempt
+/// - `"failure"` — save only on failed auth (debugging false rejects)
+/// - `"success"` — save only on successful auth (auditing)
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SnapshotMode {
+    #[default]
+    Off,
+    All,
+    Failure,
+    Success,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotConfig {
     #[serde(default)]
-    pub enabled: bool,
+    pub mode: SnapshotMode,
     #[serde(default = "default_snapshot_dir")]
     pub dir: String,
+}
+
+impl Default for SnapshotConfig {
+    fn default() -> Self {
+        Self {
+            mode: SnapshotMode::Off,
+            dir: default_snapshot_dir(),
+        }
+    }
+}
+
+impl SnapshotConfig {
+    /// Whether snapshots should be saved for a given auth outcome.
+    pub fn should_save(&self, success: bool) -> bool {
+        match self.mode {
+            SnapshotMode::Off => false,
+            SnapshotMode::All => true,
+            SnapshotMode::Success => success,
+            SnapshotMode::Failure => !success,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -246,7 +317,7 @@ fn default_max_height() -> u32 {
     480
 }
 fn default_threshold() -> f32 {
-    0.45
+    0.80
 }
 fn default_timeout() -> u32 {
     5
@@ -372,7 +443,7 @@ path = "/dev/video0"
         let config = Config::parse(toml).unwrap();
         assert_eq!(config.device.path.as_deref(), Some("/dev/video0"));
         assert_eq!(config.device.max_height, 480);
-        assert_eq!(config.recognition.threshold, 0.45);
+        assert_eq!(config.recognition.threshold, 0.80);
         assert_eq!(config.daemon.socket_path, paths::DEFAULT_SOCKET_PATH);
         assert!(config.security.require_ir);
     }
@@ -405,10 +476,10 @@ require_frame_variance = true
 min_auth_frames = 5
 
 [notification]
-enabled = false
+mode = "off"
 
 [snapshots]
-enabled = true
+mode = "all"
 dir = "/tmp/snaps"
 
 "#;
@@ -477,7 +548,7 @@ path = "/dev/video0"
         let config = Config::parse(toml).unwrap();
         assert_eq!(config.storage.db_path, paths::DEFAULT_DB_PATH);
         assert!(config.security.abort_if_ssh);
-        assert!(!config.snapshots.enabled);
+        assert_eq!(config.snapshots.mode, SnapshotMode::Off);
     }
 
     #[test]

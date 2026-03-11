@@ -152,21 +152,21 @@ fn send_as_user(user: &str, event: &NotifyEvent) {
     }
 }
 
-/// Check whether a notification should be sent for the given event, based on config.
-pub fn should_notify(config: &NotificationConfig, event: &NotifyEvent) -> bool {
-    if !config.enabled {
+/// Check whether a desktop notification should be sent for the given event.
+pub fn should_notify_desktop(config: &NotificationConfig, event: &NotifyEvent) -> bool {
+    if !config.desktop() {
         return false;
     }
     match event {
-        NotifyEvent::Scanning => true,
-        NotifyEvent::Success { .. } => config.on_success,
-        NotifyEvent::Failure { .. } => config.on_failure,
+        NotifyEvent::Scanning => config.notify_prompt,
+        NotifyEvent::Success { .. } => config.notify_on_success,
+        NotifyEvent::Failure { .. } => config.notify_on_failure,
     }
 }
 
-/// Conditionally send a notification based on config.
+/// Conditionally send a desktop notification based on config.
 pub fn notify_if_enabled(config: &NotificationConfig, event: &NotifyEvent) {
-    if should_notify(config, event) {
+    if should_notify_desktop(config, event) {
         send_notification(event);
     }
 }
@@ -214,87 +214,103 @@ mod tests {
         assert_eq!(event.timeout_ms(), 3000);
     }
 
+    use visage_core::config::NotificationMode;
+
     #[test]
-    fn should_notify_respects_enabled() {
+    fn mode_off_blocks_all() {
         let config = NotificationConfig {
-            enabled: false,
-            on_success: true,
-            on_failure: true,
+            mode: NotificationMode::Off,
+            ..Default::default()
         };
-        assert!(!should_notify(&config, &NotifyEvent::Scanning));
-        assert!(!should_notify(
+        assert!(!should_notify_desktop(&config, &NotifyEvent::Scanning));
+        assert!(!should_notify_desktop(
             &config,
-            &NotifyEvent::Success {
-                label: None,
-                similarity: 0.9
-            }
+            &NotifyEvent::Success { label: None, similarity: 0.9 }
         ));
     }
 
     #[test]
-    fn should_notify_respects_on_success() {
+    fn mode_terminal_blocks_desktop() {
         let config = NotificationConfig {
-            enabled: true,
-            on_success: false,
-            on_failure: true,
+            mode: NotificationMode::Terminal,
+            ..Default::default()
         };
-        // Scanning always goes through when enabled
-        assert!(should_notify(&config, &NotifyEvent::Scanning));
-        // Success is suppressed
-        assert!(!should_notify(
-            &config,
-            &NotifyEvent::Success {
-                label: None,
-                similarity: 0.9
-            }
-        ));
-        // Failure still goes through
-        assert!(should_notify(
-            &config,
-            &NotifyEvent::Failure {
-                reason: "no match".into()
-            }
-        ));
+        assert!(!should_notify_desktop(&config, &NotifyEvent::Scanning));
+        assert!(config.terminal());
+        assert!(!config.desktop());
     }
 
     #[test]
-    fn should_notify_respects_on_failure() {
+    fn mode_desktop_enables_desktop() {
         let config = NotificationConfig {
-            enabled: true,
-            on_success: true,
-            on_failure: false,
+            mode: NotificationMode::Desktop,
+            ..Default::default()
         };
-        assert!(should_notify(
-            &config,
-            &NotifyEvent::Success {
-                label: Some("Bob".into()),
-                similarity: 0.8
-            }
-        ));
-        assert!(!should_notify(
-            &config,
-            &NotifyEvent::Failure {
-                reason: "timeout".into()
-            }
-        ));
+        assert!(should_notify_desktop(&config, &NotifyEvent::Scanning));
+        assert!(!config.terminal());
+        assert!(config.desktop());
     }
 
     #[test]
-    fn should_notify_all_enabled() {
+    fn mode_both_enables_all() {
         let config = NotificationConfig::default();
-        assert!(should_notify(&config, &NotifyEvent::Scanning));
-        assert!(should_notify(
+        assert!(config.terminal());
+        assert!(config.desktop());
+        assert!(should_notify_desktop(&config, &NotifyEvent::Scanning));
+        assert!(should_notify_desktop(
             &config,
-            &NotifyEvent::Success {
-                label: None,
-                similarity: 0.5
-            }
+            &NotifyEvent::Success { label: None, similarity: 0.5 }
         ));
-        assert!(should_notify(
+        assert!(should_notify_desktop(
             &config,
-            &NotifyEvent::Failure {
-                reason: "err".into()
-            }
+            &NotifyEvent::Failure { reason: "err".into() }
+        ));
+    }
+
+    #[test]
+    fn notify_prompt_controls_scanning() {
+        let config = NotificationConfig {
+            notify_prompt: false,
+            ..Default::default()
+        };
+        assert!(!should_notify_desktop(&config, &NotifyEvent::Scanning));
+        // Success/failure still enabled
+        assert!(should_notify_desktop(
+            &config,
+            &NotifyEvent::Success { label: None, similarity: 0.9 }
+        ));
+    }
+
+    #[test]
+    fn notify_on_success_controls_success() {
+        let config = NotificationConfig {
+            notify_on_success: false,
+            ..Default::default()
+        };
+        assert!(should_notify_desktop(&config, &NotifyEvent::Scanning));
+        assert!(!should_notify_desktop(
+            &config,
+            &NotifyEvent::Success { label: None, similarity: 0.9 }
+        ));
+        assert!(should_notify_desktop(
+            &config,
+            &NotifyEvent::Failure { reason: "no match".into() }
+        ));
+    }
+
+    #[test]
+    fn notify_on_failure_controls_failure() {
+        let config = NotificationConfig {
+            notify_on_failure: false,
+            ..Default::default()
+        };
+        assert!(should_notify_desktop(
+            &config,
+            &NotifyEvent::Success { label: Some("Bob".into()), similarity: 0.8 }
+        ));
+        assert!(!should_notify_desktop(
+            &config,
+            &NotifyEvent::Failure { reason: "timeout".into() }
         ));
     }
 }

@@ -30,10 +30,21 @@
 
 [recognition]
 
-# Cosine similarity threshold for accepting a match. Higher values
-# are stricter (fewer false accepts, more false rejects). Range: 0.0–1.0
-# Default: 0.45
-# threshold = 0.45
+# Cosine similarity threshold for accepting a face match.
+# Higher values are stricter (fewer false accepts, more false rejects).
+#
+# Range guide (ArcFace cosine similarity):
+#   0.30–0.50  Very loose — high false accept rate, not recommended
+#   0.50–0.65  Loose — convenient but may accept similar-looking people
+#   0.65–0.80  Balanced — good for most setups, low false accept rate
+#   0.80–0.90  Strict — rarely accepts wrong person, may reject on bad angles
+#   0.90+      Very strict — may require near-ideal lighting and pose
+#
+# Tip: run `visage test` to see your similarity scores, then set the
+# threshold below your typical match score with some margin.
+#
+# Default: 0.80
+# threshold = 0.80
 
 # Maximum seconds to attempt recognition before giving up.
 # Default: 5
@@ -161,27 +172,40 @@
 
 [notification]
 
-# Enable notifications: desktop (D-Bus) for CLI, text messages for PAM.
-# When true, PAM shows "Identifying face..." and "Face recognized." prompts.
+# Notification mode: controls how auth feedback is delivered.
+#   "off"      — no notifications at all
+#   "terminal" — PAM text prompts only ("Identifying face...", "Face recognized.")
+#   "desktop"  — desktop popups only (via D-Bus/notify-send)
+#   "both"     — terminal text and desktop popups (default)
+# Default: "both"
+# mode = "both"
+
+# Show prompt when scanning starts ("Identifying face..." / "Scanning face...").
 # Default: true
-# enabled = true
+# notify_prompt = true
 
 # Notify on successful face match.
 # Default: true
-# on_success = true
+# notify_on_success = true
 
 # Notify on failed face match.
 # Default: true
-# on_failure = true
+# notify_on_failure = true
 
 
 # ── Snapshots ───────────────────────────────────────────────────────
 
 [snapshots]
 
-# Save camera snapshots on auth attempts (for debugging).
-# Default: false
-# enabled = false
+# Save camera snapshots on auth attempts for debugging or auditing.
+#   "off"     — never save snapshots (default)
+#   "all"     — save on every auth attempt
+#   "failure" — save only on failed auth (debug false rejects / spoofing)
+#   "success" — save only on successful auth (audit trail)
+#
+# Snapshots are saved as JPEG in the configured directory with timestamps.
+# Default: "off"
+# mode = "off"
 
 # Directory for snapshot images.
 # Default: "/var/log/visage/snapshots"

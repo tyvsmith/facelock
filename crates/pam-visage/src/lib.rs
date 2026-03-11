@@ -105,15 +105,43 @@ impl Default for PamSecurityConfig {
     }
 }
 
+#[derive(Default, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum PamNotificationMode {
+    Off,
+    Terminal,
+    Desktop,
+    #[default]
+    Both,
+}
+
 #[derive(Deserialize)]
 struct PamNotificationConfig {
+    #[serde(default)]
+    mode: PamNotificationMode,
     #[serde(default = "default_true")]
-    enabled: bool,
+    notify_prompt: bool,
+    #[serde(default = "default_true")]
+    notify_on_success: bool,
 }
 
 impl Default for PamNotificationConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            mode: PamNotificationMode::Both,
+            notify_prompt: true,
+            notify_on_success: true,
+        }
+    }
+}
+
+impl PamNotificationConfig {
+    fn terminal(&self) -> bool {
+        matches!(self.mode, PamNotificationMode::Terminal | PamNotificationMode::Both)
+    }
+
+    fn desktop(&self) -> bool {
+        matches!(self.mode, PamNotificationMode::Desktop | PamNotificationMode::Both)
     }
 }
 
@@ -825,16 +853,20 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
     };
 
     // 4. Display scanning notice
-    if config.notification.enabled {
+    if config.notification.notify_prompt && config.notification.terminal() {
         unsafe { pam_info(pamh, "Identifying face...") };
     }
 
     // 5. Oneshot mode: run visage-auth directly, skip the socket
     if config.daemon.mode == "oneshot" {
         let result = run_oneshot_auth(&service, &user, &config);
-        if result == PAM_SUCCESS && config.notification.enabled {
-            unsafe { pam_info(pamh, "Face recognized.") };
-            send_desktop_notification(&user, "Visage", "Face recognized.", "security-high");
+        if result == PAM_SUCCESS && config.notification.notify_on_success {
+            if config.notification.terminal() {
+                unsafe { pam_info(pamh, "Face recognized.") };
+            }
+            if config.notification.desktop() {
+                send_desktop_notification(&user, "Visage", "Face recognized.", "security-high");
+            }
         }
         return result;
     }
@@ -847,9 +879,13 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
         Err(_) => {
             // Daemon not available — fall back to oneshot mode
             let result = run_oneshot_auth(&service, &user, &config);
-            if result == PAM_SUCCESS && config.notification.enabled {
-                unsafe { pam_info(pamh, "Face recognized.") };
-                send_desktop_notification(&user, "Visage", "Face recognized.", "security-high");
+            if result == PAM_SUCCESS && config.notification.notify_on_success {
+                if config.notification.terminal() {
+                    unsafe { pam_info(pamh, "Face recognized.") };
+                }
+                if config.notification.desktop() {
+                    send_desktop_notification(&user, "Visage", "Face recognized.", "security-high");
+                }
             }
             return result;
         }
@@ -879,9 +915,13 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
         );
         drop(stream);
         let result = run_oneshot_auth(&service, &user, &config);
-        if result == PAM_SUCCESS && config.notification.enabled {
-            unsafe { pam_info(pamh, "Face recognized.") };
-            send_desktop_notification(&user, "Visage", "Face recognized.", "security-high");
+        if result == PAM_SUCCESS && config.notification.notify_on_success {
+            if config.notification.terminal() {
+                unsafe { pam_info(pamh, "Face recognized.") };
+            }
+            if config.notification.desktop() {
+                send_desktop_notification(&user, "Visage", "Face recognized.", "security-high");
+            }
         }
         return result;
     }
@@ -904,9 +944,13 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
             );
             drop(stream);
             let result = run_oneshot_auth(&service, &user, &config);
-            if result == PAM_SUCCESS && config.notification.enabled {
-                unsafe { pam_info(pamh, "Face recognized.") };
-                send_desktop_notification(&user, "Visage", "Face recognized.", "security-high");
+            if result == PAM_SUCCESS && config.notification.notify_on_success {
+                if config.notification.terminal() {
+                    unsafe { pam_info(pamh, "Face recognized.") };
+                }
+                if config.notification.desktop() {
+                    send_desktop_notification(&user, "Visage", "Face recognized.", "security-high");
+                }
             }
             return result;
         }
@@ -920,9 +964,13 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
                 &user,
                 LOG_INFO,
             );
-            if config.notification.enabled {
-                unsafe { pam_info(pamh, "Face recognized.") };
-                send_desktop_notification(&user, "Visage", "Face recognized.", "security-high");
+            if config.notification.notify_on_success {
+                if config.notification.terminal() {
+                    unsafe { pam_info(pamh, "Face recognized.") };
+                }
+                if config.notification.desktop() {
+                    send_desktop_notification(&user, "Visage", "Face recognized.", "security-high");
+                }
             }
             PAM_SUCCESS
         }
