@@ -10,6 +10,7 @@ members = [
     "crates/pam-facelock",
     "crates/facelock-test-support",
     "crates/facelock-tpm",
+    "crates/facelock-polkit",
 ]
 
 [workspace.package]

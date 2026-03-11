@@ -1,0 +1,19 @@
+[package]
+name = "facelock-polkit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "facelock-polkit-agent"
+path = "src/main.rs"
+
+[dependencies]
+facelock-core = { path = "../facelock-core" }
+zbus = "5"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+nix = { version = "0.29", features = ["user"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }

@@ -1052,6 +1052,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "facelock-polkit"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "facelock-core",
+ "nix",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "zbus",
+]
+
+[[package]]
 name = "facelock-store"
 version = "0.1.0"
 dependencies = [
