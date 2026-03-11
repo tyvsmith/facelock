@@ -64,7 +64,7 @@ cargo run --bin facelock -- --help
 | facelock-face | facelock-core, ort, ndarray, image |
 | facelock-store | facelock-core, rusqlite (bundled), bytemuck |
 | facelock-daemon | facelock-core, facelock-camera, facelock-face, facelock-store, signal-hook |
-| facelock-cli | facelock-core + all above, clap, reqwest, notify-rust, zbus |
+| facelock-cli | facelock-core + all above, clap, reqwest, zbus |
 | pam-facelock | **libc, toml, serde, zbus ONLY** |
 | facelock-tpm | facelock-core, tracing |
 

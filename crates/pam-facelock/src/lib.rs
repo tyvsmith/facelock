@@ -99,6 +99,7 @@ impl Default for PamSecurityConfig {
 
 #[derive(Default, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
+#[allow(dead_code)] // Variants used via deserialization
 enum PamNotificationMode {
     Off,
     Terminal,
@@ -130,10 +131,6 @@ impl Default for PamNotificationConfig {
 impl PamNotificationConfig {
     fn terminal(&self) -> bool {
         matches!(self.mode, PamNotificationMode::Terminal | PamNotificationMode::Both)
-    }
-
-    fn desktop(&self) -> bool {
-        matches!(self.mode, PamNotificationMode::Desktop | PamNotificationMode::Both)
     }
 }
 
@@ -335,104 +332,6 @@ unsafe fn pam_info(pamh: *mut libc::c_void, message: &str) {
             libc::free(resp_ptr.cast());
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Desktop notification (fire-and-forget from PAM context)
-// ---------------------------------------------------------------------------
-
-/// Send a desktop notification as the given user via fork+setuid+exec.
-///
-/// This uses raw libc fork/setuid/exec rather than Rust's Command API because:
-/// - The PAM module runs inside sudo/login which may set NO_NEW_PRIVS
-/// - We need to drop from root to the target user for D-Bus access
-/// - The forked child is completely independent (no environment inheritance issues)
-/// - Fire-and-forget: parent doesn't wait for child
-fn send_desktop_notification(user: &str, title: &str, body: &str, icon: &str) {
-    // Resolve user's UID/GID
-    let pw = unsafe { libc::getpwnam(CString::new(user).unwrap_or_default().as_ptr()) };
-    if pw.is_null() {
-        return;
-    }
-    let uid = unsafe { (*pw).pw_uid };
-    let gid = unsafe { (*pw).pw_gid };
-
-    // Check D-Bus bus exists
-    let bus_path = format!("/run/user/{uid}/bus");
-    if std::fs::metadata(&bus_path).is_err() {
-        return;
-    }
-    let bus_addr = format!("unix:path={bus_path}");
-
-    // Fork a child to send the notification
-    let pid = unsafe { libc::fork() };
-    if pid < 0 {
-        return; // fork failed
-    }
-    if pid > 0 {
-        // Parent: don't wait -- fire and forget. Reap with SIGCHLD ignore.
-        return;
-    }
-
-    // Child process: drop privileges and exec notify-send
-    // Double-fork to avoid zombie (child exits immediately, grandchild does the work)
-    let pid2 = unsafe { libc::fork() };
-    if pid2 < 0 {
-        unsafe { libc::_exit(1) };
-    }
-    if pid2 > 0 {
-        // First child exits immediately
-        unsafe { libc::_exit(0) };
-    }
-
-    // Grandchild: new session, drop privileges, exec
-    unsafe { libc::setsid() };
-
-    // Set environment for notify-send
-    let dbus_env = CString::new(format!("DBUS_SESSION_BUS_ADDRESS={bus_addr}")).unwrap_or_default();
-    unsafe { libc::putenv(dbus_env.as_ptr() as *mut _) };
-
-    let home_dir = format!("/home/{user}");
-    let home_env = CString::new(format!("HOME={home_dir}")).unwrap_or_default();
-    unsafe { libc::putenv(home_env.as_ptr() as *mut _) };
-
-    let xdg_env = CString::new(format!("XDG_RUNTIME_DIR=/run/user/{uid}")).unwrap_or_default();
-    unsafe { libc::putenv(xdg_env.as_ptr() as *mut _) };
-
-    // Drop privileges: set GID first, then UID
-    unsafe {
-        libc::setgid(gid);
-        libc::initgroups(CString::new(user).unwrap_or_default().as_ptr(), gid);
-        libc::setuid(uid);
-    }
-
-    // Exec notify-send
-    let prog = CString::new("/usr/bin/notify-send").unwrap_or_default();
-    let arg_app = CString::new("--app-name").unwrap_or_default();
-    let arg_app_val = CString::new("Facelock").unwrap_or_default();
-    let arg_icon = CString::new("-i").unwrap_or_default();
-    let arg_icon_val = CString::new(icon).unwrap_or_default();
-    let arg_t = CString::new("-t").unwrap_or_default();
-    let arg_t_val = CString::new("3000").unwrap_or_default();
-    let arg_title = CString::new(title).unwrap_or_default();
-    let arg_body = CString::new(body).unwrap_or_default();
-
-    let args: [*const libc::c_char; 10] = [
-        prog.as_ptr(),
-        arg_app.as_ptr(),
-        arg_app_val.as_ptr(),
-        arg_icon.as_ptr(),
-        arg_icon_val.as_ptr(),
-        arg_t.as_ptr(),
-        arg_t_val.as_ptr(),
-        arg_title.as_ptr(),
-        arg_body.as_ptr(),
-        std::ptr::null(),
-    ];
-
-    unsafe { libc::execv(prog.as_ptr(), args.as_ptr()) };
-    // If exec fails, just exit
-    unsafe { libc::_exit(1) };
 }
 
 // ---------------------------------------------------------------------------
@@ -698,18 +597,18 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
     // 5. Oneshot mode: run facelock-auth directly, skip D-Bus
     if config.daemon.mode == "oneshot" {
         let result = run_oneshot_auth(&service, &user, &config);
-        if result == PAM_SUCCESS && config.notification.notify_on_success {
-            if config.notification.terminal() {
-                unsafe { pam_info(pamh, "Face recognized.") };
-            }
-            if config.notification.desktop() {
-                send_desktop_notification(&user, "Facelock", "Face recognized.", "security-high");
-            }
+        if result == PAM_SUCCESS
+            && config.notification.notify_on_success
+            && config.notification.terminal()
+        {
+            unsafe { pam_info(pamh, "Face recognized.") };
         }
         return result;
     }
 
     // 6. Daemon mode: connect via D-Bus, fall back to oneshot if unavailable
+    // Desktop notifications are handled by the daemon's auth_attempted D-Bus signal;
+    // PAM only provides terminal feedback via pam_info().
     match daemon_authenticate(&config, &user) {
         Ok(AuthResponse::Matched { similarity }) => {
             log_auth(
@@ -718,13 +617,8 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
                 &user,
                 LOG_INFO,
             );
-            if config.notification.notify_on_success {
-                if config.notification.terminal() {
-                    unsafe { pam_info(pamh, "Face recognized.") };
-                }
-                if config.notification.desktop() {
-                    send_desktop_notification(&user, "Facelock", "Face recognized.", "security-high");
-                }
+            if config.notification.notify_on_success && config.notification.terminal() {
+                unsafe { pam_info(pamh, "Face recognized.") };
             }
             PAM_SUCCESS
         }
@@ -774,13 +668,11 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
                 LOG_WARNING,
             );
             let result = run_oneshot_auth(&service, &user, &config);
-            if result == PAM_SUCCESS && config.notification.notify_on_success {
-                if config.notification.terminal() {
-                    unsafe { pam_info(pamh, "Face recognized.") };
-                }
-                if config.notification.desktop() {
-                    send_desktop_notification(&user, "Facelock", "Face recognized.", "security-high");
-                }
+            if result == PAM_SUCCESS
+                && config.notification.notify_on_success
+                && config.notification.terminal()
+            {
+                unsafe { pam_info(pamh, "Face recognized.") };
             }
             result
         }
