@@ -10,9 +10,14 @@ use sha2::{Digest, Sha256};
 
 use facelock_core::Config;
 
-/// Embedded systemd unit files.
+/// Embedded systemd unit file.
 const SERVICE_UNIT: &str = include_str!("../../../../systemd/facelock-daemon.service");
-const SOCKET_UNIT: &str = include_str!("../../../../systemd/facelock-daemon.socket");
+
+/// Embedded D-Bus activation service file.
+const DBUS_SERVICE: &str = include_str!("../../../../dbus/org.facelock.Daemon.service");
+
+/// Embedded D-Bus policy configuration.
+const DBUS_POLICY: &str = include_str!("../../../../dbus/org.facelock.Daemon.conf");
 
 /// Embedded model manifest (same source as facelock-face).
 const MANIFEST_TOML: &str = include_str!("../../../../models/manifest.toml");
@@ -158,7 +163,7 @@ fn run_wizard() -> anyhow::Result<()> {
     println!(
         "  Daemon:   {}",
         if systemd_enabled {
-            "enabled (socket activation)"
+            "enabled (D-Bus activation)"
         } else {
             "not configured"
         }
@@ -342,7 +347,7 @@ fn wizard_systemd_setup(theme: &ColorfulTheme) -> anyhow::Result<bool> {
     }
 
     let proceed = Confirm::with_theme(theme)
-        .with_prompt("Enable daemon mode with socket activation?")
+        .with_prompt("Enable daemon mode with D-Bus activation?")
         .default(true)
         .interact()?;
 
@@ -778,7 +783,10 @@ fn verify_after_download(path: &Path, expected_sha256: &str, name: &str) -> anyh
 
 const SYSTEMD_UNIT_DIR: &str = "/usr/lib/systemd/system";
 const SERVICE_FILENAME: &str = "facelock-daemon.service";
-const SOCKET_FILENAME: &str = "facelock-daemon.socket";
+const DBUS_SYSTEM_SERVICES_DIR: &str = "/usr/share/dbus-1/system-services";
+const DBUS_SYSTEM_CONF_DIR: &str = "/usr/share/dbus-1/system.d";
+const DBUS_SERVICE_FILENAME: &str = "org.facelock.Daemon.service";
+const DBUS_POLICY_FILENAME: &str = "org.facelock.Daemon.conf";
 
 fn check_systemd() -> anyhow::Result<()> {
     if !Path::new("/run/systemd/system").exists() {
@@ -813,11 +821,12 @@ pub fn run_systemd(disable: bool) -> anyhow::Result<()> {
 
     if disable {
         println!("Disabling facelock-daemon systemd units...");
-        run_cmd("systemctl", &["disable", "--now", SOCKET_FILENAME, "facelock-daemon"])?;
-        println!("facelock-daemon socket and service disabled and stopped.");
+        run_cmd("systemctl", &["disable", "--now", "facelock-daemon"])?;
+        println!("facelock-daemon service disabled and stopped.");
     } else {
-        println!("Installing facelock-daemon systemd units...");
+        println!("Installing facelock-daemon systemd and D-Bus units...");
 
+        // Install systemd service unit
         let unit_dir = Path::new(SYSTEMD_UNIT_DIR);
         fs::create_dir_all(unit_dir)
             .with_context(|| format!("failed to create {SYSTEMD_UNIT_DIR}"))?;
@@ -827,18 +836,33 @@ pub fn run_systemd(disable: bool) -> anyhow::Result<()> {
             .with_context(|| format!("failed to write {}", service_path.display()))?;
         println!("  Wrote {}", service_path.display());
 
-        let socket_path = unit_dir.join(SOCKET_FILENAME);
-        fs::write(&socket_path, SOCKET_UNIT)
-            .with_context(|| format!("failed to write {}", socket_path.display()))?;
-        println!("  Wrote {}", socket_path.display());
+        // Install D-Bus policy file
+        let conf_dir = Path::new(DBUS_SYSTEM_CONF_DIR);
+        fs::create_dir_all(conf_dir)
+            .with_context(|| format!("failed to create {DBUS_SYSTEM_CONF_DIR}"))?;
+
+        let policy_path = conf_dir.join(DBUS_POLICY_FILENAME);
+        fs::write(&policy_path, DBUS_POLICY)
+            .with_context(|| format!("failed to write {}", policy_path.display()))?;
+        println!("  Wrote {}", policy_path.display());
+
+        // Install D-Bus activation service
+        let svc_dir = Path::new(DBUS_SYSTEM_SERVICES_DIR);
+        fs::create_dir_all(svc_dir)
+            .with_context(|| format!("failed to create {DBUS_SYSTEM_SERVICES_DIR}"))?;
+
+        let dbus_svc_path = svc_dir.join(DBUS_SERVICE_FILENAME);
+        fs::write(&dbus_svc_path, DBUS_SERVICE)
+            .with_context(|| format!("failed to write {}", dbus_svc_path.display()))?;
+        println!("  Wrote {}", dbus_svc_path.display());
 
         run_cmd("systemctl", &["daemon-reload"])?;
         println!("  systemctl daemon-reload done.");
 
-        run_cmd("systemctl", &["enable", "--now", SOCKET_FILENAME])?;
-        println!("  systemctl enable --now {SOCKET_FILENAME} done.");
+        run_cmd("systemctl", &["enable", SERVICE_FILENAME])?;
+        println!("  systemctl enable {SERVICE_FILENAME} done.");
 
-        println!("\nfacelock-daemon socket activation is now enabled.");
+        println!("\nfacelock-daemon D-Bus activation is now enabled.");
     }
 
     Ok(())
