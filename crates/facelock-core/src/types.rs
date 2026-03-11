@@ -1,11 +1,10 @@
-use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 /// 512-dimensional face embedding (ArcFace output)
 pub type FaceEmbedding = [f32; 512];
 
 /// A bounding box in image coordinates
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct BoundingBox {
     pub x: f32,
     pub y: f32,
@@ -14,14 +13,14 @@ pub struct BoundingBox {
 }
 
 /// A 2D point
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Point2D {
     pub x: f32,
     pub y: f32,
 }
 
 /// A detected face with bounding box, landmarks, and confidence
-#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Detection {
     pub bbox: BoundingBox,
     pub confidence: f32,
@@ -41,7 +40,7 @@ pub struct Frame {
 }
 
 /// A stored face model (metadata only, without embedding)
-#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FaceModelInfo {
     pub id: u32,
     pub user: String,
@@ -51,7 +50,7 @@ pub struct FaceModelInfo {
 }
 
 /// Result of a face match attempt
-#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchResult {
     pub matched: bool,
     pub model_id: Option<u32>,

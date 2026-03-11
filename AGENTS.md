@@ -42,8 +42,8 @@ cargo run --bin facelock -- --help
 - `security.require_ir` defaults to **true**. Never weaken this default.
 - Frame variance checks must be in the auth path.
 - Model files SHA256-verified at load time.
-- IPC messages have size limits (10MB max). Never allocate unbounded buffers.
-- Socket access verified via `SO_PEERCRED`.
+- D-Bus system bus policy restricts access to the daemon interface.
+- D-Bus message size limits enforced by the bus daemon.
 - PAM module logs all auth attempts to syslog.
 - Database and model files have restrictive permissions (640/644, root:facelock).
 - Rate limiting enforced in daemon (5 attempts/user/60s default).
@@ -59,13 +59,13 @@ cargo run --bin facelock -- --help
 
 | Crate | Dependencies |
 |-------|-------------|
-| facelock-core | serde, toml, bincode, thiserror, tracing, subtle |
+| facelock-core | serde, toml, thiserror, tracing, subtle, zvariant |
 | facelock-camera | facelock-core, v4l, image |
 | facelock-face | facelock-core, ort, ndarray, image |
 | facelock-store | facelock-core, rusqlite (bundled), bytemuck |
 | facelock-daemon | facelock-core, facelock-camera, facelock-face, facelock-store, signal-hook |
-| facelock-cli | facelock-core + all above, clap, reqwest, notify-rust |
-| pam-facelock | **libc, toml, serde ONLY** |
+| facelock-cli | facelock-core + all above, clap, reqwest, notify-rust, zbus |
+| pam-facelock | **libc, toml, serde, zbus ONLY** |
 | facelock-tpm | facelock-core, tracing |
 
 ## Testing Strategy
