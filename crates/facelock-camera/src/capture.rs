@@ -4,11 +4,17 @@ use facelock_core::traits::CameraSource;
 use facelock_core::types::Frame;
 use image::ImageReader;
 use std::io::Cursor;
+use std::os::unix::io::AsRawFd;
 use v4l::buffer::Type;
 use v4l::io::mmap::Stream;
 use v4l::io::traits::CaptureStream;
 use v4l::video::Capture;
 use v4l::Device;
+
+/// Timeout in milliseconds for poll() before DQBUF.
+/// If the camera doesn't produce a frame within this time, capture returns an error
+/// instead of blocking forever.
+const CAPTURE_POLL_TIMEOUT_MS: i32 = 2000;
 
 use crate::ir_emitter;
 use crate::preprocess;
@@ -166,6 +172,26 @@ impl<'a> Camera<'a> {
 
     /// Internal: capture and convert to RGB, applying downscale and rotation.
     fn capture_rgb(&mut self) -> Result<(Vec<u8>, u32, u32)> {
+        // Poll the fd before DQBUF to avoid blocking forever if camera stops producing frames.
+        let fd = self.stream.handle().fd();
+        let mut pollfd = libc::pollfd {
+            fd: fd.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let poll_result = unsafe { libc::poll(&mut pollfd, 1, CAPTURE_POLL_TIMEOUT_MS) };
+        if poll_result == 0 {
+            return Err(FacelockError::Camera(
+                "capture timeout: camera not producing frames".into(),
+            ));
+        }
+        if poll_result < 0 {
+            return Err(FacelockError::Camera(format!(
+                "capture poll error: {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+
         let (buf, _meta) = self
             .stream
             .next()

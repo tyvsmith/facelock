@@ -1,5 +1,6 @@
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::time::{Duration, Instant};
 
 use facelock_camera::{Camera, auto_detect_device, is_ir_camera, validate_device};
 use facelock_core::config::Config;
@@ -12,11 +13,41 @@ use facelock_daemon::handler::Handler;
 use facelock_daemon::rate_limit::RateLimiter;
 use facelock_face::FaceEngine;
 use facelock_store::FaceStore;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use zbus::{interface, fdo, object_server::SignalEmitter};
 
 /// Production type alias for the handler with real Camera and FaceEngine.
 type ProductionHandler = Handler<Camera<'static>, FaceEngine>;
+
+/// Maximum time to wait for the handler mutex before returning a "busy" error.
+/// This prevents D-Bus clients from hanging indefinitely if a previous auth
+/// call is stuck (e.g., camera blocking on DQBUF).
+const HANDLER_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Try to acquire the handler mutex with a timeout.
+/// Uses try_lock in a polling loop to avoid blocking the thread indefinitely.
+fn lock_handler_with_timeout(
+    handler: &Mutex<ProductionHandler>,
+) -> std::result::Result<MutexGuard<'_, ProductionHandler>, fdo::Error> {
+    let deadline = Instant::now() + HANDLER_LOCK_TIMEOUT;
+    loop {
+        match handler.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(TryLockError::Poisoned(e)) => {
+                return Err(fdo::Error::Failed(format!("handler panicked: {e}")));
+            }
+            Err(TryLockError::WouldBlock) => {
+                if Instant::now() >= deadline {
+                    warn!("handler lock timeout — previous operation may be stuck");
+                    return Err(fdo::Error::Failed(
+                        "daemon busy: previous operation timed out".into(),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
 
 struct FacelockService {
     handler: Arc<Mutex<ProductionHandler>>,
@@ -28,9 +59,7 @@ impl FacelockService {
         let handler = self.handler.clone();
         let user = user.to_string();
         tokio::task::spawn_blocking(move || {
-            let mut handler = handler
-                .lock()
-                .map_err(|e| fdo::Error::Failed(e.to_string()))?;
+            let mut handler = lock_handler_with_timeout(&handler)?;
             let request = DaemonRequest::Authenticate { user };
             let response = handler.handle(request);
             match response {
@@ -53,9 +82,7 @@ impl FacelockService {
         let user = user.to_string();
         let label = label.to_string();
         tokio::task::spawn_blocking(move || {
-            let mut handler = handler
-                .lock()
-                .map_err(|e| fdo::Error::Failed(e.to_string()))?;
+            let mut handler = lock_handler_with_timeout(&handler)?;
             let request = DaemonRequest::Enroll { user, label };
             let response = handler.handle(request);
             match response {
@@ -75,9 +102,7 @@ impl FacelockService {
         let handler = self.handler.clone();
         let user = user.to_string();
         tokio::task::spawn_blocking(move || {
-            let mut handler = handler
-                .lock()
-                .map_err(|e| fdo::Error::Failed(e.to_string()))?;
+            let mut handler = lock_handler_with_timeout(&handler)?;
             let request = DaemonRequest::ListModels { user };
             let response = handler.handle(request);
             match response {
@@ -102,9 +127,7 @@ impl FacelockService {
         let handler = self.handler.clone();
         let user = user.to_string();
         tokio::task::spawn_blocking(move || {
-            let mut handler = handler
-                .lock()
-                .map_err(|e| fdo::Error::Failed(e.to_string()))?;
+            let mut handler = lock_handler_with_timeout(&handler)?;
             let request = DaemonRequest::RemoveModel { user, model_id };
             let response = handler.handle(request);
             match response {
@@ -121,9 +144,7 @@ impl FacelockService {
         let handler = self.handler.clone();
         let user = user.to_string();
         tokio::task::spawn_blocking(move || {
-            let mut handler = handler
-                .lock()
-                .map_err(|e| fdo::Error::Failed(e.to_string()))?;
+            let mut handler = lock_handler_with_timeout(&handler)?;
             let request = DaemonRequest::ClearModels { user };
             let response = handler.handle(request);
             match response {
@@ -139,9 +160,7 @@ impl FacelockService {
     async fn preview_frame(&self) -> fdo::Result<Vec<u8>> {
         let handler = self.handler.clone();
         tokio::task::spawn_blocking(move || {
-            let mut handler = handler
-                .lock()
-                .map_err(|e| fdo::Error::Failed(e.to_string()))?;
+            let mut handler = lock_handler_with_timeout(&handler)?;
             let request = DaemonRequest::PreviewFrame;
             let response = handler.handle(request);
             match response {
@@ -161,9 +180,7 @@ impl FacelockService {
         let handler = self.handler.clone();
         let user = user.to_string();
         tokio::task::spawn_blocking(move || {
-            let mut handler = handler
-                .lock()
-                .map_err(|e| fdo::Error::Failed(e.to_string()))?;
+            let mut handler = lock_handler_with_timeout(&handler)?;
             let request = DaemonRequest::PreviewDetectFrame { user };
             let response = handler.handle(request);
             match response {
@@ -193,9 +210,7 @@ impl FacelockService {
     async fn list_devices(&self) -> fdo::Result<Vec<DeviceInfo>> {
         let handler = self.handler.clone();
         tokio::task::spawn_blocking(move || {
-            let mut handler = handler
-                .lock()
-                .map_err(|e| fdo::Error::Failed(e.to_string()))?;
+            let mut handler = lock_handler_with_timeout(&handler)?;
             let request = DaemonRequest::ListDevices;
             let response = handler.handle(request);
             match response {
@@ -219,9 +234,7 @@ impl FacelockService {
     async fn release_camera(&self) -> fdo::Result<()> {
         let handler = self.handler.clone();
         tokio::task::spawn_blocking(move || {
-            let mut handler = handler
-                .lock()
-                .map_err(|e| fdo::Error::Failed(e.to_string()))?;
+            let mut handler = lock_handler_with_timeout(&handler)?;
             let request = DaemonRequest::ReleaseCamera;
             let response = handler.handle(request);
             match response {
@@ -241,9 +254,7 @@ impl FacelockService {
     async fn shutdown(&self) -> fdo::Result<()> {
         let handler = self.handler.clone();
         tokio::task::spawn_blocking(move || {
-            let mut handler = handler
-                .lock()
-                .map_err(|e| fdo::Error::Failed(e.to_string()))?;
+            let mut handler = lock_handler_with_timeout(&handler)?;
             handler.shutdown_requested = true;
             Ok::<(), fdo::Error>(())
         })
@@ -444,9 +455,14 @@ async fn watch_sleep_signals(
         if suspending {
             let handler = handler.clone();
             let _ = tokio::task::spawn_blocking(move || {
-                if let Ok(mut h) = handler.lock() {
-                    h.handle(DaemonRequest::ReleaseCamera);
-                    info!("released camera for suspend");
+                match handler.try_lock() {
+                    Ok(mut h) => {
+                        h.handle(DaemonRequest::ReleaseCamera);
+                        info!("released camera for suspend");
+                    }
+                    Err(_) => {
+                        warn!("could not release camera for suspend: handler busy");
+                    }
                 }
             })
             .await;
@@ -465,7 +481,7 @@ async fn poll_shutdown(handler: Arc<Mutex<ProductionHandler>>) {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         let handler = handler.clone();
         let should_shutdown = tokio::task::spawn_blocking(move || {
-            if let Ok(mut h) = handler.lock() {
+            if let Ok(mut h) = handler.try_lock() {
                 if h.shutdown_requested {
                     return true;
                 }
