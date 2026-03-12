@@ -70,9 +70,12 @@ pub fn should_use_direct(config: &facelock_core::Config) -> bool {
     }
 }
 
-/// Create a blocking D-Bus proxy to the daemon.
+/// Create a blocking D-Bus proxy to the daemon with a 15-second method timeout.
 fn create_proxy() -> anyhow::Result<Proxy<'static>> {
-    let connection = Connection::system()
+    let connection = zbus::blocking::connection::Builder::system()
+        .map_err(|e| anyhow::anyhow!("D-Bus connection failed: {e}"))?
+        .method_timeout(std::time::Duration::from_secs(15))
+        .build()
         .map_err(|e| anyhow::anyhow!("D-Bus connection failed: {e}"))?;
 
     let proxy = Proxy::new_owned(

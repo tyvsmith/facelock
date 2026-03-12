@@ -30,15 +30,26 @@ fn lock_handler_with_timeout(
     handler: &Mutex<ProductionHandler>,
 ) -> std::result::Result<MutexGuard<'_, ProductionHandler>, fdo::Error> {
     let deadline = Instant::now() + HANDLER_LOCK_TIMEOUT;
+    let mut waited = false;
     loop {
         match handler.try_lock() {
-            Ok(guard) => return Ok(guard),
+            Ok(guard) => {
+                if waited {
+                    info!("handler lock acquired after waiting");
+                }
+                return Ok(guard);
+            }
             Err(TryLockError::Poisoned(e)) => {
+                error!("handler mutex poisoned (previous operation panicked): {e}");
                 return Err(fdo::Error::Failed(format!("handler panicked: {e}")));
             }
             Err(TryLockError::WouldBlock) => {
+                if !waited {
+                    info!("handler lock contention — waiting for previous operation");
+                    waited = true;
+                }
                 if Instant::now() >= deadline {
-                    warn!("handler lock timeout — previous operation may be stuck");
+                    error!("handler lock timeout after {HANDLER_LOCK_TIMEOUT:?} — previous operation is stuck");
                     return Err(fdo::Error::Failed(
                         "daemon busy: previous operation timed out".into(),
                     ));
@@ -59,9 +70,15 @@ impl FacelockService {
         let handler = self.handler.clone();
         let user = user.to_string();
         tokio::task::spawn_blocking(move || {
+            info!(user = %user, "D-Bus Authenticate: acquiring lock");
             let mut handler = lock_handler_with_timeout(&handler)?;
-            let request = DaemonRequest::Authenticate { user };
+            info!(user = %user, "D-Bus Authenticate: lock acquired, calling handler");
+            let request = DaemonRequest::Authenticate { user: user.clone() };
             let response = handler.handle(request);
+            info!(user = %user, "D-Bus Authenticate: handler returned, releasing lock");
+            // Explicitly drop the guard before logging completion
+            drop(handler);
+            info!(user = %user, "D-Bus Authenticate: lock released");
             match response {
                 DaemonResponse::AuthResult(result) => Ok(AuthResult {
                     matched: result.matched,
@@ -180,9 +197,12 @@ impl FacelockService {
         let handler = self.handler.clone();
         let user = user.to_string();
         tokio::task::spawn_blocking(move || {
+            tracing::debug!("PreviewDetectFrame: acquiring lock");
             let mut handler = lock_handler_with_timeout(&handler)?;
+            tracing::debug!("PreviewDetectFrame: lock acquired");
             let request = DaemonRequest::PreviewDetectFrame { user };
             let response = handler.handle(request);
+            tracing::debug!("PreviewDetectFrame: handler returned");
             match response {
                 DaemonResponse::DetectFrame { jpeg_data, faces } => {
                     let face_infos: Vec<PreviewFaceInfo> = faces
