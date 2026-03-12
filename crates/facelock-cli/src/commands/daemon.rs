@@ -35,7 +35,7 @@ fn lock_handler_with_timeout(
         match handler.try_lock() {
             Ok(guard) => {
                 if waited {
-                    info!("handler lock acquired after waiting");
+                    warn!("handler lock acquired after waiting");
                 }
                 return Ok(guard);
             }
@@ -45,7 +45,7 @@ fn lock_handler_with_timeout(
             }
             Err(TryLockError::WouldBlock) => {
                 if !waited {
-                    info!("handler lock contention — waiting for previous operation");
+                    warn!("handler lock contention — waiting for previous operation");
                     waited = true;
                 }
                 if Instant::now() >= deadline {
@@ -70,15 +70,10 @@ impl FacelockService {
         let handler = self.handler.clone();
         let user = user.to_string();
         tokio::task::spawn_blocking(move || {
-            info!(user = %user, "D-Bus Authenticate: acquiring lock");
             let mut handler = lock_handler_with_timeout(&handler)?;
-            info!(user = %user, "D-Bus Authenticate: lock acquired, calling handler");
-            let request = DaemonRequest::Authenticate { user: user.clone() };
+            let request = DaemonRequest::Authenticate { user };
             let response = handler.handle(request);
-            info!(user = %user, "D-Bus Authenticate: handler returned, releasing lock");
-            // Explicitly drop the guard before logging completion
             drop(handler);
-            info!(user = %user, "D-Bus Authenticate: lock released");
             match response {
                 DaemonResponse::AuthResult(result) => Ok(AuthResult {
                     matched: result.matched,
@@ -197,12 +192,9 @@ impl FacelockService {
         let handler = self.handler.clone();
         let user = user.to_string();
         tokio::task::spawn_blocking(move || {
-            tracing::debug!("PreviewDetectFrame: acquiring lock");
             let mut handler = lock_handler_with_timeout(&handler)?;
-            tracing::debug!("PreviewDetectFrame: lock acquired");
             let request = DaemonRequest::PreviewDetectFrame { user };
             let response = handler.handle(request);
-            tracing::debug!("PreviewDetectFrame: handler returned");
             match response {
                 DaemonResponse::DetectFrame { jpeg_data, faces } => {
                     let face_infos: Vec<PreviewFaceInfo> = faces
