@@ -457,24 +457,28 @@ async fn watch_sleep_signals(
     Ok(())
 }
 
-/// Poll the handler's shutdown_requested flag periodically.
+/// Poll the handler's shutdown_requested flag and idle camera release.
+/// All mutex access goes through spawn_blocking to avoid blocking the
+/// tokio runtime (which would deadlock D-Bus method dispatch).
 async fn poll_shutdown(handler: Arc<Mutex<ProductionHandler>>) {
     loop {
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        if let Ok(h) = handler.lock() {
-            if h.shutdown_requested {
-                return;
-            }
-            // Also release camera if idle
-        }
-        // Release camera check via spawn_blocking to avoid holding lock too long
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         let handler = handler.clone();
-        let _ = tokio::task::spawn_blocking(move || {
+        let should_shutdown = tokio::task::spawn_blocking(move || {
             if let Ok(mut h) = handler.lock() {
+                if h.shutdown_requested {
+                    return true;
+                }
                 h.maybe_release_camera();
             }
+            false
         })
-        .await;
+        .await
+        .unwrap_or(false);
+
+        if should_shutdown {
+            return;
+        }
     }
 }
 
