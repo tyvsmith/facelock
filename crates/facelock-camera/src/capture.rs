@@ -191,6 +191,13 @@ impl<'a> Camera<'a> {
                 std::io::Error::last_os_error()
             )));
         }
+        // Check for error conditions on the fd
+        if pollfd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+            return Err(FacelockError::Camera(format!(
+                "camera fd error: revents=0x{:x}",
+                pollfd.revents
+            )));
+        }
 
         let (buf, _meta) = self
             .stream

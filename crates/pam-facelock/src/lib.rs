@@ -379,8 +379,14 @@ enum AuthResponse {
 }
 
 /// Authenticate via D-Bus system bus to the facelock daemon.
-fn daemon_authenticate(_config: &PamConfig, user: &str) -> Result<AuthResponse, String> {
-    let connection = zbus::blocking::Connection::system()
+fn daemon_authenticate(config: &PamConfig, user: &str) -> Result<AuthResponse, String> {
+    // Timeout = recognition timeout + buffer for camera open/warmup/model load
+    let timeout_secs = config.recognition.timeout_secs as u64 + 5;
+
+    let connection = zbus::blocking::connection::Builder::system()
+        .map_err(|e| format!("dbus_connect_failed: {e}"))?
+        .method_timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
         .map_err(|e| format!("dbus_connect_failed: {e}"))?;
 
     let proxy = zbus::blocking::Proxy::new(
