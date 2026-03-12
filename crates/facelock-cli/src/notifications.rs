@@ -216,6 +216,18 @@ pub fn notify_if_enabled(config: &NotificationConfig, event: &NotifyEvent) {
     }
 }
 
+/// Conditionally send a desktop notification to a specific user's session.
+/// Used by the daemon, which runs as root without SUDO_USER/DOAS_USER.
+pub fn notify_if_enabled_for_user(
+    config: &NotificationConfig,
+    event: &NotifyEvent,
+    user: &str,
+) {
+    if should_notify_desktop(config, event) {
+        send_as_user(user, event);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
