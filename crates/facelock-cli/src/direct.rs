@@ -137,6 +137,7 @@ pub fn list_devices_direct() -> anyhow::Result<()> {
 // The auth loop is implemented in terms of core types (CameraSource + FaceProcessor).
 
 mod facelock_daemon_auth {
+    use facelock_camera::is_dark_with_config;
     use facelock_core::config::Config;
     use facelock_core::ipc::DaemonResponse;
     use facelock_core::traits::{CameraSource, FaceProcessor};
@@ -187,7 +188,11 @@ mod facelock_daemon_auth {
             };
             frame_count += 1;
 
-            if C::is_dark(&frame) {
+            if is_dark_with_config(
+                &frame,
+                config.device.dark_threshold,
+                config.device.dark_pixel_value,
+            ) {
                 dark_count += 1;
                 continue;
             }
@@ -259,6 +264,7 @@ mod facelock_daemon_auth {
 }
 
 mod facelock_daemon_enroll {
+    use facelock_camera::is_dark_with_config;
     use facelock_core::config::Config;
     use facelock_core::ipc::DaemonResponse;
     use facelock_core::traits::{CameraSource, FaceProcessor};
@@ -305,7 +311,11 @@ mod facelock_daemon_enroll {
                 Err(e) => { debug!("capture error: {e}"); continue; }
             };
 
-            if C::is_dark(&frame) { continue; }
+            if is_dark_with_config(
+                &frame,
+                config.device.dark_threshold,
+                config.device.dark_pixel_value,
+            ) { continue; }
 
             let faces = match engine.process(&frame) {
                 Ok(f) => f,

@@ -21,7 +21,6 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 indicatif = "0.17"
 reqwest = { version = "0.12", features = ["blocking"] }
-notify-rust = "4"
 sha2 = "0.10"
 serde = { workspace = true }
 serde_json = "1"
@@ -34,8 +33,11 @@ xkbcommon = { version = "0.8", optional = true }
 dialoguer = "0.11"
 signal-hook = "0.3"
 libc = "0.2"
-nix = { version = "0.29", features = ["socket", "user", "fs"] }
+nix = { version = "0.29", features = ["user"] }
 facelock-tpm = { path = "../facelock-tpm" }
+zbus = { version = "5", default-features = false, features = ["tokio", "blocking-api"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+futures-util = "0.3"
 
 [features]
 default = ["wayland"]

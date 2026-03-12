@@ -15,7 +15,7 @@ use crate::enroll;
 use crate::rate_limit::RateLimiter;
 
 /// Type alias for the camera factory closure.
-type CameraFactory<C> = Box<dyn Fn(&Config) -> Result<C, String>>;
+type CameraFactory<C> = Box<dyn Fn(&Config) -> Result<C, String> + Send + Sync>;
 
 const CAMERA_DEBOUNCE: Duration = Duration::from_secs(10);
 const JPEG_BUF_CAPACITY: usize = 128 * 1024;
@@ -87,9 +87,17 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         if self.camera.is_none() {
             debug!("opening camera");
             if let Some(ref factory) = self.camera_factory {
-                let cam = factory(&self.config).map_err(|e| DaemonResponse::Error {
+                let mut cam = factory(&self.config).map_err(|e| DaemonResponse::Error {
                     message: format!("failed to open camera: {e}"),
                 })?;
+                // Discard warmup frames for AGC/AE stabilization
+                let warmup = self.config.device.warmup_frames;
+                if warmup > 0 {
+                    debug!(warmup, "discarding warmup frames");
+                    for _ in 0..warmup {
+                        let _ = cam.capture();
+                    }
+                }
                 self.camera = Some(cam);
             } else {
                 return Err(DaemonResponse::Error {

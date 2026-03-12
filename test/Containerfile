@@ -1,7 +1,7 @@
 FROM archlinux:latest
 
 # Install dependencies
-RUN pacman -Syu --noconfirm pam sudo base-devel libxkbcommon just && pacman -Scc --noconfirm
+RUN pacman -Syu --noconfirm pam sudo base-devel libxkbcommon just dbus && pacman -Scc --noconfirm
 
 # Build pamtester from upstream source
 RUN curl -sL https://sourceforge.net/projects/pamtester/files/pamtester/0.1.2/pamtester-0.1.2.tar.gz/download | tar xz -C /tmp && \

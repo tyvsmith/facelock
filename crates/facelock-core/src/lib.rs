@@ -1,4 +1,5 @@
 pub mod config;
+pub mod dbus_interface;
 pub mod error;
 pub mod ipc;
 pub mod paths;

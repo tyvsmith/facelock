@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use facelock_camera::capture::is_dark_with_config;
 use facelock_core::config::Config;
 use facelock_core::ipc::DaemonResponse;
 use facelock_core::traits::{CameraSource, FaceProcessor};
@@ -7,6 +8,7 @@ use facelock_core::types::{best_match, check_frame_variance, FaceEmbedding, Matc
 use facelock_store::FaceStore;
 use tracing::{debug, info, warn};
 
+use crate::liveness::LandmarkTracker;
 use crate::rate_limit::RateLimiter;
 
 /// Run pre-flight checks that don't need the camera.
@@ -107,6 +109,7 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
     let mut dark_count: u32 = 0;
     let mut frame_count: u32 = 0;
     let mut best_model_id: Option<u32> = None;
+    let mut landmark_tracker = LandmarkTracker::new(10);
 
     while Instant::now() < deadline {
         let frame = match camera.capture() {
@@ -118,7 +121,11 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
         };
         frame_count += 1;
 
-        if C::is_dark(&frame) {
+        if is_dark_with_config(
+            &frame,
+            config.device.dark_threshold,
+            config.device.dark_pixel_value,
+        ) {
             dark_count += 1;
             debug!(frame = frame_count, "dark frame, skipping");
             continue;
@@ -135,6 +142,11 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
         if faces.is_empty() {
             debug!(frame = frame_count, "no faces detected");
             continue;
+        }
+
+        // Push landmarks from the first detected face for liveness tracking
+        if let Some((det, _)) = faces.first() {
+            landmark_tracker.push(det.landmarks);
         }
 
         let mut frame_matched = false;
@@ -159,11 +171,23 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
             );
         }
 
-        // Frame variance check
+        // Frame variance check + landmark liveness check
         if config.security.require_frame_variance {
             if matched_frame_embeddings.len() >= config.security.min_auth_frames as usize
                 && check_frame_variance(&matched_frame_embeddings)
             {
+                // If landmark liveness is required, check it too
+                if config.security.require_landmark_liveness
+                    && !landmark_tracker.check_liveness()
+                {
+                    debug!(
+                        frame = frame_count,
+                        landmark_frames = landmark_tracker.frame_count(),
+                        "landmark liveness not yet satisfied, continuing"
+                    );
+                    continue;
+                }
+
                 let duration = start.elapsed();
                 info!(
                     user,
@@ -181,6 +205,18 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
                 });
             }
         } else if best_similarity >= threshold {
+            // If landmark liveness is required, check it even without variance
+            if config.security.require_landmark_liveness
+                && !landmark_tracker.check_liveness()
+            {
+                debug!(
+                    frame = frame_count,
+                    landmark_frames = landmark_tracker.frame_count(),
+                    "landmark liveness not yet satisfied, continuing"
+                );
+                continue;
+            }
+
             let duration = start.elapsed();
             info!(
                 user,

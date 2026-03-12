@@ -10,7 +10,8 @@ run_test() {
     local expected_result="${3:-0}"
 
     echo -n "TEST: $name ... "
-    if eval "$cmd" > /tmp/test-output 2>&1; then
+    # Run command without pipefail so piped greps work correctly
+    if bash -c "$cmd" > /tmp/test-output 2>&1; then
         result=0
     else
         result=$?

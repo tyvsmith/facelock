@@ -41,6 +41,23 @@ pub struct DeviceConfig {
     pub max_height: u32,
     #[serde(default)]
     pub rotation: u16,
+    /// Number of frames to discard after camera open for AGC/AE stabilization.
+    #[serde(default = "default_warmup_frames")]
+    pub warmup_frames: u32,
+    /// Percentage of pixels that must be dark (< dark_pixel_value) to reject a frame.
+    /// Range: 0.0 to 1.0. Default: 0.6 (60%).
+    #[serde(default = "default_dark_threshold")]
+    pub dark_threshold: f32,
+    /// Pixel brightness value below which a pixel is considered "dark".
+    /// Range: 0-255. Default: 10.
+    #[serde(default = "default_dark_pixel_value")]
+    pub dark_pixel_value: u8,
+    /// Enable IR emitter control. When true, attempts to activate IR LED
+    /// emitters when camera opens and deactivate when camera closes.
+    /// Most cameras auto-enable emitters during streaming; enable this
+    /// only if your camera requires explicit control.
+    #[serde(default)]
+    pub ir_emitter: bool,
 }
 
 impl Default for DeviceConfig {
@@ -49,6 +66,10 @@ impl Default for DeviceConfig {
             path: None,
             max_height: default_max_height(),
             rotation: 0,
+            warmup_frames: default_warmup_frames(),
+            dark_threshold: default_dark_threshold(),
+            dark_pixel_value: default_dark_pixel_value(),
+            ir_emitter: false,
         }
     }
 }
@@ -152,6 +173,9 @@ pub struct SecurityConfig {
     pub require_ir: bool,
     #[serde(default = "default_true")]
     pub require_frame_variance: bool,
+    /// Require landmark movement between frames to pass liveness check.
+    #[serde(default = "default_true")]
+    pub require_landmark_liveness: bool,
     #[serde(default = "default_min_auth_frames")]
     pub min_auth_frames: u32,
     #[serde(default)]
@@ -184,6 +208,7 @@ impl Default for SecurityConfig {
             suppress_unknown: false,
             require_ir: true,
             require_frame_variance: true,
+            require_landmark_liveness: true,
             min_auth_frames: default_min_auth_frames(),
             rate_limit: RateLimitConfig::default(),
         }
@@ -316,6 +341,15 @@ impl Default for TpmConfig {
 fn default_max_height() -> u32 {
     480
 }
+fn default_warmup_frames() -> u32 {
+    5
+}
+fn default_dark_threshold() -> f32 {
+    0.6
+}
+fn default_dark_pixel_value() -> u8 {
+    10
+}
 fn default_threshold() -> f32 {
     0.80
 }
@@ -408,6 +442,12 @@ impl Config {
                     "device.path must not be empty when specified".into(),
                 ));
             }
+        }
+        if !(0.0..=1.0).contains(&self.device.dark_threshold) {
+            return Err(ConfigError::Validation(format!(
+                "device.dark_threshold must be between 0.0 and 1.0, got {}",
+                self.device.dark_threshold
+            )));
         }
         if !(0.0..=1.0).contains(&self.recognition.threshold) {
             return Err(ConfigError::Validation(format!(
@@ -642,5 +682,37 @@ path = "/dev/video0"
         assert!(!config.tpm.pcr_binding);
         assert_eq!(config.tpm.pcr_indices, vec![0, 1, 2, 3, 7]);
         assert_eq!(config.tpm.tcti, "device:/dev/tpmrm0");
+    }
+
+    #[test]
+    fn warmup_frames_default() {
+        let toml = r#"
+[device]
+path = "/dev/video0"
+"#;
+        let config = Config::parse(toml).unwrap();
+        assert_eq!(config.device.warmup_frames, 5);
+    }
+
+    #[test]
+    fn warmup_frames_custom() {
+        let toml = r#"
+[device]
+path = "/dev/video0"
+warmup_frames = 10
+"#;
+        let config = Config::parse(toml).unwrap();
+        assert_eq!(config.device.warmup_frames, 10);
+    }
+
+    #[test]
+    fn warmup_frames_zero() {
+        let toml = r#"
+[device]
+path = "/dev/video0"
+warmup_frames = 0
+"#;
+        let config = Config::parse(toml).unwrap();
+        assert_eq!(config.device.warmup_frames, 0);
     }
 }

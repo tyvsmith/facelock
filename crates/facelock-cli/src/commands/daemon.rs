@@ -1,26 +1,291 @@
-use std::io::{BufReader, BufWriter};
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::UnixListener;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 
 use facelock_camera::{Camera, auto_detect_device, is_ir_camera, validate_device};
 use facelock_core::config::Config;
-use facelock_core::ipc::{decode_request, encode_response, recv_message, send_message};
-use facelock_core::traits::{CameraSource, FaceProcessor};
+use facelock_core::dbus_interface::{
+    AuthResult, DeviceInfo, ModelInfo, PreviewFaceInfo, BUS_NAME, OBJECT_PATH,
+};
+use facelock_core::ipc::{DaemonRequest, DaemonResponse};
+use futures_util::StreamExt;
 use facelock_daemon::handler::Handler;
 use facelock_daemon::rate_limit::RateLimiter;
 use facelock_face::FaceEngine;
 use facelock_store::FaceStore;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
+use zbus::{interface, fdo, object_server::SignalEmitter};
 
 /// Production type alias for the handler with real Camera and FaceEngine.
 type ProductionHandler = Handler<Camera<'static>, FaceEngine>;
 
+/// Maximum time to wait for the handler mutex before returning a "busy" error.
+/// This prevents D-Bus clients from hanging indefinitely if a previous auth
+/// call is stuck (e.g., camera blocking on DQBUF).
+const HANDLER_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Try to acquire the handler mutex with a timeout.
+/// Uses try_lock in a polling loop to avoid blocking the thread indefinitely.
+fn lock_handler_with_timeout(
+    handler: &Mutex<ProductionHandler>,
+) -> std::result::Result<MutexGuard<'_, ProductionHandler>, fdo::Error> {
+    let deadline = Instant::now() + HANDLER_LOCK_TIMEOUT;
+    let mut waited = false;
+    loop {
+        match handler.try_lock() {
+            Ok(guard) => {
+                if waited {
+                    warn!("handler lock acquired after waiting");
+                }
+                return Ok(guard);
+            }
+            Err(TryLockError::Poisoned(e)) => {
+                error!("handler mutex poisoned (previous operation panicked): {e}");
+                return Err(fdo::Error::Failed(format!("handler panicked: {e}")));
+            }
+            Err(TryLockError::WouldBlock) => {
+                if !waited {
+                    warn!("handler lock contention — waiting for previous operation");
+                    waited = true;
+                }
+                if Instant::now() >= deadline {
+                    error!("handler lock timeout after {HANDLER_LOCK_TIMEOUT:?} — previous operation is stuck");
+                    return Err(fdo::Error::Failed(
+                        "daemon busy: previous operation timed out".into(),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
+
+struct FacelockService {
+    handler: Arc<Mutex<ProductionHandler>>,
+}
+
+#[interface(name = "org.facelock.Daemon")]
+impl FacelockService {
+    async fn authenticate(&self, user: &str) -> fdo::Result<AuthResult> {
+        let handler = self.handler.clone();
+        let user = user.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut handler = lock_handler_with_timeout(&handler)?;
+            let request = DaemonRequest::Authenticate { user };
+            let response = handler.handle(request);
+            drop(handler);
+            match response {
+                DaemonResponse::AuthResult(result) => Ok(AuthResult {
+                    matched: result.matched,
+                    model_id: result.model_id.map(|id| id as i32).unwrap_or(-1),
+                    label: result.label.unwrap_or_default(),
+                    similarity: result.similarity as f64,
+                }),
+                DaemonResponse::Error { message } => Err(fdo::Error::Failed(message)),
+                other => Err(fdo::Error::Failed(format!("unexpected response: {other:?}"))),
+            }
+        })
+        .await
+        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
+    }
+
+    async fn enroll(&self, user: &str, label: &str) -> fdo::Result<(u32, u32)> {
+        let handler = self.handler.clone();
+        let user = user.to_string();
+        let label = label.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut handler = lock_handler_with_timeout(&handler)?;
+            let request = DaemonRequest::Enroll { user, label };
+            let response = handler.handle(request);
+            match response {
+                DaemonResponse::Enrolled {
+                    model_id,
+                    embedding_count,
+                } => Ok((model_id, embedding_count)),
+                DaemonResponse::Error { message } => Err(fdo::Error::Failed(message)),
+                other => Err(fdo::Error::Failed(format!("unexpected response: {other:?}"))),
+            }
+        })
+        .await
+        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
+    }
+
+    async fn list_models(&self, user: &str) -> fdo::Result<Vec<ModelInfo>> {
+        let handler = self.handler.clone();
+        let user = user.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut handler = lock_handler_with_timeout(&handler)?;
+            let request = DaemonRequest::ListModels { user };
+            let response = handler.handle(request);
+            match response {
+                DaemonResponse::Models(models) => Ok(models
+                    .into_iter()
+                    .map(|m| ModelInfo {
+                        id: m.id,
+                        user: m.user,
+                        label: m.label,
+                        created_at: m.created_at,
+                    })
+                    .collect()),
+                DaemonResponse::Error { message } => Err(fdo::Error::Failed(message)),
+                other => Err(fdo::Error::Failed(format!("unexpected response: {other:?}"))),
+            }
+        })
+        .await
+        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
+    }
+
+    async fn remove_model(&self, user: &str, model_id: u32) -> fdo::Result<()> {
+        let handler = self.handler.clone();
+        let user = user.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut handler = lock_handler_with_timeout(&handler)?;
+            let request = DaemonRequest::RemoveModel { user, model_id };
+            let response = handler.handle(request);
+            match response {
+                DaemonResponse::Removed => Ok(()),
+                DaemonResponse::Error { message } => Err(fdo::Error::Failed(message)),
+                other => Err(fdo::Error::Failed(format!("unexpected response: {other:?}"))),
+            }
+        })
+        .await
+        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
+    }
+
+    async fn clear_models(&self, user: &str) -> fdo::Result<()> {
+        let handler = self.handler.clone();
+        let user = user.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut handler = lock_handler_with_timeout(&handler)?;
+            let request = DaemonRequest::ClearModels { user };
+            let response = handler.handle(request);
+            match response {
+                DaemonResponse::Removed => Ok(()),
+                DaemonResponse::Error { message } => Err(fdo::Error::Failed(message)),
+                other => Err(fdo::Error::Failed(format!("unexpected response: {other:?}"))),
+            }
+        })
+        .await
+        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
+    }
+
+    async fn preview_frame(&self) -> fdo::Result<Vec<u8>> {
+        let handler = self.handler.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut handler = lock_handler_with_timeout(&handler)?;
+            let request = DaemonRequest::PreviewFrame;
+            let response = handler.handle(request);
+            match response {
+                DaemonResponse::Frame { jpeg_data } => Ok(jpeg_data),
+                DaemonResponse::Error { message } => Err(fdo::Error::Failed(message)),
+                other => Err(fdo::Error::Failed(format!("unexpected response: {other:?}"))),
+            }
+        })
+        .await
+        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
+    }
+
+    async fn preview_detect_frame(
+        &self,
+        user: &str,
+    ) -> fdo::Result<(Vec<u8>, Vec<PreviewFaceInfo>)> {
+        let handler = self.handler.clone();
+        let user = user.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut handler = lock_handler_with_timeout(&handler)?;
+            let request = DaemonRequest::PreviewDetectFrame { user };
+            let response = handler.handle(request);
+            match response {
+                DaemonResponse::DetectFrame { jpeg_data, faces } => {
+                    let face_infos: Vec<PreviewFaceInfo> = faces
+                        .into_iter()
+                        .map(|f| PreviewFaceInfo {
+                            x: f.x as f64,
+                            y: f.y as f64,
+                            width: f.width as f64,
+                            height: f.height as f64,
+                            confidence: f.confidence as f64,
+                            similarity: f.similarity as f64,
+                            recognized: f.recognized,
+                        })
+                        .collect();
+                    Ok((jpeg_data, face_infos))
+                }
+                DaemonResponse::Error { message } => Err(fdo::Error::Failed(message)),
+                other => Err(fdo::Error::Failed(format!("unexpected response: {other:?}"))),
+            }
+        })
+        .await
+        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
+    }
+
+    async fn list_devices(&self) -> fdo::Result<Vec<DeviceInfo>> {
+        let handler = self.handler.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut handler = lock_handler_with_timeout(&handler)?;
+            let request = DaemonRequest::ListDevices;
+            let response = handler.handle(request);
+            match response {
+                DaemonResponse::Devices(devices) => Ok(devices
+                    .into_iter()
+                    .map(|d| DeviceInfo {
+                        path: d.path,
+                        name: d.name,
+                        driver: d.driver,
+                        is_ir: d.is_ir,
+                    })
+                    .collect()),
+                DaemonResponse::Error { message } => Err(fdo::Error::Failed(message)),
+                other => Err(fdo::Error::Failed(format!("unexpected response: {other:?}"))),
+            }
+        })
+        .await
+        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
+    }
+
+    async fn release_camera(&self) -> fdo::Result<()> {
+        let handler = self.handler.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut handler = lock_handler_with_timeout(&handler)?;
+            let request = DaemonRequest::ReleaseCamera;
+            let response = handler.handle(request);
+            match response {
+                DaemonResponse::Ok => Ok(()),
+                DaemonResponse::Error { message } => Err(fdo::Error::Failed(message)),
+                other => Err(fdo::Error::Failed(format!("unexpected response: {other:?}"))),
+            }
+        })
+        .await
+        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
+    }
+
+    async fn ping(&self) -> fdo::Result<String> {
+        Ok("pong".to_string())
+    }
+
+    async fn shutdown(&self) -> fdo::Result<()> {
+        let handler = self.handler.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut handler = lock_handler_with_timeout(&handler)?;
+            handler.shutdown_requested = true;
+            Ok::<(), fdo::Error>(())
+        })
+        .await
+        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
+    }
+
+    /// Signal emitted after each authentication attempt.
+    #[zbus(signal)]
+    async fn auth_attempted(
+        emitter: &SignalEmitter<'_>,
+        user: &str,
+        matched: bool,
+        similarity: f64,
+    ) -> zbus::Result<()>;
+}
+
 /// Type alias for the camera factory closure.
-type CameraFactory = Box<dyn Fn(&Config) -> Result<Camera<'static>, String>>;
+type CameraFactory = Box<dyn Fn(&Config) -> Result<Camera<'static>, String> + Send + Sync>;
 
 pub fn run(config_path: Option<String>) -> anyhow::Result<()> {
     crate::ipc_client::require_root("sudo facelock daemon")?;
@@ -111,240 +376,138 @@ pub fn run(config_path: Option<String>) -> anyhow::Result<()> {
         config.security.rate_limit.window_secs,
     );
 
-    // Try socket activation first, then create our own socket
-    let socket_path = config.daemon.socket_path.clone();
-    let (listener, socket_activated) = match receive_systemd_socket() {
-        Some(l) => {
-            info!("socket-activated by systemd");
-            (l, true)
-        }
-        None => {
-            let l = match create_socket(&socket_path) {
-                Ok(l) => l,
-                Err(e) => {
-                    error!("failed to create socket: {e}");
-                    std::process::exit(1);
-                }
-            };
-            (l, false)
-        }
-    };
-
-    // Register signal handlers
-    let term = Arc::new(AtomicBool::new(false));
-    if let Err(e) = signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&term)) {
-        error!("failed to register SIGTERM handler: {e}");
-        std::process::exit(1);
-    }
-    if let Err(e) = signal_hook::flag::register(signal_hook::consts::SIGINT, Arc::clone(&term)) {
-        error!("failed to register SIGINT handler: {e}");
-        std::process::exit(1);
-    }
-
-    // Set non-blocking for accept loop with signal checking
-    listener
-        .set_nonblocking(true)
-        .expect("failed to set socket non-blocking");
-
     // Camera factory for lazy opening
     let camera_factory: CameraFactory =
-        Box::new(|config: &Config| {
-            Camera::open(&config.device).map_err(|e| e.to_string())
-        });
+        Box::new(|config: &Config| Camera::open(&config.device).map_err(|e| e.to_string()));
 
-    let mut handler: ProductionHandler = Handler::new(
+    let handler: ProductionHandler = Handler::new(
         config, engine, store, rate_limiter, device_is_ir, Some(camera_factory),
     );
 
-    info!(socket = %&socket_path, "listening for connections");
+    let handler = Arc::new(Mutex::new(handler));
 
-    // Idle timeout tracking for socket-activated mode
-    let idle_timeout_secs = handler.config.daemon.idle_timeout_secs;
-    let mut last_activity = Instant::now();
+    // Build and run the tokio runtime for the D-Bus server
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
 
-    // Accept loop
-    while !term.load(Ordering::Relaxed) && !handler.shutdown_requested {
-        match listener.accept() {
-            Ok((stream, _addr)) => {
-                last_activity = Instant::now();
-
-                // Verify peer credentials
-                if let Err(e) = verify_peer(&stream) {
-                    warn!("rejecting unauthorized connection: {e}");
-                    continue;
-                }
-
-                // Handle connection
-                if let Err(e) = handle_connection(&mut handler, stream) {
-                    warn!("connection error: {e}");
-                }
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // No pending connection, release camera if idle, then check signals
-                handler.maybe_release_camera();
-
-                // Check idle timeout for socket-activated mode
-                if socket_activated
-                    && idle_timeout_secs > 0
-                    && last_activity.elapsed() > Duration::from_secs(idle_timeout_secs)
-                {
-                    info!(
-                        idle_secs = idle_timeout_secs,
-                        "idle timeout reached, shutting down"
-                    );
-                    break;
-                }
-
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            Err(e) => {
-                error!("accept error: {e}");
-                break;
-            }
-        }
-    }
-
-    // Cleanup
-    info!("shutting down");
-    if !socket_activated {
-        let _ = std::fs::remove_file(socket_path);
-        info!("socket removed, goodbye");
-    } else {
-        info!("socket-activated mode, socket owned by systemd, goodbye");
-    }
-
-    Ok(())
+    rt.block_on(run_dbus_server(handler))
 }
 
-/// Check if systemd socket activation is in effect.
-/// Returns a UnixListener from the passed file descriptor if so.
-fn receive_systemd_socket() -> Option<UnixListener> {
-    use std::os::unix::io::FromRawFd;
-
-    let pid: u32 = std::env::var("LISTEN_PID").ok()?.parse().ok()?;
-    if pid != std::process::id() {
-        return None;
-    }
-    let fds: u32 = std::env::var("LISTEN_FDS").ok()?.parse().ok()?;
-    if fds < 1 {
-        return None;
-    }
-    // SD_LISTEN_FDS_START = 3
-    Some(unsafe { UnixListener::from_raw_fd(3) })
-}
-
-fn create_socket(path: &str) -> std::io::Result<UnixListener> {
-    let socket_path = Path::new(path);
-
-    // Create parent directory if missing
-    if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    // Remove stale socket file
-    let _ = std::fs::remove_file(socket_path);
-
-    // Bind
-    let listener = UnixListener::bind(socket_path)?;
-
-    // Set permissions: owner (root) + group (facelock) only
-    std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660))?;
-
-    // Attempt to set ownership to root:facelock (may fail if not running as root)
-    if let Some(facelock_gid) = get_facelock_gid() {
-        let _ = nix::unistd::chown(
-            socket_path,
-            Some(nix::unistd::Uid::from_raw(0)),
-            Some(nix::unistd::Gid::from_raw(facelock_gid)),
-        );
-    }
-
-    Ok(listener)
-}
-
-fn get_facelock_gid() -> Option<u32> {
-    // Try to look up the "facelock" group
-    nix::unistd::Group::from_name("facelock")
-        .ok()
-        .flatten()
-        .map(|g| g.gid.as_raw())
-}
-
-fn verify_peer(stream: &std::os::unix::net::UnixStream) -> Result<(), String> {
-    let cred = nix::sys::socket::getsockopt(stream, nix::sys::socket::sockopt::PeerCredentials)
-        .map_err(|e| format!("getsockopt(SO_PEERCRED) failed: {e}"))?;
-
-    let peer_uid = cred.uid();
-
-    // Root (UID 0) is always allowed (PAM context)
-    if peer_uid == 0 {
-        return Ok(());
-    }
-
-    // Check if peer is in the facelock group
-    if is_in_facelock_group(peer_uid) {
-        return Ok(());
-    }
-
-    // Development mode: if no facelock group exists on the system, allow any user.
-    // In production, the facelock group is created during installation.
-    if nix::unistd::Group::from_name("facelock").ok().flatten().is_none() {
-        debug!("no facelock group found, allowing UID {peer_uid} (dev mode)");
-        return Ok(());
-    }
-
-    Err(format!("unauthorized UID {peer_uid}"))
-}
-
-fn is_in_facelock_group(uid: u32) -> bool {
-    // Look up the facelock group
-    let facelock_gid = match nix::unistd::Group::from_name("facelock") {
-        Ok(Some(g)) => g.gid,
-        _ => return false,
+async fn run_dbus_server(handler: Arc<Mutex<ProductionHandler>>) -> anyhow::Result<()> {
+    let service = FacelockService {
+        handler: handler.clone(),
     };
 
-    // Check if the user's primary group matches
-    if let Ok(Some(user)) = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid)) {
-        if user.gid == facelock_gid {
-            return true;
+    let _connection = zbus::connection::Builder::system()?
+        .name(BUS_NAME)?
+        .serve_at(OBJECT_PATH, service)?
+        .build()
+        .await?;
+
+    info!("facelock daemon running on D-Bus system bus as {BUS_NAME}");
+
+    // Spawn a background task to release the camera on system suspend.
+    // Best-effort: if logind is unavailable, log a warning and continue.
+    let handler_for_sleep = handler.clone();
+    tokio::spawn(async move {
+        if let Err(e) = watch_sleep_signals(handler_for_sleep).await {
+            tracing::warn!("failed to watch logind sleep signals: {e}");
+        }
+    });
+
+    // Wait for shutdown signal (SIGTERM or SIGINT)
+    let mut sigterm =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            info!("received SIGINT, shutting down");
+        }
+        _ = sigterm.recv() => {
+            info!("received SIGTERM, shutting down");
+        }
+        _ = poll_shutdown(handler) => {
+            info!("shutdown requested via D-Bus, shutting down");
         }
     }
 
-    // Check supplementary groups
-    if let Ok(Some(group)) = nix::unistd::Group::from_gid(facelock_gid) {
-        if let Ok(Some(user)) = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid)) {
-            let username: &str = user.name.as_ref();
-            return group.mem.iter().any(|m| m.as_str() == username);
-        }
-    }
-
-    false
+    info!("goodbye");
+    Ok(())
 }
 
-fn handle_connection<C: CameraSource, E: FaceProcessor>(
-    handler: &mut Handler<C, E>,
-    stream: std::os::unix::net::UnixStream,
-) -> facelock_core::Result<()> {
-    // Set a read timeout to avoid blocking forever
-    stream
-        .set_read_timeout(Some(Duration::from_secs(30)))
-        .map_err(facelock_core::error::FacelockError::Io)?;
+/// Watch for logind `PrepareForSleep` signals.
+///
+/// On suspend (arg=true), release the camera so V4L2 handles don't go stale.
+/// On resume (arg=false), just log — the camera will be re-acquired on demand.
+///
+/// Manual testing:
+/// ```bash
+/// # Start daemon, then:
+/// sudo systemctl suspend
+/// # After resume, check: journalctl -u facelock-daemon --since "5 min ago"
+/// ```
+async fn watch_sleep_signals(
+    handler: Arc<Mutex<ProductionHandler>>,
+) -> anyhow::Result<()> {
+    let connection = zbus::Connection::system().await?;
+    let proxy = zbus::Proxy::new(
+        &connection,
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+    )
+    .await?;
 
-    let mut reader = BufReader::new(&stream);
-    let mut writer = BufWriter::new(&stream);
+    let mut stream = proxy.receive_signal("PrepareForSleep").await?;
+    info!("watching logind PrepareForSleep signals for camera suspend/resume");
 
-    // Read request
-    let data = recv_message(&mut reader)?;
-    let request = decode_request(&data)?;
-
-    // Handle
-    let response = handler.handle(request);
-
-    // Send response
-    let resp_data = encode_response(&response)?;
-    send_message(&mut writer, &resp_data)?;
-
+    while let Some(signal) = stream.next().await {
+        let suspending: bool = signal.body().deserialize().unwrap_or(false);
+        if suspending {
+            let handler = handler.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                match handler.try_lock() {
+                    Ok(mut h) => {
+                        h.handle(DaemonRequest::ReleaseCamera);
+                        info!("released camera for suspend");
+                    }
+                    Err(_) => {
+                        warn!("could not release camera for suspend: handler busy");
+                    }
+                }
+            })
+            .await;
+        } else {
+            info!("resumed from suspend, camera will reacquire on demand");
+        }
+    }
     Ok(())
+}
+
+/// Poll the handler's shutdown_requested flag and idle camera release.
+/// All mutex access goes through spawn_blocking to avoid blocking the
+/// tokio runtime (which would deadlock D-Bus method dispatch).
+async fn poll_shutdown(handler: Arc<Mutex<ProductionHandler>>) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let handler = handler.clone();
+        let should_shutdown = tokio::task::spawn_blocking(move || {
+            if let Ok(mut h) = handler.try_lock() {
+                if h.shutdown_requested {
+                    return true;
+                }
+                h.maybe_release_camera();
+            }
+            false
+        })
+        .await
+        .unwrap_or(false);
+
+        if should_shutdown {
+            return;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -352,83 +515,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn socket_creation_and_cleanup() {
-        let dir = std::env::temp_dir().join("facelock-test-daemon-cli");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("test.sock");
-        let path_str = path.to_str().unwrap();
-
-        let listener = create_socket(path_str).unwrap();
-        assert!(path.exists());
-
-        let meta = std::fs::metadata(&path).unwrap();
-        let mode = meta.permissions().mode() & 0o777;
-        assert_eq!(mode, 0o660);
-
-        drop(listener);
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn socket_replaces_stale() {
-        let dir = std::env::temp_dir().join("facelock-test-stale-cli");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("stale.sock");
-        let path_str = path.to_str().unwrap();
-
-        let _l1 = create_socket(path_str).unwrap();
-        drop(_l1);
-
-        let _l2 = create_socket(path_str).unwrap();
-        assert!(path.exists());
-
-        drop(_l2);
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn peer_verification_on_connected_pair() {
-        let (s1, _s2) = std::os::unix::net::UnixStream::pair().unwrap();
-        let result = verify_peer(&s1);
-        let _ = result;
-    }
-
-    #[test]
-    fn get_facelock_gid_does_not_panic() {
-        let _ = get_facelock_gid();
-    }
-
-    #[test]
-    fn is_in_facelock_group_nonexistent_user() {
-        assert!(!is_in_facelock_group(99999));
-    }
-
-    #[test]
-    fn signal_handling_flag() {
-        let term = Arc::new(AtomicBool::new(false));
-        assert!(!term.load(Ordering::Relaxed));
-        term.store(true, Ordering::Relaxed);
-        assert!(term.load(Ordering::Relaxed));
-    }
-
-    #[test]
-    fn receive_systemd_socket_returns_none_without_env() {
-        unsafe {
-            std::env::remove_var("LISTEN_PID");
-            std::env::remove_var("LISTEN_FDS");
-        }
-        assert!(receive_systemd_socket().is_none());
-    }
-
-    #[test]
-    fn idle_timeout_calculation() {
-        let last_activity = Instant::now() - Duration::from_secs(10);
-        let idle_timeout = Duration::from_secs(5);
-        assert!(last_activity.elapsed() > idle_timeout);
-
-        let recent = Instant::now();
-        assert!(recent.elapsed() < idle_timeout);
+    fn bus_name_constants() {
+        assert_eq!(BUS_NAME, "org.facelock.Daemon");
+        assert_eq!(OBJECT_PATH, "/org/facelock/Daemon");
     }
 }
