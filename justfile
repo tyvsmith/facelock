@@ -115,24 +115,30 @@ install-files:
     install -Dm644 config/facelock.toml /etc/facelock/config.toml.default
     [ -f /etc/facelock/config.toml ] || cp /etc/facelock/config.toml.default /etc/facelock/config.toml
 
-    # systemd units
+    # systemd unit
     install -Dm644 systemd/facelock-daemon.service /usr/lib/systemd/system/facelock-daemon.service
-    install -Dm644 systemd/facelock-daemon.socket /usr/lib/systemd/system/facelock-daemon.socket
+
+    # D-Bus policy and activation
+    install -Dm644 dbus/org.facelock.Daemon.conf /usr/share/dbus-1/system.d/org.facelock.Daemon.conf
+    install -Dm644 dbus/org.facelock.Daemon.service /usr/share/dbus-1/system-services/org.facelock.Daemon.service
+
+    # Polkit agent (optional)
+    [ -f target/release/facelock-polkit-agent ] && install -Dm755 target/release/facelock-polkit-agent /usr/bin/facelock-polkit-agent || true
+    [ -f polkit/org.facelock.AuthAgent.desktop ] && install -Dm644 polkit/org.facelock.AuthAgent.desktop /etc/xdg/autostart/org.facelock.AuthAgent.desktop || true
 
     # Directories
     install -dm770 -o root -g facelock /var/lib/facelock
     install -dm755 -o root -g root /var/lib/facelock/models
     install -dm750 -o root -g facelock /var/log/facelock
     install -dm750 -o root -g facelock /var/log/facelock/snapshots
-    install -dm755 -o root -g facelock /run/facelock
 
-    # Enable socket activation (if systemd present)
+    # Enable D-Bus activation (if systemd present)
     if [ -d /run/systemd/system ]; then
-        systemctl stop facelock-daemon.service facelock-daemon.socket 2>/dev/null || true
+        systemctl stop facelock-daemon.service 2>/dev/null || true
         systemctl daemon-reload
         systemctl reset-failed facelock-daemon.service 2>/dev/null || true
-        systemctl enable --now facelock-daemon.socket 2>/dev/null || true
-        echo "Socket activation enabled."
+        systemctl enable facelock-daemon.service 2>/dev/null || true
+        echo "D-Bus activation enabled."
     fi
 
     # Add to /etc/pam.d/sudo (if not already present)
@@ -163,8 +169,8 @@ uninstall-files:
     PAM_LINE="auth  sufficient  pam_facelock.so"
 
     # Stop and disable daemon
-    systemctl stop facelock-daemon.socket facelock-daemon 2>/dev/null || true
-    systemctl disable facelock-daemon.socket facelock-daemon 2>/dev/null || true
+    systemctl stop facelock-daemon.service 2>/dev/null || true
+    systemctl disable facelock-daemon.service 2>/dev/null || true
 
     # Remove PAM line
     if [ -f /etc/pam.d/sudo ]; then
@@ -175,7 +181,10 @@ uninstall-files:
     # Remove binaries and units
     rm -f /usr/bin/facelock /lib/security/pam_facelock.so
     rm -f /usr/lib/systemd/system/facelock-daemon.service
-    rm -f /usr/lib/systemd/system/facelock-daemon.socket
+    rm -f /usr/share/dbus-1/system.d/org.facelock.Daemon.conf
+    rm -f /usr/share/dbus-1/system-services/org.facelock.Daemon.service
+    rm -f /usr/bin/facelock-polkit-agent
+    rm -f /etc/xdg/autostart/org.facelock.AuthAgent.desktop
     systemctl daemon-reload 2>/dev/null || true
 
     echo "Uninstalled. Config and data preserved in /etc/facelock and /var/lib/facelock."
@@ -192,6 +201,6 @@ show-paths:
     @echo "Config:   /etc/facelock/config.toml"
     @echo "Models:   /var/lib/facelock/models/"
     @echo "Database: /var/lib/facelock/facelock.db"
-    @echo "Socket:   /run/facelock/facelock.sock"
+    @echo "D-Bus:    /usr/share/dbus-1/system.d/org.facelock.Daemon.conf"
     @echo "Service:  /usr/lib/systemd/system/facelock-daemon.service"
     @echo "Logs:     /var/log/facelock/"
