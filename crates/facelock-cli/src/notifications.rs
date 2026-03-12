@@ -126,7 +126,6 @@ pub fn send_notification(event: &NotifyEvent) {
 fn send_as_user(user: &str, event: &NotifyEvent) {
     use std::process::Command;
 
-    // Resolve the user's UID/GID for setpriv and DBUS_SESSION_BUS_ADDRESS
     let user_info = match nix::unistd::User::from_name(user) {
         Ok(Some(u)) => u,
         _ => {
@@ -146,21 +145,7 @@ fn send_as_user(user: &str, event: &NotifyEvent) {
     let bus_addr = format!("unix:path={bus_path}");
     let uid_str = uid.to_string();
     let gid_str = gid.to_string();
-
-    // Use gdbus call to invoke the Notifications interface directly.
-    // This avoids depending on notify-send and uses the same D-Bus API.
-    let body = event.body();
-    let icon = event.icon();
     let timeout = event.timeout_ms().to_string();
-
-    // gdbus call syntax for org.freedesktop.Notifications.Notify:
-    // (app_name, replaces_id, app_icon, summary, body, actions, hints, expire_timeout)
-    let notify_args = format!(
-        "('Facelock', uint32 0, '{}', 'Facelock', '{}', @as [], @a{{sv}} {{}}, int32 {})",
-        escape_gvariant(icon),
-        escape_gvariant(&body),
-        timeout,
-    );
 
     let result = Command::new("/usr/bin/setpriv")
         .args([
@@ -168,12 +153,12 @@ fn send_as_user(user: &str, event: &NotifyEvent) {
             "--regid", &gid_str,
             "--init-groups",
             "--",
-            "gdbus", "call",
-            "--session",
-            "--dest", "org.freedesktop.Notifications",
-            "--object-path", "/org/freedesktop/Notifications",
-            "--method", "org.freedesktop.Notifications.Notify",
-            &notify_args,
+            "notify-send",
+            "--app-name", "Facelock",
+            "-i", event.icon(),
+            "-t", &timeout,
+            "Facelock",
+            &event.body(),
         ])
         .env("DBUS_SESSION_BUS_ADDRESS", &bus_addr)
         .stdin(std::process::Stdio::null())
@@ -182,20 +167,15 @@ fn send_as_user(user: &str, event: &NotifyEvent) {
         .output();
 
     match result {
-        Ok(output) if output.status.success() => debug!(user, "notification sent via setpriv+gdbus"),
+        Ok(output) if output.status.success() => debug!(user, "notification sent"),
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            debug!(user, %output.status, %stderr, "gdbus via setpriv failed");
+            debug!(user, %output.status, %stderr, "notify-send failed");
         }
         Err(e) => debug!(user, %e, "failed to spawn setpriv"),
     }
 }
 
-/// Escape a string for use in a GVariant text format string.
-/// Single quotes need to be escaped.
-fn escape_gvariant(s: &str) -> String {
-    s.replace('\'', "'\\''")
-}
 
 /// Check whether a desktop notification should be sent for the given event.
 pub fn should_notify_desktop(config: &NotificationConfig, event: &NotifyEvent) -> bool {
@@ -269,16 +249,6 @@ mod tests {
         assert_eq!(event.body(), "Face auth failed: no match");
         assert_eq!(event.icon(), "security-low");
         assert_eq!(event.timeout_ms(), 3000);
-    }
-
-    #[test]
-    fn escape_gvariant_plain() {
-        assert_eq!(escape_gvariant("hello"), "hello");
-    }
-
-    #[test]
-    fn escape_gvariant_quotes() {
-        assert_eq!(escape_gvariant("it's"), "it'\\''s");
     }
 
     use facelock_core::config::NotificationMode;
