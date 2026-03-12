@@ -35,7 +35,7 @@ signal-hook = "0.3"
 libc = "0.2"
 nix = { version = "0.29", features = ["user"] }
 facelock-tpm = { path = "../facelock-tpm" }
-zbus = "5"
+zbus = { version = "5", default-features = false, features = ["tokio", "blocking-api"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 futures-util = "0.3"
 
