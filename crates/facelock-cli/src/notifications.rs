@@ -166,12 +166,14 @@ fn send_as_user(user: &str, event: &NotifyEvent) {
         });
 
     match result {
-        Ok(output) if output.status.success() => debug!(user, "notification sent"),
+        Ok(output) if output.status.success() => {
+            tracing::info!(user, "desktop notification sent");
+        }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            debug!(user, %output.status, %stderr, "notify-send failed");
+            tracing::warn!(user, %output.status, %stderr, "notify-send failed");
         }
-        Err(e) => debug!(user, %e, "failed to send notification"),
+        Err(e) => tracing::warn!(user, %e, "failed to send notification"),
     }
 }
 
@@ -202,9 +204,11 @@ pub fn notify_if_enabled_for_user(
     event: &NotifyEvent,
     user: &str,
 ) {
-    if should_notify_desktop(config, event) {
-        send_as_user(user, event);
+    if !should_notify_desktop(config, event) {
+        debug!(?event, "notification filtered by config");
+        return;
     }
+    send_as_user(user, event);
 }
 
 #[cfg(test)]

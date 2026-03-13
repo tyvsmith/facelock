@@ -326,7 +326,7 @@ pub fn run(config_path: Option<String>) -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "facelock_daemon=info,facelock_cli=info".into()),
+                .unwrap_or_else(|_| "facelock_daemon=info,facelock=info".into()),
         )
         .with_target(true)
         .init();
@@ -407,11 +407,6 @@ pub fn run(config_path: Option<String>) -> anyhow::Result<()> {
     );
 
     let handler = Arc::new(Mutex::new(handler));
-
-    // Drop capabilities now that initialization is complete.
-    // Engine loaded, DB opened, camera will be opened lazily via factory.
-    // Keep CAP_DAC_OVERRIDE for /dev/video* access and DB file access.
-    drop_capabilities();
 
     // Build and run the tokio runtime for the D-Bus server
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -539,39 +534,6 @@ async fn poll_shutdown(handler: Arc<Mutex<ProductionHandler>>) {
             return;
         }
     }
-}
-
-/// Drop all capabilities except CAP_DAC_OVERRIDE (needed for /dev/video* and DB files).
-/// Also sets PR_SET_NO_NEW_PRIVS to prevent gaining capabilities via exec.
-/// Best-effort: logs warnings on failure but does not abort.
-fn drop_capabilities() {
-    // Set PR_SET_NO_NEW_PRIVS first
-    match unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } {
-        0 => info!("set PR_SET_NO_NEW_PRIVS"),
-        _ => warn!("failed to set PR_SET_NO_NEW_PRIVS: {}", std::io::Error::last_os_error()),
-    }
-
-    // Drop all capabilities except CAP_DAC_OVERRIDE
-    if let Err(e) = drop_caps_inner() {
-        warn!("failed to drop capabilities: {e}");
-    } else {
-        info!("dropped capabilities (keeping CAP_DAC_OVERRIDE only)");
-    }
-}
-
-fn drop_caps_inner() -> anyhow::Result<()> {
-    use caps::{CapSet, Capability};
-
-    // Clear all from effective and permitted sets
-    caps::clear(None, CapSet::Effective)?;
-    caps::clear(None, CapSet::Permitted)?;
-    caps::clear(None, CapSet::Inheritable)?;
-
-    // Re-add only CAP_DAC_OVERRIDE
-    caps::raise(None, CapSet::Permitted, Capability::CAP_DAC_OVERRIDE)?;
-    caps::raise(None, CapSet::Effective, Capability::CAP_DAC_OVERRIDE)?;
-
-    Ok(())
 }
 
 #[cfg(test)]

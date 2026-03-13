@@ -38,7 +38,6 @@ facelock-tpm = { path = "../facelock-tpm" }
 zbus = { version = "5", default-features = false, features = ["tokio", "blocking-api"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 futures-util = "0.3"
-caps = "0.5"
 tss-esapi = { workspace = true, optional = true }
 
 [features]
