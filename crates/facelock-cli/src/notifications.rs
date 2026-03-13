@@ -118,11 +118,13 @@ pub fn send_notification(event: &NotifyEvent) {
     }
 }
 
-/// Send notification as a specific user by dropping privileges with setpriv.
+/// Send notification as a specific user.
 ///
-/// Uses setpriv to drop to the target user and run a small helper that connects
-/// to the user's session D-Bus and sends the notification via the standard
-/// Notifications interface. This avoids shelling out to notify-send.
+/// Uses `runuser` to run `notify-send` as the target user with a proper
+/// login environment. This works even from systemd services where the
+/// daemon's mount namespace may not include `/run/user/<uid>/`.
+///
+/// Falls back to `su -c` if `runuser` is not available.
 fn send_as_user(user: &str, event: &NotifyEvent) {
     use std::process::Command;
 
@@ -134,37 +136,34 @@ fn send_as_user(user: &str, event: &NotifyEvent) {
         }
     };
     let uid = user_info.uid.as_raw();
-    let gid = user_info.gid.as_raw();
-
-    let bus_path = format!("/run/user/{uid}/bus");
-    if !std::path::Path::new(&bus_path).exists() {
-        debug!(user, bus_path, "D-Bus session bus not found, skipping notification");
-        return;
-    }
-
-    let bus_addr = format!("unix:path={bus_path}");
-    let uid_str = uid.to_string();
-    let gid_str = gid.to_string();
+    let bus_addr = format!("unix:path=/run/user/{uid}/bus");
     let timeout = event.timeout_ms().to_string();
 
-    let result = Command::new("/usr/bin/setpriv")
-        .args([
-            "--reuid", &uid_str,
-            "--regid", &gid_str,
-            "--init-groups",
-            "--",
-            "notify-send",
-            "--app-name", "Facelock",
-            "-i", event.icon(),
-            "-t", &timeout,
-            "Facelock",
-            &event.body(),
-        ])
-        .env("DBUS_SESSION_BUS_ADDRESS", &bus_addr)
+    // Build the notify-send command string
+    let notify_cmd = format!(
+        "DBUS_SESSION_BUS_ADDRESS='{}' notify-send --app-name Facelock -i '{}' -t {} Facelock '{}'",
+        bus_addr,
+        event.icon(),
+        timeout,
+        event.body().replace('\'', "'\\''"),
+    );
+
+    // Try runuser first (available on most systems, works from systemd services),
+    // fall back to su -c
+    let result = Command::new("runuser")
+        .args(["-u", user, "--", "sh", "-c", &notify_cmd])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
-        .output();
+        .output()
+        .or_else(|_| {
+            Command::new("su")
+                .args(["-", user, "-c", &notify_cmd])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .output()
+        });
 
     match result {
         Ok(output) if output.status.success() => debug!(user, "notification sent"),
@@ -172,7 +171,7 @@ fn send_as_user(user: &str, event: &NotifyEvent) {
             let stderr = String::from_utf8_lossy(&output.stderr);
             debug!(user, %output.status, %stderr, "notify-send failed");
         }
-        Err(e) => debug!(user, %e, "failed to spawn setpriv"),
+        Err(e) => debug!(user, %e, "failed to send notification"),
     }
 }
 

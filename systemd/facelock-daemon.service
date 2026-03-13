@@ -12,31 +12,5 @@ Restart=on-failure
 RestartSec=3
 LimitNOFILE=1024
 
-# --- Phase 1: Safe hardening (no compatibility concerns) ---
-ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/var/lib/facelock /var/log/facelock /run/user
-PrivateTmp=yes
-NoNewPrivileges=yes
-
-# --- Phase 2: Kernel protection ---
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-RestrictNamespaces=yes
-LockPersonality=yes
-RestrictRealtime=yes
-RestrictSUIDSGID=yes
-
-# --- Phase 3: Device access ---
-# Allow video capture devices and optional TPM
-DeviceAllow=/dev/video* rw
-DeviceAllow=/dev/tpmrm0 rw
-# Note: SystemCallFilter is intentionally omitted. ONNX Runtime uses
-# syscalls outside @system-service (mmap variants, futex, clone3, etc.)
-# that cause silent process death when filtered. Use `systemd-analyze
-# syscall-filter` and strace to build a tested allowlist before enabling.
-# MemoryDenyWriteExecute=yes also breaks CUDA/TensorRT GPU inference.
-
 [Install]
 WantedBy=multi-user.target
