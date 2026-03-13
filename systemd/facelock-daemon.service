@@ -28,16 +28,15 @@ LockPersonality=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
 
-# --- Phase 3: Device and syscall filtering ---
+# --- Phase 3: Device access ---
 # Allow video capture devices and optional TPM
 DeviceAllow=/dev/video* rw
 DeviceAllow=/dev/tpmrm0 rw
-# System service syscalls plus io-event for epoll/select (tokio)
-SystemCallFilter=@system-service @io-event
-SystemCallErrorNumber=EPERM
-# Note: MemoryDenyWriteExecute=yes breaks CUDA/TensorRT GPU inference.
-# Enable only if using CPU execution provider:
-# MemoryDenyWriteExecute=yes
+# Note: SystemCallFilter is intentionally omitted. ONNX Runtime uses
+# syscalls outside @system-service (mmap variants, futex, clone3, etc.)
+# that cause silent process death when filtered. Use `systemd-analyze
+# syscall-filter` and strace to build a tested allowlist before enabling.
+# MemoryDenyWriteExecute=yes also breaks CUDA/TensorRT GPU inference.
 
 [Install]
 WantedBy=multi-user.target
