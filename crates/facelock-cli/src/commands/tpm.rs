@@ -84,110 +84,23 @@ fn status() -> Result<()> {
 }
 
 fn seal_db() -> Result<()> {
-    crate::ipc_client::require_root("sudo facelock tpm seal-db")?;
-    let config = Config::load()?;
-
-    let store = FaceStore::open(Path::new(&config.storage.db_path))
-        .context("failed to open face database")?;
-
-    let mut sealer = facelock_tpm::TpmSealer::new(&config.tpm.tcti)
-        .context("failed to initialize TPM sealer")?;
-
-    if !sealer.is_available() {
-        anyhow::bail!("TPM is not available -- cannot seal embeddings without real TPM support");
-    }
-
-    let all = store
-        .get_all_embeddings_raw()
-        .context("failed to read embeddings")?;
-
-    let unsealed: Vec<_> = all.iter().filter(|(_, _, _, sealed)| !sealed).collect();
-
-    if unsealed.is_empty() {
-        println!("All embeddings are already sealed. Nothing to do.");
-        return Ok(());
-    }
-
-    println!(
-        "Sealing {} unsealed embedding(s)...",
-        unsealed.len()
+    anyhow::bail!(
+        "TPM direct sealing is not supported for face embeddings.\n\
+         (2048-byte embeddings exceed the TPM's 256-byte SensitiveData limit)\n\n\
+         Use software encryption instead:\n\
+         \x20 sudo facelock encrypt --generate-key\n\
+         \x20 sudo facelock encrypt\n\n\
+         Or set in /etc/facelock/config.toml:\n\
+         \x20 [encryption]\n\
+         \x20 method = \"keyfile\""
     );
-
-    let pcr_indices = if config.tpm.pcr_binding {
-        Some(config.tpm.pcr_indices.as_slice())
-    } else {
-        None
-    };
-
-    let mut sealed_count = 0u32;
-    for (id, _user, blob, _sealed) in &unsealed {
-        let sealed_blob = sealer
-            .seal_bytes(blob, pcr_indices)
-            .with_context(|| format!("failed to seal embedding {id}"))?;
-
-        store
-            .update_embedding_sealed(*id, &sealed_blob, true)
-            .with_context(|| format!("failed to update embedding {id}"))?;
-
-        sealed_count += 1;
-    }
-
-    println!("Sealed {sealed_count} embedding(s) successfully.");
-    Ok(())
 }
 
 fn unseal_db() -> Result<()> {
-    crate::ipc_client::require_root("sudo facelock tpm unseal-db")?;
-    let config = Config::load()?;
-
-    let store = FaceStore::open(Path::new(&config.storage.db_path))
-        .context("failed to open face database")?;
-
-    let mut sealer = facelock_tpm::TpmSealer::new(&config.tpm.tcti)
-        .context("failed to initialize TPM sealer")?;
-
-    let all = store
-        .get_all_embeddings_raw()
-        .context("failed to read embeddings")?;
-
-    let sealed: Vec<_> = all.iter().filter(|(_, _, _, s)| *s).collect();
-
-    if sealed.is_empty() {
-        println!("No sealed embeddings found. Nothing to do.");
-        return Ok(());
-    }
-
-    if !sealer.is_available() {
-        anyhow::bail!("TPM is not available -- cannot unseal embeddings without real TPM support");
-    }
-
-    println!(
-        "Unsealing {} sealed embedding(s)...",
-        sealed.len()
+    anyhow::bail!(
+        "TPM direct sealing is not supported for face embeddings.\n\
+         Use `sudo facelock decrypt` to decrypt software-encrypted embeddings."
     );
-
-    let mut unsealed_count = 0u32;
-    for (id, _user, blob, _sealed) in &sealed {
-        // Unseal to get raw embedding bytes, then store back as unsealed
-        let embedding = sealer
-            .unseal_embedding(blob)
-            .with_context(|| format!("failed to unseal embedding {id}"))?;
-
-        // Convert embedding back to raw bytes
-        let raw_bytes: Vec<u8> = embedding
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect();
-
-        store
-            .update_embedding_sealed(*id, &raw_bytes, false)
-            .with_context(|| format!("failed to update embedding {id}"))?;
-
-        unsealed_count += 1;
-    }
-
-    println!("Unsealed {unsealed_count} embedding(s) successfully.");
-    Ok(())
 }
 
 fn pcr_baseline() -> Result<()> {

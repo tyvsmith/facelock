@@ -170,11 +170,10 @@
 [encryption]
 
 # How face embeddings are encrypted at rest. Run `facelock setup` to
-# configure automatically (detects TPM, falls back to keyfile).
+# configure automatically.
 #
 #   "none"    — no encryption (NOT RECOMMENDED for production)
-#   "keyfile" — AES-256-GCM with a key file (software encryption)
-#   "tpm"     — TPM 2.0 hardware sealing (strongest, requires TPM chip)
+#   "keyfile" — AES-256-GCM with a key file (recommended)
 #
 # Default: "none" (until `facelock setup` configures it)
 # method = "none"

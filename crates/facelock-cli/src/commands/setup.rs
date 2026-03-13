@@ -169,7 +169,7 @@ fn run_wizard() -> anyhow::Result<()> {
     // -- Summary --
     println!("\n--- Setup Complete ---\n");
     let encryption_label = match config.encryption.method {
-        facelock_core::config::EncryptionMethod::Tpm => "TPM 2.0",
+        facelock_core::config::EncryptionMethod::Tpm => "AES-256-GCM (TPM-backed key — not yet supported)",
         facelock_core::config::EncryptionMethod::Keyfile => "AES-256-GCM (keyfile)",
         facelock_core::config::EncryptionMethod::None => "none (NOT RECOMMENDED)",
     };
@@ -327,52 +327,15 @@ fn wizard_model_download(theme: &ColorfulTheme, config: &Config) -> anyhow::Resu
 }
 
 fn wizard_encryption_setup(
-    #[allow(unused_variables)] theme: &ColorfulTheme,
+    _theme: &ColorfulTheme,
     config: &mut Config,
 ) -> anyhow::Result<()> {
     use facelock_core::config::EncryptionMethod;
 
-    // Check if TPM is available
-    let tpm_available = Path::new("/dev/tpmrm0").exists();
-
-    if tpm_available {
-        println!("  TPM 2.0 device detected at /dev/tpmrm0.");
-
-        #[cfg(feature = "tpm")]
-        {
-            // Try to actually connect to the TPM
-            match facelock_tpm::TpmSealer::new(&config.tpm.tcti) {
-                Ok(sealer) if sealer.is_available() => {
-                    println!("  TPM sealing is available.");
-                    let use_tpm = Confirm::with_theme(theme)
-                        .with_prompt("Use TPM to encrypt face embeddings? (recommended)")
-                        .default(true)
-                        .interact()?;
-
-                    if use_tpm {
-                        config.tpm.seal_database = true;
-                        config.encryption.method = EncryptionMethod::Tpm;
-                        update_config_encryption(config, "tpm")?;
-                        println!("  TPM encryption enabled.");
-                        return Ok(());
-                    }
-                }
-                Ok(_) => println!("  TPM device found but sealing not available."),
-                Err(e) => println!("  TPM connection failed: {e}"),
-            }
-        }
-
-        #[cfg(not(feature = "tpm"))]
-        {
-            println!("  Note: facelock was compiled without TPM support.");
-            println!("  Rebuild with --features tpm to use hardware encryption.");
-        }
-    } else {
-        println!("  No TPM 2.0 device detected.");
-    }
-
-    // Fall back to software encryption
-    println!("  Setting up software encryption (AES-256-GCM with key file).");
+    // Always use software encryption (AES-256-GCM with key file).
+    // TPM direct sealing doesn't work for embeddings (2048 bytes > 256-byte TPM limit).
+    // Future: use TPM to seal the AES key itself for hardware-backed protection.
+    println!("  Setting up AES-256-GCM encryption for face embeddings.");
 
     let key_path = Path::new(&config.encryption.key_path);
     if key_path.exists() {
@@ -386,7 +349,7 @@ fn wizard_encryption_setup(
 
     config.encryption.method = EncryptionMethod::Keyfile;
     update_config_encryption(config, "keyfile")?;
-    println!("  Software encryption enabled.");
+    println!("  Encryption enabled.");
 
     Ok(())
 }
@@ -634,7 +597,6 @@ fn run_non_interactive() -> anyhow::Result<()> {
 }
 
 /// Auto-configure encryption in non-interactive mode.
-/// TPM if available, otherwise software encryption.
 fn setup_encryption_auto(config: &Config) -> anyhow::Result<()> {
     use facelock_core::config::EncryptionMethod;
 
@@ -644,25 +606,6 @@ fn setup_encryption_auto(config: &Config) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Try TPM first
-    let tpm_available = Path::new("/dev/tpmrm0").exists();
-    if tpm_available {
-        #[cfg(feature = "tpm")]
-        {
-            if let Ok(sealer) = facelock_tpm::TpmSealer::new(&config.tpm.tcti) {
-                if sealer.is_available() {
-                    let mut config = config.clone();
-                    config.tpm.seal_database = true;
-                    config.encryption.method = EncryptionMethod::Tpm;
-                    update_config_encryption(&config, "tpm")?;
-                    println!("  [ok] TPM 2.0 encryption enabled.");
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    // Fall back to software encryption
     let key_path = Path::new(&config.encryption.key_path);
     if !key_path.exists() {
         facelock_tpm::SoftwareSealer::generate_key_file(key_path)
@@ -673,7 +616,7 @@ fn setup_encryption_auto(config: &Config) -> anyhow::Result<()> {
     let mut config = config.clone();
     config.encryption.method = EncryptionMethod::Keyfile;
     update_config_encryption(&config, "keyfile")?;
-    println!("  [ok] Software encryption (AES-256-GCM) enabled.");
+    println!("  [ok] AES-256-GCM encryption enabled.");
     Ok(())
 }
 
