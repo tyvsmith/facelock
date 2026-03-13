@@ -62,14 +62,12 @@ fn lock_handler_with_timeout(
 
 struct FacelockService {
     handler: Arc<Mutex<ProductionHandler>>,
-    notification_config: facelock_core::config::NotificationConfig,
 }
 
 #[interface(name = "org.facelock.Daemon")]
 impl FacelockService {
     async fn authenticate(&self, user: &str) -> fdo::Result<AuthResult> {
         let handler = self.handler.clone();
-        let notify_config = self.notification_config.clone();
         let user = user.to_string();
         tokio::task::spawn_blocking(move || {
             let mut handler = lock_handler_with_timeout(&handler)?;
@@ -89,6 +87,11 @@ impl FacelockService {
                             reason: "no match".into(),
                         }
                     };
+                    // Re-read notification config from disk so changes
+                    // take effect without daemon restart
+                    let notify_config = Config::load()
+                        .map(|c| c.notification)
+                        .unwrap_or_default();
                     crate::notifications::notify_if_enabled_for_user(
                         &notify_config, &event, &user,
                     );
@@ -395,9 +398,6 @@ pub fn run(config_path: Option<String>) -> anyhow::Result<()> {
         config.security.rate_limit.window_secs,
     );
 
-    // Capture notification config before config is moved into handler
-    let notification_config = config.notification.clone();
-
     // Camera factory for lazy opening
     let camera_factory: CameraFactory =
         Box::new(|config: &Config| Camera::open(&config.device).map_err(|e| e.to_string()));
@@ -413,16 +413,14 @@ pub fn run(config_path: Option<String>) -> anyhow::Result<()> {
         .enable_all()
         .build()?;
 
-    rt.block_on(run_dbus_server(handler, notification_config))
+    rt.block_on(run_dbus_server(handler))
 }
 
 async fn run_dbus_server(
     handler: Arc<Mutex<ProductionHandler>>,
-    notification_config: facelock_core::config::NotificationConfig,
 ) -> anyhow::Result<()> {
     let service = FacelockService {
         handler: handler.clone(),
-        notification_config,
     };
 
     let _connection = zbus::connection::Builder::system()?
