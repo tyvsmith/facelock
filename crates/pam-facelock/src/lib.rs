@@ -121,7 +121,7 @@ struct PamNotificationConfig {
 impl Default for PamNotificationConfig {
     fn default() -> Self {
         Self {
-            mode: PamNotificationMode::Both,
+            mode: PamNotificationMode::Terminal,
             notify_prompt: true,
             notify_on_success: true,
         }

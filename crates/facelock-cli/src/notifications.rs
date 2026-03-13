@@ -291,9 +291,27 @@ mod tests {
         assert!(config.desktop());
     }
 
+    /// Helper: config with desktop notifications fully enabled
+    fn desktop_config() -> NotificationConfig {
+        NotificationConfig {
+            mode: NotificationMode::Both,
+            notify_prompt: true,
+            notify_on_success: true,
+            notify_on_failure: true,
+        }
+    }
+
+    #[test]
+    fn default_is_terminal_only() {
+        let config = NotificationConfig::default();
+        assert!(config.terminal());
+        assert!(!config.desktop());
+        assert!(!config.notify_on_failure);
+    }
+
     #[test]
     fn mode_both_enables_all() {
-        let config = NotificationConfig::default();
+        let config = desktop_config();
         assert!(config.terminal());
         assert!(config.desktop());
         assert!(should_notify_desktop(&config, &NotifyEvent::Scanning));
@@ -311,7 +329,7 @@ mod tests {
     fn notify_prompt_controls_scanning() {
         let config = NotificationConfig {
             notify_prompt: false,
-            ..Default::default()
+            ..desktop_config()
         };
         assert!(!should_notify_desktop(&config, &NotifyEvent::Scanning));
         // Success/failure still enabled
@@ -325,7 +343,7 @@ mod tests {
     fn notify_on_success_controls_success() {
         let config = NotificationConfig {
             notify_on_success: false,
-            ..Default::default()
+            ..desktop_config()
         };
         assert!(should_notify_desktop(&config, &NotifyEvent::Scanning));
         assert!(!should_notify_desktop(
@@ -342,7 +360,7 @@ mod tests {
     fn notify_on_failure_controls_failure() {
         let config = NotificationConfig {
             notify_on_failure: false,
-            ..Default::default()
+            ..desktop_config()
         };
         assert!(should_notify_desktop(
             &config,

@@ -253,10 +253,10 @@ pub struct NotificationConfig {
 impl Default for NotificationConfig {
     fn default() -> Self {
         Self {
-            mode: NotificationMode::Both,
+            mode: NotificationMode::Terminal,
             notify_prompt: true,
             notify_on_success: true,
-            notify_on_failure: true,
+            notify_on_failure: false,
         }
     }
 }
