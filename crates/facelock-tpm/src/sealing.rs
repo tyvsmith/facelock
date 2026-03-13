@@ -2,6 +2,7 @@ use facelock_core::error::{Result, FacelockError};
 use facelock_core::types::FaceEmbedding;
 #[cfg(feature = "tpm")]
 use tracing::{debug, info};
+#[cfg(not(feature = "tpm"))]
 use tracing::warn;
 
 /// Version byte prefixed to TPM-sealed blobs.
@@ -103,13 +104,10 @@ impl TpmSealer {
     ) -> Result<Vec<u8>> {
         use tss_esapi::{
             attributes::ObjectAttributesBuilder,
-            interface_types::{
-                algorithm::HashingAlgorithm,
-                reserved_handles::Hierarchy,
-            },
+            interface_types::algorithm::HashingAlgorithm,
             structures::{
-                MaxBuffer, SensitiveData,
-                PublicBuilder, SymmetricDefinitionObject,
+                SensitiveData,
+                PublicBuilder,
             },
         };
 
@@ -254,15 +252,12 @@ impl TpmSealer {
         use tss_esapi::{
             attributes::ObjectAttributesBuilder,
             interface_types::{
-                algorithm::{
-                    HashingAlgorithm, PublicAlgorithm,
-                    EccSchemeAlgorithm,
-                },
+                algorithm::{HashingAlgorithm, PublicAlgorithm},
                 ecc::EccCurve,
                 reserved_handles::Hierarchy,
             },
             structures::{
-                EccScheme, HashScheme, KeyDerivationFunctionScheme,
+                EccScheme, KeyDerivationFunctionScheme,
                 PublicBuilder, PublicEccParametersBuilder,
                 SymmetricDefinitionObject, EccPoint,
             },
