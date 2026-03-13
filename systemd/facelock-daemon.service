@@ -15,7 +15,7 @@ LimitNOFILE=1024
 # --- Phase 1: Safe hardening (no compatibility concerns) ---
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/lib/facelock /var/log/facelock
+ReadWritePaths=/var/lib/facelock /var/log/facelock /run/user
 PrivateTmp=yes
 NoNewPrivileges=yes
 
