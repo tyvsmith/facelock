@@ -1,5 +1,6 @@
 mod commands;
 pub mod direct;
+pub mod i18n;
 mod ipc_client;
 pub mod notifications;
 
@@ -130,6 +131,23 @@ enum Commands {
         #[command(subcommand)]
         command: TpmCommand,
     },
+    /// Encrypt all unencrypted embeddings with AES-256-GCM
+    Encrypt {
+        /// Generate a new encryption key (does not encrypt)
+        #[arg(long)]
+        generate_key: bool,
+    },
+    /// Decrypt all software-encrypted embeddings
+    Decrypt,
+    /// View structured audit log
+    Audit {
+        /// Follow mode: watch for new entries
+        #[arg(short = 'f', long)]
+        follow: bool,
+        /// Number of recent entries to show
+        #[arg(short, long, default_value = "20")]
+        lines: usize,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -184,6 +202,9 @@ fn main() -> anyhow::Result<()> {
                 Commands::Devices => commands::devices::run(),
                 Commands::Bench { command } => commands::bench::run(command),
                 Commands::Tpm { command } => commands::tpm::run(command),
+                Commands::Encrypt { generate_key } => commands::encrypt::run_encrypt(generate_key),
+                Commands::Decrypt => commands::encrypt::run_decrypt(),
+                Commands::Audit { follow, lines } => commands::audit::run(follow, lines),
                 // Already handled above
                 Commands::Daemon { .. } | Commands::Auth { .. } => unreachable!(),
             }

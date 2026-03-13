@@ -4,7 +4,10 @@ use facelock_camera::capture::is_dark_with_config;
 use facelock_core::config::Config;
 use facelock_core::ipc::DaemonResponse;
 use facelock_core::traits::{CameraSource, FaceProcessor};
-use facelock_core::types::{best_match, check_frame_variance, FaceEmbedding, MatchResult};
+use facelock_core::types::{
+    best_match, check_frame_variance, zeroize_embedding, zeroize_stored_embeddings,
+    FaceEmbedding, MatchResult,
+};
 use facelock_store::FaceStore;
 use tracing::{debug, info, warn};
 
@@ -77,6 +80,7 @@ pub fn pre_check(
 
 /// Run the camera-based authentication loop.
 /// Called after pre_check returns None.
+/// Loads embeddings from the store (plaintext only — does not handle encryption).
 pub fn authenticate<C: CameraSource, E: FaceProcessor>(
     camera: &mut C,
     engine: &mut E,
@@ -84,10 +88,7 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
     config: &Config,
     user: &str,
 ) -> DaemonResponse {
-    let start = Instant::now();
-
-    // Load user embeddings + build label lookup
-    let stored = match store.get_user_embeddings(user) {
+    let mut stored = match store.get_user_embeddings(user) {
         Ok(v) => v,
         Err(e) => {
             return DaemonResponse::Error {
@@ -96,6 +97,33 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
         }
     };
     let models = store.list_models(user).unwrap_or_default();
+    authenticate_inner(camera, engine, &mut stored, &models, config, user)
+}
+
+/// Run the camera-based authentication loop with pre-loaded (decrypted) embeddings.
+/// Called by the handler when encryption is active so embeddings are already decrypted.
+pub fn authenticate_with_embeddings<C: CameraSource, E: FaceProcessor>(
+    camera: &mut C,
+    engine: &mut E,
+    stored: &[(u32, FaceEmbedding)],
+    models: &[facelock_core::types::FaceModelInfo],
+    config: &Config,
+    user: &str,
+) -> DaemonResponse {
+    let mut stored = stored.to_vec();
+    let models = models.to_vec();
+    authenticate_inner(camera, engine, &mut stored, &models, config, user)
+}
+
+fn authenticate_inner<C: CameraSource, E: FaceProcessor>(
+    camera: &mut C,
+    engine: &mut E,
+    stored: &mut [(u32, FaceEmbedding)],
+    models: &[facelock_core::types::FaceModelInfo],
+    config: &Config,
+    user: &str,
+) -> DaemonResponse {
+    let start = Instant::now();
     let label_for = |id: u32| -> Option<String> {
         models.iter().find(|m| m.id == id).map(|m| m.label.clone())
     };
@@ -151,7 +179,7 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
 
         let mut frame_matched = false;
         for (_det, embedding) in &faces {
-            let (frame_best_sim, frame_best_id) = best_match(embedding, &stored);
+            let (frame_best_sim, frame_best_id) = best_match(embedding, stored);
 
             if frame_best_sim > best_similarity {
                 best_similarity = frame_best_sim;
@@ -197,12 +225,18 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
                     duration_ms = duration.as_millis() as u64,
                     "authentication succeeded"
                 );
-                return DaemonResponse::AuthResult(MatchResult {
+                let response = DaemonResponse::AuthResult(MatchResult {
                     matched: true,
                     model_id: best_model_id,
                     label: best_model_id.and_then(&label_for),
                     similarity: best_similarity,
                 });
+                // Zero sensitive data before returning
+                zeroize_stored_embeddings(stored);
+                for emb in &mut matched_frame_embeddings {
+                    zeroize_embedding(emb);
+                }
+                return response;
             }
         } else if best_similarity >= threshold {
             // If landmark liveness is required, check it even without variance
@@ -225,16 +259,27 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
                 duration_ms = duration.as_millis() as u64,
                 "authentication succeeded (no variance check)"
             );
-            return DaemonResponse::AuthResult(MatchResult {
+            let response = DaemonResponse::AuthResult(MatchResult {
                 matched: true,
                 model_id: best_model_id,
                 label: best_model_id.and_then(&label_for),
                 similarity: best_similarity,
             });
+            zeroize_stored_embeddings(stored);
+            for emb in &mut matched_frame_embeddings {
+                zeroize_embedding(emb);
+            }
+            return response;
         }
     }
 
     let duration = start.elapsed();
+
+    // Zero sensitive data before returning
+    zeroize_stored_embeddings(stored);
+    for emb in &mut matched_frame_embeddings {
+        zeroize_embedding(emb);
+    }
 
     if dark_count == frame_count && frame_count > 0 {
         warn!(

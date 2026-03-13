@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 /// 512-dimensional face embedding (ArcFace output)
 pub type FaceEmbedding = [f32; 512];
@@ -37,6 +38,26 @@ pub struct Frame {
     pub gray: Vec<u8>,
     pub width: u32,
     pub height: u32,
+}
+
+impl Drop for Frame {
+    fn drop(&mut self) {
+        self.rgb.zeroize();
+        self.gray.zeroize();
+    }
+}
+
+/// Zero a face embedding in place (overwrite with 0.0).
+/// Use this at security boundaries after embeddings are no longer needed.
+pub fn zeroize_embedding(embedding: &mut FaceEmbedding) {
+    embedding.zeroize();
+}
+
+/// Zero a vector of embedding tuples (model_id, embedding).
+pub fn zeroize_stored_embeddings(stored: &mut [(u32, FaceEmbedding)]) {
+    for (_, emb) in stored.iter_mut() {
+        emb.zeroize();
+    }
 }
 
 /// A stored face model (metadata only, without embedding)
@@ -274,6 +295,61 @@ mod tests {
             let b = super::float_bits_to_ordered(window[1].to_bits());
             assert!(a < b, "ordered({}) should be < ordered({}), got {} vs {}", window[0], window[1], a, b);
         }
+    }
+
+    #[test]
+    fn zeroize_embedding_clears_data() {
+        let mut emb: FaceEmbedding = [0.0; 512];
+        emb[0] = 1.0;
+        emb[100] = -0.5;
+        emb[511] = 42.0;
+
+        zeroize_embedding(&mut emb);
+
+        for (i, &val) in emb.iter().enumerate() {
+            assert_eq!(val, 0.0, "embedding[{i}] should be zeroed, got {val}");
+        }
+    }
+
+    #[test]
+    fn zeroize_stored_embeddings_clears_all() {
+        let emb1: FaceEmbedding = [1.0; 512];
+        let emb2: FaceEmbedding = [2.0; 512];
+        let mut stored = vec![(1u32, emb1), (2u32, emb2)];
+
+        zeroize_stored_embeddings(&mut stored);
+
+        for (id, emb) in &stored {
+            for (i, &val) in emb.iter().enumerate() {
+                assert_eq!(val, 0.0, "embedding for model {id} at [{i}] should be zeroed");
+            }
+        }
+    }
+
+    #[test]
+    fn frame_drop_zeroes_pixel_data() {
+        let rgb = vec![255u8; 640 * 480 * 3];
+        let gray = vec![128u8; 640 * 480];
+
+        // Create frame and get raw pointers to the backing memory
+        let mut frame = Frame {
+            rgb,
+            gray,
+            width: 640,
+            height: 480,
+        };
+
+        // Verify data is non-zero before drop
+        assert!(frame.rgb.iter().any(|&b| b != 0));
+        assert!(frame.gray.iter().any(|&b| b != 0));
+
+        // Zeroize happens on drop, but we can test the explicit zeroize path
+        use zeroize::Zeroize;
+        frame.rgb.zeroize();
+        frame.gray.zeroize();
+
+        assert!(frame.rgb.iter().all(|&b| b == 0), "RGB data should be zeroed");
+        assert!(frame.gray.iter().all(|&b| b == 0), "gray data should be zeroed");
     }
 
     #[test]

@@ -10,3 +10,5 @@ facelock-core = { path = "../facelock-core" }
 v4l = "0.14"
 image = "0.25"
 tracing = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }

@@ -11,6 +11,7 @@ toml = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 subtle = "2"
+zeroize = { version = "1", features = ["derive"] }
 zvariant = { version = "5", default-features = false, features = ["enumflags2"] }
 
 [dev-dependencies]

@@ -1,4 +1,6 @@
+pub mod audit;
 pub mod auth;
+pub mod quality;
 pub mod enroll;
 pub mod handler;
 pub mod liveness;

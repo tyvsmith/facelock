@@ -16,7 +16,7 @@ pub fn run(command: TpmCommand) -> Result<()> {
 }
 
 fn status() -> Result<()> {
-    let config = Config::load()?;
+    let config = Config::load().context("failed to load config (try: sudo facelock tpm status)")?;
 
     // Extract device path from TCTI string (e.g., "device:/dev/tpmrm0" -> "/dev/tpmrm0")
     let device_path = config
@@ -66,10 +66,25 @@ fn status() -> Result<()> {
     #[cfg(not(feature = "tpm"))]
     println!("\n  Note: compiled without TPM support (feature 'tpm' not enabled)");
 
+    // Show software encryption status too
+    println!();
+    println!("  Software Encryption:");
+    println!(
+        "    method:   {:?}",
+        config.encryption.method
+    );
+    println!("    key_path: {}", config.encryption.key_path);
+    let key_exists = std::path::Path::new(&config.encryption.key_path).exists();
+    println!(
+        "    key file: {}",
+        if key_exists { "present" } else { "not found" }
+    );
+
     Ok(())
 }
 
 fn seal_db() -> Result<()> {
+    crate::ipc_client::require_root("sudo facelock tpm seal-db")?;
     let config = Config::load()?;
 
     let store = FaceStore::open(Path::new(&config.storage.db_path))
@@ -122,6 +137,7 @@ fn seal_db() -> Result<()> {
 }
 
 fn unseal_db() -> Result<()> {
+    crate::ipc_client::require_root("sudo facelock tpm unseal-db")?;
     let config = Config::load()?;
 
     let store = FaceStore::open(Path::new(&config.storage.db_path))
@@ -184,7 +200,7 @@ fn pcr_baseline() -> Result<()> {
     {
         use tss_esapi::tcti_ldr::TctiNameConf;
 
-        let tcti_conf: TctiNameConf = config.tpm.tcti.as_str().try_into()
+        let tcti_conf: TctiNameConf = config.tpm.tcti.parse()
             .context("invalid TCTI string")?;
         let mut context = tss_esapi::Context::new(tcti_conf)
             .context("failed to connect to TPM")?;

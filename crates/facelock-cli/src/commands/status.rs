@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use facelock_core::config::EncryptionMethod;
 use facelock_core::ipc::{DaemonRequest, DaemonResponse};
 use facelock_core::Config;
 
@@ -20,7 +21,10 @@ pub fn run() -> anyhow::Result<()> {
     // 4. Models
     check_models(&config);
 
-    // 5. PAM
+    // 5. Encryption
+    check_encryption(&config);
+
+    // 6. PAM
     check_pam();
 
     Ok(())
@@ -56,17 +60,17 @@ fn check_daemon() -> Option<Config> {
         }
     };
 
-    let socket_path = &config.daemon.socket_path;
-    print_status_item("Daemon socket", socket_path);
+    print_status_item("Daemon", "org.facelock.Daemon (D-Bus system bus)");
 
-    if !Path::new(socket_path).exists() {
-        print_result(false, "socket not found");
+    // Check if daemon is reachable via D-Bus
+    if ipc_client::should_use_direct(&config) {
+        print_result(false, "not running");
         return Some(config);
     }
 
     // Try to ping the daemon
     let request = DaemonRequest::Ping;
-    match ipc_client::send_request(socket_path, &request) {
+    match ipc_client::send_request("", &request) {
         Ok(DaemonResponse::Ok) => {
             print_result(true, "responding");
         }
@@ -119,24 +123,72 @@ fn check_models(config: &Option<Config>) {
         return;
     }
 
-    // Check for required model files
-    let required_files = ["scrfd_2.5g_bnkps.onnx", "w600k_r50.onnx"];
-    let mut all_present = true;
+    // Check for the configured model files (not just defaults)
+    let models = [
+        ("detector", config.recognition.detector_model.as_str()),
+        ("embedder", config.recognition.embedder_model.as_str()),
+    ];
 
-    for filename in &required_files {
+    let mut all_present = true;
+    for (purpose, filename) in &models {
         let path = Path::new(model_dir).join(filename);
         if path.exists() {
-            print_detail(filename, "present");
+            print_detail(&format!("{purpose} ({filename})"), "present");
         } else {
-            print_detail(filename, "MISSING");
+            print_detail(&format!("{purpose} ({filename})"), "MISSING");
             all_present = false;
         }
     }
 
     if all_present {
-        print_result(true, "all required models present");
+        print_result(true, "all configured models present");
     } else {
         print_result(false, "some models missing (run 'facelock setup')");
+    }
+}
+
+fn check_encryption(config: &Option<Config>) {
+    let Some(config) = config else {
+        return;
+    };
+
+    let method_str = match config.encryption.method {
+        EncryptionMethod::Tpm => "TPM 2.0",
+        EncryptionMethod::Keyfile => "AES-256-GCM (keyfile)",
+        EncryptionMethod::None => "none",
+    };
+    print_status_item("Encryption", method_str);
+
+    match config.encryption.method {
+        EncryptionMethod::Keyfile => {
+            let key_exists = Path::new(&config.encryption.key_path).exists();
+            if key_exists {
+                print_result(true, &format!("key file: {}", config.encryption.key_path));
+            } else {
+                print_result(false, &format!("key file missing: {}", config.encryption.key_path));
+            }
+        }
+        EncryptionMethod::Tpm => {
+            let tpm_exists = Path::new("/dev/tpmrm0").exists();
+            if tpm_exists {
+                print_result(true, "TPM device available");
+            } else {
+                print_result(false, "TPM device not found");
+            }
+        }
+        EncryptionMethod::None => {
+            print_result(false, "embeddings stored as plaintext (run 'facelock setup' to enable encryption)");
+        }
+    }
+
+    // Show DB encryption stats if readable
+    if let Ok(store) = facelock_store::FaceStore::open_readonly(Path::new(&config.storage.db_path)) {
+        if let Ok((sealed, unsealed)) = store.count_sealed() {
+            if sealed + unsealed > 0 {
+                print_detail("encrypted", &sealed.to_string());
+                print_detail("plaintext", &unsealed.to_string());
+            }
+        }
     }
 }
 

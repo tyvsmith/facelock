@@ -70,6 +70,7 @@ fn run_wizard() -> anyhow::Result<()> {
     println!("  This wizard will walk you through initial setup:");
     println!("    - Camera detection");
     println!("    - Model downloads");
+    println!("    - Embedding encryption (TPM or software)");
     println!("    - Face enrollment");
     println!("    - Daemon and PAM configuration");
     println!();
@@ -108,8 +109,18 @@ fn run_wizard() -> anyhow::Result<()> {
         }
     }
 
-    // -- Step 3: Face enrollment --
-    println!("\n--- Step 3: Face Enrollment ---\n");
+    // -- Step 3: Encryption setup --
+    println!("\n--- Step 3: Embedding Encryption ---\n");
+    match wizard_encryption_setup(&theme, &mut config) {
+        Ok(()) => {}
+        Err(e) => {
+            println!("  Encryption setup failed: {e}");
+            println!("  You can configure encryption later with: sudo facelock encrypt --generate-key");
+        }
+    }
+
+    // -- Step 4: Face enrollment --
+    println!("\n--- Step 4: Face Enrollment ---\n");
     let enrolled = match wizard_face_enroll(&theme) {
         Ok(did_enroll) => did_enroll,
         Err(e) => {
@@ -119,9 +130,9 @@ fn run_wizard() -> anyhow::Result<()> {
         }
     };
 
-    // -- Step 4: Test recognition --
+    // -- Step 5: Test recognition --
     if enrolled {
-        println!("\n--- Step 4: Test Recognition ---\n");
+        println!("\n--- Step 5: Test Recognition ---\n");
         match wizard_test_recognition(&theme) {
             Ok(()) => {}
             Err(e) => {
@@ -130,11 +141,11 @@ fn run_wizard() -> anyhow::Result<()> {
             }
         }
     } else {
-        println!("\n--- Step 4: Test Recognition (skipped, no face enrolled) ---\n");
+        println!("\n--- Step 5: Test Recognition (skipped, no face enrolled) ---\n");
     }
 
-    // -- Step 5: Systemd setup --
-    println!("\n--- Step 5: Daemon Configuration ---\n");
+    // -- Step 6: Systemd setup --
+    println!("\n--- Step 6: Daemon Configuration ---\n");
     let systemd_enabled = match wizard_systemd_setup(&theme) {
         Ok(enabled) => enabled,
         Err(e) => {
@@ -144,8 +155,8 @@ fn run_wizard() -> anyhow::Result<()> {
         }
     };
 
-    // -- Step 6: PAM configuration --
-    println!("\n--- Step 6: PAM Configuration ---\n");
+    // -- Step 7: PAM configuration --
+    println!("\n--- Step 7: PAM Configuration ---\n");
     let pam_services = match wizard_pam_setup(&theme) {
         Ok(services) => services,
         Err(e) => {
@@ -157,9 +168,15 @@ fn run_wizard() -> anyhow::Result<()> {
 
     // -- Summary --
     println!("\n--- Setup Complete ---\n");
-    println!("  Camera:   {}", config.device.path.as_deref().unwrap_or("/dev/video0"));
-    println!("  Models:   {}", config.daemon.model_dir);
-    println!("  Database: {}", config.storage.db_path);
+    let encryption_label = match config.encryption.method {
+        facelock_core::config::EncryptionMethod::Tpm => "TPM 2.0",
+        facelock_core::config::EncryptionMethod::Keyfile => "AES-256-GCM (keyfile)",
+        facelock_core::config::EncryptionMethod::None => "none (NOT RECOMMENDED)",
+    };
+    println!("  Camera:     {}", config.device.path.as_deref().unwrap_or("/dev/video0"));
+    println!("  Models:     {}", config.daemon.model_dir);
+    println!("  Database:   {}", config.storage.db_path);
+    println!("  Encryption: {}", encryption_label);
     println!(
         "  Daemon:   {}",
         if systemd_enabled {
@@ -304,6 +321,128 @@ fn wizard_model_download(theme: &ColorfulTheme, config: &Config) -> anyhow::Resu
         download_model(entry, &model_path)?;
         verify_after_download(&model_path, &entry.sha256, &entry.name)?;
         println!("  [ok] {} downloaded and verified", entry.name);
+    }
+
+    Ok(())
+}
+
+fn wizard_encryption_setup(
+    #[allow(unused_variables)] theme: &ColorfulTheme,
+    config: &mut Config,
+) -> anyhow::Result<()> {
+    use facelock_core::config::EncryptionMethod;
+
+    // Check if TPM is available
+    let tpm_available = Path::new("/dev/tpmrm0").exists();
+
+    if tpm_available {
+        println!("  TPM 2.0 device detected at /dev/tpmrm0.");
+
+        #[cfg(feature = "tpm")]
+        {
+            // Try to actually connect to the TPM
+            match facelock_tpm::TpmSealer::new(&config.tpm.tcti) {
+                Ok(sealer) if sealer.is_available() => {
+                    println!("  TPM sealing is available.");
+                    let use_tpm = Confirm::with_theme(theme)
+                        .with_prompt("Use TPM to encrypt face embeddings? (recommended)")
+                        .default(true)
+                        .interact()?;
+
+                    if use_tpm {
+                        config.tpm.seal_database = true;
+                        config.encryption.method = EncryptionMethod::Tpm;
+                        update_config_encryption(config, "tpm")?;
+                        println!("  TPM encryption enabled.");
+                        return Ok(());
+                    }
+                }
+                Ok(_) => println!("  TPM device found but sealing not available."),
+                Err(e) => println!("  TPM connection failed: {e}"),
+            }
+        }
+
+        #[cfg(not(feature = "tpm"))]
+        {
+            println!("  Note: facelock was compiled without TPM support.");
+            println!("  Rebuild with --features tpm to use hardware encryption.");
+        }
+    } else {
+        println!("  No TPM 2.0 device detected.");
+    }
+
+    // Fall back to software encryption
+    println!("  Setting up software encryption (AES-256-GCM with key file).");
+
+    let key_path = Path::new(&config.encryption.key_path);
+    if key_path.exists() {
+        println!("  Encryption key already exists at {}.", key_path.display());
+    } else {
+        println!("  Generating encryption key...");
+        facelock_tpm::SoftwareSealer::generate_key_file(key_path)
+            .context("failed to generate encryption key")?;
+        println!("  Key written to {} (permissions: 0600).", key_path.display());
+    }
+
+    config.encryption.method = EncryptionMethod::Keyfile;
+    update_config_encryption(config, "keyfile")?;
+    println!("  Software encryption enabled.");
+
+    Ok(())
+}
+
+/// Update the config file on disk with the chosen encryption method.
+fn update_config_encryption(config: &Config, method: &str) -> anyhow::Result<()> {
+    let config_path = facelock_core::paths::config_path();
+    if !config_path.exists() {
+        return Ok(()); // Config will be created later
+    }
+
+    let content = fs::read_to_string(&config_path)
+        .with_context(|| format!("failed to read {}", config_path.display()))?;
+
+    // Check if [encryption] section already exists
+    if content.contains("[encryption]") {
+        // Update existing section
+        let mut new_content = String::new();
+        let mut in_encryption = false;
+        let mut method_written = false;
+        for line in content.lines() {
+            if line.trim() == "[encryption]" {
+                in_encryption = true;
+                new_content.push_str(line);
+                new_content.push('\n');
+                continue;
+            }
+            if in_encryption && line.trim_start().starts_with("method") {
+                new_content.push_str(&format!("method = \"{method}\"\n"));
+                method_written = true;
+                continue;
+            }
+            if in_encryption && line.starts_with('[') {
+                if !method_written {
+                    new_content.push_str(&format!("method = \"{method}\"\n"));
+                }
+                in_encryption = false;
+            }
+            new_content.push_str(line);
+            new_content.push('\n');
+        }
+        if in_encryption && !method_written {
+            new_content.push_str(&format!("method = \"{method}\"\n"));
+        }
+        fs::write(&config_path, new_content)?;
+    } else {
+        // Append new section
+        let mut content = content;
+        if !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(&format!(
+            "\n[encryption]\nmethod = \"{method}\"\nkey_path = \"{}\"\n",
+            config.encryption.key_path
+        ));
+        fs::write(&config_path, content)?;
     }
 
     Ok(())
@@ -487,7 +626,54 @@ fn run_non_interactive() -> anyhow::Result<()> {
         }
     }
 
+    // 4. Auto-configure encryption
+    setup_encryption_auto(&config)?;
+
     println!("\nSetup complete. Run `facelock enroll` to register your face.");
+    Ok(())
+}
+
+/// Auto-configure encryption in non-interactive mode.
+/// TPM if available, otherwise software encryption.
+fn setup_encryption_auto(config: &Config) -> anyhow::Result<()> {
+    use facelock_core::config::EncryptionMethod;
+
+    // Skip if already configured
+    if config.encryption.method != EncryptionMethod::None {
+        println!("  Encryption already configured ({:?}).", config.encryption.method);
+        return Ok(());
+    }
+
+    // Try TPM first
+    let tpm_available = Path::new("/dev/tpmrm0").exists();
+    if tpm_available {
+        #[cfg(feature = "tpm")]
+        {
+            if let Ok(sealer) = facelock_tpm::TpmSealer::new(&config.tpm.tcti) {
+                if sealer.is_available() {
+                    let mut config = config.clone();
+                    config.tpm.seal_database = true;
+                    config.encryption.method = EncryptionMethod::Tpm;
+                    update_config_encryption(&config, "tpm")?;
+                    println!("  [ok] TPM 2.0 encryption enabled.");
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    // Fall back to software encryption
+    let key_path = Path::new(&config.encryption.key_path);
+    if !key_path.exists() {
+        facelock_tpm::SoftwareSealer::generate_key_file(key_path)
+            .context("failed to generate encryption key")?;
+        println!("  [ok] Generated encryption key at {}", key_path.display());
+    }
+
+    let mut config = config.clone();
+    config.encryption.method = EncryptionMethod::Keyfile;
+    update_config_encryption(&config, "keyfile")?;
+    println!("  [ok] Software encryption (AES-256-GCM) enabled.");
     Ok(())
 }
 

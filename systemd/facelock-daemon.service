@@ -12,5 +12,32 @@ Restart=on-failure
 RestartSec=3
 LimitNOFILE=1024
 
+# --- Phase 1: Safe hardening (no compatibility concerns) ---
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/facelock /var/log/facelock
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+# --- Phase 2: Kernel protection ---
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+
+# --- Phase 3: Device and syscall filtering ---
+# Allow video capture devices and optional TPM
+DeviceAllow=/dev/video* rw
+DeviceAllow=/dev/tpmrm0 rw
+# System service syscalls plus io-event for epoll/select (tokio)
+SystemCallFilter=@system-service @io-event
+SystemCallErrorNumber=EPERM
+# Note: MemoryDenyWriteExecute=yes breaks CUDA/TensorRT GPU inference.
+# Enable only if using CPU execution provider:
+# MemoryDenyWriteExecute=yes
+
 [Install]
 WantedBy=multi-user.target

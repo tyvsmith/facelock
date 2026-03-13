@@ -306,29 +306,19 @@ caps::clear(None, CapSet::Permitted)?;
 // Only keep what's needed: nothing (camera fd already open, socket already bound)
 ```
 
-#### B. systemd Hardening (Required, already partially in place)
+#### B. systemd Hardening (Implemented)
 
-The systemd unit should include:
-```ini
-[Service]
-# Already present:
-ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/var/lib/facelock /run/facelock /var/log/facelock
-DeviceAllow=/dev/video* rw
+The systemd unit (`systemd/facelock-daemon.service`) includes layered hardening:
 
-# Add these:
-NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectKernelTunables=yes
-ProtectKernelModules=yes
-ProtectControlGroups=yes
-RestrictNamespaces=yes
-RestrictRealtime=yes
-RestrictSUIDSGID=yes
-SystemCallFilter=@system-service @io-event
-MemoryDenyWriteExecute=yes
-LockPersonality=yes
+**Phase 1 (safe):** `ProtectSystem=strict`, `ProtectHome=yes`, `ReadWritePaths=/var/lib/facelock /var/log/facelock`, `PrivateTmp=yes`, `NoNewPrivileges=yes`
+
+**Phase 2 (kernel):** `ProtectKernelTunables/Modules/ControlGroups=yes`, `RestrictNamespaces=yes`, `LockPersonality=yes`, `RestrictRealtime=yes`, `RestrictSUIDSGID=yes`
+
+**Phase 3 (devices/syscalls):** `DeviceAllow=/dev/video* rw`, `DeviceAllow=/dev/tpmrm0 rw`, `SystemCallFilter=@system-service @io-event`
+
+**GPU compatibility note:** `MemoryDenyWriteExecute=yes` is commented out because it breaks CUDA and TensorRT GPU inference (JIT compilation requires W+X pages). Enable it only when using the CPU execution provider. Verify hardening score with:
+```bash
+systemd-analyze security facelock-daemon.service
 ```
 
 ## Security Configuration Reference

@@ -6,15 +6,16 @@ pkgdesc="Face authentication for Linux"
 arch=('x86_64')
 url="https://github.com/user/facelock"
 license=('MIT' 'Apache-2.0')
-depends=('pam' 'gcc-libs')
+depends=('pam' 'gcc-libs' 'tpm2-tss')
 makedepends=('rust' 'cargo' 'clang')
-optdepends=('tpm2-tss: TPM2 support for embedding encryption')
 backup=('etc/facelock/config.toml')
 install=facelock.install
 
 build() {
     cd "$srcdir/$pkgname-$pkgver"
+    # Build all crates, then rebuild facelock-cli with TPM support
     cargo build --release --workspace
+    cargo build --release -p facelock-cli --features tpm
 }
 
 package() {

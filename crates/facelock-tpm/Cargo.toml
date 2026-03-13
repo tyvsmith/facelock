@@ -10,6 +10,9 @@ facelock-core = { path = "../facelock-core" }
 tracing.workspace = true
 tss-esapi = { workspace = true, optional = true }
 serde = { workspace = true }
+zeroize = "1"
+aes-gcm = "0.10"
+rand = "0.8"
 
 [dev-dependencies]
 serde_json = "1"

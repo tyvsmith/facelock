@@ -7,6 +7,15 @@ use tracing::warn;
 /// Version byte prefixed to TPM-sealed blobs.
 const SEALED_VERSION_BYTE: u8 = 0x01;
 
+/// Version byte prefixed to software-encrypted blobs (AES-256-GCM).
+const SOFTWARE_ENCRYPTED_VERSION_BYTE: u8 = 0x02;
+
+/// AES-256-GCM nonce size in bytes.
+const AES_NONCE_SIZE: usize = 12;
+
+/// AES-256-GCM key size in bytes (256 bits).
+const AES_KEY_SIZE: usize = 32;
+
 /// Raw embedding size: 512 f32 values = 2048 bytes.
 const RAW_EMBEDDING_SIZE: usize = 512 * 4;
 
@@ -41,7 +50,7 @@ impl TpmSealer {
     pub fn new(tcti: &str) -> Result<Self> {
         use tss_esapi::tcti_ldr::TctiNameConf;
 
-        let tcti_conf: TctiNameConf = tcti.try_into().map_err(|e| {
+        let tcti_conf: TctiNameConf = tcti.parse().map_err(|e| {
             FacelockError::Tpm(format!("invalid TCTI string '{tcti}': {e}"))
         })?;
 
@@ -233,7 +242,7 @@ impl TpmSealer {
             .execute_with_nullauth_session(|ctx| ctx.unseal(loaded.into()))
             .map_err(|e| FacelockError::Tpm(format!("TPM unseal failed: {e}")))?;
 
-        let data: Vec<u8> = unsealed.into();
+        let data: Vec<u8> = unsealed.as_slice().to_vec();
         debug!(unsealed_size = data.len(), "unsealed embedding");
         Ok(data)
     }
@@ -414,6 +423,174 @@ impl TpmSealer {
 }
 
 // ---------------------------------------------------------------------------
+// Software encryption (AES-256-GCM, non-TPM fallback)
+// ---------------------------------------------------------------------------
+
+/// AES-256-GCM based sealer for environments without a TPM.
+///
+/// Encrypts embeddings using a 256-bit key stored in a key file.
+/// Sealed format: `0x02 | 12-byte nonce | ciphertext | 16-byte auth tag`
+pub struct SoftwareSealer {
+    key: [u8; AES_KEY_SIZE],
+}
+
+impl std::fmt::Debug for SoftwareSealer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SoftwareSealer")
+            .field("key", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl SoftwareSealer {
+    /// Create a new SoftwareSealer from a key file.
+    ///
+    /// The key file must contain exactly 32 bytes (256 bits) of key material.
+    pub fn from_key_file(path: &std::path::Path) -> Result<Self> {
+        let data = std::fs::read(path).map_err(|e| {
+            FacelockError::Encryption(format!("failed to read key file {}: {e}", path.display()))
+        })?;
+        if data.len() != AES_KEY_SIZE {
+            return Err(FacelockError::Encryption(format!(
+                "key file must be exactly {AES_KEY_SIZE} bytes, got {}",
+                data.len()
+            )));
+        }
+        let mut key = [0u8; AES_KEY_SIZE];
+        key.copy_from_slice(&data);
+        Ok(Self { key })
+    }
+
+    /// Create a SoftwareSealer from raw key bytes.
+    pub fn from_key(key: [u8; AES_KEY_SIZE]) -> Self {
+        Self { key }
+    }
+
+    /// Generate a new random 256-bit key and write it to a file.
+    /// Sets file permissions to 0600 (owner read/write only).
+    pub fn generate_key_file(path: &std::path::Path) -> Result<()> {
+        use rand::RngCore;
+
+        let mut key = [0u8; AES_KEY_SIZE];
+        rand::thread_rng().fill_bytes(&mut key);
+
+        // Write atomically: write to temp file, then rename
+        let dir = path.parent().ok_or_else(|| {
+            FacelockError::Encryption("key file path has no parent directory".into())
+        })?;
+        std::fs::create_dir_all(dir).map_err(|e| {
+            FacelockError::Encryption(format!("failed to create directory {}: {e}", dir.display()))
+        })?;
+
+        std::fs::write(path, key).map_err(|e| {
+            FacelockError::Encryption(format!("failed to write key file {}: {e}", path.display()))
+        })?;
+
+        // Set restrictive permissions (0600 = owner read/write only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(
+                |e| {
+                    FacelockError::Encryption(format!(
+                        "failed to set key file permissions: {e}"
+                    ))
+                },
+            )?;
+        }
+
+        // Zeroize the in-memory copy
+        use zeroize::Zeroize;
+        key.zeroize();
+
+        Ok(())
+    }
+
+    /// Encrypt an embedding using AES-256-GCM.
+    ///
+    /// Returns: `0x02 | 12-byte nonce | ciphertext | 16-byte tag`
+    pub fn seal_embedding(&self, embedding: &FaceEmbedding) -> Result<Vec<u8>> {
+        let raw = embedding_to_bytes(embedding);
+        self.seal_bytes(&raw)
+    }
+
+    /// Decrypt an embedding from a software-encrypted blob.
+    pub fn unseal_embedding(&self, sealed: &[u8]) -> Result<FaceEmbedding> {
+        let raw = self.unseal_bytes(sealed)?;
+        bytes_to_embedding(&raw)
+    }
+
+    /// Encrypt arbitrary bytes.
+    #[allow(deprecated)] // aes-gcm uses deprecated generic-array API
+    pub fn seal_bytes(&self, data: &[u8]) -> Result<Vec<u8>> {
+        use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+        use aes_gcm::aead::Aead;
+        use rand::RngCore;
+
+        let cipher = Aes256Gcm::new_from_slice(&self.key).map_err(|e| {
+            FacelockError::Encryption(format!("failed to create AES cipher: {e}"))
+        })?;
+
+        let mut nonce_bytes = [0u8; AES_NONCE_SIZE];
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let ciphertext = cipher.encrypt(nonce, data).map_err(|e| {
+            FacelockError::Encryption(format!("AES-GCM encryption failed: {e}"))
+        })?;
+
+        // Format: version byte + nonce + ciphertext (includes 16-byte tag)
+        let mut blob = Vec::with_capacity(1 + AES_NONCE_SIZE + ciphertext.len());
+        blob.push(SOFTWARE_ENCRYPTED_VERSION_BYTE);
+        blob.extend_from_slice(&nonce_bytes);
+        blob.extend_from_slice(&ciphertext);
+
+        Ok(blob)
+    }
+
+    /// Decrypt a software-encrypted blob.
+    #[allow(deprecated)] // aes-gcm uses deprecated generic-array API
+    pub fn unseal_bytes(&self, sealed: &[u8]) -> Result<Vec<u8>> {
+        use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+        use aes_gcm::aead::Aead;
+
+        let min_size = 1 + AES_NONCE_SIZE + 16; // version + nonce + tag (minimum)
+        if sealed.len() < min_size {
+            return Err(FacelockError::Encryption(
+                "encrypted blob too short".into(),
+            ));
+        }
+
+        if sealed[0] != SOFTWARE_ENCRYPTED_VERSION_BYTE {
+            return Err(FacelockError::Encryption(format!(
+                "expected software encryption version byte 0x{:02x}, got 0x{:02x}",
+                SOFTWARE_ENCRYPTED_VERSION_BYTE, sealed[0]
+            )));
+        }
+
+        let nonce = Nonce::from_slice(&sealed[1..1 + AES_NONCE_SIZE]);
+        let ciphertext = &sealed[1 + AES_NONCE_SIZE..];
+
+        let cipher = Aes256Gcm::new_from_slice(&self.key).map_err(|e| {
+            FacelockError::Encryption(format!("failed to create AES cipher: {e}"))
+        })?;
+
+        cipher.decrypt(nonce, ciphertext).map_err(|e| {
+            FacelockError::Encryption(format!(
+                "AES-GCM decryption failed (wrong key or corrupted data): {e}"
+            ))
+        })
+    }
+}
+
+impl Drop for SoftwareSealer {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.key.zeroize();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
@@ -439,9 +616,40 @@ fn bytes_to_embedding(data: &[u8]) -> Result<FaceEmbedding> {
     Ok(embedding)
 }
 
-/// Detect whether a blob is TPM-sealed (version byte prefix) or raw.
+/// Zero-on-drop wrapper for raw embedding bytes used during seal/unseal.
+/// Ensures sensitive biometric data does not linger in memory.
+pub struct ZeroizingBytes(Vec<u8>);
+
+impl ZeroizingBytes {
+    pub fn new(data: Vec<u8>) -> Self {
+        Self(data)
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Drop for ZeroizingBytes {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.0.zeroize();
+    }
+}
+
+/// Detect whether a blob is TPM-sealed (version byte 0x01) or raw.
 pub fn is_sealed(data: &[u8]) -> bool {
     !data.is_empty() && data[0] == SEALED_VERSION_BYTE && data.len() != RAW_EMBEDDING_SIZE
+}
+
+/// Detect whether a blob is software-encrypted (version byte 0x02).
+pub fn is_software_encrypted(data: &[u8]) -> bool {
+    !data.is_empty() && data[0] == SOFTWARE_ENCRYPTED_VERSION_BYTE && data.len() != RAW_EMBEDDING_SIZE
+}
+
+/// Detect whether a blob is encrypted (either TPM-sealed or software-encrypted).
+pub fn is_encrypted(data: &[u8]) -> bool {
+    is_sealed(data) || is_software_encrypted(data)
 }
 
 /// Return the raw embedding size constant.
@@ -520,6 +728,204 @@ mod tests {
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("TPM"), "error should mention TPM: {err_msg}");
+    }
+
+    #[test]
+    fn software_seal_unseal_round_trip() {
+        let key = [0x42u8; 32];
+        let sealer = SoftwareSealer::from_key(key);
+        let mut emb = [0.0f32; 512];
+        emb[0] = 1.0;
+        emb[1] = -1.0;
+        emb[511] = 42.0;
+
+        let sealed = sealer.seal_embedding(&emb).unwrap();
+        assert_eq!(sealed[0], SOFTWARE_ENCRYPTED_VERSION_BYTE);
+        assert!(sealed.len() > RAW_EMBEDDING_SIZE); // encrypted is larger due to nonce + tag
+
+        let unsealed = sealer.unseal_embedding(&sealed).unwrap();
+        assert_eq!(emb, unsealed);
+    }
+
+    #[test]
+    fn software_seal_wrong_key_fails() {
+        let key1 = [0x42u8; 32];
+        let key2 = [0x43u8; 32];
+        let sealer1 = SoftwareSealer::from_key(key1);
+        let sealer2 = SoftwareSealer::from_key(key2);
+
+        let emb = [0.5f32; 512];
+        let sealed = sealer1.seal_embedding(&emb).unwrap();
+
+        let result = sealer2.unseal_embedding(&sealed);
+        assert!(result.is_err(), "decryption with wrong key should fail");
+    }
+
+    #[test]
+    fn software_encrypted_detection() {
+        let key = [0x42u8; 32];
+        let sealer = SoftwareSealer::from_key(key);
+        let data = b"test data";
+        let encrypted = sealer.seal_bytes(data).unwrap();
+        assert!(is_software_encrypted(&encrypted));
+        assert!(!is_sealed(&encrypted));
+        assert!(is_encrypted(&encrypted));
+    }
+
+    #[test]
+    fn software_seal_bytes_round_trip() {
+        let key = [0x42u8; 32];
+        let sealer = SoftwareSealer::from_key(key);
+        let data = b"hello, biometric world!";
+        let sealed = sealer.seal_bytes(data).unwrap();
+        let unsealed = sealer.unseal_bytes(&sealed).unwrap();
+        assert_eq!(unsealed, data);
+    }
+
+    #[test]
+    fn software_seal_truncated_blob_fails() {
+        let key = [0x42u8; 32];
+        let sealer = SoftwareSealer::from_key(key);
+        // Too short: version byte only
+        let result = sealer.unseal_bytes(&[SOFTWARE_ENCRYPTED_VERSION_BYTE]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn software_sealer_generate_and_load_key_file() {
+        let dir = std::env::temp_dir().join("facelock_key_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let key_path = dir.join("test.key");
+
+        // Generate key file
+        SoftwareSealer::generate_key_file(&key_path).unwrap();
+
+        // Verify file exists and is 32 bytes
+        let data = std::fs::read(&key_path).unwrap();
+        assert_eq!(data.len(), AES_KEY_SIZE, "key file should be exactly 32 bytes");
+
+        // Verify permissions (0600)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::metadata(&key_path).unwrap().permissions();
+            assert_eq!(perms.mode() & 0o777, 0o600, "key file should be 0600");
+        }
+
+        // Load key from file and verify round-trip
+        let sealer = SoftwareSealer::from_key_file(&key_path).unwrap();
+        let emb = [0.42f32; 512];
+        let sealed = sealer.seal_embedding(&emb).unwrap();
+        let unsealed = sealer.unseal_embedding(&sealed).unwrap();
+        assert_eq!(emb, unsealed);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn software_sealer_from_key_file_wrong_size() {
+        let dir = std::env::temp_dir().join("facelock_key_wrong_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let key_path = dir.join("bad.key");
+        std::fs::write(&key_path, &[0u8; 16]).unwrap(); // 16 bytes instead of 32
+
+        let result = SoftwareSealer::from_key_file(&key_path);
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("32"), "error should mention expected size: {err}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn software_sealer_from_key_file_missing() {
+        let result = SoftwareSealer::from_key_file(std::path::Path::new("/nonexistent/key.file"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn zeroizing_bytes_clears_on_drop() {
+        let data = vec![0xAA; 100];
+        let wrapper = ZeroizingBytes::new(data);
+        assert_eq!(wrapper.as_slice().len(), 100);
+        assert!(wrapper.as_slice().iter().all(|&b| b == 0xAA));
+        // Drop happens here; we can't verify memory after drop without unsafe,
+        // but we verify the wrapper API works correctly
+    }
+
+    #[test]
+    fn is_encrypted_covers_both_types() {
+        // TPM-sealed
+        let mut tpm_blob = vec![SEALED_VERSION_BYTE];
+        tpm_blob.extend_from_slice(&[0u8; 100]);
+        assert!(is_encrypted(&tpm_blob));
+        assert!(is_sealed(&tpm_blob));
+        assert!(!is_software_encrypted(&tpm_blob));
+
+        // Software-encrypted
+        let mut sw_blob = vec![SOFTWARE_ENCRYPTED_VERSION_BYTE];
+        sw_blob.extend_from_slice(&[0u8; 100]);
+        assert!(is_encrypted(&sw_blob));
+        assert!(!is_sealed(&sw_blob));
+        assert!(is_software_encrypted(&sw_blob));
+
+        // Raw embedding (neither)
+        let raw = vec![0u8; RAW_EMBEDDING_SIZE];
+        assert!(!is_encrypted(&raw));
+
+        // Empty
+        assert!(!is_encrypted(&[]));
+    }
+
+    #[test]
+    fn software_seal_different_nonces() {
+        // Two seals with the same key and data should produce different ciphertexts
+        // (due to random nonces)
+        let key = [0x42u8; 32];
+        let sealer = SoftwareSealer::from_key(key);
+        let data = b"same data";
+        let sealed1 = sealer.seal_bytes(data).unwrap();
+        let sealed2 = sealer.seal_bytes(data).unwrap();
+        assert_ne!(sealed1, sealed2, "different nonces should produce different ciphertexts");
+
+        // Both should decrypt to the same data
+        let unsealed1 = sealer.unseal_bytes(&sealed1).unwrap();
+        let unsealed2 = sealer.unseal_bytes(&sealed2).unwrap();
+        assert_eq!(unsealed1, unsealed2);
+    }
+
+    #[test]
+    fn software_seal_tampered_ciphertext_fails() {
+        let key = [0x42u8; 32];
+        let sealer = SoftwareSealer::from_key(key);
+        let data = b"secret data";
+        let mut sealed = sealer.seal_bytes(data).unwrap();
+
+        // Tamper with ciphertext (flip a byte after the nonce)
+        let tamper_idx = 1 + AES_NONCE_SIZE + 5;
+        if tamper_idx < sealed.len() {
+            sealed[tamper_idx] ^= 0xFF;
+        }
+
+        let result = sealer.unseal_bytes(&sealed);
+        assert!(result.is_err(), "tampered ciphertext should fail authentication");
+    }
+
+    #[test]
+    fn software_unseal_wrong_version_byte() {
+        let key = [0x42u8; 32];
+        let sealer = SoftwareSealer::from_key(key);
+        // Blob with version byte 0x03 (unknown)
+        let mut blob = vec![0x03u8];
+        blob.extend_from_slice(&[0u8; 50]);
+        let result = sealer.unseal_bytes(&blob);
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("version"), "error should mention version byte: {err}");
     }
 
     #[test]

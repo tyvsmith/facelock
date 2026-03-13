@@ -1,18 +1,17 @@
 use std::time::{Duration, Instant};
 
-use facelock_core::config::Config;
+use facelock_core::config::{Config, EncryptionMethod};
 use facelock_core::ipc::{DaemonRequest, DaemonResponse, PreviewFace};
 use facelock_core::traits::{CameraSource, FaceProcessor};
 use facelock_core::types::best_match;
 use facelock_store::FaceStore;
 use image::codecs::jpeg::JpegEncoder;
-use tracing::{debug, info};
-#[cfg(feature = "tpm")]
-use tracing::warn;
+use tracing::{debug, info, warn};
 
 use crate::auth;
 use crate::enroll;
 use crate::rate_limit::RateLimiter;
+
 
 /// Type alias for the camera factory closure.
 type CameraFactory<C> = Box<dyn Fn(&Config) -> Result<C, String> + Send + Sync>;
@@ -33,6 +32,7 @@ pub struct Handler<C: CameraSource, E: FaceProcessor> {
     jpeg_buf: Vec<u8>,
     #[cfg(feature = "tpm")]
     tpm_sealer: Option<facelock_tpm::TpmSealer>,
+    software_sealer: Option<facelock_tpm::SoftwareSealer>,
 }
 
 impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
@@ -60,6 +60,23 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
             None
         };
 
+        // Initialize software sealer if keyfile encryption is configured
+        let software_sealer = if config.encryption.method == EncryptionMethod::Keyfile {
+            let key_path = std::path::Path::new(&config.encryption.key_path);
+            match facelock_tpm::SoftwareSealer::from_key_file(key_path) {
+                Ok(sealer) => {
+                    info!("software encryption sealer initialized from {}", key_path.display());
+                    Some(sealer)
+                }
+                Err(e) => {
+                    warn!("failed to initialize software encryption sealer: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Self {
             config,
             engine,
@@ -73,6 +90,7 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
             jpeg_buf: Vec::with_capacity(JPEG_BUF_CAPACITY),
             #[cfg(feature = "tpm")]
             tpm_sealer,
+            software_sealer,
         }
     }
 
@@ -116,61 +134,77 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         }
     }
 
-    /// Load user embeddings, unsealing TPM-sealed blobs when a sealer is available.
-    #[allow(dead_code)]
-    /// Falls back to the standard `get_user_embeddings` path when TPM is not active.
+    /// Load user embeddings, decrypting TPM-sealed or software-encrypted blobs.
+    /// Falls back to the standard `get_user_embeddings` path when no encryption is active.
     fn load_user_embeddings(
         &mut self,
         user: &str,
     ) -> Result<Vec<(u32, facelock_core::types::FaceEmbedding)>, DaemonResponse> {
+        // Check if any encryption is configured that requires raw blob handling
+        let needs_raw = self.software_sealer.is_some();
         #[cfg(feature = "tpm")]
-        if let Some(ref mut sealer) = self.tpm_sealer {
-            let raw_rows = self.store.get_user_embeddings_raw(user).map_err(|e| {
-                DaemonResponse::Error {
-                    message: format!("storage error: {e}"),
-                }
-            })?;
+        let needs_raw = needs_raw || self.tpm_sealer.is_some();
 
-            let mut results = Vec::with_capacity(raw_rows.len());
-            for (id, blob, sealed) in &raw_rows {
-                if *sealed && !sealer.is_available() {
-                    return Err(DaemonResponse::Error {
+        if !needs_raw {
+            // Fast path: no encryption, use standard method (no overhead)
+            return self.store.get_user_embeddings(user).map_err(|e| DaemonResponse::Error {
+                message: format!("storage error: {e}"),
+            });
+        }
+
+        // Slow path: load raw blobs and decrypt as needed
+        let raw_rows = self.store.get_user_embeddings_raw(user).map_err(|e| {
+            DaemonResponse::Error {
+                message: format!("storage error: {e}"),
+            }
+        })?;
+
+        let mut results = Vec::with_capacity(raw_rows.len());
+        for (id, blob, sealed) in &raw_rows {
+            let embedding = if *sealed && facelock_tpm::is_software_encrypted(blob) {
+                // Software-encrypted (version byte 0x02)
+                let sealer = self.software_sealer.as_ref().ok_or_else(|| DaemonResponse::Error {
+                    message: format!("embedding {id} is software-encrypted but no key is configured"),
+                })?;
+                sealer.unseal_embedding(blob).map_err(|e| DaemonResponse::Error {
+                    message: format!("software decryption failed for embedding {id}: {e}"),
+                })?
+            } else if *sealed {
+                // TPM-sealed (version byte 0x01)
+                #[cfg(feature = "tpm")]
+                {
+                    let sealer = self.tpm_sealer.as_mut().ok_or_else(|| DaemonResponse::Error {
                         message: "TPM-sealed embeddings exist but TPM is not available".into(),
-                    });
-                }
-
-                let embedding = if *sealed {
+                    })?;
                     sealer.unseal_embedding(blob).map_err(|e| DaemonResponse::Error {
                         message: format!("TPM unseal failed for embedding {id}: {e}"),
                     })?
-                } else {
-                    // Raw embedding — interpret as f32 slice
-                    let floats: &[f32] = bytemuck::cast_slice(blob);
-                    let mut emb = [0f32; 512];
-                    if floats.len() != 512 {
-                        return Err(DaemonResponse::Error {
-                            message: format!(
-                                "invalid raw embedding size for id {id}: expected 512 floats, got {}",
-                                floats.len()
-                            ),
-                        });
-                    }
-                    emb.copy_from_slice(floats);
-                    emb
-                };
+                }
+                #[cfg(not(feature = "tpm"))]
+                {
+                    return Err(DaemonResponse::Error {
+                        message: format!("embedding {id} is TPM-sealed but TPM support is not compiled in"),
+                    });
+                }
+            } else {
+                // Plaintext raw embedding
+                let floats: &[f32] = bytemuck::cast_slice(blob);
+                let mut emb = [0f32; 512];
+                if floats.len() != 512 {
+                    return Err(DaemonResponse::Error {
+                        message: format!(
+                            "invalid raw embedding size for id {id}: expected 512 floats, got {}",
+                            floats.len()
+                        ),
+                    });
+                }
+                emb.copy_from_slice(floats);
+                emb
+            };
 
-                // Map embedding_id back to model_id for best_match compatibility
-                // The raw query returns embedding IDs, but we need model IDs for label lookup.
-                // Re-query the model_id for this embedding.
-                results.push((*id, embedding));
-            }
-            return Ok(results);
+            results.push((*id, embedding));
         }
-
-        // Non-TPM path: use the standard method
-        self.store.get_user_embeddings(user).map_err(|e| DaemonResponse::Error {
-            message: format!("storage error: {e}"),
-        })
+        Ok(results)
     }
 
     pub fn handle(&mut self, request: DaemonRequest) -> DaemonResponse {
@@ -205,12 +239,20 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                     return resp;
                 }
 
+                // Pre-load and decrypt embeddings (handles TPM + software encryption)
+                let stored = match self.load_user_embeddings(&user) {
+                    Ok(s) => s,
+                    Err(resp) => return resp,
+                };
+
                 // Split borrows: take camera out, run auth, put it back
                 let mut camera = self.camera.take().unwrap();
-                let result = auth::authenticate(
+                let models = self.store.list_models(&user).unwrap_or_default();
+                let result = auth::authenticate_with_embeddings(
                     &mut camera,
                     &mut self.engine,
-                    &self.store,
+                    &stored,
+                    &models,
                     &self.config,
                     &user,
                 );

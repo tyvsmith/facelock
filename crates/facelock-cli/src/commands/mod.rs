@@ -1,9 +1,11 @@
+pub mod audit;
 pub mod auth;
 pub mod bench;
 pub mod clear;
 pub mod config;
 pub mod daemon;
 pub mod devices;
+pub mod encrypt;
 pub mod enroll;
 pub mod list;
 pub mod preview;

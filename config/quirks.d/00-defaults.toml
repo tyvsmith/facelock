@@ -1,0 +1,90 @@
+# Facelock Hardware Quirks Database
+#
+# This file contains device-specific workarounds for cameras known to need
+# special handling. Entries are matched by USB vendor:product ID first,
+# then by device name pattern as a fallback.
+#
+# Fields:
+#   vendor_id / product_id  - USB IDs (hex string, e.g. "8086")
+#   name_pattern            - regex matched against device name (fallback)
+#   force_ir                - treat this device as an IR camera regardless of format detection
+#   emitter_xu_guid         - UVC Extension Unit GUID for IR emitter control
+#   emitter_xu_selector     - UVC XU control selector for emitter toggle
+#   warmup_frames           - override device.warmup_frames for this camera
+#   format_preference       - preferred pixel format (e.g. "GREY", "Y16 ", "YUYV")
+#   rotation                - image rotation in degrees (0, 90, 180, 270)
+#   notes                   - human-readable explanation
+
+# --- Intel RealSense ---
+
+[[quirk]]
+vendor_id = "8086"
+product_id = "0b07"
+force_ir = true
+warmup_frames = 10
+format_preference = "Y16 "
+notes = "Intel RealSense SR300 IR camera"
+
+[[quirk]]
+vendor_id = "8086"
+product_id = "0ad3"
+force_ir = true
+warmup_frames = 8
+format_preference = "Y16 "
+notes = "Intel RealSense D435 IR module"
+
+[[quirk]]
+vendor_id = "8086"
+product_id = "0b5c"
+force_ir = true
+warmup_frames = 8
+format_preference = "Y16 "
+notes = "Intel RealSense D455 IR module"
+
+# --- Lenovo ThinkPad IR cameras ---
+
+[[quirk]]
+name_pattern = "(?i)ir.*camera"
+force_ir = true
+warmup_frames = 8
+notes = "ThinkPad integrated IR camera (various models)"
+
+# --- Logitech BRIO ---
+
+[[quirk]]
+vendor_id = "046d"
+product_id = "085e"
+force_ir = true
+warmup_frames = 10
+notes = "Logitech BRIO 4K with IR sensor"
+
+# --- Microsoft Surface cameras ---
+
+[[quirk]]
+name_pattern = "(?i)surface.*ir"
+force_ir = true
+warmup_frames = 8
+notes = "Microsoft Surface IR camera"
+
+[[quirk]]
+vendor_id = "045e"
+product_id = "0990"
+force_ir = true
+warmup_frames = 8
+notes = "Microsoft Surface Pro IR camera"
+
+# --- HP IR cameras ---
+
+[[quirk]]
+name_pattern = "(?i)hp.*ir"
+force_ir = true
+warmup_frames = 8
+notes = "HP IR camera (various models)"
+
+# --- Dell IR cameras ---
+
+[[quirk]]
+name_pattern = "(?i)dell.*ir"
+force_ir = true
+warmup_frames = 8
+notes = "Dell IR camera (various models)"

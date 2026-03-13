@@ -47,8 +47,27 @@ pub fn validate_device(path: &str) -> Result<DeviceInfo> {
 }
 
 /// Heuristic: is this likely an IR camera?
-/// Checks device name for "ir"/"infrared" or format list for GREY/Y16 .
+/// Checks device name for "ir"/"infrared" or format list for GREY/Y16.
+/// Also checks the hardware quirks database for `force_ir` overrides.
 pub fn is_ir_camera(device: &DeviceInfo) -> bool {
+    is_ir_camera_with_quirks(device, None)
+}
+
+/// Like `is_ir_camera` but accepts a quirks database for device-specific overrides.
+pub fn is_ir_camera_with_quirks(
+    device: &DeviceInfo,
+    quirks: Option<&crate::quirks::QuirksDb>,
+) -> bool {
+    // Check quirks database first (most authoritative)
+    if let Some(db) = quirks {
+        if let Some(quirk) = db.find_match(device) {
+            if let Some(force_ir) = quirk.force_ir {
+                return force_ir;
+            }
+        }
+    }
+
+    // Fall back to heuristic detection
     let name_lower = device.name.to_lowercase();
     let has_ir_name = name_lower.contains("ir") || name_lower.contains("infrared");
     let has_ir_format = device

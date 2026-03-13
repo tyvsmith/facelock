@@ -23,18 +23,27 @@ pub fn run(user: Option<String>, json: bool) -> anyhow::Result<()> {
 }
 
 fn fetch_models(config: &Config, user: &str) -> anyhow::Result<Vec<FaceModelInfo>> {
-    if ipc_client::should_use_direct(config) {
-        let store = crate::direct::open_store(config)?;
-        return store.list_models(user).map_err(|e| anyhow::anyhow!("{e}"));
+    // Try D-Bus first (works without root)
+    if !ipc_client::should_use_direct(config) {
+        let request = DaemonRequest::ListModels {
+            user: user.to_string(),
+        };
+        let response = ipc_client::send_request("", &request)?;
+        return match response {
+            DaemonResponse::Models(models) => Ok(models),
+            other => anyhow::bail!("unexpected response from daemon: {other:?}"),
+        };
     }
 
-    let request = DaemonRequest::ListModels {
-        user: user.to_string(),
-    };
-    let response = ipc_client::send_request(&config.daemon.socket_path, &request)?;
-    match response {
-        DaemonResponse::Models(models) => Ok(models),
-        other => anyhow::bail!("unexpected response from daemon: {other:?}"),
+    // Direct mode: needs read access to DB (typically root or facelock group)
+    match crate::direct::open_store(config) {
+        Ok(store) => store.list_models(user).map_err(|e| anyhow::anyhow!("{e}")),
+        Err(_) => {
+            // DB not accessible — prompt for root
+            ipc_client::require_root("sudo facelock list")?;
+            let store = crate::direct::open_store(config)?;
+            store.list_models(user).map_err(|e| anyhow::anyhow!("{e}"))
+        }
     }
 }
 

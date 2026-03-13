@@ -20,6 +20,8 @@ pub enum FacelockError {
     Ipc(String),
     #[error("TPM error: {0}")]
     Tpm(String),
+    #[error("encryption error: {0}")]
+    Encryption(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

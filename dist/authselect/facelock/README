@@ -1,0 +1,18 @@
+Facelock authselect profile for Fedora/RHEL.
+
+Based on the default sssd profile with optional facelock face authentication.
+
+Usage:
+  sudo authselect select facelock with-facelock
+
+Features:
+  with-facelock    Enable face authentication via pam_facelock.so
+
+This profile adds pam_facelock.so as a sufficient auth method before
+password authentication. If face recognition fails or is unavailable,
+authentication falls through to the standard password prompt.
+
+Requirements:
+  - facelock package installed
+  - At least one face enrolled: facelock enroll
+  - facelock daemon running: systemctl enable --now facelock-daemon

@@ -173,6 +173,37 @@ fn default_true() -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Gettext (i18n) support
+// ---------------------------------------------------------------------------
+
+/// Text domain for PAM module translations.
+const GETTEXT_DOMAIN: &[u8] = b"pam_facelock\0";
+
+unsafe extern "C" {
+    safe fn dgettext(
+        domainname: *const libc::c_char,
+        msgid: *const libc::c_char,
+    ) -> *const libc::c_char;
+}
+
+/// Translate a message using gettext. Falls back to the original English string
+/// if no translation is available or if gettext fails.
+fn gettext(msgid: &str) -> String {
+    let Ok(c_msgid) = CString::new(msgid) else {
+        return msgid.to_string();
+    };
+
+    let result = dgettext(GETTEXT_DOMAIN.as_ptr().cast(), c_msgid.as_ptr());
+    if result.is_null() {
+        return msgid.to_string();
+    }
+    unsafe { CStr::from_ptr(result) }
+        .to_str()
+        .unwrap_or(msgid)
+        .to_string()
+}
+
+// ---------------------------------------------------------------------------
 // Syslog logging
 // ---------------------------------------------------------------------------
 
@@ -597,7 +628,7 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
 
     // 4. Display scanning notice
     if config.notification.notify_prompt && config.notification.terminal() {
-        unsafe { pam_info(pamh, "Identifying face...") };
+        unsafe { pam_info(pamh, &gettext("Identifying face...")) };
     }
 
     // 5. Oneshot mode: run facelock-auth directly, skip D-Bus
@@ -607,7 +638,7 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
             && config.notification.notify_on_success
             && config.notification.terminal()
         {
-            unsafe { pam_info(pamh, "Face recognized.") };
+            unsafe { pam_info(pamh, &gettext("Face recognized.")) };
         }
         return result;
     }
@@ -624,7 +655,7 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
                 LOG_INFO,
             );
             if config.notification.notify_on_success && config.notification.terminal() {
-                unsafe { pam_info(pamh, "Face recognized.") };
+                unsafe { pam_info(pamh, &gettext("Face recognized.")) };
             }
             PAM_SUCCESS
         }
@@ -678,7 +709,7 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
                 && config.notification.notify_on_success
                 && config.notification.terminal()
             {
-                unsafe { pam_info(pamh, "Face recognized.") };
+                unsafe { pam_info(pamh, &gettext("Face recognized.")) };
             }
             result
         }

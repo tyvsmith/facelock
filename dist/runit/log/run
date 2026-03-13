@@ -1,0 +1,3 @@
+#!/bin/sh
+# runit log script for facelock daemon
+exec svlogd -tt /var/log/facelock

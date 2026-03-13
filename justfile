@@ -8,6 +8,7 @@ build:
 # Build in release mode (for install)
 build-release:
     cargo build --release --workspace
+    cargo build --release -p facelock-cli --features tpm
 
 # Run all unit tests
 test:

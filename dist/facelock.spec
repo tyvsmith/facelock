@@ -12,8 +12,11 @@ BuildRequires:  clang-devel
 BuildRequires:  pam-devel
 BuildRequires:  libv4l-devel
 BuildRequires:  systemd-rpm-macros
+BuildRequires:  tpm2-tss-devel
 
 Requires:       pam
+Requires:       tpm2-tss
+Recommends:     authselect
 
 %description
 Facelock provides Windows Hello-style face authentication for Linux
@@ -32,6 +35,7 @@ recognition models, then 'sudo facelock enroll' to register your face.
 
 %build
 cargo build --release --workspace
+cargo build --release -p facelock-cli --features tpm
 
 %install
 # Binary
@@ -52,6 +56,17 @@ install -Dm644 dist/facelock.sysusers %{buildroot}%{_sysusersdir}/facelock.conf
 
 # tmpfiles.d
 install -Dm644 dist/facelock.tmpfiles %{buildroot}%{_tmpfilesdir}/facelock.conf
+
+# D-Bus policy and activation
+install -Dm644 dbus/org.facelock.Daemon.conf %{buildroot}%{_datadir}/dbus-1/system.d/org.facelock.Daemon.conf
+install -Dm644 dbus/org.facelock.Daemon.service %{buildroot}%{_datadir}/dbus-1/system-services/org.facelock.Daemon.service
+
+# authselect profile
+install -dm755 %{buildroot}%{_datadir}/authselect/vendor/facelock
+install -Dm644 dist/authselect/facelock/system-auth %{buildroot}%{_datadir}/authselect/vendor/facelock/system-auth
+install -Dm644 dist/authselect/facelock/password-auth %{buildroot}%{_datadir}/authselect/vendor/facelock/password-auth
+install -Dm644 dist/authselect/facelock/postlogin %{buildroot}%{_datadir}/authselect/vendor/facelock/postlogin
+install -Dm644 dist/authselect/facelock/README %{buildroot}%{_datadir}/authselect/vendor/facelock/README
 
 # Licenses
 install -Dm644 LICENSE-MIT %{buildroot}%{_datadir}/licenses/%{name}/LICENSE-MIT
@@ -88,6 +103,9 @@ echo "  2. sudo facelock enroll      (register your face)"
 %{_unitdir}/facelock-daemon.socket
 %{_sysusersdir}/facelock.conf
 %{_tmpfilesdir}/facelock.conf
+%{_datadir}/dbus-1/system.d/org.facelock.Daemon.conf
+%{_datadir}/dbus-1/system-services/org.facelock.Daemon.service
+%{_datadir}/authselect/vendor/facelock/
 
 %changelog
 * Mon Mar 10 2026 Facelock Contributors <facelock@example.com> - 0.1.0-1
