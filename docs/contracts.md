@@ -8,6 +8,7 @@ Stable contracts. Do not change without updating this document.
 |--------|-------|---------|
 | `facelock` | facelock-cli | Unified CLI (daemon, auth, enroll, test, setup, etc.) |
 | `libpam_facelock.so` | pam-facelock | PAM authentication module |
+| `facelock-polkit-agent` | facelock-polkit | Polkit face authentication agent |
 
 ## CLI Subcommands
 
@@ -28,7 +29,10 @@ Stable contracts. Do not change without updating this document.
 | `facelock daemon` | Run persistent daemon |
 | `facelock auth --user X` | One-shot auth (PAM helper) |
 | `facelock tpm status` | TPM status |
-| `facelock bench` | Benchmarks |
+| `facelock bench` | Benchmarks and calibration |
+| `facelock encrypt` | Encrypt stored embeddings (AES-256-GCM) |
+| `facelock decrypt` | Decrypt stored embeddings |
+| `facelock audit` | View structured audit log |
 
 ## Operating Modes
 
@@ -73,9 +77,11 @@ TOML format. All keys optional — camera auto-detected, sensible defaults for e
 | `[recognition]` | `threshold`, `timeout_secs`, `detector_model`, `embedder_model`, `threads`, `execution_provider` |
 | `[daemon]` | `mode` (DaemonMode enum), `socket_path`, `model_dir`, `idle_timeout_secs` |
 | `[storage]` | `db_path` |
-| `[security]` | `require_ir`, `require_frame_variance`, `min_auth_frames`, `abort_if_ssh`, `abort_if_lid_closed`, rate_limit sub-section |
+| `[security]` | `disabled`, `require_ir`, `require_frame_variance`, `require_landmark_liveness`, `min_auth_frames`, `abort_if_ssh`, `abort_if_lid_closed`, `suppress_unknown`, rate_limit sub-section |
 | `[notification]` | `mode` (off/terminal/desktop/both), `notify_prompt`, `notify_on_success`, `notify_on_failure` |
 | `[snapshots]` | `mode` (off/all/failure/success), `dir` |
+| `[encryption]` | `method` (none/keyfile), `key_path` |
+| `[audit]` | `enabled`, `path`, `rotate_size_mb` |
 | `[tpm]` | `seal_database`, `pcr_binding`, `pcr_indices`, `tcti` |
 
 ### Camera Auto-Detection
@@ -102,24 +108,27 @@ CREATE TABLE face_models (
 CREATE TABLE face_embeddings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     model_id INTEGER NOT NULL REFERENCES face_models(id) ON DELETE CASCADE,
-    embedding BLOB NOT NULL  -- 512 x f32 = 2048 bytes
+    embedding BLOB NOT NULL,  -- 512 x f32 = 2048 bytes (or encrypted blob)
+    sealed INTEGER NOT NULL DEFAULT 0  -- 0=plaintext, 1=TPM-sealed, 1=software-encrypted
 );
 ```
 
 ## IPC Protocol
 
-Unix socket, length-prefixed bincode. Only used in daemon mode.
+D-Bus system bus (`org.facelock.Daemon`). Only used in daemon mode.
 
-```
-[4 bytes: u32 LE length][N bytes: bincode payload]
-```
+The daemon registers on the system bus via D-Bus activation. The PAM module and CLI connect as D-Bus clients. Access is controlled by the D-Bus system bus policy (`dbus/org.facelock.Daemon.conf`).
 
-Max message size: 10MB.
+### D-Bus Interface
 
-### Requests
+- **Bus name**: `org.facelock.Daemon`
+- **Object path**: `/org/facelock/Daemon`
+- **Interface**: `org.facelock.Daemon`
+
+### Methods
 `Authenticate`, `Enroll`, `ListModels`, `RemoveModel`, `ClearModels`, `PreviewFrame`, `PreviewDetectFrame`, `ListDevices`, `ReleaseCamera`, `Ping`, `Shutdown`
 
-### Responses
+### Response types
 `AuthResult`, `Enrolled`, `Models`, `Removed`, `Frame`, `DetectFrame`, `Devices`, `Ok`, `Error`
 
 ## PAM Semantics
@@ -156,7 +165,7 @@ These defaults must not be weakened without security review.
 |-------|------|------|---------|
 | SCRFD 2.5G | `scrfd_2.5g_bnkps.onnx` | ~3MB | Yes |
 | ArcFace R50 | `w600k_r50.onnx` | ~166MB | Yes |
-| SCRFD 10G | `scrfd_10g_bnkps.onnx` | ~16MB | Optional |
-| ArcFace R100 | `w600k_r100.onnx` | ~249MB | Optional |
+| SCRFD 10G | `det_10g.onnx` | ~17MB | Optional |
+| ArcFace R100 | `glintr100.onnx` | ~249MB | Optional |
 
 Configurable via `recognition.detector_model` and `recognition.embedder_model`.

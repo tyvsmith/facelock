@@ -17,7 +17,7 @@ No daemon needed -- the CLI auto-falls back to direct mode when no daemon is run
 
 | Mode | Config | How it works | Latency |
 |------|--------|-------------|---------|
-| **Daemon** | `mode = "daemon"` (default) | PAM connects to socket, persistent daemon | ~50ms warm |
+| **Daemon** | `mode = "daemon"` (default) | PAM connects via D-Bus, persistent daemon | ~200ms warm |
 | **Socket activation** | systemd `.socket` unit | systemd starts daemon on demand | ~700ms cold |
 | **Oneshot** | `mode = "oneshot"` | PAM spawns `facelock auth` subprocess | ~700ms |
 
@@ -38,8 +38,10 @@ facelock (unified binary)
 ├── facelock tpm status     TPM status
 └── facelock bench          Benchmarks
 
-pam_facelock.so (PAM module, ~600KB)
-├── daemon mode → socket IPC to daemon
+facelock-polkit-agent       Polkit face authentication agent
+
+pam_facelock.so (PAM module)
+├── daemon mode → D-Bus IPC to daemon
 └── oneshot mode → fork/exec facelock auth
 ```
 
@@ -47,14 +49,15 @@ pam_facelock.so (PAM module, ~600KB)
 
 | Crate | Type | Purpose |
 |-------|------|---------|
-| `facelock-core` | lib | Config, types, errors, IPC protocol, traits |
+| `facelock-core` | lib | Config, types, errors, D-Bus interface, traits |
 | `facelock-camera` | lib | V4L2 capture, auto-detection, preprocessing |
 | `facelock-face` | lib | ONNX inference (SCRFD detection + ArcFace embedding) |
 | `facelock-store` | lib | SQLite face embedding storage |
-| `facelock-daemon` | lib | Auth/enroll logic, rate limiting, request handler |
+| `facelock-daemon` | lib | Auth/enroll logic, rate limiting, liveness, audit |
 | `facelock-cli` | bin | All CLI commands, daemon runner, direct mode |
-| `pam-facelock` | cdylib | PAM module (libc + toml + serde only) |
-| `facelock-tpm` | lib | Optional TPM encryption (feature-gated) |
+| `pam-facelock` | cdylib | PAM module (libc + toml + serde + zbus only) |
+| `facelock-tpm` | lib | Optional TPM sealing, software AES-256-GCM encryption |
+| `facelock-polkit` | bin | Polkit face authentication agent |
 | `facelock-test-support` | lib | Mock camera/engine for testing |
 
 ### Face Recognition Pipeline
@@ -75,7 +78,7 @@ All keys are optional. Camera is auto-detected if `device.path` is omitted. See 
 # path = "/dev/video2"     # auto-detected if omitted (prefers IR)
 
 [recognition]
-# threshold = 0.45         # cosine similarity threshold
+# threshold = 0.80         # cosine similarity threshold (default)
 
 [daemon]
 # mode = "daemon"          # "daemon" or "oneshot"
@@ -94,7 +97,7 @@ See [Quick Start](quickstart.md) for full instructions.
 - IR camera enforcement on by default (anti-spoofing)
 - Frame variance checks reject static photo attacks
 - Model SHA256 verification at every load
-- Socket peer credential checks (SO_PEERCRED)
+- D-Bus system bus policy restricts daemon access
 - PAM audit logging to syslog
 - Rate limiting (5 attempts/user/60s)
 - systemd service hardening

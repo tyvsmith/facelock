@@ -18,8 +18,8 @@ Facelock is a face authentication system for Linux PAM. It detects faces via SCR
     │  pam_facelock.so  │──────────────────┤
     │  (~600KB cdylib) │                  │
     │                 │                  │
-    │  daemon mode:   │                  │
-    │  → socket IPC   │          ┌───────▼──────────────┐
+     │  daemon mode:   │                  │
+     │  → D-Bus IPC    │          ┌───────▼──────────────┐
     │                 │          │  facelock daemon        │
     │  oneshot mode:  │          │  (persistent process) │
     │  → facelock auth  │          │                       │
@@ -51,14 +51,17 @@ facelock-core (config, types, IPC, traits)
     ├── facelock-tpm (optional TPM encryption)
     └── facelock-test-support (mocks, dev-only)
 
-facelock-daemon (auth/enroll logic, rate limiter, handler)
-    └── depends on: core, camera, face, store
+facelock-daemon (auth/enroll logic, rate limiter, liveness, audit)
+    └── depends on: core, camera, face, store, tpm
 
 facelock-cli (unified binary)
-    └── depends on: core, camera, face, store, daemon
+    └── depends on: core, camera, face, store, daemon, tpm
+
+facelock-polkit (polkit authentication agent)
+    └── depends on: core, zbus, tokio
 
 pam-facelock (PAM module)
-    └── depends on: libc, toml, serde ONLY (no facelock crates)
+    └── depends on: libc, toml, serde, zbus ONLY (no facelock crates)
 ```
 
 ## Face Recognition Pipeline
@@ -81,7 +84,7 @@ pam-facelock (PAM module)
 
 ### Matching
 - Compare live embedding against all stored embeddings for the user
-- Accept if best similarity >= `recognition.threshold` (default 0.45)
+- Accept if best similarity >= `recognition.threshold` (default 0.80)
 - Frame variance check: multiple frames must show different embeddings (anti-photo)
 
 ## Auth Flow
@@ -102,8 +105,8 @@ pam-facelock (PAM module)
 ## Operating Modes
 
 ### Daemon Mode
-The daemon (`facelock daemon`) runs persistently, holding ONNX models and camera resources in memory. The PAM module and CLI connect via Unix socket IPC. Benefits:
-- ~50ms auth latency (models already loaded)
+The daemon (`facelock daemon`) runs persistently, holding ONNX models and camera resources in memory. The PAM module and CLI connect via D-Bus system bus. Benefits:
+- ~200ms auth latency (models already loaded)
 - Camera stays warm between requests
 - Single point of resource management
 
@@ -114,7 +117,7 @@ The PAM module spawns `facelock auth --user X` for each auth attempt. The proces
 - Works on any Linux system
 
 ### Direct CLI Mode
-The CLI silently detects whether the daemon socket exists. If yes, uses IPC. If no, operates directly (opens camera, loads models inline). The user doesn't need to know which mode is active.
+The CLI silently attempts to connect to the daemon via D-Bus. If available, uses D-Bus IPC. If not, operates directly (opens camera, loads models inline). The user doesn't need to know which mode is active.
 
 ## Security Layers
 
@@ -122,6 +125,6 @@ The CLI silently detects whether the daemon socket exists. If yes, uses IPC. If 
 2. **Frame variance**: Multiple frames must show micro-movement (prevents static photo)
 3. **Rate limiting**: 5 attempts per user per 60 seconds
 4. **Model integrity**: SHA256 verification at every load
-5. **Socket security**: Peer credentials checked, group-restricted permissions
+5. **D-Bus security**: System bus policy restricts access to daemon interface
 6. **Audit trail**: All auth events logged to syslog
 7. **Process hardening**: systemd service runs with ProtectSystem=strict, NoNewPrivileges, etc.

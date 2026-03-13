@@ -42,7 +42,7 @@
 **Risk**: A broken PAM module can lock users out of sudo, login, and su.
 
 **Mitigation**:
-- 4-tier testing strategy (unit -> hardware -> container -> VM -> host)
+- 5-tier testing strategy (unit -> hardware -> container -> VM -> host)
 - PAM module is thin IPC client -- no ONNX, no camera
 - Returns PAM_IGNORE on any error (graceful fallback to password)
 - Container testing with pamtester before any host install
@@ -76,19 +76,19 @@
 
 **Exit Criteria**: No undocumented contract changes in final codebase.
 
-## R7: Socket Security
+## R7: D-Bus IPC Security
 
-**Risk**: Unix socket permissions could allow unauthorized users to trigger auth or enroll faces.
+**Risk**: Unauthorized users could call daemon D-Bus methods to trigger auth or enroll faces.
 
 **Mitigation**:
-- Socket permissions: 0o660, owned by root:facelock group
-- Peer credential verification via SO_PEERCRED on every connection
+- D-Bus system bus policy (`dbus/org.facelock.Daemon.conf`) restricts method access
+- Only root and `facelock` group members can call daemon methods
 - PAM module connects as root (PAM context)
 - CLI requires root/sudo for write operations
-- Message size limits (10MB max) prevent memory exhaustion
+- D-Bus bus daemon enforces message size limits
 - Rate limiting prevents brute-force (5 attempts/user/60s)
 
-**Exit Criteria**: Documented permission model. Socket not world-accessible. Peer creds verified.
+**Exit Criteria**: Documented permission model. D-Bus policy restricts access. Rate limiting active.
 
 ## R8: Photo/Video Spoofing
 

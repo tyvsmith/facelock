@@ -56,8 +56,8 @@ Controls how the PAM module reaches the face engine.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `mode` | string | `"daemon"` | `"daemon"` connects to a persistent daemon via Unix socket (fast, ~50ms). `"oneshot"` spawns `facelock auth` per PAM call (slower, ~700ms, no background process). |
-| `socket_path` | string | `"/run/facelock/facelock.sock"` | Unix socket path for daemon IPC (daemon mode only). |
+| `mode` | string | `"daemon"` | `"daemon"` connects to a persistent daemon via D-Bus system bus (fast, ~200ms). `"oneshot"` spawns `facelock auth` per PAM call (slower, ~700ms, no background process). |
+| `socket_path` | string | `"/run/facelock/facelock.sock"` | Legacy socket path (D-Bus activation is now used for daemon IPC). |
 | `model_dir` | string | `"/var/lib/facelock/models"` | Directory containing ONNX model files. |
 | `idle_timeout_secs` | u64 | `0` | Shut down the daemon after this many idle seconds. `0` means never. Useful with systemd socket activation. |
 

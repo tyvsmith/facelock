@@ -15,19 +15,21 @@ cargo build --workspace
 
 ## Workspace structure
 
-Facelock is a Cargo workspace with 9 crates:
+Facelock is a Cargo workspace with 11 crates:
 
 | Crate | Type | Purpose |
 |-------|------|---------|
-| `facelock-core` | lib | Config, types, errors, IPC protocol, traits |
+| `facelock-core` | lib | Config, types, errors, D-Bus interface, traits |
 | `facelock-camera` | lib | V4L2 capture, auto-detection, preprocessing |
 | `facelock-face` | lib | ONNX inference (SCRFD + ArcFace) |
 | `facelock-store` | lib | SQLite face embedding storage |
-| `facelock-daemon` | lib | Auth/enroll logic, rate limiting, handler |
+| `facelock-daemon` | lib | Auth/enroll logic, rate limiting, liveness, audit |
 | `facelock-cli` | bin | Unified CLI (`facelock` binary) |
-| `pam-facelock` | cdylib | PAM module (libc + toml + serde only) |
-| `facelock-tpm` | lib | Optional TPM encryption |
+| `pam-facelock` | cdylib | PAM module (libc + toml + serde + zbus only) |
+| `facelock-tpm` | lib | Optional TPM sealing, software AES-256-GCM encryption |
+| `facelock-polkit` | bin | Polkit face authentication agent |
 | `facelock-test-support` | lib | Mocks and fixtures for testing |
+| `facelock-bench` | bin | Standalone benchmarks (not in workspace members) |
 
 Version is declared once in the root `Cargo.toml` and inherited via `version.workspace = true`. Inter-crate dependencies use relative paths.
 
@@ -41,9 +43,9 @@ Version is declared once in the root `Cargo.toml` and inherited via `version.wor
 
 ## Dependency rules
 
-The PAM module (`pam-facelock`) must stay lightweight: **libc, toml, serde only**. No ort, no v4l, no facelock-core. This keeps the shared library small and avoids dragging heavy dependencies into every PAM-using process.
+The PAM module (`pam-facelock`) must stay lightweight: **libc, toml, serde, zbus only**. No ort, no v4l, no facelock-core. This keeps the shared library small and avoids dragging heavy dependencies into every PAM-using process.
 
-Each crate has a defined dependency boundary. See `CLAUDE.md` for the full table.
+Each crate has a defined dependency boundary. See `AGENTS.md` for the full table.
 
 ## Testing
 
@@ -97,7 +99,7 @@ Read `docs/security.md` before implementing any auth-related code. Key rules:
 - Frame variance checks must remain in the auth path.
 - Model files are SHA256-verified at load time.
 - IPC messages have size limits (10MB max). Never allocate unbounded buffers.
-- Socket access is verified via `SO_PEERCRED`.
+- D-Bus system bus policy restricts daemon access.
 - The PAM module logs all auth attempts to syslog.
 - Rate limiting is enforced in the daemon (5 attempts/user/60s default).
 

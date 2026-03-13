@@ -133,9 +133,9 @@ cp /etc/pam.d/sudo.facelock-backup /etc/pam.d/sudo
    ls -la /var/lib/facelock/models/
    ```
 5. Manual test run (should print errors to stderr):
-   ```bash
-   sudo /usr/bin/facelock daemon --foreground
-   ```
+    ```bash
+    sudo /usr/bin/facelock daemon
+    ```
 
 ### Known issue: ONNX runtime crashes under restrictive systemd sandboxing
 
@@ -159,8 +159,8 @@ The ONNX runtime requires access to `/dev/null`, `/dev/urandom`, and `/proc/sys`
 4. Ensure the model directory exists and has correct permissions:
    ```bash
    sudo mkdir -p /var/lib/facelock/models
-   sudo chown root:facelock /var/lib/facelock/models
-   sudo chmod 750 /var/lib/facelock/models
+    sudo chown root:root /var/lib/facelock/models
+    sudo chmod 755 /var/lib/facelock/models
    ```
 
 ## Permission issues
@@ -204,7 +204,7 @@ RUST_LOG=debug facelock test
 RUST_LOG=facelock_camera=trace facelock devices
 
 # Multiple filters:
-RUST_LOG=facelock_daemon=debug,facelock_face=trace facelock daemon --foreground
+RUST_LOG=facelock_daemon=debug,facelock_face=trace facelock daemon
 ```
 
 ### sudo strips environment variables
@@ -213,7 +213,7 @@ RUST_LOG=facelock_daemon=debug,facelock_face=trace facelock daemon --foreground
 
 ```bash
 sudo env RUST_LOG=debug facelock test
-sudo env RUST_LOG=facelock_daemon=trace facelock daemon --foreground
+sudo env RUST_LOG=facelock_daemon=trace facelock daemon
 ```
 
 ### Useful log targets

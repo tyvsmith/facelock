@@ -6,19 +6,21 @@ Facelock is a Linux face authentication PAM module written in Rust. Single unifi
 
 ## Repository Structure
 
-Cargo workspace with 9 crates:
+Cargo workspace with 11 crates:
 
 | Crate | Type | Purpose |
 |-------|------|---------|
-| `facelock-core` | lib | Config, types, errors, IPC protocol, traits |
+| `facelock-core` | lib | Config, types, errors, D-Bus interface, traits |
 | `facelock-camera` | lib | V4L2 capture, auto-detection, preprocessing |
 | `facelock-face` | lib | ONNX inference (SCRFD + ArcFace) |
 | `facelock-store` | lib | SQLite face embedding storage |
-| `facelock-daemon` | lib | Auth/enroll logic, rate limiting, handler |
+| `facelock-daemon` | lib | Auth/enroll logic, rate limiting, liveness, audit |
 | `facelock-cli` | bin | Unified CLI (`facelock` binary) |
-| `pam-facelock` | cdylib | PAM module (libc + toml + serde only) |
-| `facelock-tpm` | lib | Optional TPM encryption |
+| `pam-facelock` | cdylib | PAM module (libc + toml + serde + zbus only) |
+| `facelock-tpm` | lib | Optional TPM sealing, software AES-256-GCM encryption |
+| `facelock-polkit` | bin | Polkit authentication agent (`facelock-polkit-agent`) |
 | `facelock-test-support` | lib | Mocks and fixtures for testing |
+| `facelock-bench` | bin | Standalone benchmarks (not in workspace members) |
 
 ## Build & Verify
 
@@ -57,16 +59,19 @@ cargo run --bin facelock -- --help
 
 ## Dependency Rules
 
-| Crate | Dependencies |
+Key dependencies per crate (see each `Cargo.toml` for full list):
+
+| Crate | Key Dependencies |
 |-------|-------------|
-| facelock-core | serde, toml, thiserror, tracing, subtle, zvariant |
-| facelock-camera | facelock-core, v4l, image |
-| facelock-face | facelock-core, ort, ndarray, image |
+| facelock-core | serde, toml, thiserror, tracing, subtle, zeroize, zvariant |
+| facelock-camera | facelock-core, v4l, image, tracing |
+| facelock-face | facelock-core, ort, ndarray, image, sha2 |
 | facelock-store | facelock-core, rusqlite (bundled), bytemuck |
-| facelock-daemon | facelock-core, facelock-camera, facelock-face, facelock-store, signal-hook |
-| facelock-cli | facelock-core + all above, clap, reqwest, zbus |
+| facelock-daemon | facelock-core, facelock-camera, facelock-face, facelock-store, facelock-tpm, signal-hook, nix |
+| facelock-cli | facelock-core + all above, clap, reqwest, zbus, tokio, dialoguer |
 | pam-facelock | **libc, toml, serde, zbus ONLY** |
-| facelock-tpm | facelock-core, tracing |
+| facelock-tpm | facelock-core, tracing, aes-gcm, rand, zeroize, tss-esapi (optional) |
+| facelock-polkit | facelock-core, zbus, tokio, nix, anyhow |
 
 ## Testing Strategy
 

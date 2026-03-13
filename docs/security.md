@@ -73,7 +73,7 @@ fn check_frame_variance(embeddings: &[(Detection, FaceEmbedding)], min_frames: u
     }
     // If ALL consecutive frames are too similar, likely a static image
     // Real faces typically vary by 0.02-0.10 between frames
-    max_similarity < 0.995
+    max_similarity < 0.998  // FRAME_VARIANCE_THRESHOLD in facelock-core/types.rs
 }
 ```
 
@@ -169,69 +169,21 @@ Face embeddings are **biometric data**. Unlike passwords, they cannot be changed
 
 For high-security deployments, consider encrypting the database with a key derived from a system secret (e.g., TPM-backed key). Not MVP, but design the storage layer so it could be added later.
 
-### 4. IPC / Socket Security
+### 4. D-Bus IPC Security
 
-**Attack**: Unauthorized user connects to daemon socket to trigger auth, enroll faces, or extract data.
+**Attack**: Unauthorized user calls daemon D-Bus methods to trigger auth, enroll faces, or extract data.
 
 **Mitigations**:
 
-#### A. Socket Permissions (Required)
+#### A. D-Bus System Bus Policy (Required)
 
-```rust
-// Create socket with restricted permissions
-let socket_path = &config.daemon.socket_path;
-// Remove stale socket
-let _ = std::fs::remove_file(socket_path);
-// Bind
-let listener = UnixListener::bind(socket_path)?;
-// Set permissions: owner (root) + group (facelock) only
-std::fs::set_permissions(socket_path, Permissions::from_mode(0o660))?;
-// Set ownership
-nix::unistd::chown(socket_path, Some(Uid::from_raw(0)), Some(gid_of("facelock")))?;
-```
+Access to the daemon's D-Bus interface (`org.facelock.Daemon`) is restricted by a system bus policy file (`dbus/org.facelock.Daemon.conf`). Only root and members of the `facelock` group can call daemon methods. The D-Bus daemon enforces this policy before messages reach the facelock daemon.
 
-#### B. Peer Credential Verification (Required)
+#### B. D-Bus Message Size Limits (Enforced by Bus)
 
-Verify the connecting process's UID via `SO_PEERCRED`:
+The D-Bus system bus daemon enforces message size limits (typically 128MB, configurable). This prevents memory exhaustion from oversized messages without requiring application-level checks.
 
-```rust
-use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
-
-fn verify_peer(stream: &UnixStream) -> Result<()> {
-    let cred = getsockopt(stream.as_raw_fd(), PeerCredentials)?;
-    let peer_uid = cred.uid();
-
-    // Only root (PAM context) and members of facelock group can connect
-    if peer_uid != 0 && !is_in_facelock_group(peer_uid) {
-        return Err(FacelockError::Daemon("unauthorized connection".into()));
-    }
-    Ok(())
-}
-```
-
-#### C. Message Size Limits (Required)
-
-Prevent oversized messages from consuming memory:
-
-```rust
-pub fn recv_message<R: Read>(reader: &mut R) -> Result<Vec<u8>> {
-    let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf)?;
-    let len = u32::from_le_bytes(len_buf) as usize;
-
-    // Reject messages larger than 10MB (generous for JPEG preview frames)
-    const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
-    if len > MAX_MESSAGE_SIZE {
-        return Err(FacelockError::Ipc(format!("message too large: {} bytes", len)));
-    }
-
-    let mut buf = vec![0u8; len];
-    reader.read_exact(&mut buf)?;
-    Ok(buf)
-}
-```
-
-#### D. Rate Limiting (Recommended)
+#### C. Rate Limiting (Recommended)
 
 Throttle authentication attempts to prevent brute-force:
 
@@ -333,7 +285,7 @@ require_frame_variance = true # Reject static images (photo defense)
 min_auth_frames = 3          # Minimum frames before accepting (variance check)
 
 [notification]
-enabled = true               # Show "Identifying face..." on login screen
+mode = "terminal"            # Show "Identifying face..." on login screen
 
 [security.pam_policy]
 allowed_services = ["sudo", "polkit-1"]
@@ -351,8 +303,8 @@ window_secs = 60             # Rate limit window
 | **P0** | IR camera enforcement (`require_ir`) | 02-camera, 05-daemon |
 | **P0** | Frame variance check (anti-photo) | 05-daemon |
 | **P0** | Model SHA256 at load time | 03-face-engine |
-| **P0** | Socket permissions + peer creds | 05-daemon |
-| **P0** | IPC message size limits | 01-core-types |
+| **P0** | D-Bus system bus policy | 05-daemon |
+| **P0** | D-Bus message size limits (bus-enforced) | 01-core-types |
 | **P0** | PAM audit logging | 06-pam-module |
 | **P0** | Database file permissions | 10-build-install |
 | **P1** | IR texture validation | 02-camera, 05-daemon |

@@ -92,25 +92,21 @@ Face embeddings are **biometric data**. Unlike passwords, they cannot be changed
 
 For high-security deployments, embeddings can be encrypted with a TPM-bound key. See [Configuration - TPM](configuration.md#tpm).
 
-### 4. IPC / Socket Security
+### 4. D-Bus IPC Security
 
-**Attack**: Unauthorized user connects to daemon socket to trigger auth, enroll faces, or extract data.
+**Attack**: Unauthorized user calls daemon D-Bus methods to trigger auth, enroll faces, or extract data.
 
 **Mitigations**:
 
-#### A. Socket Permissions (Required)
+#### A. D-Bus System Bus Policy (Required)
 
-Socket created with owner (root) + group (facelock) only permissions (mode 0660).
+Access to the daemon's D-Bus interface (`org.facelock.Daemon`) is restricted by a system bus policy file (`dbus/org.facelock.Daemon.conf`). Only root and members of the `facelock` group can call daemon methods.
 
-#### B. Peer Credential Verification (Required)
+#### B. D-Bus Message Size Limits (Enforced by Bus)
 
-Verify the connecting process's UID via `SO_PEERCRED`. Only root (PAM context) and members of facelock group can connect.
+The D-Bus system bus daemon enforces message size limits, preventing memory exhaustion without requiring application-level checks.
 
-#### C. Message Size Limits (Required)
-
-Reject messages larger than 10MB to prevent memory exhaustion attacks.
-
-#### D. Rate Limiting (Recommended)
+#### C. Rate Limiting (Recommended)
 
 Throttle authentication attempts: 5 per user per 60 seconds by default. Prevents brute-force and rapid-retry attacks.
 

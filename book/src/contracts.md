@@ -108,18 +108,20 @@ CREATE TABLE face_embeddings (
 
 ## IPC Protocol
 
-Unix socket, length-prefixed bincode. Only used in daemon mode.
+D-Bus system bus (`org.facelock.Daemon`). Only used in daemon mode.
 
-```
-[4 bytes: u32 LE length][N bytes: bincode payload]
-```
+The daemon registers on the system bus via D-Bus activation. The PAM module and CLI connect as D-Bus clients. Access is controlled by the D-Bus system bus policy (`dbus/org.facelock.Daemon.conf`).
 
-Max message size: 10MB.
+### D-Bus Interface
 
-### Requests
+- **Bus name**: `org.facelock.Daemon`
+- **Object path**: `/org/facelock/Daemon`
+- **Interface**: `org.facelock.Daemon`
+
+### Methods
 `Authenticate`, `Enroll`, `ListModels`, `RemoveModel`, `ClearModels`, `PreviewFrame`, `PreviewDetectFrame`, `ListDevices`, `ReleaseCamera`, `Ping`, `Shutdown`
 
-### Responses
+### Response types
 `AuthResult`, `Enrolled`, `Models`, `Removed`, `Frame`, `DetectFrame`, `Devices`, `Ok`, `Error`
 
 ## PAM Semantics
@@ -156,7 +158,7 @@ These defaults must not be weakened without security review.
 |-------|------|------|---------|
 | SCRFD 2.5G | `scrfd_2.5g_bnkps.onnx` | ~3MB | Yes |
 | ArcFace R50 | `w600k_r50.onnx` | ~166MB | Yes |
-| SCRFD 10G | `scrfd_10g_bnkps.onnx` | ~16MB | Optional |
-| ArcFace R100 | `w600k_r100.onnx` | ~249MB | Optional |
+| SCRFD 10G | `det_10g.onnx` | ~17MB | Optional |
+| ArcFace R100 | `glintr100.onnx` | ~249MB | Optional |
 
 Configurable via `recognition.detector_model` and `recognition.embedder_model`.
