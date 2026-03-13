@@ -123,9 +123,9 @@ install-files:
     install -Dm644 dbus/org.facelock.Daemon.conf /usr/share/dbus-1/system.d/org.facelock.Daemon.conf
     install -Dm644 dbus/org.facelock.Daemon.service /usr/share/dbus-1/system-services/org.facelock.Daemon.service
 
-    # Polkit agent (optional)
+    # Polkit agent binary (optional, do NOT install autostart — agent is not production-ready
+    # and will steal polkit auth from the DE's agent, causing all privilege prompts to hang)
     [ -f target/release/facelock-polkit-agent ] && install -Dm755 target/release/facelock-polkit-agent /usr/bin/facelock-polkit-agent || true
-    [ -f polkit/org.facelock.AuthAgent.desktop ] && install -Dm644 polkit/org.facelock.AuthAgent.desktop /etc/xdg/autostart/org.facelock.AuthAgent.desktop || true
 
     # Directories
     install -dm770 -o root -g facelock /var/lib/facelock
