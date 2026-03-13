@@ -179,6 +179,9 @@ uninstall-files:
         echo "Removed face auth from /etc/pam.d/sudo"
     fi
 
+    # Kill facelock polkit agent if running (so the DE's agent can take over)
+    pkill -f facelock-polkit-agent 2>/dev/null || true
+
     # Remove binaries and units
     rm -f /usr/bin/facelock /lib/security/pam_facelock.so
     rm -f /usr/lib/systemd/system/facelock-daemon.service
