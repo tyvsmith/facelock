@@ -1,0 +1,138 @@
+.TH PAM_FACELOCK 8 "2026-03-11" "pam_facelock" "System Administration"
+.SH NAME
+pam_facelock \- PAM module for face authentication
+.SH SYNOPSIS
+.B pam_facelock.so
+.SH DESCRIPTION
+.B pam_facelock
+is a PAM module that provides face-based authentication for Linux systems.
+It is a thin client that first attempts to connect to the
+.BR facelock (1)
+daemon via a Unix domain socket. If the daemon is unavailable, it falls back
+to spawning
+.B facelock auth
+as a one-shot process.
+.PP
+The module is intentionally kept minimal with no heavy dependencies (no ONNX
+runtime, no V4L2, no facelock-core). All inference is delegated to the daemon
+or the facelock binary.
+.PP
+All authentication attempts are logged to syslog under the AUTH facility.
+.SH MODULE TYPES PROVIDED
+.TP
+.B auth
+This module performs face-based user authentication. It does not provide
+account, session, or password management.
+.SH RETURN VALUES
+.TP
+.B PAM_SUCCESS
+The user's face was matched against an enrolled model with sufficient
+confidence.
+.TP
+.B PAM_AUTH_ERR
+Authentication failed. The face did not match any enrolled model, no face
+was detected, or an error occurred during the authentication process.
+.TP
+.B PAM_IGNORE
+The module is configured to be skipped for this authentication context,
+or the user has no enrolled face models. This allows the PAM stack to
+fall through to the next module.
+.SH EXAMPLES
+To enable face authentication for
+.BR sudo (8),
+add the following line to
+.I /etc/pam.d/sudo
+before the existing auth lines:
+.PP
+.RS
+.nf
+auth    sufficient    pam_facelock.so
+.fi
+.RE
+.PP
+This allows face authentication to succeed without requiring a password. If
+face authentication fails or returns PAM_IGNORE, the next module in the PAM
+stack (typically
+.BR pam_unix (8))
+will prompt for a password.
+.PP
+For stricter security, use
+.B required
+instead of
+.BR sufficient :
+.PP
+.RS
+.nf
+auth    required    pam_facelock.so
+.fi
+.RE
+.PP
+The recommended way to manage PAM configuration is via the setup command:
+.PP
+.RS
+.nf
+facelock setup --pam --service sudo
+.fi
+.RE
+.SH SECURITY
+.SS IR Camera Requirement
+By default, facelock requires an infrared (IR) camera for authentication
+.RB ( security.require_ir=true
+in the configuration file). IR cameras are resistant to photo-based spoofing
+attacks. Do not disable this requirement unless you understand the security
+implications.
+.SS Anti-Spoofing
+Frame variance checks are performed during authentication to detect
+presentation attacks (e.g., holding a photo or video in front of the camera).
+.SS Rate Limiting
+The daemon enforces rate limiting (5 attempts per user per 60 seconds by
+default) to prevent brute-force attacks.
+.SS IPC Security
+Communication between the PAM module and daemon uses a Unix domain socket
+.RI ( /run/facelock/facelock.sock ).
+Peer credentials are verified via
+.B SO_PEERCRED
+and message sizes are limited to 10MB.
+.SS Syslog Logging
+All authentication attempts (success, failure, and error) are logged to
+syslog under the AUTH facility with the identifier
+.IR pam_facelock .
+.SH CONFIGURATION
+The module reads its configuration from
+.I /etc/facelock/config.toml
+(or the path specified by the
+.B FACELOCK_CONFIG
+environment variable). Relevant configuration sections:
+.TP
+.B [pam]
+PAM-specific settings including
+.BR timeout_secs ,
+.BR notification_mode ,
+and
+.BR skip_for_ssh .
+.TP
+.B [security]
+Security settings including
+.B require_ir
+(default: true).
+.TP
+.B [daemon]
+Daemon settings including mode and model directory.
+.SH FILES
+.TP
+.I /etc/facelock/config.toml
+Main configuration file.
+.TP
+.I /usr/lib/security/pam_facelock.so
+The PAM module shared library.
+.TP
+.I /run/facelock/facelock.sock
+Unix domain socket for daemon communication.
+.TP
+.I /var/lib/facelock/facelock.db
+Face embedding database.
+.SH SEE ALSO
+.BR facelock (1),
+.BR pam (8),
+.BR pam.conf (5),
+.BR pam.d (5)

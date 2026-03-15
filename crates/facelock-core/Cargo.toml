@@ -1,0 +1,18 @@
+[package]
+name = "facelock-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+subtle = "2"
+zeroize = { version = "1", features = ["derive"] }
+zvariant = { version = "5", default-features = false, features = ["enumflags2"] }
+
+[dev-dependencies]
+zvariant = { version = "5", default-features = false, features = ["enumflags2"] }

@@ -1,0 +1,10 @@
+# Runtime directory for facelock daemon
+d /run/facelock 0755 root facelock -
+
+# Data directory (biometric data - restricted)
+d /var/lib/facelock 0750 root facelock -
+d /var/lib/facelock/models 0755 root root -
+
+# Log directory (auth snapshots - restricted)
+d /var/log/facelock 0750 root facelock -
+d /var/log/facelock/snapshots 0750 root facelock -

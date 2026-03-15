@@ -1,0 +1,45 @@
+[Unit]
+Description=Facelock Face Authentication Daemon
+After=local-fs.target
+
+[Service]
+Type=dbus
+BusName=org.facelock.Daemon
+ExecStart=/usr/bin/facelock daemon
+StandardOutput=journal
+StandardError=journal
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=1024
+
+# Phase 1: Filesystem isolation
+ProtectSystem=strict
+# ProtectHome=yes also hides /run/user/, breaking desktop notifications
+# (daemon sends notify-send via runuser to /run/user/<uid>/bus).
+# Use InaccessiblePaths instead to protect /home and /root without
+# affecting /run/user/.
+InaccessiblePaths=/home /root
+ReadWritePaths=/var/lib/facelock /var/log/facelock
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+# Phase 2: Kernel hardening
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+
+# Phase 2.5: Device access
+# DevicePolicy=closed/auto both use cgroup device ACLs which hide /dev/video*
+# from stat(), breaking camera auto-detection. Omitted — the daemon only needs
+# /dev/video* and /dev/tpmrm0, both protected by standard Unix permissions.
+# ProtectSystem=strict already prevents writing to /dev/.
+
+# Deferred: MemoryDenyWriteExecute=yes breaks ONNX Runtime JIT.
+# Phase 3 (seccomp, capabilities, network) deferred to future work.
+
+[Install]
+WantedBy=multi-user.target

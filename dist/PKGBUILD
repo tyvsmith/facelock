@@ -1,0 +1,51 @@
+# Maintainer: facelock contributors
+pkgname=facelock
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Face authentication for Linux"
+arch=('x86_64')
+url="https://github.com/user/facelock"
+license=('MIT' 'Apache-2.0')
+depends=('pam' 'gcc-libs' 'tpm2-tss')
+makedepends=('rust' 'cargo' 'clang')
+backup=('etc/facelock/config.toml')
+install=facelock.install
+
+build() {
+    cd "$srcdir/$pkgname-$pkgver"
+    # Build all crates, then rebuild facelock-cli with TPM support
+    cargo build --release --workspace
+    cargo build --release -p facelock-cli --features tpm
+}
+
+package() {
+    cd "$srcdir/$pkgname-$pkgver"
+
+    # Binary (unified)
+    install -Dm755 target/release/facelock "$pkgdir/usr/bin/facelock"
+
+    # PAM module (Arch uses /usr/lib/security/)
+    install -Dm755 target/release/libpam_facelock.so "$pkgdir/usr/lib/security/pam_facelock.so"
+
+    # Configuration
+    install -Dm644 config/facelock.toml "$pkgdir/etc/facelock/config.toml"
+
+    # systemd units
+    install -Dm644 systemd/facelock-daemon.service "$pkgdir/usr/lib/systemd/system/facelock-daemon.service"
+
+    # sysusers.d for facelock group
+    install -Dm644 dist/facelock.sysusers "$pkgdir/usr/lib/sysusers.d/facelock.conf"
+
+    # tmpfiles.d for runtime directories
+    install -Dm644 dist/facelock.tmpfiles "$pkgdir/usr/lib/tmpfiles.d/facelock.conf"
+
+    # Data directories
+    install -dm750 "$pkgdir/var/lib/facelock"
+    install -dm755 "$pkgdir/var/lib/facelock/models"
+    install -dm750 "$pkgdir/var/log/facelock"
+    install -dm750 "$pkgdir/var/log/facelock/snapshots"
+
+    # Licenses
+    install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+    install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+}

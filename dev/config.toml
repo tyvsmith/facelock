@@ -1,0 +1,27 @@
+# Development config — uses temp paths, no root required.
+# Set FACELOCK_CONFIG=dev/config.toml in your shell.
+
+[device]
+# path auto-detected (omit for auto-detect, or set explicitly)
+max_height = 480
+
+[recognition]
+threshold = 0.50
+timeout_secs = 5
+detector_model = "det_10g.onnx"
+#embedder_model = "glintr100.onnx"
+
+[daemon]
+# mode = "daemon"  # or "oneshot" for daemonless development
+model_dir = "./models"
+
+[storage]
+db_path = "/tmp/facelock-dev.db"
+
+[security]
+disabled = false
+require_ir = true
+require_frame_variance = true
+
+[snapshots]
+dir = "/tmp/facelock-dev-snapshots"

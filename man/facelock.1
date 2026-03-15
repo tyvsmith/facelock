@@ -1,0 +1,237 @@
+.TH FACELOCK 1 "2026-03-11" "facelock" "User Commands"
+.SH NAME
+facelock \- Linux face authentication
+.SH SYNOPSIS
+.B facelock
+.I command
+.RI [ options ]
+.SH DESCRIPTION
+.B facelock
+is a unified command-line tool for Linux face authentication. It handles
+face enrollment, authentication, daemon management, camera preview,
+benchmarking, and system setup. The companion PAM module
+.BR pam_facelock (8)
+connects to the facelock daemon or spawns
+.B facelock auth
+to perform face-based authentication for system services such as
+.BR sudo (8)
+and login managers.
+.PP
+All face recognition inference runs locally using ONNX models (SCRFD for
+detection and ArcFace for embedding). No cloud services are contacted.
+.SH COMMANDS
+.TP
+.B setup
+Download models and create directories. An interactive wizard guides initial
+configuration.
+.RS
+.TP
+.B \-\-systemd
+Install and enable systemd units for the facelock daemon.
+.TP
+.B \-\-disable
+Used with \fB\-\-systemd\fR: disable and stop systemd units instead.
+.TP
+.B \-\-pam
+Install or manage PAM module configuration.
+.TP
+.B \-\-service \fIname\fR
+Target PAM service (default: sudo).
+.TP
+.B \-\-remove
+Remove the PAM line instead of adding it.
+.TP
+.B \-y\fR, \fB\-\-yes
+Skip confirmation for sensitive services.
+.TP
+.B \-\-non\-interactive
+Run in non-interactive mode (skip wizard).
+.RE
+.TP
+.B enroll
+Capture and store a face embedding for authentication.
+.RS
+.TP
+.B \-u\fR, \fB\-\-user \fIusername\fR
+Username to enroll (default: current user).
+.TP
+.B \-l\fR, \fB\-\-label \fIlabel\fR
+Label for this face model.
+.RE
+.TP
+.B remove \fImodel_id\fR
+Remove a specific face model by its numeric ID.
+.RS
+.TP
+.B \-u\fR, \fB\-\-user \fIusername\fR
+Username (default: current user).
+.TP
+.B \-y\fR, \fB\-\-yes
+Skip confirmation prompt.
+.RE
+.TP
+.B clear
+Remove all face models for a user.
+.RS
+.TP
+.B \-u\fR, \fB\-\-user \fIusername\fR
+Username (default: current user).
+.TP
+.B \-y\fR, \fB\-\-yes
+Skip confirmation prompt.
+.RE
+.TP
+.B list
+List enrolled face models.
+.RS
+.TP
+.B \-u\fR, \fB\-\-user \fIusername\fR
+Username (default: current user).
+.TP
+.B \-\-json
+Output as JSON.
+.RE
+.TP
+.B test
+Test face recognition against enrolled models for the current or specified user.
+.RS
+.TP
+.B \-u\fR, \fB\-\-user \fIusername\fR
+Username (default: current user).
+.RE
+.TP
+.B preview
+Live camera preview with face detection overlay.
+.RS
+.TP
+.B \-\-text\-only
+Print detection results to stdout instead of graphical preview.
+.TP
+.B \-u\fR, \fB\-\-user \fIusername\fR
+User to match faces against (defaults to current user).
+.RE
+.TP
+.B config
+Show or edit configuration.
+.RS
+.TP
+.B \-\-edit
+Open config file in editor.
+.RE
+.TP
+.B status
+Check system status including daemon connectivity, enrolled faces, camera
+availability, and model integrity.
+.TP
+.B devices
+List available camera devices.
+.TP
+.B daemon
+Run the persistent authentication daemon. Listens on a Unix domain socket
+for authentication and enrollment requests from the PAM module and CLI.
+.RS
+.TP
+.B \-c\fR, \fB\-\-config \fIpath\fR
+Path to config file.
+.RE
+.TP
+.B auth
+One-shot authentication (used by the PAM module). Exits with code 0 on
+success or non-zero on failure.
+.RS
+.TP
+.B \-\-user \fIusername\fR
+Username to authenticate (required).
+.TP
+.B \-\-config \fIpath\fR
+Path to config file.
+.RE
+.TP
+.B bench \fIsubcommand\fR
+Benchmark and calibration tools.
+.RS
+.TP
+.B cold\-auth
+Measure cold auth latency (model load + first auth).
+.TP
+.B warm\-auth
+Measure warm auth latency (models already loaded).
+.TP
+.B preview
+Measure preview frame capture latency.
+.TP
+.B enrollment
+Measure enrollment time.
+.TP
+.B model\-load
+Measure ONNX model load time.
+.TP
+.B calibrate
+Sweep thresholds and measure FAR/FRR.
+.TP
+.B report
+Generate a comprehensive benchmark report.
+.RE
+.TP
+.B tpm \fIsubcommand\fR
+TPM integration status and management.
+.RS
+.TP
+.B status
+Report TPM availability and configuration.
+.TP
+.B seal\-db
+Seal all unsealed embeddings in the database using TPM.
+.TP
+.B unseal\-db
+Unseal all sealed embeddings (migrate away from TPM).
+.TP
+.B pcr\-baseline
+Display current PCR values for configured indices.
+.RE
+.SH ENVIRONMENT
+.TP
+.B RUST_LOG
+Controls log verbosity via the tracing/env_filter crate. Example:
+.BR RUST_LOG=debug .
+.TP
+.B FACELOCK_CONFIG
+Override path to the configuration file.
+.SH FILES
+.TP
+.I /etc/facelock/config.toml
+Main configuration file. Controls camera device, recognition thresholds,
+daemon settings, security policy, and TPM options.
+.TP
+.I /var/lib/facelock/facelock.db
+SQLite database storing face embeddings. Permissions should be 640, owned
+by root:facelock.
+.TP
+.I /var/lib/facelock/models/
+Directory containing ONNX model files (SCRFD and ArcFace). SHA256-verified
+at load time. Permissions should be 644, owned by root:facelock.
+.TP
+.I /run/facelock/facelock.sock
+Unix domain socket used for IPC between the PAM module and the daemon.
+.TP
+.I /usr/lib/security/pam_facelock.so
+PAM module shared library.
+.SH EXIT STATUS
+.TP
+.B 0
+Success (authentication passed, command completed).
+.TP
+.B non\-zero
+Failure (authentication failed, error occurred).
+.SH SECURITY
+The default configuration requires an IR camera
+.RB ( security.require_ir=true ).
+Frame variance checks are performed during authentication to prevent
+photo-based spoofing. Rate limiting is enforced by the daemon (5 attempts
+per user per 60 seconds by default). IPC messages are limited to 10MB and
+socket peers are verified via
+.BR SO_PEERCRED .
+.SH SEE ALSO
+.BR pam_facelock (8),
+.BR pam (8),
+.BR sudo (8)

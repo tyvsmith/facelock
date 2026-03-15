@@ -1,0 +1,7 @@
+#!/bin/sh
+# runit run script for facelock face authentication daemon
+#
+# Install to: /etc/sv/facelock-daemon/run
+# Enable: ln -s /etc/sv/facelock-daemon /var/service/
+
+exec chpst -u root /usr/bin/facelock daemon 2>&1

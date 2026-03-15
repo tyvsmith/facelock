@@ -1,0 +1,56 @@
+FROM archlinux:latest
+
+# Install dependencies
+RUN pacman -Syu --noconfirm pam sudo base-devel libxkbcommon just dbus && pacman -Scc --noconfirm
+
+# Build pamtester from upstream source
+RUN curl -sL https://sourceforge.net/projects/pamtester/files/pamtester/0.1.2/pamtester-0.1.2.tar.gz/download | tar xz -C /tmp && \
+    cd /tmp/pamtester-0.1.2 && \
+    ./configure --prefix=/usr CFLAGS="-Wno-implicit-function-declaration" && make && make install && \
+    rm -rf /tmp/pamtester-0.1.2
+
+# Create test user
+RUN useradd -m testuser && echo "testuser:test" | chpasswd
+
+# Copy the repo (pre-built binaries in target/release/)
+COPY . /build
+WORKDIR /build
+
+# Install using the real install path
+RUN just install-files
+
+# Copy models to the configured model_dir for integration tests
+RUN cp models/*.onnx /var/lib/facelock/models/ 2>/dev/null || true
+RUN cp models/manifest.toml /var/lib/facelock/models/ 2>/dev/null || true
+
+# Override config for container testing (use /var/lib paths, not /tmp dev paths)
+RUN cat > /etc/facelock/config.toml <<'EOF'
+[device]
+max_height = 480
+
+[recognition]
+threshold = 0.80
+timeout_secs = 5
+
+[daemon]
+model_dir = "/var/lib/facelock/models"
+
+[security]
+disabled = false
+require_ir = false
+require_frame_variance = false
+EOF
+
+# Facelock-test PAM config for pamtester
+COPY test/pam.d/facelock-test /etc/pam.d/facelock-test
+
+# Copy test scripts
+COPY test/run-container-tests.sh /run-tests.sh
+COPY test/run-integration-tests.sh /run-integration-tests.sh
+COPY test/run-oneshot-tests.sh /run-oneshot-tests.sh
+RUN chmod +x /run-tests.sh /run-integration-tests.sh /run-oneshot-tests.sh
+
+# Clean up build dir to save image size
+RUN rm -rf /build
+
+CMD ["/run-tests.sh"]

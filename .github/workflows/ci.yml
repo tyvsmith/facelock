@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  build-and-test:
+    name: Build, Test, Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libv4l-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libpam0g-dev \
+            clang \
+            libtss2-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Build workspace
+        run: cargo build --workspace
+
+      - name: Build workspace with TPM
+        run: cargo build --workspace --features tpm
+
+      - name: Run clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Run clippy with TPM
+        run: cargo clippy --workspace --features tpm -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace
+
+  tpm-tests:
+    name: TPM Tests (swtpm)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libv4l-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libpam0g-dev \
+            clang \
+            libtss2-dev \
+            swtpm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Start swtpm
+        run: |
+          mkdir -p /tmp/swtpm
+          swtpm socket \
+            --tpmstate dir=/tmp/swtpm \
+            --tpm2 \
+            --ctrl type=tcp,port=2322 \
+            --server type=tcp,port=2321 \
+            --flags not-need-init &
+          sleep 1
+
+      - name: Run TPM tests
+        env:
+          TCTI: swtpm:host=localhost,port=2321
+        run: cargo test --workspace --features tpm
+
+  container-pam-test:
+    name: Container PAM Smoke Test
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libv4l-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libpam0g-dev \
+            clang \
+            libtss2-dev \
+            podman
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release --workspace
+
+      - name: Build container
+        run: |
+          if [ -f test/Containerfile ]; then
+            podman build -t facelock-pam-test -f test/Containerfile .
+          else
+            echo "No Containerfile found, skipping container build"
+            exit 0
+          fi
+
+      - name: Run container PAM tests
+        run: |
+          if [ -f test/Containerfile ]; then
+            podman run --rm facelock-pam-test
+          else
+            echo "No Containerfile, skipping"
+          fi

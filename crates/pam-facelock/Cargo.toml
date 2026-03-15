@@ -1,0 +1,15 @@
+[package]
+name = "pam-facelock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+libc = "0.2"
+toml = { workspace = true }
+serde = { workspace = true }
+zbus = { version = "5", features = ["blocking"] }

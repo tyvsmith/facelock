@@ -1,0 +1,66 @@
+# Facelock PAM module - translation template
+# Copyright (C) 2026 Facelock Contributors
+# This file is distributed under the same license as the facelock package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: pam_facelock 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-03-12 00:00+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: crates/pam-facelock/src/lib.rs
+#. Shown when face scanning begins
+msgid "Identifying face..."
+msgstr ""
+
+#: crates/pam-facelock/src/lib.rs
+#. Shown on successful face recognition
+msgid "Face recognized."
+msgstr ""
+
+#: crates/pam-facelock/src/lib.rs
+#. Shown when face recognition fails
+msgid "Face not recognized."
+msgstr ""
+
+#: crates/pam-facelock/src/lib.rs
+#. Shown when face recognition times out
+msgid "Face recognition timed out."
+msgstr ""
+
+#: crates/pam-facelock/src/lib.rs
+#. Shown when rate limited
+msgid "Too many attempts. Please wait."
+msgstr ""
+
+#: crates/pam-facelock/src/lib.rs
+#. Shown when IR camera is required but not available
+msgid "IR camera required for face authentication."
+msgstr ""
+
+#: crates/pam-facelock/src/lib.rs
+#. Shown when no faces are enrolled
+msgid "No faces enrolled."
+msgstr ""
+
+#: crates/pam-facelock/src/lib.rs
+#. Shown when facelock is disabled
+msgid "Face authentication disabled."
+msgstr ""
+
+#: crates/pam-facelock/src/lib.rs
+#. Shown when SSH session detected
+msgid "Face authentication skipped (SSH session)."
+msgstr ""
+
+#: crates/pam-facelock/src/lib.rs
+#. Shown when laptop lid is closed
+msgid "Face authentication skipped (lid closed)."
+msgstr ""

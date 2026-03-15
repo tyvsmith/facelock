@@ -1,0 +1,11 @@
+facelock (0.1.0-1) unstable; urgency=medium
+
+  * Initial release.
+  * Unified binary for CLI, daemon, and oneshot auth.
+  * PAM module with daemon and oneshot modes.
+  * IR camera anti-spoofing with frame variance checks.
+  * ONNX inference with SCRFD + ArcFace models.
+  * SQLite face embedding storage.
+  * D-Bus activation support.
+
+ -- Facelock Contributors <facelock@example.com>  Mon, 10 Mar 2026 00:00:00 +0000

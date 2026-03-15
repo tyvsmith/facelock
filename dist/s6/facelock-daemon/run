@@ -1,0 +1,8 @@
+#!/bin/execlineb -P
+# s6 service script for facelock face authentication daemon
+#
+# Install to: /etc/s6/sv/facelock-daemon/
+# Enable: s6-rc-bundle-update default add facelock-daemon
+
+fdmove -c 2 1
+/usr/bin/facelock daemon

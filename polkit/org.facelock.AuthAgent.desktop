@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Facelock Polkit Agent
+Comment=Face authentication agent for PolicyKit
+Exec=/usr/bin/facelock-polkit-agent
+NoDisplay=true
+X-GNOME-Autostart-Phase=Initialization

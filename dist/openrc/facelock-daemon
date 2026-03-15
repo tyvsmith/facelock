@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+# OpenRC init script for facelock face authentication daemon
+
+description="Facelock Face Authentication Daemon"
+command="/usr/bin/facelock"
+command_args="daemon"
+command_background=true
+pidfile="/run/facelock/daemon.pid"
+
+depend() {
+    need localmount dbus
+    after bootmisc
+}
+
+start_pre() {
+    checkpath --directory --owner root:facelock --mode 0750 /run/facelock
+    checkpath --directory --owner root:facelock --mode 0750 /var/lib/facelock
+    checkpath --directory --owner root:root --mode 0750 /var/log/facelock
+}

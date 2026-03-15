@@ -1,0 +1,7 @@
+/target
+*.onnx
+*.dat
+dev/*.db
+.worktrees/
+/.internal/
+.claude/worktrees/

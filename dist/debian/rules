@@ -1,0 +1,38 @@
+#!/usr/bin/make -f
+
+export CARGO_HOME = $(CURDIR)/debian/.cargo
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release --workspace
+
+override_dh_auto_install:
+	# Binary
+	install -Dm755 target/release/facelock debian/facelock/usr/bin/facelock
+
+	# PAM module (Debian uses /lib/security/)
+	install -Dm755 target/release/libpam_facelock.so debian/facelock/lib/security/pam_facelock.so
+
+	# Configuration
+	install -Dm644 config/facelock.toml debian/facelock/etc/facelock/config.toml
+
+	# systemd units
+	install -Dm644 systemd/facelock-daemon.service debian/facelock/usr/lib/systemd/system/facelock-daemon.service
+
+	# sysusers.d
+	install -Dm644 dist/facelock.sysusers debian/facelock/usr/lib/sysusers.d/facelock.conf
+
+	# tmpfiles.d
+	install -Dm644 dist/facelock.tmpfiles debian/facelock/usr/lib/tmpfiles.d/facelock.conf
+
+	# pam-auth-update profile
+	install -Dm644 dist/debian/pam-auth-update debian/facelock/usr/share/pam-configs/facelock
+
+override_dh_auto_test:
+	# Tests require hardware (camera); skip in package build
+	true
+
+override_dh_auto_clean:
+	cargo clean 2>/dev/null || true
