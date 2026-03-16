@@ -2,7 +2,7 @@
 
 # Facelock: Face Authentication for Linux
 
-> **v0.1.0** — Pre-release. Functional and daily-driveable but APIs may change before 1.0. See [CHANGELOG.md](CHANGELOG.md).
+> **v0.1.0-alpha** — Pre-release. Under active development. Functional, daily-driveable, but experimental. APIs will change before 1.0. See [CHANGELOG.md](CHANGELOG.md).
 
 A modern face authentication system for Linux PAM. Provides Windows Hello-style facial auth with IR anti-spoofing, configurable as a persistent daemon or daemonless one-shot.
 
