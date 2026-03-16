@@ -141,6 +141,8 @@ enum Commands {
     },
     /// Decrypt all software-encrypted embeddings
     Decrypt,
+    /// Restart the facelock daemon
+    Restart,
     /// View structured audit log
     Audit {
         /// Follow mode: watch for new entries
@@ -204,6 +206,7 @@ fn main() -> anyhow::Result<()> {
                 Commands::Tpm { command } => commands::tpm::run(command),
                 Commands::Encrypt { generate_key } => commands::encrypt::run_encrypt(generate_key),
                 Commands::Decrypt => commands::encrypt::run_decrypt(),
+                Commands::Restart => commands::config::restart(),
                 Commands::Audit { follow, lines } => commands::audit::run(follow, lines),
                 // Already handled above
                 Commands::Daemon { .. } | Commands::Auth { .. } => unreachable!(),

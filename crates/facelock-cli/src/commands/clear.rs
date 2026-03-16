@@ -9,6 +9,24 @@ pub fn run(user: Option<String>, yes: bool) -> anyhow::Result<()> {
     let config = Config::load().context("failed to load config")?;
     let user = ipc_client::resolve_user(user.as_deref());
 
+    // Check if user has any models before prompting
+    let has_models = if ipc_client::should_use_direct(&config) {
+        crate::direct::open_store(&config)
+            .ok()
+            .and_then(|s| s.has_models(&user).ok())
+            .unwrap_or(true) // assume yes if we can't check, let the actual clear handle it
+    } else {
+        let request = DaemonRequest::ListModels { user: user.clone() };
+        matches!(
+            ipc_client::send_request(&request),
+            Ok(DaemonResponse::Models(ref m)) if !m.is_empty()
+        )
+    };
+    if !has_models {
+        println!("No face models enrolled for user '{user}'.");
+        return Ok(());
+    }
+
     if !yes {
         let confirmed = ipc_client::confirm(&format!("Remove ALL face models for user '{user}'?"))?;
         if !confirmed {

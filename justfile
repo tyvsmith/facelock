@@ -19,6 +19,15 @@ build-release-cuda:
     cargo build --release --workspace --features cuda
     cargo build --release -p facelock-cli --features tpm,cuda
 
+# Build with TensorRT GPU acceleration (requires CUDA + TensorRT SDK)
+build-tensorrt:
+    cargo build --workspace --features cuda,tensorrt
+
+# Build release with TensorRT GPU acceleration
+build-release-tensorrt:
+    cargo build --release --workspace --features cuda,tensorrt
+    cargo build --release -p facelock-cli --features tpm,cuda,tensorrt
+
 # Run all unit tests
 test:
     cargo test --workspace
@@ -183,6 +192,46 @@ install-files:
     echo "Installed. Two steps remaining:"
     echo "  1. sudo facelock setup       (download face recognition models)"
     echo "  2. sudo facelock enroll      (register your face)"
+
+# Build release with TensorRT and install to system
+# Requires: CUDA toolkit + TensorRT SDK (libnvinfer)
+install-tensorrt:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Check for TensorRT library
+    if ! ldconfig -p 2>/dev/null | grep -q libnvinfer; then
+        echo "TensorRT SDK (libnvinfer) not found."
+        echo "Install from: https://developer.nvidia.com/tensorrt"
+        echo "  Arch/CachyOS: yay -S libnvinfer  (AUR)"
+        echo "  Ubuntu/Debian: apt install libnvinfer-dev"
+        exit 1
+    fi
+    if ! pacman -Q onnxruntime-opt-cuda &>/dev/null && ! pacman -Q onnxruntime-cuda &>/dev/null; then
+        echo "System ONNX Runtime with CUDA not found."
+        echo "Install with: sudo pacman -S onnxruntime-opt-cuda"
+        exit 1
+    fi
+    just build-release-tensorrt
+    sudo env PATH="$PATH" just install-files install-tensorrt-config
+
+# Enable TensorRT execution provider in installed config (requires root)
+install-tensorrt-config:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    CONFIG="/etc/facelock/config.toml"
+    [ -f "$CONFIG" ] || { echo "Error: $CONFIG not found. Run 'just install' first."; exit 1; }
+    if grep -q '^execution_provider' "$CONFIG"; then
+        sed -i 's/^execution_provider.*/execution_provider = "tensorrt"/' "$CONFIG"
+    elif grep -q '^# execution_provider' "$CONFIG"; then
+        sed -i 's/^# execution_provider.*/execution_provider = "tensorrt"/' "$CONFIG"
+    else
+        sed -i '/^\[recognition\]/a execution_provider = "tensorrt"' "$CONFIG"
+    fi
+    echo "TensorRT execution provider enabled in $CONFIG"
+    if systemctl is-active facelock-daemon.service &>/dev/null; then
+        systemctl restart facelock-daemon.service
+        echo "Daemon restarted with TensorRT."
+    fi
 
 # Enable CUDA execution provider in installed config (requires root)
 install-cuda-config:

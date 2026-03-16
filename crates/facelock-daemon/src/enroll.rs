@@ -119,7 +119,7 @@ pub fn enroll<C: CameraSource, E: FaceProcessor>(
             match sealer.seal_embedding(embedding) {
                 Ok(encrypted) => match model_id {
                     None => store
-                        .add_model_raw(user, label, &encrypted, true)
+                        .add_model_raw(user, label, &encrypted, true, &config.recognition.embedder_model)
                         .map(Some),
                     Some(id) => store
                         .add_embedding_raw(id, &encrypted, true)
@@ -134,7 +134,7 @@ pub fn enroll<C: CameraSource, E: FaceProcessor>(
             }
         } else {
             match model_id {
-                None => store.add_model(user, label, embedding).map(Some),
+                None => store.add_model(user, label, embedding, &config.recognition.embedder_model).map(Some),
                 Some(id) => store.add_embedding(id, embedding).map(|()| None),
             }
         };

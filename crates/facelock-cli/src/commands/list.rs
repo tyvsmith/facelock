@@ -54,12 +54,17 @@ fn print_table(user: &str, models: &[FaceModelInfo]) {
     }
 
     println!("Face models for user '{user}':\n");
-    println!("  {:<6} {:<20} Created", "ID", "Label");
-    println!("  {}", "-".repeat(50));
+    println!("  {:<6} {:<20} {:<24} Model", "ID", "Label", "Created");
+    println!("  {}", "-".repeat(70));
 
     for model in models {
         let created = format_timestamp(model.created_at);
-        println!("  {:<6} {:<20} {}", model.id, model.label, created);
+        let model_name = if model.embedder_model.is_empty() {
+            "(legacy)".to_string()
+        } else {
+            model.embedder_model.clone()
+        };
+        println!("  {:<6} {:<20} {:<24} {}", model.id, model.label, created, model_name);
     }
 
     println!("\n  Total: {} model(s)", models.len());
@@ -70,8 +75,8 @@ fn print_json(models: &[FaceModelInfo]) {
     for (i, model) in models.iter().enumerate() {
         let comma = if i + 1 < models.len() { "," } else { "" };
         println!(
-            "  {{\"id\": {}, \"label\": \"{}\", \"user\": \"{}\", \"created_at\": {}}}{}",
-            model.id, model.label, model.user, model.created_at, comma
+            "  {{\"id\": {}, \"label\": \"{}\", \"user\": \"{}\", \"created_at\": {}, \"embedder_model\": \"{}\"}}{}",
+            model.id, model.label, model.user, model.created_at, model.embedder_model, comma
         );
     }
     println!("]");

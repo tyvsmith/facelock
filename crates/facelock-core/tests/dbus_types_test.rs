@@ -20,6 +20,7 @@ fn model_info_has_dbus_signature() {
         user: String::new(),
         label: String::new(),
         created_at: 0,
+        embedder_model: String::new(),
     };
     let sig = val.signature();
     assert!(!sig.to_string().is_empty());

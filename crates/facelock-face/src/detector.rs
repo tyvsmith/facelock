@@ -188,42 +188,55 @@ pub fn letterbox(
     let channels = 3usize;
     let mut output = vec![0.0f32; channels * ts * ts];
 
+    // Pre-compute scale factors (source-to-destination mapping)
+    let inv_scale_x = src_w as f32 / new_w as f32;
+    let inv_scale_y = src_h as f32 / new_h as f32;
+    let src_w_usize = src_w as usize;
+    let src_w_limit = src_w - 1;
+    let src_h_limit = src_h - 1;
+    let plane_size = ts * ts;
+
     // Bilinear resize + place into padded output
     for dy in 0..new_h {
+        let sy = dy as f32 * inv_scale_y;
+        let y0 = sy.floor() as u32;
+        let y1 = (y0 + 1).min(src_h_limit);
+        let fy = sy - y0 as f32;
+        let fy_inv = 1.0 - fy;
+
+        let out_y = (dy + pad_y_int) as usize;
+        let y0_row = y0 as usize * src_w_usize;
+        let y1_row = y1 as usize * src_w_usize;
+
         for dx in 0..new_w {
-            // Map back to source coordinates
-            let sx = dx as f32 * (src_w as f32 / new_w as f32);
-            let sy = dy as f32 * (src_h as f32 / new_h as f32);
-
+            let sx = dx as f32 * inv_scale_x;
             let x0 = sx.floor() as u32;
-            let y0 = sy.floor() as u32;
-            let x1 = (x0 + 1).min(src_w - 1);
-            let y1 = (y0 + 1).min(src_h - 1);
-
+            let x1 = (x0 + 1).min(src_w_limit);
             let fx = sx - x0 as f32;
-            let fy = sy - y0 as f32;
+            let fx_inv = 1.0 - fx;
 
-            let out_x = dx + pad_x_int;
-            let out_y = dy + pad_y_int;
-            if out_x >= target_size || out_y >= target_size {
-                continue;
-            }
+            let out_x = (dx + pad_x_int) as usize;
+            let out_idx = out_y * ts + out_x;
+
+            // Pre-compute source pixel indices
+            let p00_idx = (y0_row + x0 as usize) * 3;
+            let p10_idx = (y0_row + x1 as usize) * 3;
+            let p01_idx = (y1_row + x0 as usize) * 3;
+            let p11_idx = (y1_row + x1 as usize) * 3;
+
+            // Bilinear weights
+            let w00 = fx_inv * fy_inv;
+            let w10 = fx * fy_inv;
+            let w01 = fx_inv * fy;
+            let w11 = fx * fy;
 
             for c in 0..3 {
-                let p00 = rgb[(y0 as usize * src_w as usize + x0 as usize) * 3 + c] as f32;
-                let p10 = rgb[(y0 as usize * src_w as usize + x1 as usize) * 3 + c] as f32;
-                let p01 = rgb[(y1 as usize * src_w as usize + x0 as usize) * 3 + c] as f32;
-                let p11 = rgb[(y1 as usize * src_w as usize + x1 as usize) * 3 + c] as f32;
+                let val = rgb[p00_idx + c] as f32 * w00
+                    + rgb[p10_idx + c] as f32 * w10
+                    + rgb[p01_idx + c] as f32 * w01
+                    + rgb[p11_idx + c] as f32 * w11;
 
-                let val = p00 * (1.0 - fx) * (1.0 - fy)
-                    + p10 * fx * (1.0 - fy)
-                    + p01 * (1.0 - fx) * fy
-                    + p11 * fx * fy;
-
-                // Normalize: (pixel - 127.5) / 128.0
-                let normalized = (val - 127.5) / 128.0;
-                // NCHW layout: [c, out_y, out_x]
-                output[c * ts * ts + out_y as usize * ts + out_x as usize] = normalized;
+                output[c * plane_size + out_idx] = (val - 127.5) / 128.0;
             }
         }
     }

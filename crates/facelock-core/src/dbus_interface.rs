@@ -20,6 +20,7 @@ pub struct ModelInfo {
     pub user: String,
     pub label: String,
     pub created_at: u64,
+    pub embedder_model: String,
 }
 
 /// Info about a detected face in preview.

@@ -16,7 +16,8 @@ use crate::rate_limit::RateLimiter;
 /// Type alias for the camera factory closure.
 type CameraFactory<C> = Box<dyn Fn(&Config) -> Result<C, String> + Send + Sync>;
 
-const CAMERA_DEBOUNCE: Duration = Duration::from_secs(10);
+/// Fallback camera release delay when config value is 0 (shouldn't happen with default).
+const CAMERA_DEBOUNCE_FALLBACK: Duration = Duration::from_secs(5);
 const JPEG_BUF_CAPACITY: usize = 128 * 1024;
 
 pub struct Handler<C: CameraSource, E: FaceProcessor> {
@@ -127,7 +128,12 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
     }
 
     pub fn maybe_release_camera(&mut self) {
-        if self.camera.is_some() && self.camera_last_used.elapsed() > CAMERA_DEBOUNCE {
+        let debounce = if self.config.device.camera_release_secs > 0 {
+            Duration::from_secs(self.config.device.camera_release_secs as u64)
+        } else {
+            CAMERA_DEBOUNCE_FALLBACK
+        };
+        if self.camera.is_some() && self.camera_last_used.elapsed() > debounce {
             debug!("releasing camera (debounce)");
             self.camera = None;
         }
@@ -337,8 +343,14 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                     &user,
                     self.device_is_ir,
                 );
-                // Release camera after auth (one-shot operation)
-                drop(camera);
+                self.camera = Some(camera);
+                self.camera_last_used = Instant::now();
+                // Only failed auths count against the rate limit
+                if let DaemonResponse::AuthResult(ref mr) = result {
+                    if !mr.matched {
+                        self.rate_limiter.record_failure(&user);
+                    }
+                }
                 result
             }
 
@@ -357,7 +369,8 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                     &label,
                     self.software_sealer.as_ref(),
                 );
-                drop(camera);
+                self.camera = Some(camera);
+                self.camera_last_used = Instant::now();
                 result
             }
 

@@ -128,18 +128,19 @@ pub fn send_request(request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
                         user: m.user,
                         label: m.label,
                         created_at: m.created_at,
+                        embedder_model: m.embedder_model,
                     })
                     .collect(),
             ))
         }
         DaemonRequest::RemoveModel { user, model_id } => {
-            let _: bool = proxy
+            let _: () = proxy
                 .call("RemoveModel", &(user.as_str(), *model_id))
                 .context("D-Bus RemoveModel call failed")?;
             Ok(DaemonResponse::Removed)
         }
         DaemonRequest::ClearModels { user } => {
-            let _: u32 = proxy
+            let _: () = proxy
                 .call("ClearModels", &(user.as_str(),))
                 .context("D-Bus ClearModels call failed")?;
             Ok(DaemonResponse::Removed)

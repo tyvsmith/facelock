@@ -72,5 +72,17 @@ pub fn run_migrations(conn: &rusqlite::Connection) -> Result<()> {
         .map_err(|e| FacelockError::Storage(e.to_string()))?;
     }
 
+    if version < 5 {
+        // V5: track which embedder model generated each enrollment's embeddings.
+        // Switching embedder models invalidates enrolled faces.
+        conn.execute_batch(
+            "
+            ALTER TABLE face_models ADD COLUMN embedder_model TEXT NOT NULL DEFAULT '';
+            INSERT OR REPLACE INTO schema_version (version) VALUES (5);
+        ",
+        )
+        .map_err(|e| FacelockError::Storage(e.to_string()))?;
+    }
+
     Ok(())
 }

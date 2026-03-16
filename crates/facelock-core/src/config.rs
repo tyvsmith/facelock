@@ -62,6 +62,10 @@ pub struct DeviceConfig {
     /// only if your camera requires explicit control.
     #[serde(default)]
     pub ir_emitter: bool,
+    /// Seconds to keep the camera open after auth before releasing it.
+    /// Avoids warmup frame cost on consecutive auths. Default: 5.
+    #[serde(default = "default_camera_release_secs")]
+    pub camera_release_secs: u32,
 }
 
 impl Default for DeviceConfig {
@@ -74,6 +78,7 @@ impl Default for DeviceConfig {
             dark_threshold: default_dark_threshold(),
             dark_pixel_value: default_dark_pixel_value(),
             ir_emitter: false,
+            camera_release_secs: default_camera_release_secs(),
         }
     }
 }
@@ -175,8 +180,14 @@ pub struct SecurityConfig {
     #[serde(default = "default_true")]
     pub require_frame_variance: bool,
     /// Require landmark movement between frames to pass liveness check.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub require_landmark_liveness: bool,
+    /// Minimum pixel displacement to count a landmark as "moving" between frames.
+    #[serde(default = "default_landmark_displacement_px")]
+    pub landmark_displacement_px: f32,
+    /// Number of landmarks (out of 5) that must show movement for liveness.
+    #[serde(default = "default_landmark_min_moving")]
+    pub landmark_min_moving: u32,
     #[serde(default = "default_min_auth_frames")]
     pub min_auth_frames: u32,
     #[serde(default)]
@@ -209,7 +220,9 @@ impl Default for SecurityConfig {
             suppress_unknown: false,
             require_ir: true,
             require_frame_variance: true,
-            require_landmark_liveness: true,
+            require_landmark_liveness: false,
+            landmark_displacement_px: default_landmark_displacement_px(),
+            landmark_min_moving: default_landmark_min_moving(),
             min_auth_frames: default_min_auth_frames(),
             rate_limit: RateLimitConfig::default(),
         }
@@ -387,10 +400,13 @@ fn default_max_height() -> u32 {
     480
 }
 fn default_warmup_frames() -> u32 {
-    5
+    2
 }
 fn default_dark_threshold() -> f32 {
     0.6
+}
+fn default_camera_release_secs() -> u32 {
+    5
 }
 fn default_dark_pixel_value() -> u8 {
     10
@@ -417,6 +433,12 @@ fn default_snapshot_dir() -> String {
     paths::DEFAULT_SNAPSHOT_DIR.to_string()
 }
 fn default_min_auth_frames() -> u32 {
+    3
+}
+fn default_landmark_displacement_px() -> f32 {
+    1.5
+}
+fn default_landmark_min_moving() -> u32 {
     3
 }
 fn default_true() -> bool {
@@ -765,7 +787,7 @@ path = "/dev/video0"
 path = "/dev/video0"
 "#;
         let config = Config::parse(toml).unwrap();
-        assert_eq!(config.device.warmup_frames, 5);
+        assert_eq!(config.device.warmup_frames, 2);
     }
 
     #[test]

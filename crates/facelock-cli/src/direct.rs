@@ -278,7 +278,11 @@ mod facelock_daemon_auth {
         let mut dark_count: u32 = 0;
         let mut frame_count: u32 = 0;
         let mut best_model_id: Option<u32> = None;
-        let mut landmark_tracker = LandmarkTracker::new(10);
+        let mut landmark_tracker = LandmarkTracker::new(
+            10,
+            config.security.landmark_displacement_px,
+            config.security.landmark_min_moving as usize,
+        );
 
         while Instant::now() < deadline {
             let frame = match camera.capture() {
@@ -535,7 +539,7 @@ mod facelock_daemon_enroll {
                 match sealer.seal_embedding(embedding) {
                     Ok(encrypted) => match model_id {
                         None => store
-                            .add_model_raw(user, label, &encrypted, true)
+                            .add_model_raw(user, label, &encrypted, true, &config.recognition.embedder_model)
                             .map(Some),
                         Some(id) => store
                             .add_embedding_raw(id, &encrypted, true)
@@ -550,7 +554,7 @@ mod facelock_daemon_enroll {
                 }
             } else {
                 match model_id {
-                    None => store.add_model(user, label, embedding).map(Some),
+                    None => store.add_model(user, label, embedding, &config.recognition.embedder_model).map(Some),
                     Some(id) => store.add_embedding(id, embedding).map(|()| None),
                 }
             };

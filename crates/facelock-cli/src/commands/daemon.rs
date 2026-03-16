@@ -143,6 +143,56 @@ struct FacelockService {
     handler: Arc<Mutex<ProductionHandler>>,
     /// Timestamp of last D-Bus method call (seconds since daemon start).
     last_activity: Arc<AtomicU64>,
+    /// Config file mtime when the handler was last built.
+    /// Used to detect config changes and reload on next request.
+    config_mtime: Arc<Mutex<Option<std::time::SystemTime>>>,
+}
+
+impl FacelockService {
+    /// Check if the config file has been modified since the handler was built.
+    /// If so, reload config, rebuild the engine/store/handler, and swap it in.
+    /// Called at the start of authenticate and enroll — the two methods that
+    /// depend on cached ONNX models and config values.
+    fn maybe_reload_handler(&self) {
+        let config_path = facelock_core::paths::config_path();
+        let current_mtime = std::fs::metadata(&config_path)
+            .and_then(|m| m.modified())
+            .ok();
+
+        let needs_reload = {
+            let stored = self.config_mtime.lock().unwrap();
+            match (*stored, current_mtime) {
+                (Some(old), Some(new)) => new > old,
+                _ => false,
+            }
+        };
+
+        if !needs_reload {
+            return;
+        }
+
+        info!("config file changed, reloading");
+
+        let new_handler = match build_handler(None) {
+            Ok((handler, _idle)) => handler,
+            Err(e) => {
+                warn!("failed to reload config: {e} — continuing with old config");
+                return;
+            }
+        };
+
+        // Swap in the new handler
+        if let Ok(mut guard) = self.handler.lock() {
+            *guard = new_handler;
+        }
+
+        // Update stored mtime
+        if let Ok(mut stored) = self.config_mtime.lock() {
+            *stored = current_mtime;
+        }
+
+        info!("handler reloaded with new config");
+    }
 }
 
 #[interface(name = "org.facelock.Daemon")]
@@ -155,6 +205,7 @@ impl FacelockService {
         user: &str,
     ) -> fdo::Result<AuthResult> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
+        self.maybe_reload_handler();
         verify_caller_authorized(&hdr, connection, user).await?;
         let handler = self.handler.clone();
         let user = user.to_string();
@@ -231,6 +282,7 @@ impl FacelockService {
         label: &str,
     ) -> fdo::Result<(u32, u32)> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
+        self.maybe_reload_handler();
         verify_caller_authorized(&hdr, connection, user).await?;
         let handler = self.handler.clone();
         let user = user.to_string();
@@ -276,6 +328,7 @@ impl FacelockService {
                         user: m.user,
                         label: m.label,
                         created_at: m.created_at,
+                        embedder_model: m.embedder_model,
                     })
                     .collect()),
                 DaemonResponse::Error { message } => Err(fdo::Error::Failed(message)),
@@ -476,21 +529,79 @@ impl FacelockService {
 /// Type alias for the camera factory closure.
 type CameraFactory = Box<dyn Fn(&Config) -> Result<Camera<'static>, String> + Send + Sync>;
 
-pub fn run(config_path: Option<String>) -> anyhow::Result<()> {
-    crate::ipc_client::require_root("sudo facelock daemon")?;
-
-    // Load config
+/// Build a new handler from config. Used at startup and for live config reload.
+/// Returns the handler and idle_timeout_secs from the loaded config.
+fn build_handler(
+    config_path: Option<&str>,
+) -> Result<(ProductionHandler, u64), String> {
     let config = match config_path {
-        Some(ref p) => Config::load_from(Path::new(p)),
+        Some(p) => Config::load_from(Path::new(p)),
         None => Config::load(),
     };
-    let mut config = match config {
-        Ok(c) => c,
+    let mut config = config.map_err(|e| format!("failed to load config: {e}"))?;
+
+    let quirks = QuirksDb::load();
+
+    if config.device.path.is_none() {
+        let info = auto_detect_device().map_err(|e| {
+            format!("no camera device specified and auto-detection failed: {e}")
+        })?;
+        let is_ir = is_ir_camera_with_quirks(&info, Some(&quirks));
+        info!(device = %info.path, name = %info.name, ir = is_ir, "auto-detected camera device");
+        config.device.path = Some(info.path);
+    }
+
+    let device_path = config.device.path.clone().unwrap();
+
+    let device_is_ir = match validate_device(&device_path) {
+        Ok(info) => {
+            let is_ir = is_ir_camera_with_quirks(&info, Some(&quirks));
+            info!(device = %device_path, ir = is_ir, name = %info.name, "camera device");
+            is_ir
+        }
         Err(e) => {
-            eprintln!("facelock daemon: failed to load config: {e}");
-            std::process::exit(1);
+            warn!("failed to query device {device_path}: {e}");
+            false
         }
     };
+
+    let engine = FaceEngine::load(&config.recognition, Path::new(&config.daemon.model_dir))
+        .map_err(|e| format!("failed to load face engine: {e}"))?;
+
+    let store = FaceStore::open(Path::new(&config.storage.db_path))
+        .map_err(|e| format!("failed to open database: {e}"))?;
+
+    let rate_limiter = RateLimiter::new(
+        config.security.rate_limit.max_attempts,
+        config.security.rate_limit.window_secs,
+    );
+
+    let device_quirk = validate_device(&device_path)
+        .ok()
+        .and_then(|info| quirks.find_match(&info).cloned());
+
+    let quirk_for_factory = device_quirk.clone();
+    let camera_factory: CameraFactory = Box::new(move |config: &Config| {
+        Camera::open(&config.device, quirk_for_factory.as_ref()).map_err(|e| e.to_string())
+    });
+
+    let idle_timeout_secs = config.daemon.idle_timeout_secs;
+    let warmup_override = device_quirk.and_then(|q| q.warmup_frames);
+    let handler = Handler::new(
+        config,
+        engine,
+        store,
+        rate_limiter,
+        device_is_ir,
+        Some(camera_factory),
+        warmup_override,
+    )?;
+
+    Ok((handler, idle_timeout_secs))
+}
+
+pub fn run(config_path: Option<String>) -> anyhow::Result<()> {
+    crate::ipc_client::require_root("sudo facelock daemon")?;
 
     // Init tracing (daemon uses its own tracing setup with target=true)
     tracing_subscriber::fmt()
@@ -503,96 +614,17 @@ pub fn run(config_path: Option<String>) -> anyhow::Result<()> {
 
     info!("facelock daemon starting");
 
-    // Load hardware quirks database
-    let quirks = QuirksDb::load();
-
-    // Auto-detect device if not specified
-    if config.device.path.is_none() {
-        match auto_detect_device() {
-            Ok(info) => {
-                let is_ir = is_ir_camera_with_quirks(&info, Some(&quirks));
-                info!(
-                    device = %info.path,
-                    name = %info.name,
-                    ir = is_ir,
-                    "auto-detected camera device"
-                );
-                config.device.path = Some(info.path);
-            }
-            Err(e) => {
-                error!("no camera device specified and auto-detection failed: {e}");
-                std::process::exit(1);
-            }
-        }
-    }
-
-    let device_path = config.device.path.clone().unwrap();
-
-    // Check device info for IR detection
-    let device_is_ir = match validate_device(&device_path) {
-        Ok(info) => {
-            let is_ir = is_ir_camera_with_quirks(&info, Some(&quirks));
-            info!(device = %device_path, ir = is_ir, name = %info.name, "camera device");
-            is_ir
-        }
+    let (handler, idle_timeout_secs) = match build_handler(config_path.as_deref()) {
+        Ok(r) => r,
         Err(e) => {
-            error!("failed to query device {device_path}: {e}");
-            false
-        }
-    };
-
-    // Load ONNX models
-    let engine = match FaceEngine::load(&config.recognition, Path::new(&config.daemon.model_dir)) {
-        Ok(e) => e,
-        Err(e) => {
-            error!("failed to load face engine: {e}");
+            error!("{e}");
             std::process::exit(1);
         }
     };
 
-    // Open database
-    let store = match FaceStore::open(Path::new(&config.storage.db_path)) {
-        Ok(s) => s,
-        Err(e) => {
-            error!("failed to open database: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    // Create rate limiter
-    let rate_limiter = RateLimiter::new(
-        config.security.rate_limit.max_attempts,
-        config.security.rate_limit.window_secs,
-    );
-
-    // Look up hardware quirk for this specific device
-    let device_quirk = validate_device(&device_path)
-        .ok()
-        .and_then(|info| quirks.find_match(&info).cloned());
-
-    // Camera factory for lazy opening — passes the matched quirk (if any)
-    let quirk_for_factory = device_quirk.clone();
-    let camera_factory: CameraFactory = Box::new(move |config: &Config| {
-        Camera::open(&config.device, quirk_for_factory.as_ref()).map_err(|e| e.to_string())
-    });
-
-    let idle_timeout_secs = config.daemon.idle_timeout_secs;
-    let warmup_override = device_quirk.and_then(|q| q.warmup_frames);
-    let handler: ProductionHandler = match Handler::new(
-        config,
-        engine,
-        store,
-        rate_limiter,
-        device_is_ir,
-        Some(camera_factory),
-        warmup_override,
-    ) {
-        Ok(h) => h,
-        Err(e) => {
-            error!("failed to initialize handler: {e}");
-            std::process::exit(1);
-        }
-    };
+    let config_mtime = std::fs::metadata(facelock_core::paths::config_path())
+        .and_then(|m| m.modified())
+        .ok();
 
     let handler = Arc::new(Mutex::new(handler));
 
@@ -601,7 +633,7 @@ pub fn run(config_path: Option<String>) -> anyhow::Result<()> {
         .enable_all()
         .build()?;
 
-    rt.block_on(run_dbus_server(handler, idle_timeout_secs))
+    rt.block_on(run_dbus_server(handler, idle_timeout_secs, config_mtime))
 }
 
 /// Drop all Linux capabilities and set PR_SET_NO_NEW_PRIVS.
@@ -677,11 +709,13 @@ fn drop_capabilities() -> std::result::Result<(), String> {
 async fn run_dbus_server(
     handler: Arc<Mutex<ProductionHandler>>,
     idle_timeout_secs: u64,
+    startup_config_mtime: Option<std::time::SystemTime>,
 ) -> anyhow::Result<()> {
     let last_activity = Arc::new(AtomicU64::new(now_secs()));
     let service = FacelockService {
         handler: handler.clone(),
         last_activity: last_activity.clone(),
+        config_mtime: Arc::new(Mutex::new(startup_config_mtime)),
     };
 
     let _connection = zbus::connection::Builder::system()?

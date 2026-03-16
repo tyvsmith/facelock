@@ -174,14 +174,14 @@ impl<'a> Camera<'a> {
         &self.format
     }
 
-    /// Capture a single frame with full preprocessing (RGB + grayscale + CLAHE).
-    /// Use this for authentication and enrollment where face detection is needed.
+    /// Capture a single frame with preprocessing (RGB + raw grayscale).
+    /// CLAHE is not applied here — callers that need it (e.g. IR texture checks)
+    /// should run `preprocess::clahe()` on `frame.gray` themselves.
     pub fn capture(&mut self) -> Result<Frame> {
         let (rgb, width, height) = self.capture_rgb()?;
 
-        // Convert to grayscale and apply CLAHE for face detection
+        // Convert to grayscale (no CLAHE — deferred to callers that need it)
         let gray = preprocess::rgb_to_gray(&rgb, width, height);
-        let gray = preprocess::clahe(&gray, width, height);
 
         Ok(Frame {
             rgb,
@@ -451,6 +451,7 @@ mod tests {
             dark_threshold: 0.6,
             dark_pixel_value: 10,
             ir_emitter: false,
+            camera_release_secs: 5,
         };
         let mut cam = Camera::open(&config, None).expect("failed to open camera");
         let frame = cam.capture().expect("failed to capture frame");

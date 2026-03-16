@@ -31,6 +31,51 @@ pub fn run(user: Option<String>) -> anyhow::Result<()> {
     let user = ipc_client::resolve_user(user.as_deref());
     let notif_config = &config.notification;
 
+    // Check if user has enrolled models before attempting auth
+    let has_models = if ipc_client::should_use_direct(&config) {
+        crate::direct::open_store(&config)
+            .ok()
+            .and_then(|s| s.has_models(&user).ok())
+            .unwrap_or(false)
+    } else {
+        let request = DaemonRequest::ListModels { user: user.clone() };
+        matches!(
+            ipc_client::send_request(&request),
+            Ok(DaemonResponse::Models(ref m)) if !m.is_empty()
+        )
+    };
+    if !has_models {
+        println!("No face models enrolled for user '{user}'.");
+        println!("Run 'facelock enroll' to enroll a face first.");
+        return Ok(());
+    }
+
+    // Warn if no enrolled models match the current embedder
+    {
+        let config_embedder = &config.recognition.embedder_model;
+        let has_matching = if ipc_client::should_use_direct(&config) {
+            crate::direct::open_store(&config)
+                .ok()
+                .and_then(|s| s.has_models_for_embedder(&user, config_embedder).ok())
+                .unwrap_or(false)
+        } else {
+            let request = DaemonRequest::ListModels { user: user.clone() };
+            match ipc_client::send_request(&request) {
+                Ok(DaemonResponse::Models(ref m)) => {
+                    m.iter().any(|model| model.embedder_model == *config_embedder)
+                }
+                _ => true, // can't check, proceed anyway
+            }
+        };
+        if !has_matching {
+            println!(
+                "Warning: no enrolled models use the configured embedder '{config_embedder}'."
+            );
+            println!("Re-enroll with 'facelock enroll' to use the current model.");
+            return Ok(());
+        }
+    }
+
     println!("Testing face recognition for user '{user}'...");
     println!("Look at the camera.");
 

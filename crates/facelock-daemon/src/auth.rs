@@ -69,7 +69,7 @@ pub fn pre_check(
         }));
     }
 
-    if !rate_limiter.check_and_record(user) {
+    if !rate_limiter.check(user) {
         warn!(user, "rate limited");
         return Some(DaemonResponse::Error {
             message: "rate limited".into(),
@@ -171,6 +171,7 @@ fn authenticate_inner<C: CameraSource, E: FaceProcessor>(
     device_is_ir: bool,
 ) -> DaemonResponse {
     let start = Instant::now();
+    let save_snapshots = config.snapshots.mode != facelock_core::config::SnapshotMode::Off;
     let label_for =
         |id: u32| -> Option<String> { models.iter().find(|m| m.id == id).map(|m| m.label.clone()) };
 
@@ -183,7 +184,11 @@ fn authenticate_inner<C: CameraSource, E: FaceProcessor>(
     let mut dark_count: u32 = 0;
     let mut frame_count: u32 = 0;
     let mut best_model_id: Option<u32> = None;
-    let mut landmark_tracker = LandmarkTracker::new(10);
+    let mut landmark_tracker = LandmarkTracker::new(
+        10,
+        config.security.landmark_displacement_px,
+        config.security.landmark_min_moving as usize,
+    );
     #[allow(unused_assignments)]
     let mut last_frame: Option<Frame> = None;
 
@@ -207,7 +212,9 @@ fn authenticate_inner<C: CameraSource, E: FaceProcessor>(
             continue;
         }
 
-        last_frame = Some(frame.clone());
+        if save_snapshots {
+            last_frame = Some(frame.clone());
+        }
 
         let faces = match engine.process(&frame) {
             Ok(f) => f,
@@ -227,14 +234,22 @@ fn authenticate_inner<C: CameraSource, E: FaceProcessor>(
             landmark_tracker.push(det.landmarks);
         }
 
+        // Compute CLAHE-enhanced grayscale only for IR texture checks
+        let clahe_gray = if device_is_ir {
+            Some(facelock_camera::preprocess::clahe(&frame.gray, frame.width, frame.height))
+        } else {
+            None
+        };
+
         // IR texture check: when using an IR camera, verify each detected face
         // has real skin texture (not a flat photo/screen replay attack).
         // Only applied to IR frames — RGB texture varies too much and would
         // cause false positives.
         if device_is_ir {
+            let gray = clahe_gray.as_deref().unwrap_or(&frame.gray);
             let all_flat = faces
                 .iter()
-                .all(|(det, _)| !check_ir_texture(&frame.gray, &det.bbox, frame.width));
+                .all(|(det, _)| !check_ir_texture(gray, &det.bbox, frame.width));
             if all_flat {
                 debug!(
                     frame = frame_count,
@@ -247,7 +262,7 @@ fn authenticate_inner<C: CameraSource, E: FaceProcessor>(
         let mut frame_matched = false;
         for (det, embedding) in &faces {
             // Skip individual faces that fail IR texture check
-            if device_is_ir && !check_ir_texture(&frame.gray, &det.bbox, frame.width) {
+            if device_is_ir && !check_ir_texture(clahe_gray.as_deref().unwrap_or(&frame.gray), &det.bbox, frame.width) {
                 debug!(
                     frame = frame_count,
                     "IR texture check failed for face, skipping"

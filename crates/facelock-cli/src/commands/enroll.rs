@@ -49,6 +49,35 @@ pub fn run(user: Option<String>, label: Option<String>, skip_setup_check: bool) 
         next_label(&date, &user)
     });
 
+    // Warn if existing models use a different embedder than currently configured
+    {
+        let config_embedder = &config.recognition.embedder_model;
+        let has_stale = if ipc_client::should_use_direct(&config) {
+            crate::direct::open_store(&config).ok().map(|s| {
+                let has_any = s.has_models(&user).ok().unwrap_or(false);
+                let has_matching = s
+                    .has_models_for_embedder(&user, config_embedder)
+                    .ok()
+                    .unwrap_or(false);
+                has_any && !has_matching
+            })
+        } else {
+            let request = DaemonRequest::ListModels { user: user.clone() };
+            match ipc_client::send_request(&request) {
+                Ok(DaemonResponse::Models(ref m)) if !m.is_empty() => {
+                    Some(!m.iter().any(|model| model.embedder_model == *config_embedder))
+                }
+                _ => None,
+            }
+        };
+        if has_stale == Some(true) {
+            println!(
+                "Note: existing models don't use the configured embedder '{config_embedder}'."
+            );
+            println!("Old enrollments will not work with the new embedder. Consider removing them with 'facelock remove'.\n");
+        }
+    }
+
     println!("Enrolling face for user '{user}' with label '{label}'...");
     println!("Look at the camera. Slowly turn your head left and right.");
 

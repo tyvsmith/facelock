@@ -114,7 +114,7 @@ fn fixtures_identical_embeddings_same() {
 fn store_round_trip_with_mock_embedding() {
     let store = FaceStore::open_memory().unwrap();
     let emb = fixtures::known_embedding(42);
-    let id = store.add_model("testuser", "test-label", &emb).unwrap();
+    let id = store.add_model("testuser", "test-label", &emb, "").unwrap();
     let stored = store.get_user_embeddings("testuser").unwrap();
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].0, id);

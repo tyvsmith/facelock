@@ -6,23 +6,21 @@
 
 use facelock_core::types::Point2D;
 
-/// Minimum Euclidean displacement (pixels) between consecutive frames to count as "movement".
-const MIN_DISPLACEMENT_PX: f32 = 1.5;
-
-/// Number of landmarks (out of 5) that must show movement.
-const MIN_MOVING_LANDMARKS: usize = 3;
-
 /// Tracks landmark positions across frames for liveness analysis.
 pub struct LandmarkTracker {
     history: Vec<[Point2D; 5]>,
     max_frames: usize,
+    displacement_threshold: f32,
+    min_moving_landmarks: usize,
 }
 
 impl LandmarkTracker {
-    pub fn new(max_frames: usize) -> Self {
+    pub fn new(max_frames: usize, displacement_threshold: f32, min_moving_landmarks: usize) -> Self {
         Self {
             history: Vec::with_capacity(max_frames),
             max_frames,
+            displacement_threshold,
+            min_moving_landmarks,
         }
     }
 
@@ -48,10 +46,10 @@ impl LandmarkTracker {
                 .filter(|(a, b)| {
                     let dx = a.x - b.x;
                     let dy = a.y - b.y;
-                    (dx * dx + dy * dy).sqrt() >= MIN_DISPLACEMENT_PX
+                    (dx * dx + dy * dy).sqrt() >= self.displacement_threshold
                 })
                 .count();
-            if moving_count >= MIN_MOVING_LANDMARKS {
+            if moving_count >= self.min_moving_landmarks {
                 return true;
             }
         }
@@ -94,7 +92,7 @@ mod tests {
 
     #[test]
     fn rejects_static_landmarks() {
-        let mut tracker = LandmarkTracker::new(10);
+        let mut tracker = LandmarkTracker::new(10, 1.5, 3);
         tracker.push(static_landmarks());
         tracker.push(static_landmarks());
         assert!(!tracker.check_liveness());
@@ -102,7 +100,7 @@ mod tests {
 
     #[test]
     fn accepts_moving_landmarks() {
-        let mut tracker = LandmarkTracker::new(10);
+        let mut tracker = LandmarkTracker::new(10, 1.5, 3);
         tracker.push(static_landmarks());
         tracker.push(moved_landmarks());
         assert!(tracker.check_liveness());
@@ -110,14 +108,14 @@ mod tests {
 
     #[test]
     fn insufficient_frames() {
-        let mut tracker = LandmarkTracker::new(10);
+        let mut tracker = LandmarkTracker::new(10, 1.5, 3);
         tracker.push(static_landmarks());
         assert!(!tracker.check_liveness());
     }
 
     #[test]
     fn reset_clears_history() {
-        let mut tracker = LandmarkTracker::new(10);
+        let mut tracker = LandmarkTracker::new(10, 1.5, 3);
         tracker.push(static_landmarks());
         tracker.push(moved_landmarks());
         tracker.reset();
@@ -127,7 +125,7 @@ mod tests {
 
     #[test]
     fn max_frames_respected() {
-        let mut tracker = LandmarkTracker::new(3);
+        let mut tracker = LandmarkTracker::new(3, 1.5, 3);
         for _ in 0..5 {
             tracker.push(static_landmarks());
         }

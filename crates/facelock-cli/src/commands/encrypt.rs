@@ -248,8 +248,8 @@ mod tests {
 
         // Add some unencrypted embeddings
         let emb = [0.42f32; 512];
-        store.add_model("alice", "front", &emb).unwrap();
-        store.add_model("alice", "side", &emb).unwrap();
+        store.add_model("alice", "front", &emb, "").unwrap();
+        store.add_model("alice", "side", &emb, "").unwrap();
 
         let key = [0x42u8; 32];
         let sealer = facelock_tpm::SoftwareSealer::from_key(key);
@@ -309,7 +309,7 @@ mod tests {
         let store = facelock_store::FaceStore::open_memory().unwrap();
 
         let emb = [0.5f32; 512];
-        store.add_model("alice", "raw", &emb).unwrap();
+        store.add_model("alice", "raw", &emb, "").unwrap();
 
         // Pre-encrypt one embedding manually
         let key = [0x42u8; 32];
@@ -317,7 +317,7 @@ mod tests {
         let raw_bytes: Vec<u8> = emb.iter().flat_map(|f| f.to_le_bytes()).collect();
         let encrypted_blob = sealer.seal_bytes(&raw_bytes).unwrap();
         store
-            .add_model_raw("bob", "encrypted", &encrypted_blob, true)
+            .add_model_raw("bob", "encrypted", &encrypted_blob, true, "")
             .unwrap();
 
         let all = store.get_all_embeddings_raw().unwrap();

@@ -22,7 +22,7 @@ fn full_lifecycle_add_list_get_remove() {
     let emb = make_embedding(1.0);
 
     // Add a model
-    let model_id = store.add_model("alice", "front", &emb).unwrap();
+    let model_id = store.add_model("alice", "front", &emb, "").unwrap();
     assert!(model_id > 0);
 
     // List models
@@ -58,8 +58,8 @@ fn multi_user_isolation() {
     let emb_a = make_embedding(1.0);
     let emb_b = make_embedding(2.0);
 
-    let alice_id = store.add_model("alice", "default", &emb_a).unwrap();
-    let bob_id = store.add_model("bob", "default", &emb_b).unwrap();
+    let alice_id = store.add_model("alice", "default", &emb_a, "").unwrap();
+    let bob_id = store.add_model("bob", "default", &emb_b, "").unwrap();
 
     // Each user sees only their own models
     let alice_models = store.list_models("alice").unwrap();
@@ -102,7 +102,7 @@ fn embedding_round_trip_bit_exact() {
     emb[100] = 0.123_456_79;
     emb[511] = 42.0;
 
-    store.add_model("alice", "precision-test", &emb).unwrap();
+    store.add_model("alice", "precision-test", &emb, "").unwrap();
 
     let results = store.get_user_embeddings("alice").unwrap();
     assert_eq!(results.len(), 1);
@@ -127,9 +127,9 @@ fn clear_user_removes_all_models() {
     let store = FaceStore::open_memory().unwrap();
     let emb = make_embedding(0.5);
 
-    store.add_model("alice", "model-a", &emb).unwrap();
-    store.add_model("alice", "model-b", &emb).unwrap();
-    store.add_model("alice", "model-c", &emb).unwrap();
+    store.add_model("alice", "model-a", &emb, "").unwrap();
+    store.add_model("alice", "model-b", &emb, "").unwrap();
+    store.add_model("alice", "model-c", &emb, "").unwrap();
 
     assert_eq!(store.list_models("alice").unwrap().len(), 3);
 
@@ -160,11 +160,11 @@ fn has_models_reflects_state_changes() {
 
     // True after adding
     let emb = make_embedding(0.0);
-    store.add_model("alice", "first", &emb).unwrap();
+    store.add_model("alice", "first", &emb, "").unwrap();
     assert!(store.has_models("alice").unwrap());
 
     // Still true after adding a second
-    store.add_model("alice", "second", &emb).unwrap();
+    store.add_model("alice", "second", &emb, "").unwrap();
     assert!(store.has_models("alice").unwrap());
 
     // False after clearing
@@ -181,8 +181,8 @@ fn duplicate_label_same_user_errors() {
     let store = FaceStore::open_memory().unwrap();
     let emb = make_embedding(0.0);
 
-    store.add_model("alice", "front", &emb).unwrap();
-    let result = store.add_model("alice", "front", &emb);
+    store.add_model("alice", "front", &emb, "").unwrap();
+    let result = store.add_model("alice", "front", &emb, "");
     assert!(
         result.is_err(),
         "adding duplicate label for same user should fail"
@@ -194,9 +194,9 @@ fn same_label_different_users_succeeds() {
     let store = FaceStore::open_memory().unwrap();
     let emb = make_embedding(0.0);
 
-    store.add_model("alice", "front", &emb).unwrap();
+    store.add_model("alice", "front", &emb, "").unwrap();
     // Different user with the same label should be fine
-    let result = store.add_model("bob", "front", &emb);
+    let result = store.add_model("bob", "front", &emb, "");
     assert!(
         result.is_ok(),
         "same label for different users should succeed"
@@ -226,7 +226,7 @@ fn empty_store_queries_succeed() {
 fn model_metadata_has_reasonable_timestamp() {
     let store = FaceStore::open_memory().unwrap();
     let emb = make_embedding(0.0);
-    store.add_model("alice", "timestamped", &emb).unwrap();
+    store.add_model("alice", "timestamped", &emb, "").unwrap();
 
     let models = store.list_models("alice").unwrap();
     assert_eq!(models.len(), 1);

@@ -68,6 +68,9 @@ pub struct FaceModelInfo {
     pub label: String,
     /// Unix timestamp
     pub created_at: u64,
+    /// Which ONNX embedder model generated this enrollment's embeddings.
+    /// Empty string means legacy/unknown (pre-migration).
+    pub embedder_model: String,
 }
 
 /// Result of a face match attempt

@@ -49,7 +49,7 @@ impl FaceStore {
     }
 
     /// Add a face model with its embedding. Returns the new model ID.
-    pub fn add_model(&self, user: &str, label: &str, embedding: &FaceEmbedding) -> Result<u32> {
+    pub fn add_model(&self, user: &str, label: &str, embedding: &FaceEmbedding, embedder_model: &str) -> Result<u32> {
         let tx = self.conn.unchecked_transaction().map_err(map_err)?;
 
         let created_at = SystemTime::now()
@@ -58,8 +58,8 @@ impl FaceStore {
             .unwrap_or(0);
 
         tx.execute(
-            "INSERT INTO face_models (user, label, created_at) VALUES (?1, ?2, ?3)",
-            params![user, label, created_at],
+            "INSERT INTO face_models (user, label, created_at, embedder_model) VALUES (?1, ?2, ?3, ?4)",
+            params![user, label, created_at, embedder_model],
         )
         .map_err(map_err)?;
 
@@ -150,7 +150,7 @@ impl FaceStore {
     pub fn list_models(&self, user: &str) -> Result<Vec<FaceModelInfo>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, user, label, created_at FROM face_models WHERE user = ?1")
+            .prepare("SELECT id, user, label, created_at, embedder_model FROM face_models WHERE user = ?1")
             .map_err(map_err)?;
 
         let rows = stmt
@@ -160,6 +160,7 @@ impl FaceStore {
                     user: row.get(1)?,
                     label: row.get(2)?,
                     created_at: row.get(3)?,
+                    embedder_model: row.get(4)?,
                 })
             })
             .map_err(map_err)?;
@@ -194,12 +195,15 @@ impl FaceStore {
     }
 
     /// Get all embeddings for a user as raw bytes with sealed flag.
-    /// Returns (embedding_id, raw_bytes, sealed) triples.
+    /// Returns (model_id, raw_bytes, sealed) triples.
+    /// Uses `fm.id` (face_models ID) — not `fe.id` — so the returned IDs
+    /// are consistent with `get_user_embeddings` and can be looked up via
+    /// `list_models`.
     pub fn get_user_embeddings_raw(&self, user: &str) -> Result<Vec<(u32, Vec<u8>, bool)>> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT fe.id, fe.embedding, fe.sealed
+                "SELECT fm.id, fe.embedding, fe.sealed
                  FROM face_models fm
                  JOIN face_embeddings fe ON fe.model_id = fm.id
                  WHERE fm.user = ?1",
@@ -223,7 +227,7 @@ impl FaceStore {
     }
 
     /// Add a face model with raw bytes and a sealed flag. Returns the new model ID.
-    pub fn add_model_raw(&self, user: &str, label: &str, data: &[u8], sealed: bool) -> Result<u32> {
+    pub fn add_model_raw(&self, user: &str, label: &str, data: &[u8], sealed: bool, embedder_model: &str) -> Result<u32> {
         let tx = self.conn.unchecked_transaction().map_err(map_err)?;
 
         let created_at = SystemTime::now()
@@ -232,8 +236,8 @@ impl FaceStore {
             .unwrap_or(0);
 
         tx.execute(
-            "INSERT INTO face_models (user, label, created_at) VALUES (?1, ?2, ?3)",
-            params![user, label, created_at],
+            "INSERT INTO face_models (user, label, created_at, embedder_model) VALUES (?1, ?2, ?3, ?4)",
+            params![user, label, created_at, embedder_model],
         )
         .map_err(map_err)?;
 
@@ -380,6 +384,34 @@ impl FaceStore {
         Ok(())
     }
 
+    /// Get the embedder model used by a user's most recent enrollment.
+    /// Returns `None` if the user has no models.
+    pub fn get_user_embedder_model(&self, user: &str) -> Result<Option<String>> {
+        let result = self.conn.query_row(
+            "SELECT embedder_model FROM face_models WHERE user = ?1 ORDER BY created_at DESC LIMIT 1",
+            params![user],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(model) => Ok(Some(model)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(map_err(e)),
+        }
+    }
+
+    /// Check if a user has any models enrolled with the given embedder model.
+    pub fn has_models_for_embedder(&self, user: &str, embedder_model: &str) -> Result<bool> {
+        let count: u32 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM face_models WHERE user = ?1 AND embedder_model = ?2",
+                params![user, embedder_model],
+                |row| row.get(0),
+            )
+            .map_err(map_err)?;
+        Ok(count > 0)
+    }
+
     /// Check if a user has any stored models.
     pub fn has_models(&self, user: &str) -> Result<bool> {
         let count: u32 = self
@@ -410,7 +442,7 @@ mod tests {
     fn test_add_and_retrieve() {
         let store = FaceStore::open_memory().unwrap();
         let emb = test_embedding();
-        let id = store.add_model("alice", "front", &emb).unwrap();
+        let id = store.add_model("alice", "front", &emb, "").unwrap();
         let results = store.get_user_embeddings("alice").unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, id);
@@ -423,8 +455,8 @@ mod tests {
     fn test_duplicate_label() {
         let store = FaceStore::open_memory().unwrap();
         let emb = test_embedding();
-        store.add_model("alice", "front", &emb).unwrap();
-        let result = store.add_model("alice", "front", &emb);
+        store.add_model("alice", "front", &emb, "").unwrap();
+        let result = store.add_model("alice", "front", &emb, "");
         assert!(result.is_err());
     }
 
@@ -432,8 +464,8 @@ mod tests {
     fn test_list_models() {
         let store = FaceStore::open_memory().unwrap();
         let emb = test_embedding();
-        store.add_model("alice", "front", &emb).unwrap();
-        store.add_model("alice", "side", &emb).unwrap();
+        store.add_model("alice", "front", &emb, "").unwrap();
+        store.add_model("alice", "side", &emb, "").unwrap();
         let models = store.list_models("alice").unwrap();
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].user, "alice");
@@ -447,7 +479,7 @@ mod tests {
     fn test_remove_model() {
         let store = FaceStore::open_memory().unwrap();
         let emb = test_embedding();
-        let id = store.add_model("alice", "front", &emb).unwrap();
+        let id = store.add_model("alice", "front", &emb, "").unwrap();
         assert!(store.remove_model("alice", id).unwrap());
         let models = store.list_models("alice").unwrap();
         assert!(models.is_empty());
@@ -457,9 +489,9 @@ mod tests {
     fn test_clear_user() {
         let store = FaceStore::open_memory().unwrap();
         let emb = test_embedding();
-        store.add_model("alice", "a", &emb).unwrap();
-        store.add_model("alice", "b", &emb).unwrap();
-        store.add_model("alice", "c", &emb).unwrap();
+        store.add_model("alice", "a", &emb, "").unwrap();
+        store.add_model("alice", "b", &emb, "").unwrap();
+        store.add_model("alice", "c", &emb, "").unwrap();
         let count = store.clear_user("alice").unwrap();
         assert_eq!(count, 3);
         assert!(!store.has_models("alice").unwrap());
@@ -469,8 +501,8 @@ mod tests {
     fn test_multi_user() {
         let store = FaceStore::open_memory().unwrap();
         let emb = test_embedding();
-        store.add_model("alice", "front", &emb).unwrap();
-        store.add_model("bob", "front", &emb).unwrap();
+        store.add_model("alice", "front", &emb, "").unwrap();
+        store.add_model("bob", "front", &emb, "").unwrap();
 
         let alice_models = store.list_models("alice").unwrap();
         let bob_models = store.list_models("bob").unwrap();
@@ -487,7 +519,7 @@ mod tests {
         let store = FaceStore::open_memory().unwrap();
         assert!(!store.has_models("alice").unwrap());
         let emb = test_embedding();
-        store.add_model("alice", "front", &emb).unwrap();
+        store.add_model("alice", "front", &emb, "").unwrap();
         assert!(store.has_models("alice").unwrap());
         store.clear_user("alice").unwrap();
         assert!(!store.has_models("alice").unwrap());
@@ -511,7 +543,7 @@ mod tests {
         emb[3] = f32::MIN_POSITIVE;
         emb[511] = 42.0;
 
-        store.add_model("alice", "test", &emb).unwrap();
+        store.add_model("alice", "test", &emb, "").unwrap();
         let results = store.get_user_embeddings("alice").unwrap();
         assert_eq!(results.len(), 1);
         for i in 0..512 {
@@ -530,7 +562,7 @@ mod tests {
         let mut emb2 = test_embedding();
         emb2[0] = 99.0;
 
-        let id = store.add_model("alice", "front", &emb1).unwrap();
+        let id = store.add_model("alice", "front", &emb1, "").unwrap();
         store.add_embedding(id, &emb2).unwrap();
 
         let results = store.get_user_embeddings("alice").unwrap();
@@ -543,7 +575,7 @@ mod tests {
     fn test_remove_model_by_label() {
         let store = FaceStore::open_memory().unwrap();
         let emb = test_embedding();
-        store.add_model("alice", "front", &emb).unwrap();
+        store.add_model("alice", "front", &emb, "").unwrap();
         assert!(store.remove_model_by_label("alice", "front").unwrap());
         assert!(!store.has_models("alice").unwrap());
         // Removing again returns false
@@ -560,7 +592,7 @@ mod tests {
     fn test_cascade_delete() {
         let store = FaceStore::open_memory().unwrap();
         let emb = test_embedding();
-        let id = store.add_model("alice", "front", &emb).unwrap();
+        let id = store.add_model("alice", "front", &emb, "").unwrap();
 
         // Verify embedding exists
         let embs = store.get_user_embeddings("alice").unwrap();
@@ -590,7 +622,7 @@ mod tests {
         let store = FaceStore::open_memory().unwrap();
         // The sealed column should exist with default 0
         let emb = test_embedding();
-        store.add_model("alice", "front", &emb).unwrap();
+        store.add_model("alice", "front", &emb, "").unwrap();
         let raw = store.get_user_embeddings_raw("alice").unwrap();
         assert_eq!(raw.len(), 1);
         assert!(!raw[0].2, "newly added embedding should not be sealed");
@@ -600,7 +632,7 @@ mod tests {
     fn test_add_model_raw() {
         let store = FaceStore::open_memory().unwrap();
         let data = vec![0xAA; 100]; // arbitrary raw data
-        let id = store.add_model_raw("bob", "test", &data, true).unwrap();
+        let id = store.add_model_raw("bob", "test", &data, true, "").unwrap();
         assert!(id > 0);
 
         let raw = store.get_user_embeddings_raw("bob").unwrap();
@@ -613,10 +645,14 @@ mod tests {
     fn test_update_embedding_sealed() {
         let store = FaceStore::open_memory().unwrap();
         let emb = test_embedding();
-        store.add_model("alice", "front", &emb).unwrap();
+        store.add_model("alice", "front", &emb, "").unwrap();
+
+        // Use get_all_embeddings_raw to get the embedding ID (fe.id)
+        // needed by update_embedding_sealed
+        let all = store.get_all_embeddings_raw().unwrap();
+        let emb_id = all[0].0;
 
         let raw = store.get_user_embeddings_raw("alice").unwrap();
-        let emb_id = raw[0].0;
         assert!(!raw[0].2);
 
         // Update to sealed
@@ -657,8 +693,8 @@ mod tests {
 
         // Add some regular (unsealed) embeddings
         let emb = test_embedding();
-        store.add_model("alice", "a", &emb).unwrap();
-        store.add_model("alice", "b", &emb).unwrap();
+        store.add_model("alice", "a", &emb, "").unwrap();
+        store.add_model("alice", "b", &emb, "").unwrap();
 
         let (s, u) = store.count_sealed().unwrap();
         assert_eq!(s, 0);
@@ -666,7 +702,7 @@ mod tests {
 
         // Add a sealed embedding via raw
         store
-            .add_model_raw("bob", "sealed", &[0x01; 50], true)
+            .add_model_raw("bob", "sealed", &[0x01; 50], true, "")
             .unwrap();
 
         let (s, u) = store.count_sealed().unwrap();
@@ -722,9 +758,9 @@ mod tests {
     fn test_get_all_embeddings_raw() {
         let store = FaceStore::open_memory().unwrap();
         let emb = test_embedding();
-        store.add_model("alice", "front", &emb).unwrap();
+        store.add_model("alice", "front", &emb, "").unwrap();
         store
-            .add_model_raw("bob", "sealed", &[0x01; 50], true)
+            .add_model_raw("bob", "sealed", &[0x01; 50], true, "")
             .unwrap();
 
         let all = store.get_all_embeddings_raw().unwrap();
