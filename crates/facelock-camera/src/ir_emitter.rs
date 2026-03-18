@@ -265,6 +265,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // requires /dev/video0
     fn enable_without_quirk_returns_false() {
         let result = enable_emitter("/dev/video0", None);
         assert!(result.is_ok());
@@ -272,6 +273,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // requires /dev/video0
     fn disable_without_quirk_returns_ok() {
         let result = disable_emitter("/dev/video0", None);
         assert!(result.is_ok());

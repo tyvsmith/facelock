@@ -138,6 +138,13 @@ impl FaceStore {
         let mut results = Vec::new();
         for row in rows {
             let (id, blob) = row.map_err(map_err)?;
+            if blob.len() != 512 * 4 {
+                return Err(FacelockError::Storage(format!(
+                    "invalid embedding blob size: expected {} bytes, got {}",
+                    512 * 4,
+                    blob.len()
+                )));
+            }
             let floats: &[f32] = bytemuck::cast_slice(&blob);
             let mut embedding = [0f32; 512];
             embedding.copy_from_slice(floats);

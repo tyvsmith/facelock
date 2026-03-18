@@ -104,7 +104,7 @@ fn init_software_sealer(
 
 /// Load user embeddings, decrypting software-encrypted or TPM-sealed blobs as needed.
 /// Mirrors `Handler::load_user_embeddings` from the daemon path.
-fn load_user_embeddings(
+pub fn load_user_embeddings(
     store: &FaceStore,
     config: &Config,
     user: &str,
@@ -141,12 +141,13 @@ fn load_user_embeddings(
             }
         } else {
             // Plaintext raw embedding
-            let floats: &[f32] = bytemuck::cast_slice(blob);
             anyhow::ensure!(
-                floats.len() == 512,
-                "invalid raw embedding size for id {id}: expected 512 floats, got {}",
-                floats.len()
+                blob.len() == 512 * 4,
+                "invalid raw embedding size for id {id}: expected {} bytes, got {}",
+                512 * 4,
+                blob.len()
             );
+            let floats: &[f32] = bytemuck::cast_slice(blob);
             let mut emb = [0f32; 512];
             emb.copy_from_slice(floats);
             emb

@@ -188,8 +188,8 @@ impl PreviewState {
                 render_error(canvas, width, height, "unexpected daemon response");
             }
             Err(e) => {
-                tracing::warn!("IPC error: {e}");
-                render_error(canvas, width, height, &format!("IPC error: {e}"));
+                tracing::warn!("IPC error: {e:#}");
+                render_error(canvas, width, height, &format!("IPC error: {e:#}"));
             }
         }
 

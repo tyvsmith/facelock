@@ -247,16 +247,17 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                 }
             } else {
                 // Plaintext raw embedding
-                let floats: &[f32] = bytemuck::cast_slice(blob);
-                let mut emb = [0f32; 512];
-                if floats.len() != 512 {
+                if blob.len() != 512 * 4 {
                     return Err(DaemonResponse::Error {
                         message: format!(
-                            "invalid raw embedding size for id {id}: expected 512 floats, got {}",
-                            floats.len()
+                            "invalid raw embedding size for id {id}: expected {} bytes, got {}",
+                            512 * 4,
+                            blob.len()
                         ),
                     });
                 }
+                let floats: &[f32] = bytemuck::cast_slice(blob);
+                let mut emb = [0f32; 512];
                 emb.copy_from_slice(floats);
                 emb
             };
@@ -501,7 +502,7 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
             }
         };
 
-        let stored = self.store.get_user_embeddings(user).unwrap_or_default();
+        let stored = self.load_user_embeddings(user).unwrap_or_default();
         let threshold = self.config.recognition.threshold;
 
         detections

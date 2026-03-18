@@ -130,9 +130,7 @@ pub fn run_direct(config: &facelock_core::Config, user: &str) -> anyhow::Result<
     let mut camera = crate::direct::open_camera(config)?;
     let mut engine = crate::direct::load_engine(config)?;
     let store = crate::direct::open_store(config)?;
-    let stored = store
-        .get_user_embeddings(user)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let stored = crate::direct::load_user_embeddings(&store, config, user)?;
     let threshold = config.recognition.threshold;
 
     let mut frame_count: u64 = 0;
