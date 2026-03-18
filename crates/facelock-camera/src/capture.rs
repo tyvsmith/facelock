@@ -143,9 +143,7 @@ impl<'a> Camera<'a> {
 
         // Apply quirk overrides for rotation (warmup_frames is handled by the caller
         // since Camera::open doesn't consume warmup frames itself).
-        let rotation = quirk
-            .and_then(|q| q.rotation)
-            .unwrap_or(config.rotation);
+        let rotation = quirk.and_then(|q| q.rotation).unwrap_or(config.rotation);
         if let Some(q) = quirk {
             if q.rotation.is_some() || q.warmup_frames.is_some() || q.format_preference.is_some() {
                 tracing::info!(
@@ -311,10 +309,7 @@ impl Drop for Camera<'_> {
                 match ir_emitter::disable_emitter_with_info(&self.device_path, xu_info) {
                     Ok(()) => tracing::debug!("IR emitter disabled on {}", self.device_path),
                     Err(e) => {
-                        tracing::warn!(
-                            "failed to disable IR emitter on {}: {e}",
-                            self.device_path
-                        )
+                        tracing::warn!("failed to disable IR emitter on {}: {e}", self.device_path)
                     }
                 }
             }

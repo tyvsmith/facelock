@@ -26,11 +26,9 @@ pub fn run(user: &str) -> anyhow::Result<()> {
     let stdout = std::io::stdout();
 
     while !stop.load(Ordering::Relaxed) {
-        let response = match ipc_client::send_request(
-            &DaemonRequest::PreviewDetectFrame {
-                user: user.to_string(),
-            },
-        ) {
+        let response = match ipc_client::send_request(&DaemonRequest::PreviewDetectFrame {
+            user: user.to_string(),
+        }) {
             Ok(r) => r,
             Err(_) => break,
         };

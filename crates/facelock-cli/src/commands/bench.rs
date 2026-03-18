@@ -77,7 +77,8 @@ fn open_camera(config: &Config) -> Result<Camera<'static>> {
             .with_context(|| format!("Camera device {path} not accessible"))?;
         info!(device = %path, ir = is_ir_camera(&device_info), "Camera validated");
     }
-    Camera::open(&config.device, None).with_context(|| format!("Failed to open camera ({path_display})"))
+    Camera::open(&config.device, None)
+        .with_context(|| format!("Failed to open camera ({path_display})"))
 }
 
 /// Load FaceEngine from config.

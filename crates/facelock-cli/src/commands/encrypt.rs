@@ -194,10 +194,7 @@ pub fn run_decrypt() -> Result<()> {
 
     // Decrypt TPM-sealed embeddings
     if !tpm_sealed.is_empty() {
-        println!(
-            "Decrypting {} TPM-sealed embedding(s)...",
-            tpm_sealed.len()
-        );
+        println!("Decrypting {} TPM-sealed embedding(s)...", tpm_sealed.len());
 
         #[cfg(feature = "tpm")]
         {

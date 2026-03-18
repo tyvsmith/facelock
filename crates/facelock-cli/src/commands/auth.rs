@@ -148,7 +148,14 @@ pub fn run(user: String, config_path: Option<String>) -> i32 {
         };
 
     let start = std::time::Instant::now();
-    let response = auth::authenticate(&mut camera, &mut engine, &store, &config, &user, device_is_ir);
+    let response = auth::authenticate(
+        &mut camera,
+        &mut engine,
+        &store,
+        &config,
+        &user,
+        device_is_ir,
+    );
     let duration_ms = start.elapsed().as_millis() as u64;
 
     // Note: authenticate_inner already writes audit entries for the camera-based

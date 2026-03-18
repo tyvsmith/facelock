@@ -6,7 +6,11 @@ use facelock_core::ipc::{DaemonRequest, DaemonResponse};
 
 use crate::ipc_client;
 
-pub fn run(user: Option<String>, label: Option<String>, skip_setup_check: bool) -> anyhow::Result<()> {
+pub fn run(
+    user: Option<String>,
+    label: Option<String>,
+    skip_setup_check: bool,
+) -> anyhow::Result<()> {
     // Setup gate: prompt user if setup hasn't been run.
     // Setup includes model downloads, encryption, and face enrollment,
     // so if setup runs successfully we're done — no need to enroll again.
@@ -64,9 +68,10 @@ pub fn run(user: Option<String>, label: Option<String>, skip_setup_check: bool) 
         } else {
             let request = DaemonRequest::ListModels { user: user.clone() };
             match ipc_client::send_request(&request) {
-                Ok(DaemonResponse::Models(ref m)) if !m.is_empty() => {
-                    Some(!m.iter().any(|model| model.embedder_model == *config_embedder))
-                }
+                Ok(DaemonResponse::Models(ref m)) if !m.is_empty() => Some(
+                    !m.iter()
+                        .any(|model| model.embedder_model == *config_embedder),
+                ),
                 _ => None,
             }
         };
@@ -74,7 +79,9 @@ pub fn run(user: Option<String>, label: Option<String>, skip_setup_check: bool) 
             println!(
                 "Note: existing models don't use the configured embedder '{config_embedder}'."
             );
-            println!("Old enrollments will not work with the new embedder. Consider removing them with 'facelock remove'.\n");
+            println!(
+                "Old enrollments will not work with the new embedder. Consider removing them with 'facelock remove'.\n"
+            );
         }
     }
 
