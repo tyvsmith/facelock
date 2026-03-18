@@ -53,9 +53,35 @@ The `.github/workflows/release.yml` workflow:
 
 ### Manual steps after release
 
-- Update AUR PKGBUILD if published separately
+- Update AUR package (see below)
 - Update any external package repositories
 - Announce on relevant channels
+
+### AUR Update
+
+After the GitHub Release is created (triggered by the tag push):
+
+1. Download the release tarball and compute the checksum:
+   ```bash
+   curl -sL https://github.com/tyvsmith/facelock/archive/v$VERSION.tar.gz | sha256sum
+   ```
+2. Clone the AUR repo (first time only):
+   ```bash
+   git clone ssh://aur@aur.archlinux.org/facelock.git aur-facelock
+   ```
+3. Copy `dist/PKGBUILD` and `dist/facelock.install` into the AUR repo
+4. Update `sha256sums` in the PKGBUILD with the real checksum from step 1
+5. Generate `.SRCINFO`:
+   ```bash
+   cd aur-facelock
+   makepkg --printsrcinfo > .SRCINFO
+   ```
+6. Commit and push to AUR:
+   ```bash
+   git add PKGBUILD facelock.install .SRCINFO
+   git commit -m "Update to v$VERSION"
+   git push
+   ```
 
 ## Version Sources
 
