@@ -151,6 +151,14 @@ facelock bench model-load               # model loading time
 facelock bench report                   # full benchmark report
 ```
 
+## facelock restart
+
+Restart the persistent daemon. On systemd systems, runs `systemctl restart facelock-daemon.service`. Otherwise, sends a D-Bus shutdown request and the daemon restarts on next use via D-Bus activation.
+
+```bash
+facelock restart
+```
+
 ## User Resolution
 
 For commands that accept `--user`:

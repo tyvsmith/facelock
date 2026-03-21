@@ -1,6 +1,6 @@
 # Introduction
 
-Facelock is a modern face authentication system for Linux PAM. It provides Windows Hello-style facial authentication with IR anti-spoofing, configurable as a persistent daemon or daemonless one-shot.
+Facelock is a modern face authentication system for Linux PAM. It provides Windows Hello-style facial authentication with IR anti-spoofing, configurable as a persistent daemon or daemonless one-shot. All inference runs locally on your hardware -- no cloud services, no network requests, no telemetry. Your biometric data never leaves your machine.
 
 ## Quick Start
 
@@ -17,9 +17,11 @@ No daemon needed -- the CLI auto-falls back to direct mode when no daemon is run
 
 | Mode | Config | How it works | Latency |
 |------|--------|-------------|---------|
-| **Daemon** | `mode = "daemon"` (default) | PAM connects via D-Bus, persistent daemon | ~200ms warm |
-| **Socket activation** | systemd `.socket` unit | systemd starts daemon on demand | ~700ms cold |
-| **Oneshot** | `mode = "oneshot"` | PAM spawns `facelock auth` subprocess | ~700ms |
+| **Daemon** | `mode = "daemon"` (default) | PAM connects via D-Bus, persistent daemon | ~150-600ms |
+| **D-Bus activation** | systemd + D-Bus service | systemd starts daemon on demand | ~700ms+ cold |
+| **Oneshot** | `mode = "oneshot"` | PAM spawns `facelock auth` subprocess | ~700ms+ |
+
+Daemon latency depends on camera state: ~600ms with a cold camera, ~150-180ms on back-to-back auths when the camera is already warm.
 
 The CLI works in all modes -- it connects to the daemon if available, otherwise operates directly.
 
@@ -53,7 +55,7 @@ pam_facelock.so (PAM module)
 | `facelock-face` | lib | ONNX inference (SCRFD detection + ArcFace embedding) |
 | `facelock-store` | lib | SQLite face embedding storage |
 | `facelock-daemon` | lib | Auth/enroll logic, liveness, audit, rate limiting, request handler |
-| `facelock-cli` | bin | All CLI commands, daemon runner, direct mode |
+| `facelock-cli` | bin | All CLI commands, daemon runner, direct mode, benchmarks |
 | `pam-facelock` | cdylib | PAM module (libc + toml + serde + zbus only) |
 | `facelock-tpm` | lib | Optional TPM-bound encryption for embeddings at rest |
 | `facelock-polkit` | bin | Polkit authentication agent for face auth |
@@ -91,10 +93,16 @@ All keys are optional. Camera is auto-detected if `device.path` is omitted. See 
 
 See [Quick Start](quickstart.md) for full instructions.
 
-## Security
+## Privacy & Security
+
+**Privacy**: Facelock is 100% local. Face detection and recognition run entirely on your hardware via ONNX Runtime. No images, embeddings, or metadata are ever sent to any external server. There is no telemetry, no analytics, no phone-home behavior. Models are downloaded once during setup -- after that, Facelock never touches the network.
+
+**Security**:
 
 - IR camera enforcement on by default (anti-spoofing)
 - Frame variance checks reject static photo attacks
+- Constant-time embedding comparison via `subtle` crate
+- AES-256-GCM encryption at rest with optional TPM-sealed keys
 - Model SHA256 verification at every load
 - D-Bus system bus policy
 - PAM audit logging to syslog

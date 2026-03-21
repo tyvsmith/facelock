@@ -24,7 +24,7 @@ Facelock is a Cargo workspace with 10 crates:
 | `facelock-face` | lib | ONNX inference (SCRFD + ArcFace) |
 | `facelock-store` | lib | SQLite face embedding storage |
 | `facelock-daemon` | lib | Auth/enroll logic, liveness, audit, rate limiting, handler |
-| `facelock-cli` | bin | Unified CLI (`facelock` binary) |
+| `facelock-cli` | bin | Unified CLI (`facelock` binary, includes `bench` subcommand) |
 | `pam-facelock` | cdylib | PAM module (libc + toml + serde + zbus only) |
 | `facelock-tpm` | lib | Optional TPM-bound encryption for embeddings at rest |
 | `facelock-polkit` | bin | Polkit authentication agent for face auth |
@@ -97,7 +97,7 @@ Read the [Security](security.md) chapter before implementing any auth-related co
 - `security.require_ir` defaults to **true**. Never weaken this default.
 - Frame variance checks must remain in the auth path.
 - Model files are SHA256-verified at load time.
-- IPC messages have size limits (10MB max). Never allocate unbounded buffers.
+- D-Bus message size limits are enforced by the bus daemon. Never allocate unbounded buffers.
 - D-Bus system bus policy restricts daemon access.
 - The PAM module logs all auth attempts to syslog.
 - Rate limiting is enforced in the daemon (5 attempts/user/60s default).

@@ -87,22 +87,22 @@ open as a recovery path.
 
 ## 2. Test Coverage Audit
 
-### Unit test counts by crate
+### Unit test counts by crate (approximate)
 
-| Crate | `#[test]` count | `#[ignore]` count | Notes |
-|-------|---------------:|------------------:|-------|
-| facelock-core | 43 | 0 | Good coverage: config parsing, types, paths, D-Bus types |
-| facelock-camera | 39 | 2 | Good: preprocessing, device detection, quirks. Hardware tests ignored. |
-| facelock-face | 18 | 6 | Moderate: alignment, detector, embedder, model verification. 5 integration tests need camera+models. |
-| facelock-store | 30 | 0 | Good: SQLite CRUD, embedding storage, migration. Plus integration test file. |
-| facelock-daemon | 54 | 0 | Strong: rate limiting, audit, quality scoring, auth logic, liveness. Plus integration test file. |
-| facelock-cli | 63 | 0 | Strong: daemon command, preview rendering, bench, list, encrypt, setup, TPM, IPC client, i18n, notifications. Plus CLI smoke test. |
-| facelock-tpm | 27 | 0 | Good: PCR policy, sealing/unsealing (swtpm in CI). |
-| pam-facelock | 0 | 0 | No unit tests. Tested via container PAM smoke (Tier 3a). |
-| facelock-polkit | 0 | 0 | No tests. Agent is not production-ready. |
-| facelock-bench | 0 | 0 | Benchmark binary, not a test target. |
-| facelock-test-support | 0 | 0 | Mocks/fixtures only, no self-tests. |
-| **Total** | **274** | **8** | |
+| Crate | Approx. tests | Notes |
+|-------|-------------:|-------|
+| facelock-core | ~40+ | Good coverage: config parsing, types, paths, D-Bus types |
+| facelock-camera | ~40+ | Good: preprocessing, device detection, quirks. A few hardware tests ignored. |
+| facelock-face | ~20 | Moderate: alignment, detector, embedder, model verification. Some integration tests need camera+models. |
+| facelock-store | ~30 | Good: SQLite CRUD, embedding storage, migration. |
+| facelock-daemon | ~50+ | Strong: rate limiting, audit, quality scoring, auth logic, liveness. |
+| facelock-cli | ~60+ | Strong: daemon command, preview rendering, bench, list, encrypt, setup, TPM, IPC client, notifications. |
+| facelock-tpm | ~25+ | Good: PCR policy, sealing/unsealing (swtpm in CI). |
+| pam-facelock | 0 | No unit tests. Tested via container PAM smoke (Tier 3a). |
+| facelock-polkit | 0 | No tests. Agent is not production-ready. |
+| facelock-bench | 0 | Benchmark binary, not a test target. |
+| facelock-test-support | 0 | Mocks/fixtures only, no self-tests. |
+| **Total** | **~270+** | |
 
 ### CI jobs
 
@@ -135,7 +135,7 @@ No `cargo-fuzz` targets exist. High-value fuzz targets would be:
 
 ### No coverage reporting
 Neither `cargo-tarpaulin` nor `llvm-cov` is configured. No visibility into
-which code paths are actually exercised by the 274 unit tests.
+which code paths are actually exercised by the unit tests.
 
 ### No supply chain auditing
 No `cargo-audit` or `cargo-deny` in CI. The project pulls in `ort` (ONNX
@@ -217,7 +217,7 @@ before they ship.
 
 ### P1: Coverage reporting
 Add `cargo-llvm-cov` to CI with a coverage summary comment on PRs. Provides
-visibility into what the 274 tests actually cover and highlights dead code.
+visibility into what the ~270+ tests actually cover and highlights dead code.
 
 ### P2: PAM module unit tests
 Add unit tests to `pam-facelock` for config parsing, D-Bus client fallback
