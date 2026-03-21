@@ -16,15 +16,16 @@ pub fn config_path() -> PathBuf {
 mod tests {
     use super::*;
 
+    // These tests must run sequentially in a single test because they mutate
+    // a shared process-wide env var. Separate #[test] functions race when
+    // cargo runs tests in parallel.
     #[test]
-    fn config_path_default() {
-        // Clear env var to test default
+    fn config_path_default_and_env_override() {
+        // Test default (env var not set)
         unsafe { std::env::remove_var("FACELOCK_CONFIG") };
         assert_eq!(config_path(), PathBuf::from(DEFAULT_CONFIG_PATH));
-    }
 
-    #[test]
-    fn config_path_env_override() {
+        // Test env var override
         unsafe { std::env::set_var("FACELOCK_CONFIG", "/tmp/test-facelock.toml") };
         assert_eq!(config_path(), PathBuf::from("/tmp/test-facelock.toml"));
         unsafe { std::env::remove_var("FACELOCK_CONFIG") };
