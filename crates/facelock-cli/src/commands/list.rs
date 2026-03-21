@@ -64,7 +64,10 @@ fn print_table(user: &str, models: &[FaceModelInfo]) {
         } else {
             model.embedder_model.clone()
         };
-        println!("  {:<6} {:<20} {:<24} {}", model.id, model.label, created, model_name);
+        println!(
+            "  {:<6} {:<20} {:<24} {}",
+            model.id, model.label, created, model_name
+        );
     }
 
     println!("\n  Total: {} model(s)", models.len());

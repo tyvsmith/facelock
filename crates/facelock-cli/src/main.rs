@@ -189,7 +189,11 @@ fn main() -> anyhow::Result<()> {
                         commands::setup::run(non_interactive)
                     }
                 }
-                Commands::Enroll { user, label, skip_setup_check } => commands::enroll::run(user, label, skip_setup_check),
+                Commands::Enroll {
+                    user,
+                    label,
+                    skip_setup_check,
+                } => commands::enroll::run(user, label, skip_setup_check),
                 Commands::Remove {
                     model_id,
                     user,

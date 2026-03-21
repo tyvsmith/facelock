@@ -7,7 +7,9 @@ use std::path::Path;
 
 use anyhow::{Context, bail};
 use facelock_camera::quirks::QuirksDb;
-use facelock_camera::{Camera, is_ir_camera, is_ir_camera_with_quirks, list_devices, validate_device};
+use facelock_camera::{
+    Camera, is_ir_camera, is_ir_camera_with_quirks, list_devices, validate_device,
+};
 use facelock_core::config::{Config, EncryptionMethod};
 use facelock_core::ipc::DaemonResponse;
 use facelock_core::types::MatchResult;
@@ -29,8 +31,8 @@ pub fn open_camera(config: &Config) -> anyhow::Result<Camera<'static>> {
         .and_then(|p| validate_device(p).ok())
         .and_then(|info| quirks.find_match(&info).cloned());
 
-    let mut camera = Camera::open(&config.device, device_quirk.as_ref())
-        .context("failed to open camera")?;
+    let mut camera =
+        Camera::open(&config.device, device_quirk.as_ref()).context("failed to open camera")?;
 
     // Discard warmup frames for AGC/AE stabilization.
     // Quirk override takes precedence over config value.
@@ -95,9 +97,7 @@ pub fn authenticate(config: &Config, user: &str) -> anyhow::Result<bool> {
 
 /// Initialize a software sealer based on encryption config.
 /// Returns `None` if encryption is disabled.
-fn init_software_sealer(
-    config: &Config,
-) -> anyhow::Result<Option<facelock_tpm::SoftwareSealer>> {
+fn init_software_sealer(config: &Config) -> anyhow::Result<Option<facelock_tpm::SoftwareSealer>> {
     match config.encryption.method {
         EncryptionMethod::Keyfile => {
             let key_path = Path::new(&config.encryption.key_path);
@@ -160,7 +160,9 @@ pub fn load_user_embeddings(
         } else if *sealed {
             #[cfg(feature = "tpm")]
             {
-                bail!("embedding {id} is TPM-sealed but direct path only supports software encryption — use the daemon");
+                bail!(
+                    "embedding {id} is TPM-sealed but direct path only supports software encryption — use the daemon"
+                );
             }
             #[cfg(not(feature = "tpm"))]
             {
@@ -297,8 +299,8 @@ mod facelock_daemon_auth {
             models.iter().find(|m| m.id == id).map(|m| m.label.clone())
         };
 
-        let deadline = Instant::now()
-            + std::time::Duration::from_secs(config.recognition.timeout_secs as u64);
+        let deadline =
+            Instant::now() + std::time::Duration::from_secs(config.recognition.timeout_secs as u64);
         let threshold = config.recognition.threshold;
         let mut best_similarity: f32 = 0.0;
         let mut matched_frame_embeddings: Vec<FaceEmbedding> =
@@ -423,9 +425,7 @@ mod facelock_daemon_auth {
                 }
             } else if best_similarity >= threshold {
                 // If landmark liveness is required, check it even without variance
-                if config.security.require_landmark_liveness
-                    && !landmark_tracker.check_liveness()
-                {
+                if config.security.require_landmark_liveness && !landmark_tracker.check_liveness() {
                     debug!(
                         frame = frame_count,
                         landmark_frames = landmark_tracker.frame_count(),
@@ -567,11 +567,15 @@ mod facelock_daemon_enroll {
                 match sealer.seal_embedding(embedding) {
                     Ok(encrypted) => match model_id {
                         None => store
-                            .add_model_raw(user, label, &encrypted, true, &config.recognition.embedder_model)
+                            .add_model_raw(
+                                user,
+                                label,
+                                &encrypted,
+                                true,
+                                &config.recognition.embedder_model,
+                            )
                             .map(Some),
-                        Some(id) => store
-                            .add_embedding_raw(id, &encrypted, true)
-                            .map(|()| None),
+                        Some(id) => store.add_embedding_raw(id, &encrypted, true).map(|()| None),
                     },
                     Err(e) => {
                         warn!("failed to encrypt embedding: {e}");
@@ -582,7 +586,9 @@ mod facelock_daemon_enroll {
                 }
             } else {
                 match model_id {
-                    None => store.add_model(user, label, embedding, &config.recognition.embedder_model).map(Some),
+                    None => store
+                        .add_model(user, label, embedding, &config.recognition.embedder_model)
+                        .map(Some),
                     Some(id) => store.add_embedding(id, embedding).map(|()| None),
                 }
             };

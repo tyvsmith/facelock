@@ -58,7 +58,10 @@ pub fn pre_check(
     };
     if !has_models {
         if config.security.suppress_unknown {
-            info!(user, "no enrolled models, suppressing (suppress_unknown=true)");
+            info!(
+                user,
+                "no enrolled models, suppressing (suppress_unknown=true)"
+            );
             return Some(DaemonResponse::Suppressed);
         }
         return Some(DaemonResponse::AuthResult(MatchResult {
@@ -106,7 +109,15 @@ pub fn authenticate<C: CameraSource, E: FaceProcessor>(
         }
     };
     let models = store.list_models(user).unwrap_or_default();
-    authenticate_inner(camera, engine, &mut stored, &models, config, user, device_is_ir)
+    authenticate_inner(
+        camera,
+        engine,
+        &mut stored,
+        &models,
+        config,
+        user,
+        device_is_ir,
+    )
 }
 
 /// Run the camera-based authentication loop with pre-loaded (decrypted) embeddings.
@@ -122,7 +133,15 @@ pub fn authenticate_with_embeddings<C: CameraSource, E: FaceProcessor>(
 ) -> DaemonResponse {
     let mut stored = stored.to_vec();
     let models = models.to_vec();
-    authenticate_inner(camera, engine, &mut stored, &models, config, user, device_is_ir)
+    authenticate_inner(
+        camera,
+        engine,
+        &mut stored,
+        &models,
+        config,
+        user,
+        device_is_ir,
+    )
 }
 
 /// Save a snapshot of the last captured frame to disk.
@@ -236,7 +255,11 @@ fn authenticate_inner<C: CameraSource, E: FaceProcessor>(
 
         // Compute CLAHE-enhanced grayscale only for IR texture checks
         let clahe_gray = if device_is_ir {
-            Some(facelock_camera::preprocess::clahe(&frame.gray, frame.width, frame.height))
+            Some(facelock_camera::preprocess::clahe(
+                &frame.gray,
+                frame.width,
+                frame.height,
+            ))
         } else {
             None
         };
@@ -262,7 +285,13 @@ fn authenticate_inner<C: CameraSource, E: FaceProcessor>(
         let mut frame_matched = false;
         for (det, embedding) in &faces {
             // Skip individual faces that fail IR texture check
-            if device_is_ir && !check_ir_texture(clahe_gray.as_deref().unwrap_or(&frame.gray), &det.bbox, frame.width) {
+            if device_is_ir
+                && !check_ir_texture(
+                    clahe_gray.as_deref().unwrap_or(&frame.gray),
+                    &det.bbox,
+                    frame.width,
+                )
+            {
                 debug!(
                     frame = frame_count,
                     "IR texture check failed for face, skipping"

@@ -957,7 +957,7 @@ fn pam_install(service: &str, yes: bool) -> anyhow::Result<()> {
         fs::read_to_string(pam_file).with_context(|| format!("failed to read {pam_path}"))?;
 
     // Check idempotency — match on the module name, not exact spacing
-    if content.lines().any(|line| is_facelock_pam_line(line)) {
+    if content.lines().any(is_facelock_pam_line) {
         println!("PAM line already present in {pam_path}. Nothing to do.");
         return Ok(());
     }
@@ -1221,11 +1221,13 @@ account include   system-login
         assert!(content.lines().any(|line| is_facelock_pam_line(line)));
 
         // Different spacing should still match
-        let content2 = "#%PAM-1.0\nauth  sufficient  pam_facelock.so\nauth    include   system-login\n";
+        let content2 =
+            "#%PAM-1.0\nauth  sufficient  pam_facelock.so\nauth    include   system-login\n";
         assert!(content2.lines().any(|line| is_facelock_pam_line(line)));
 
         // Commented-out line should not match
-        let content3 = "#%PAM-1.0\n#auth sufficient pam_facelock.so\nauth    include   system-login\n";
+        let content3 =
+            "#%PAM-1.0\n#auth sufficient pam_facelock.so\nauth    include   system-login\n";
         assert!(!content3.lines().any(|line| is_facelock_pam_line(line)));
     }
 

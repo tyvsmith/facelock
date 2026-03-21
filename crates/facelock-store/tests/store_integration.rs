@@ -102,7 +102,9 @@ fn embedding_round_trip_bit_exact() {
     emb[100] = 0.123_456_79;
     emb[511] = 42.0;
 
-    store.add_model("alice", "precision-test", &emb, "").unwrap();
+    store
+        .add_model("alice", "precision-test", &emb, "")
+        .unwrap();
 
     let results = store.get_user_embeddings("alice").unwrap();
     assert_eq!(results.len(), 1);

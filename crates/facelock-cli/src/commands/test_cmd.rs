@@ -61,9 +61,9 @@ pub fn run(user: Option<String>) -> anyhow::Result<()> {
         } else {
             let request = DaemonRequest::ListModels { user: user.clone() };
             match ipc_client::send_request(&request) {
-                Ok(DaemonResponse::Models(ref m)) => {
-                    m.iter().any(|model| model.embedder_model == *config_embedder)
-                }
+                Ok(DaemonResponse::Models(ref m)) => m
+                    .iter()
+                    .any(|model| model.embedder_model == *config_embedder),
                 _ => true, // can't check, proceed anyway
             }
         };

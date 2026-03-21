@@ -564,9 +564,7 @@ type CameraFactory = Box<dyn Fn(&Config) -> Result<Camera<'static>, String> + Se
 
 /// Build a new handler from config. Used at startup and for live config reload.
 /// Returns the handler and idle_timeout_secs from the loaded config.
-fn build_handler(
-    config_path: Option<&str>,
-) -> Result<(ProductionHandler, u64), String> {
+fn build_handler(config_path: Option<&str>) -> Result<(ProductionHandler, u64), String> {
     let config = match config_path {
         Some(p) => Config::load_from(Path::new(p)),
         None => Config::load(),
@@ -576,9 +574,8 @@ fn build_handler(
     let quirks = QuirksDb::load();
 
     if config.device.path.is_none() {
-        let info = auto_detect_device().map_err(|e| {
-            format!("no camera device specified and auto-detection failed: {e}")
-        })?;
+        let info = auto_detect_device()
+            .map_err(|e| format!("no camera device specified and auto-detection failed: {e}"))?;
         let is_ir = is_ir_camera_with_quirks(&info, Some(&quirks));
         info!(device = %info.path, name = %info.name, ir = is_ir, "auto-detected camera device");
         config.device.path = Some(info.path);

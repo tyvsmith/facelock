@@ -86,7 +86,10 @@ impl PolkitAgent {
             let _ = cancel_tx.send(());
             tracing::info!(cookie, "cancel signal sent to in-flight auth");
         } else {
-            tracing::debug!(cookie, "no in-flight auth found for cookie (already completed or never started)");
+            tracing::debug!(
+                cookie,
+                "no in-flight auth found for cookie (already completed or never started)"
+            );
         }
         Ok(())
     }

@@ -137,8 +137,7 @@ impl PreviewState {
         let user = self.user.clone();
 
         // Request a frame with detection from the daemon
-        let frame_result =
-            ipc_client::send_request(&DaemonRequest::PreviewDetectFrame { user });
+        let frame_result = ipc_client::send_request(&DaemonRequest::PreviewDetectFrame { user });
 
         // Update FPS tracking
         let fps = match &frame_result {

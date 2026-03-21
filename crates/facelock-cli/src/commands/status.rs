@@ -298,14 +298,29 @@ fn check_security(config: &Option<Config>) {
         print_result(false, "ALL SECURITY CHECKS DISABLED");
         return;
     }
-    print_detail("require_ir", if config.security.require_ir { "yes" } else { "no" });
+    print_detail(
+        "require_ir",
+        if config.security.require_ir {
+            "yes"
+        } else {
+            "no"
+        },
+    );
     print_detail(
         "liveness (frame variance)",
-        if config.security.require_frame_variance { "yes" } else { "no" },
+        if config.security.require_frame_variance {
+            "yes"
+        } else {
+            "no"
+        },
     );
     print_detail(
         "liveness (landmark movement)",
-        if config.security.require_landmark_liveness { "yes" } else { "no" },
+        if config.security.require_landmark_liveness {
+            "yes"
+        } else {
+            "no"
+        },
     );
     print_detail(
         "min_auth_frames",
@@ -326,9 +341,30 @@ fn check_notifications(config: &Option<Config>) {
     };
     print_status_item("Notifications", mode_str);
     if config.notification.mode != facelock_core::config::NotificationMode::Off {
-        print_detail("prompt", if config.notification.notify_prompt { "yes" } else { "no" });
-        print_detail("on success", if config.notification.notify_on_success { "yes" } else { "no" });
-        print_detail("on failure", if config.notification.notify_on_failure { "yes" } else { "no" });
+        print_detail(
+            "prompt",
+            if config.notification.notify_prompt {
+                "yes"
+            } else {
+                "no"
+            },
+        );
+        print_detail(
+            "on success",
+            if config.notification.notify_on_success {
+                "yes"
+            } else {
+                "no"
+            },
+        );
+        print_detail(
+            "on failure",
+            if config.notification.notify_on_failure {
+                "yes"
+            } else {
+                "no"
+            },
+        );
     }
 }
 

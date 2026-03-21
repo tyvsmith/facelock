@@ -42,7 +42,9 @@ impl FaceEmbedder {
             ))
         })?;
 
-        Ok(Self { session: ManuallyDrop::new(session) })
+        Ok(Self {
+            session: ManuallyDrop::new(session),
+        })
     }
 
     /// Extract a 512-D embedding from an aligned face image.

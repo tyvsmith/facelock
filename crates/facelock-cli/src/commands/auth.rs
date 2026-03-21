@@ -4,8 +4,8 @@
 
 use std::path::Path;
 
-use facelock_camera::{Camera, auto_detect_device, is_ir_camera_with_quirks, validate_device};
 use facelock_camera::quirks::QuirksDb;
+use facelock_camera::{Camera, auto_detect_device, is_ir_camera_with_quirks, validate_device};
 use facelock_core::config::Config;
 use facelock_core::ipc::DaemonResponse;
 use facelock_core::types::MatchResult;
@@ -164,7 +164,14 @@ pub fn run(user: String, config_path: Option<String>) -> i32 {
         };
 
     let start = std::time::Instant::now();
-    let response = auth::authenticate(&mut camera, &mut engine, &store, &config, &user, device_is_ir);
+    let response = auth::authenticate(
+        &mut camera,
+        &mut engine,
+        &store,
+        &config,
+        &user,
+        device_is_ir,
+    );
     let duration_ms = start.elapsed().as_millis() as u64;
 
     // Note: authenticate_inner already writes audit entries for the camera-based

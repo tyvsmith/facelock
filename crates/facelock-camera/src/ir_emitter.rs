@@ -88,9 +88,7 @@ pub fn enable_emitter(device_path: &str, quirk: Option<&Quirk>) -> Result<bool, 
     let xu_info = match quirk.and_then(EmitterXuInfo::from_quirk) {
         Some(info) => info,
         None => {
-            tracing::debug!(
-                "no emitter XU info available for {device_path}, skipping"
-            );
+            tracing::debug!("no emitter XU info available for {device_path}, skipping");
             return Ok(false);
         }
     };
@@ -109,7 +107,10 @@ pub fn enable_emitter(device_path: &str, quirk: Option<&Quirk>) -> Result<bool, 
 ///
 /// This variant is used by the `Camera` drop path where the original `Quirk`
 /// reference is no longer available.
-pub fn enable_emitter_with_info(device_path: &str, xu_info: &EmitterXuInfo) -> Result<bool, String> {
+pub fn enable_emitter_with_info(
+    device_path: &str,
+    xu_info: &EmitterXuInfo,
+) -> Result<bool, String> {
     if !Path::new(device_path).exists() {
         return Err(format!("device not found: {device_path}"));
     }
@@ -129,9 +130,7 @@ pub fn disable_emitter(device_path: &str, quirk: Option<&Quirk>) -> Result<(), S
     let xu_info = match quirk.and_then(EmitterXuInfo::from_quirk) {
         Some(info) => info,
         None => {
-            tracing::debug!(
-                "no emitter XU info available for {device_path}, skipping"
-            );
+            tracing::debug!("no emitter XU info available for {device_path}, skipping");
             return Ok(());
         }
     };
@@ -180,7 +179,11 @@ pub fn has_controllable_emitter(device_path: &str, quirk: Option<&Quirk>) -> boo
 }
 
 /// Send a `UVC_SET_CUR` to the emitter XU control.
-fn set_emitter_control(device_path: &str, xu_info: &EmitterXuInfo, value: u8) -> Result<(), String> {
+fn set_emitter_control(
+    device_path: &str,
+    xu_info: &EmitterXuInfo,
+    value: u8,
+) -> Result<(), String> {
     let file = OpenOptions::new()
         .read(true)
         .write(true)

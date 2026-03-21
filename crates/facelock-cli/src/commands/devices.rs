@@ -11,9 +11,8 @@ pub fn run() -> anyhow::Result<()> {
         return crate::direct::list_devices_direct();
     }
 
-    let response =
-        ipc_client::send_request(&DaemonRequest::ListDevices)
-            .context("failed to query daemon — is facelock-daemon running?")?;
+    let response = ipc_client::send_request(&DaemonRequest::ListDevices)
+        .context("failed to query daemon — is facelock-daemon running?")?;
 
     match response {
         DaemonResponse::Devices(devices) => {
