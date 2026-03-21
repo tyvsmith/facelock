@@ -581,10 +581,11 @@ fn wizard_pam_setup(theme: &ColorfulTheme) -> anyhow::Result<Vec<String>> {
         return Ok(Vec::new());
     }
 
-    let available_services = ["sudo", "polkit-1"];
+    let available_services = ["sudo", "polkit-1", "hyprlock"];
     let service_descriptions = [
-        "sudo    - authenticate sudo commands with face recognition",
+        "sudo     - authenticate sudo commands with face recognition",
         "polkit-1 - authenticate graphical privilege prompts with face recognition",
+        "hyprlock - authenticate lock screen with face recognition",
     ];
 
     // Filter to services that actually exist on the system
@@ -903,9 +904,15 @@ fn download_model(entry: &ModelEntry, dest: &Path) -> anyhow::Result<()> {
 
 // --- PAM installation ---
 
-const PAM_LINE: &str = "auth  sufficient  pam_facelock.so";
+const PAM_LINE: &str = "auth      sufficient pam_facelock.so";
 const PAM_MODULE_PATH: &str = "/lib/security/pam_facelock.so";
 const SENSITIVE_SERVICES: &[&str] = &["system-auth", "login", "sshd"];
+
+/// Check if a PAM config line references pam_facelock, regardless of spacing.
+fn is_facelock_pam_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    !trimmed.starts_with('#') && trimmed.contains("pam_facelock.so")
+}
 
 pub fn run_pam(service: &str, remove: bool, yes: bool) -> anyhow::Result<()> {
     // 1. Check root
@@ -949,8 +956,8 @@ fn pam_install(service: &str, yes: bool) -> anyhow::Result<()> {
     let content =
         fs::read_to_string(pam_file).with_context(|| format!("failed to read {pam_path}"))?;
 
-    // Check idempotency
-    if content.lines().any(|line| line.trim() == PAM_LINE) {
+    // Check idempotency — match on the module name, not exact spacing
+    if content.lines().any(|line| is_facelock_pam_line(line)) {
         println!("PAM line already present in {pam_path}. Nothing to do.");
         return Ok(());
     }
@@ -1008,7 +1015,7 @@ fn pam_remove(service: &str) -> anyhow::Result<()> {
     let original_count = content.lines().count();
     let new_lines: Vec<&str> = content
         .lines()
-        .filter(|line| line.trim() != PAM_LINE)
+        .filter(|line| !is_facelock_pam_line(line))
         .collect();
 
     if new_lines.len() == original_count {
@@ -1209,22 +1216,29 @@ account include   system-login
 
     #[test]
     fn pam_idempotent_detection() {
+        // Exact match
         let content = format!("#%PAM-1.0\n{PAM_LINE}\nauth    include   system-login\n");
-        let already_present = content.lines().any(|line| line.trim() == PAM_LINE);
-        assert!(already_present);
+        assert!(content.lines().any(|line| is_facelock_pam_line(line)));
+
+        // Different spacing should still match
+        let content2 = "#%PAM-1.0\nauth  sufficient  pam_facelock.so\nauth    include   system-login\n";
+        assert!(content2.lines().any(|line| is_facelock_pam_line(line)));
+
+        // Commented-out line should not match
+        let content3 = "#%PAM-1.0\n#auth sufficient pam_facelock.so\nauth    include   system-login\n";
+        assert!(!content3.lines().any(|line| is_facelock_pam_line(line)));
     }
 
     #[test]
     fn pam_remove_filters_line() {
-        let content = format!(
-            "#%PAM-1.0\n{PAM_LINE}\nauth    include   system-login\naccount include   system-login\n"
-        );
+        // Should remove regardless of spacing
+        let content = "#%PAM-1.0\nauth  sufficient  pam_facelock.so\nauth    include   system-login\naccount include   system-login\n";
         let new_lines: Vec<&str> = content
             .lines()
-            .filter(|line| line.trim() != PAM_LINE)
+            .filter(|line| !is_facelock_pam_line(line))
             .collect();
         assert_eq!(new_lines.len(), 3);
-        assert!(!new_lines.iter().any(|l| l.trim() == PAM_LINE));
+        assert!(!new_lines.iter().any(|l| is_facelock_pam_line(l)));
     }
 
     #[test]
