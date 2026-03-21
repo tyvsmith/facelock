@@ -4,7 +4,8 @@
 
 use std::path::Path;
 
-use facelock_camera::{Camera, auto_detect_device, is_ir_camera, validate_device};
+use facelock_camera::{Camera, auto_detect_device, is_ir_camera_with_quirks, validate_device};
+use facelock_camera::quirks::QuirksDb;
 use facelock_core::config::Config;
 use facelock_core::ipc::DaemonResponse;
 use facelock_core::types::MatchResult;
@@ -121,8 +122,11 @@ pub fn run(user: String, config_path: Option<String>) -> i32 {
     // --- End pre-flight checks ---
 
     let device_path = config.device.path.clone().unwrap();
-    let device_is_ir = validate_device(&device_path)
-        .map(|dev| is_ir_camera(&dev))
+    let quirks = QuirksDb::load();
+    let device_info = validate_device(&device_path);
+    let device_is_ir = device_info
+        .as_ref()
+        .map(|dev| is_ir_camera_with_quirks(dev, Some(&quirks)))
         .unwrap_or(false);
 
     if config.security.require_ir && !device_is_ir {
@@ -130,13 +134,25 @@ pub fn run(user: String, config_path: Option<String>) -> i32 {
         return 2;
     }
 
-    let mut camera = match Camera::open(&config.device, None) {
+    let device_quirk = device_info
+        .ok()
+        .and_then(|info| quirks.find_match(&info).cloned());
+
+    let mut camera = match Camera::open(&config.device, device_quirk.as_ref()) {
         Ok(c) => c,
         Err(e) => {
             error!("camera: {e}");
             return 2;
         }
     };
+
+    // Discard warmup frames for AGC/AE stabilization.
+    let warmup = device_quirk
+        .and_then(|q| q.warmup_frames)
+        .unwrap_or(config.device.warmup_frames);
+    for _ in 0..warmup {
+        let _ = camera.capture();
+    }
 
     let mut engine =
         match FaceEngine::load(&config.recognition, Path::new(&config.daemon.model_dir)) {

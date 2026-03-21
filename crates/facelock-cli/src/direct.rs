@@ -6,19 +6,45 @@
 use std::path::Path;
 
 use anyhow::{Context, bail};
-use facelock_camera::{Camera, is_ir_camera, list_devices, validate_device};
+use facelock_camera::quirks::QuirksDb;
+use facelock_camera::{Camera, is_ir_camera, is_ir_camera_with_quirks, list_devices, validate_device};
 use facelock_core::config::{Config, EncryptionMethod};
 use facelock_core::ipc::DaemonResponse;
 use facelock_core::types::MatchResult;
 use facelock_face::FaceEngine;
 use facelock_store::FaceStore;
+use tracing::debug;
 
 pub fn open_store(config: &Config) -> anyhow::Result<FaceStore> {
     FaceStore::open(Path::new(&config.storage.db_path)).context("failed to open database")
 }
 
+/// Open camera with quirks support and warmup frame discarding.
 pub fn open_camera(config: &Config) -> anyhow::Result<Camera<'static>> {
-    Camera::open(&config.device, None).context("failed to open camera")
+    let quirks = QuirksDb::load();
+    let device_quirk = config
+        .device
+        .path
+        .as_deref()
+        .and_then(|p| validate_device(p).ok())
+        .and_then(|info| quirks.find_match(&info).cloned());
+
+    let mut camera = Camera::open(&config.device, device_quirk.as_ref())
+        .context("failed to open camera")?;
+
+    // Discard warmup frames for AGC/AE stabilization.
+    // Quirk override takes precedence over config value.
+    let warmup = device_quirk
+        .and_then(|q| q.warmup_frames)
+        .unwrap_or(config.device.warmup_frames);
+    if warmup > 0 {
+        debug!(warmup, "discarding warmup frames");
+        for _ in 0..warmup {
+            let _ = camera.capture();
+        }
+    }
+
+    Ok(camera)
 }
 
 pub fn load_engine(config: &Config) -> anyhow::Result<FaceEngine> {
@@ -37,12 +63,13 @@ pub fn authenticate(config: &Config, user: &str) -> anyhow::Result<bool> {
     let mut camera = open_camera(config)?;
     let mut engine = load_engine(config)?;
 
+    let quirks = QuirksDb::load();
     let device_is_ir = config
         .device
         .path
         .as_deref()
         .and_then(|p| validate_device(p).ok())
-        .map(|dev| is_ir_camera(&dev))
+        .map(|dev| is_ir_camera_with_quirks(&dev, Some(&quirks)))
         .unwrap_or(false);
 
     // Load embeddings with encryption support, matching the daemon handler path.
