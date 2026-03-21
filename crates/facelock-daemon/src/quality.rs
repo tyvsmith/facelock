@@ -425,7 +425,6 @@ mod tests {
     fn angle_diversity_at_threshold() {
         // Create two embeddings with similarity exactly at threshold
         let mut emb1 = [0.0f32; 512];
-        let mut emb2 = [0.0f32; 512];
 
         // Construct embeddings with specific similarity
         // For unit vectors that share most components but differ slightly
@@ -433,7 +432,7 @@ mod tests {
         for x in emb1.iter_mut() {
             *x = val;
         }
-        emb2 = emb1;
+        let mut emb2 = emb1;
         // Perturb one component slightly — this should change similarity below 0.95
         emb2[0] = -val * 5.0;
         // Re-normalize (approximate)

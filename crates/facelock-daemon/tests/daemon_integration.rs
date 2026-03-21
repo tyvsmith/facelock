@@ -1,6 +1,5 @@
 use facelock_core::config::Config;
 use facelock_core::ipc::{DaemonRequest, DaemonResponse};
-use facelock_core::types::MatchResult;
 use facelock_store::FaceStore;
 use facelock_test_support::fixtures;
 use facelock_test_support::{MockCamera, MockFaceEngine};
@@ -147,7 +146,7 @@ fn warmup_frames_discarded_on_camera_open() {
 
     // Track captures via a shared counter
     let capture_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let counter = capture_count.clone();
+    let _counter = capture_count.clone();
 
     let factory: Box<
         dyn Fn(&facelock_core::config::Config) -> Result<MockCamera, String> + Send + Sync,
