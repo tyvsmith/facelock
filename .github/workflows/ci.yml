@@ -83,8 +83,8 @@ jobs:
             --tpm2 \
             --ctrl type=tcp,port=2322 \
             --server type=tcp,port=2321 \
-            --flags not-need-init &
-          sleep 1
+            --flags startup-clear &
+          sleep 2
 
       - name: Run TPM tests
         env:
