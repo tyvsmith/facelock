@@ -7,21 +7,9 @@ post_install() {
     # Reload systemd for D-Bus activation
     systemctl daemon-reload 2>/dev/null || true
 
-    # Add to /etc/pam.d/sudo (if not already present)
-    if [ -f /etc/pam.d/sudo ]; then
-        if ! grep -qF "$PAM_LINE" /etc/pam.d/sudo; then
-            cp /etc/pam.d/sudo /etc/pam.d/sudo.facelock-backup
-            # Prepend before first auth line
-            sed -i "0,/^auth/{s/^auth/${PAM_LINE}\nauth/}" /etc/pam.d/sudo
-            echo "==> Added face authentication to /etc/pam.d/sudo"
-            echo "==> Backup at /etc/pam.d/sudo.facelock-backup"
-        fi
-    fi
-
     echo ""
-    echo "==> facelock installed. Two steps remaining:"
-    echo "    1. sudo facelock setup       (download face recognition models)"
-    echo "    2. sudo facelock enroll      (register your face)"
+    echo "==> facelock installed. Run 'sudo facelock setup' to complete configuration."
+    echo "    (downloads models, configures PAM services, enrolls your face)"
 }
 
 post_upgrade() {
@@ -40,11 +28,13 @@ pre_remove() {
     systemctl stop facelock-daemon 2>/dev/null || true
     systemctl disable facelock-daemon 2>/dev/null || true
 
-    # Remove PAM line from sudo
-    if [ -f /etc/pam.d/sudo ]; then
-        sed -i "\|^${PAM_LINE}$|d" /etc/pam.d/sudo
-        echo "==> Removed face authentication from /etc/pam.d/sudo"
-    fi
+    # Remove PAM lines
+    for PAM_FILE in /etc/pam.d/sudo /etc/pam.d/polkit-1 /etc/pam.d/hyprlock; do
+        if [ -f "$PAM_FILE" ] && grep -qF "$PAM_LINE" "$PAM_FILE"; then
+            sed -i "\|^${PAM_LINE}$|d" "$PAM_FILE"
+            echo "==> Removed face authentication from $PAM_FILE"
+        fi
+    done
 }
 
 post_remove() {

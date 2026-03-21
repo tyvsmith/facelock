@@ -10,24 +10,6 @@ build-release:
     cargo build --release --workspace
     cargo build --release -p facelock-cli --features tpm
 
-# Build with CUDA GPU acceleration (requires: sudo pacman -S onnxruntime-opt-cuda)
-build-cuda:
-    cargo build --workspace --features cuda
-
-# Build release with CUDA GPU acceleration
-build-release-cuda:
-    cargo build --release --workspace --features cuda
-    cargo build --release -p facelock-cli --features tpm,cuda
-
-# Build with TensorRT GPU acceleration (requires CUDA + TensorRT SDK)
-build-tensorrt:
-    cargo build --workspace --features cuda,tensorrt
-
-# Build release with TensorRT GPU acceleration
-build-release-tensorrt:
-    cargo build --release --workspace --features cuda,tensorrt
-    cargo build --release -p facelock-cli --features tpm,cuda,tensorrt
-
 # Run all unit tests
 test:
     cargo test --workspace
@@ -107,24 +89,10 @@ test-shell: build-release
 install: build-release
     sudo env PATH="$PATH" just install-files
 
-# Build release with CUDA and install to system
-# Requires: sudo pacman -S onnxruntime-opt-cuda
-install-cuda:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if ! pacman -Q onnxruntime-opt-cuda &>/dev/null && ! pacman -Q onnxruntime-cuda &>/dev/null; then
-        echo "System ONNX Runtime with CUDA not found."
-        echo "Install with: sudo pacman -S onnxruntime-opt-cuda"
-        exit 1
-    fi
-    just build-release-cuda
-    sudo env PATH="$PATH" just install-files install-cuda-config
-
 # Install pre-built binaries to system (requires root, no build)
 install-files:
     #!/usr/bin/env bash
     set -euo pipefail
-    PAM_LINE="auth  sufficient  pam_facelock.so"
 
     # Verify binaries exist
     for f in target/release/facelock target/release/libpam_facelock.so; do
@@ -177,80 +145,53 @@ install-files:
         echo "D-Bus activation enabled."
     fi
 
-    # Add to /etc/pam.d/sudo (if not already present)
-    if [ -f /etc/pam.d/sudo ] && ! grep -qF "$PAM_LINE" /etc/pam.d/sudo; then
-        cp /etc/pam.d/sudo /etc/pam.d/sudo.facelock-backup
-        sed -i "0,/^auth/{s/^auth/${PAM_LINE}\nauth/}" /etc/pam.d/sudo
-        echo "Added face auth to /etc/pam.d/sudo (backup: /etc/pam.d/sudo.facelock-backup)"
-    fi
-
     # Fix permissions on existing data
     [ -d /var/lib/facelock/models ] && chmod 644 /var/lib/facelock/models/*.onnx 2>/dev/null || true
     [ -f /var/lib/facelock/facelock.db ] && chown root:facelock /var/lib/facelock/facelock.db && chmod 640 /var/lib/facelock/facelock.db || true
 
     echo ""
-    echo "Installed. Two steps remaining:"
-    echo "  1. sudo facelock setup       (download face recognition models)"
-    echo "  2. sudo facelock enroll      (register your face)"
+    echo ""
 
-# Build release with TensorRT and install to system
-# Requires: CUDA toolkit + TensorRT SDK (libnvinfer)
-install-tensorrt:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # Check for TensorRT library
-    if ! ldconfig -p 2>/dev/null | grep -q libnvinfer; then
-        echo "TensorRT SDK (libnvinfer) not found."
-        echo "Install from: https://developer.nvidia.com/tensorrt"
-        echo "  Arch/CachyOS: yay -S libnvinfer  (AUR)"
-        echo "  Ubuntu/Debian: apt install libnvinfer-dev"
-        exit 1
-    fi
-    if ! pacman -Q onnxruntime-opt-cuda &>/dev/null && ! pacman -Q onnxruntime-cuda &>/dev/null; then
-        echo "System ONNX Runtime with CUDA not found."
-        echo "Install with: sudo pacman -S onnxruntime-opt-cuda"
-        exit 1
-    fi
-    just build-release-tensorrt
-    sudo env PATH="$PATH" just install-files install-tensorrt-config
+    # Check what's still needed
+    NEEDS_SETUP=false
+    NEEDS_ORT=false
 
-# Enable TensorRT execution provider in installed config (requires root)
-install-tensorrt-config:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    CONFIG="/etc/facelock/config.toml"
-    [ -f "$CONFIG" ] || { echo "Error: $CONFIG not found. Run 'just install' first."; exit 1; }
-    if grep -q '^execution_provider' "$CONFIG"; then
-        sed -i 's/^execution_provider.*/execution_provider = "tensorrt"/' "$CONFIG"
-    elif grep -q '^# execution_provider' "$CONFIG"; then
-        sed -i 's/^# execution_provider.*/execution_provider = "tensorrt"/' "$CONFIG"
+    # Models present?
+    if ! ls /var/lib/facelock/models/*.onnx >/dev/null 2>&1; then
+        NEEDS_SETUP=true
+    fi
+
+    # Config present?
+    if [ ! -f /etc/facelock/config.toml ]; then
+        NEEDS_SETUP=true
+    fi
+
+    # PAM configured?
+    if ! grep -qs pam_facelock /etc/pam.d/sudo 2>/dev/null; then
+        NEEDS_SETUP=true
+    fi
+
+    # ORT installed? Check file paths directly.
+    if [ ! -f /usr/lib/libonnxruntime.so ] && \
+       [ ! -f /usr/lib64/libonnxruntime.so ] && \
+       [ ! -f /usr/lib/facelock/libonnxruntime.so ]; then
+        NEEDS_ORT=true
+    fi
+
+    if $NEEDS_SETUP || $NEEDS_ORT; then
+        echo "Installed."
+        if $NEEDS_ORT; then
+            echo ""
+            echo "Requires: onnxruntime (pacman -S onnxruntime-cpu)"
+            echo "Optional: onnxruntime-opt-cuda (NVIDIA) or onnxruntime-opt-rocm (AMD)"
+        fi
+        if $NEEDS_SETUP; then
+            echo ""
+            echo "Run 'sudo facelock setup' to complete configuration."
+            echo "  (downloads models, configures PAM services, enrolls your face)"
+        fi
     else
-        sed -i '/^\[recognition\]/a execution_provider = "tensorrt"' "$CONFIG"
-    fi
-    echo "TensorRT execution provider enabled in $CONFIG"
-    if systemctl is-active facelock-daemon.service &>/dev/null; then
-        systemctl restart facelock-daemon.service
-        echo "Daemon restarted with TensorRT."
-    fi
-
-# Enable CUDA execution provider in installed config (requires root)
-install-cuda-config:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    CONFIG="/etc/facelock/config.toml"
-    [ -f "$CONFIG" ] || { echo "Error: $CONFIG not found. Run 'just install' first."; exit 1; }
-    if grep -q '^execution_provider' "$CONFIG"; then
-        sed -i 's/^execution_provider.*/execution_provider = "cuda"/' "$CONFIG"
-    elif grep -q '^# execution_provider' "$CONFIG"; then
-        sed -i 's/^# execution_provider.*/execution_provider = "cuda"/' "$CONFIG"
-    else
-        sed -i '/^\[recognition\]/a execution_provider = "cuda"' "$CONFIG"
-    fi
-    echo "CUDA execution provider enabled in $CONFIG"
-    # Restart daemon to pick up new config
-    if systemctl is-active facelock-daemon.service &>/dev/null; then
-        systemctl restart facelock-daemon.service
-        echo "Daemon restarted with CUDA."
+        echo "Installed and up to date."
     fi
 
 # Uninstall from system
@@ -262,17 +203,17 @@ uninstall:
 uninstall-files:
     #!/usr/bin/env bash
     set -euo pipefail
-    PAM_LINE="auth  sufficient  pam_facelock.so"
-
     # Stop and disable daemon
     systemctl stop facelock-daemon.service 2>/dev/null || true
     systemctl disable facelock-daemon.service 2>/dev/null || true
 
-    # Remove PAM line
-    if [ -f /etc/pam.d/sudo ]; then
-        sed -i "\|^${PAM_LINE}$|d" /etc/pam.d/sudo
-        echo "Removed face auth from /etc/pam.d/sudo"
-    fi
+    # Remove PAM lines from all known services (match on module name, not exact spacing)
+    for PAM_FILE in /etc/pam.d/sudo /etc/pam.d/polkit-1 /etc/pam.d/hyprlock; do
+        if [ -f "$PAM_FILE" ] && grep -q 'pam_facelock\.so' "$PAM_FILE"; then
+            sed -i '/pam_facelock\.so/d' "$PAM_FILE"
+            echo "Removed face auth from $PAM_FILE"
+        fi
+    done
 
     # Kill facelock polkit agent if running (so the DE's agent can take over)
     pkill -f facelock-polkit-agent 2>/dev/null || true
@@ -288,6 +229,69 @@ uninstall-files:
 
     echo "Uninstalled. Config and data preserved in /etc/facelock and /var/lib/facelock."
     echo "To remove all data: rm -rf /etc/facelock /var/lib/facelock /var/log/facelock"
+
+# Add face auth icon to omarchy hyprlock placeholder text (no root required)
+omarchy-enable:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    HYPRLOCK_CONF="$HOME/.config/hypr/hyprlock.conf"
+
+    if [ ! -d "$HOME/.local/share/omarchy" ]; then
+        echo "Error: omarchy not detected. This target is for omarchy systems only."
+        exit 1
+    fi
+
+    if [ ! -f "$HYPRLOCK_CONF" ]; then
+        echo "Error: $HYPRLOCK_CONF not found."
+        exit 1
+    fi
+
+    if grep -q '󰄀' "$HYPRLOCK_CONF"; then
+        echo "Face auth icon already present in hyprlock config."
+        exit 0
+    fi
+
+    # Preserve fingerprint icon if present
+    if grep -q '󰈷' "$HYPRLOCK_CONF"; then
+        sed -i 's/placeholder_text = .*/placeholder_text = <span> Enter Password 󰄀 󰈷 <\/span>/' "$HYPRLOCK_CONF"
+    else
+        sed -i 's/placeholder_text = .*/placeholder_text = <span> Enter Password 󰄀 <\/span>/' "$HYPRLOCK_CONF"
+    fi
+
+    # Source the faceauth overlay if not already sourced
+    if [ -f "$HOME/.config/hypr/hyprlock-faceauth.conf" ] && ! grep -q 'hyprlock-faceauth.conf' "$HYPRLOCK_CONF"; then
+        echo 'source = ~/.config/hypr/hyprlock-faceauth.conf' >> "$HYPRLOCK_CONF"
+    fi
+
+    echo "Enabled face auth in hyprlock."
+
+# Remove face auth icon from omarchy hyprlock placeholder text (no root required)
+omarchy-disable:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    HYPRLOCK_CONF="$HOME/.config/hypr/hyprlock.conf"
+
+    if [ ! -f "$HYPRLOCK_CONF" ]; then
+        echo "Error: $HYPRLOCK_CONF not found."
+        exit 1
+    fi
+
+    if ! grep -q '󰄀' "$HYPRLOCK_CONF"; then
+        echo "Face auth icon not present in hyprlock config."
+        exit 0
+    fi
+
+    # Preserve fingerprint icon if present
+    if grep -q '󰈷' "$HYPRLOCK_CONF"; then
+        sed -i 's/placeholder_text = .*/placeholder_text = <span> Enter Password 󰈷 <\/span>/' "$HYPRLOCK_CONF"
+    else
+        sed -i 's/placeholder_text = .*/placeholder_text = Enter Password/' "$HYPRLOCK_CONF"
+    fi
+
+    # Remove the faceauth overlay source line
+    sed -i '\|hyprlock-faceauth.conf|d' "$HYPRLOCK_CONF"
+
+    echo "Disabled face auth in hyprlock."
 
 # Bump version and prepare a release commit + tag
 # Usage: just release 0.2.0
