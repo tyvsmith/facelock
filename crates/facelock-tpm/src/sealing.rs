@@ -853,9 +853,14 @@ pub fn raw_embedding_size() -> usize {
 mod tests {
     use super::*;
 
+    /// Get TCTI string from env (for swtpm in CI) or fall back to device path.
+    fn test_tcti() -> String {
+        std::env::var("TCTI").unwrap_or_else(|_| "device:/dev/tpmrm0".into())
+    }
+
     #[test]
     fn seal_unseal_round_trip_passthrough() {
-        let mut sealer = TpmSealer::new("device:/dev/tpmrm0").unwrap();
+        let mut sealer = TpmSealer::new(&test_tcti()).unwrap();
         let mut emb = [0.0f32; 512];
         emb[0] = 1.0;
         emb[1] = -1.0;
@@ -1141,7 +1146,7 @@ mod tests {
 
     #[test]
     fn seal_bytes_passthrough() {
-        let mut sealer = TpmSealer::new("device:/dev/tpmrm0").unwrap();
+        let mut sealer = TpmSealer::new(&test_tcti()).unwrap();
         let data = b"hello world";
         let result = sealer.seal_bytes(data, None).unwrap();
 
