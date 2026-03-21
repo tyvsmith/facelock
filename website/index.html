@@ -30,7 +30,7 @@
     <div class="container">
       <div class="hero-badge">Open Source / MIT + Apache 2.0</div>
       <h1><span class="accent">Facelock</span></h1>
-      <p class="hero-tagline">Face authentication for Linux. Windows Hello-style facial recognition with IR anti-spoofing, ~200ms daemon-mode latency, and complete privacy -- all authentication runs locally on your hardware with no telemetry. After initial model download, Facelock never touches the network.</p>
+      <p class="hero-tagline">Face authentication for Linux. Windows Hello-style facial recognition with IR anti-spoofing, sub-second daemon-mode latency, and complete privacy -- all authentication runs locally on your hardware with no telemetry. After initial model download, Facelock never touches the network.</p>
 
       <div class="hero-actions">
         <a href="docs/quickstart.html" class="btn btn-primary">Get Started</a>
@@ -123,8 +123,8 @@
           <div class="feature-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
           </div>
-          <h3>~200ms Latency</h3>
-          <p>Persistent daemon keeps ONNX models and camera warm. Authentication completes in ~200ms after initial model load.</p>
+          <h3>Sub-Second Auth</h3>
+          <p>Persistent daemon keeps ONNX models loaded. ~600ms typical, dropping to ~150ms on back-to-back auths when the camera stays warm.</p>
         </div>
 
         <div class="feature-card">
@@ -340,7 +340,7 @@
             </tr>
             <tr>
               <td>Daemon mode</td>
-              <td><span class="check">Yes (~200ms auth)</span></td>
+              <td><span class="check">Yes (~150-600ms auth)</span></td>
               <td><span class="cross">No (process per auth)</span></td>
             </tr>
             <tr>

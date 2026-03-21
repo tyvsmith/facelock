@@ -39,9 +39,11 @@ just uninstall
 
 | Mode | Config | How it works | Latency |
 |------|--------|-------------|---------|
-| **Daemon** | `mode = "daemon"` (default) | PAM → D-Bus → persistent daemon | ~200ms warm |
-| **D-Bus activation** | systemd + D-Bus service | systemd starts daemon on demand | ~700ms cold |
-| **Oneshot** | `mode = "oneshot"` | PAM → `facelock auth` subprocess | ~700ms |
+| **Daemon** | `mode = "daemon"` (default) | PAM → D-Bus → persistent daemon | ~150-600ms |
+| **D-Bus activation** | systemd + D-Bus service | systemd starts daemon on demand | ~700ms+ cold |
+| **Oneshot** | `mode = "oneshot"` | PAM → `facelock auth` subprocess | ~700ms+ |
+
+Daemon latency depends on camera state: ~600ms with a cold camera, ~150-180ms on back-to-back auths when the camera is already warm. The lighter default model (`scrfd_2.5g`) keeps inference fast.
 
 The CLI works in all modes — it connects to the daemon if available, otherwise operates directly.
 

@@ -44,7 +44,7 @@
 
 ### First-start latency (~700ms -- 2s)
 
-The first authentication after boot (or after the daemon starts) is slow because ONNX models must be loaded into memory. This is normal. Subsequent auths in daemon mode take ~200ms.
+The first authentication after boot (or after the daemon starts) is slow because ONNX models must be loaded into memory. This is normal. Subsequent auths in daemon mode typically take ~600ms (or ~150ms if the camera is still warm from a recent auth).
 
 ### Consistently slow (~700ms+ every time)
 

@@ -208,8 +208,8 @@ flowchart LR
 
 ### Daemon Mode
 The daemon (`facelock daemon`) runs persistently, holding ONNX models and camera resources in memory. The PAM module and CLI connect via D-Bus system bus. Benefits:
-- ~200ms auth latency (models already loaded)
-- Camera stays warm between requests
+- ~600ms typical auth latency (~150ms with warm camera)
+- Camera stays warm between back-to-back requests
 - Single point of resource management
 
 ### Oneshot Mode
