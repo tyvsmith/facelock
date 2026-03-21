@@ -7,7 +7,7 @@ Stable contracts. Do not change without updating this document.
 | Binary | Crate | Purpose |
 |--------|-------|---------|
 | `facelock` | facelock-cli | Unified CLI (daemon, auth, enroll, test, setup, etc.) |
-| `libpam_facelock.so` | pam-facelock | PAM authentication module |
+| `pam_facelock.so` | pam-facelock | PAM authentication module |
 
 ## CLI Subcommands
 
@@ -29,6 +29,7 @@ Stable contracts. Do not change without updating this document.
 | `facelock auth --user X` | One-shot auth (PAM helper) |
 | `facelock tpm status` | TPM status |
 | `facelock bench` | Benchmarks |
+| `facelock restart` | Restart daemon |
 
 ## Operating Modes
 
@@ -55,7 +56,6 @@ The CLI silently falls back to direct mode when the daemon is not available on D
 | `/var/lib/facelock/facelock.db` | root:facelock | 640 | Face embeddings |
 | `/var/lib/facelock/models/` | root:root | 755 | ONNX models |
 | `/var/log/facelock/snapshots/` | root:facelock | 750 | Auth snapshots |
-| `/run/facelock/facelock.sock` | daemon | 660 | Legacy IPC socket (unused; D-Bus activation is now used) |
 | `/usr/bin/facelock` | root:root | 755 | CLI binary |
 | `/lib/security/pam_facelock.so` | root:root | 755 | PAM module |
 
@@ -141,7 +141,7 @@ pam_facelock(<service>): <result> for user <username>
 |---------|--------|---------|
 | IR camera enforcement | `security.require_ir` | **true** |
 | Frame variance check | `security.require_frame_variance` | **true** |
-| Landmark liveness | `security.require_landmark_liveness` | **true** |
+| Landmark liveness | `security.require_landmark_liveness` | **false** |
 | Minimum auth frames | `security.min_auth_frames` | 3 |
 | Variance threshold | `FRAME_VARIANCE_THRESHOLD` | 0.998 |
 

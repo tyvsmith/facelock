@@ -24,7 +24,7 @@ Facelock is a Cargo workspace with 10 crates:
 | `facelock-face` | lib | ONNX inference (SCRFD + ArcFace) |
 | `facelock-store` | lib | SQLite face embedding storage |
 | `facelock-daemon` | lib | Auth/enroll logic, rate limiting, liveness, audit |
-| `facelock-cli` | bin | Unified CLI (`facelock` binary) |
+| `facelock-cli` | bin | Unified CLI (`facelock` binary, includes `bench` subcommand) |
 | `pam-facelock` | cdylib | PAM module (libc + toml + serde, zbus only) |
 | `facelock-tpm` | lib | Optional TPM encryption |
 | `facelock-polkit` | bin | Polkit face authentication agent |

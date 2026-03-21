@@ -2,7 +2,7 @@
 
 ## Overview
 
-Facelock is a face authentication system for Linux PAM. It detects faces via SCRFD, extracts embeddings via ArcFace, and matches against stored models using cosine similarity.
+Facelock is a face authentication system for Linux PAM. It detects faces via SCRFD, extracts embeddings via ArcFace, and matches against stored models using cosine similarity. All processing is local -- no network calls, no cloud services, no telemetry.
 
 ## System Diagram
 
@@ -16,7 +16,7 @@ Facelock is a face authentication system for Linux PAM. It detects faces via SCR
          │                               │ or IPC to daemon
     ┌────▼────────────┐                  │
     │  pam_facelock.so  │──────────────────┤
-    │  (~600KB cdylib) │                  │
+    │  (~2MB cdylib) │                  │
     │                 │                  │
     │  daemon mode:   │                  │
     │  → D-Bus IPC    │          ┌───────▼──────────────┐

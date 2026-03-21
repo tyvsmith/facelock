@@ -17,6 +17,7 @@
         <li><a href="#how-it-works">How It Works</a></li>
         <li><a href="#features">Features</a></li>
         <li><a href="#security">Security</a></li>
+        <li><a href="#privacy">Privacy</a></li>
         <li><a href="#install">Install</a></li>
         <li><a href="docs/quickstart.html">Docs</a></li>
         <li><a href="https://github.com/tyvsmith/facelock">GitHub</a></li>
@@ -29,7 +30,7 @@
     <div class="container">
       <div class="hero-badge">Open Source / MIT + Apache 2.0</div>
       <h1><span class="accent">Facelock</span></h1>
-      <p class="hero-tagline">Face authentication for Linux. Windows Hello-style facial recognition with IR anti-spoofing, local inference, and ~200ms daemon-mode latency.</p>
+      <p class="hero-tagline">Face authentication for Linux. Windows Hello-style facial recognition with IR anti-spoofing, ~200ms daemon-mode latency, and complete privacy -- all inference runs locally on your hardware, with zero network calls and zero telemetry.</p>
 
       <div class="hero-actions">
         <a href="docs/quickstart.html" class="btn btn-primary">Get Started</a>
@@ -130,8 +131,8 @@
           <div class="feature-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path></svg>
           </div>
-          <h3>Local-Only Inference</h3>
-          <p>All processing happens on-device with ONNX Runtime. No cloud services, no network requests, no telemetry. Your biometrics never leave the machine.</p>
+          <h3>100% Local &amp; Private</h3>
+          <p>All processing happens on-device via ONNX Runtime. No cloud services, no network requests, no telemetry, no analytics. Your face data never leaves your machine, ever.</p>
         </div>
 
         <div class="feature-card">
@@ -222,6 +223,51 @@
     </div>
   </section>
 
+  <!-- Privacy -->
+  <section id="privacy">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-label">Privacy</div>
+        <h2 class="section-title">Your face, your machine, nobody else</h2>
+        <p class="section-desc">Facelock is designed from the ground up to keep your biometric data private.</p>
+      </div>
+
+      <div class="security-grid">
+        <div class="security-item">
+          <div class="security-marker">LO</div>
+          <div>
+            <h4>Local-Only Processing</h4>
+            <p>Face detection and recognition run entirely on your CPU or GPU via ONNX Runtime. No images or embeddings are ever transmitted over the network.</p>
+          </div>
+        </div>
+
+        <div class="security-item">
+          <div class="security-marker">NT</div>
+          <div>
+            <h4>No Telemetry</h4>
+            <p>Facelock contains zero analytics, tracking, or phone-home code. After the one-time model download during setup, it never contacts any server.</p>
+          </div>
+        </div>
+
+        <div class="security-item">
+          <div class="security-marker">EN</div>
+          <div>
+            <h4>Encryption at Rest</h4>
+            <p>Face embeddings can be encrypted with AES-256-GCM, optionally sealed to your TPM. Even if someone copies your database, the biometric data is unreadable.</p>
+          </div>
+        </div>
+
+        <div class="security-item">
+          <div class="security-marker">OS</div>
+          <div>
+            <h4>Open Source &amp; Auditable</h4>
+            <p>Every line of code is MIT/Apache-2.0 licensed. No proprietary blobs, no obfuscated network calls. Verify the privacy claims yourself.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- Install -->
   <section id="install">
     <div class="container">
@@ -234,6 +280,7 @@
       <div class="install-block">
         <div class="install-tabs">
           <span class="install-tab active">Arch Linux</span>
+          <span class="install-tab">From source</span>
         </div>
         <div class="terminal">
           <div class="terminal-bar">
@@ -263,6 +310,8 @@
           </div>
         </div>
       </div>
+
+      <p class="install-note" style="text-align: center; margin-top: 1.5rem; opacity: 0.7;">Also available as <code>.deb</code>, <code>.rpm</code>, and Nix flake. See <a href="docs/quickstart.html">docs</a> for details.</p>
     </div>
   </section>
 
@@ -326,8 +375,28 @@
               <td><span class="cross">No</span></td>
             </tr>
             <tr>
+              <td>Constant-time matching</td>
+              <td><span class="check">subtle crate (no timing leaks)</span></td>
+              <td><span class="cross">No</span></td>
+            </tr>
+            <tr>
+              <td>GPU acceleration</td>
+              <td><span class="check">CUDA / ROCm / OpenVINO (runtime)</span></td>
+              <td><span class="cross">No</span></td>
+            </tr>
+            <tr>
+              <td>Audit logging</td>
+              <td><span class="check">Structured JSONL + syslog</span></td>
+              <td><span class="cross">No</span></td>
+            </tr>
+            <tr>
+              <td>systemd hardening</td>
+              <td><span class="check">ProtectSystem, NoNewPrivileges, etc.</span></td>
+              <td><span class="cross">No</span></td>
+            </tr>
+            <tr>
               <td>PAM module size</td>
-              <td>~600KB (no heavy deps)</td>
+              <td>~2MB (no heavy deps)</td>
               <td>Full Python runtime</td>
             </tr>
           </tbody>

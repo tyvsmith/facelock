@@ -9,6 +9,16 @@ facelock is a **local biometric authentication system**. The threat model assume
 - **Attacker does not have root** (if they do, game over regardless)
 - **Attacker cannot modify files** in `/etc/facelock/`, `/var/lib/facelock/`, or `/lib/security/`
 
+## Privacy Guarantees
+
+Facelock is designed to keep biometric data under the user's exclusive control:
+
+- **Local-only inference**: All face detection and recognition runs on-device via ONNX Runtime. No images, embeddings, or metadata are ever transmitted over the network.
+- **No telemetry**: Facelock contains zero analytics, tracking, or phone-home code. After the one-time model download during `facelock setup`, it never contacts any server.
+- **No cloud dependencies**: Authentication works fully offline. No account registration, no API keys, no external services.
+- **Data stays on disk**: Face embeddings are stored in a local SQLite database (`/var/lib/facelock/facelock.db`) with restrictive permissions (640, root:facelock). Optional AES-256-GCM encryption with TPM-sealed keys provides defense in depth.
+- **Open source**: All code is MIT/Apache-2.0 licensed. No proprietary blobs or obfuscated network calls. Privacy claims are verifiable by reading the source.
+
 ## Attack Vectors & Mitigations
 
 ### 1. Photo/Video Spoofing (CRITICAL)
@@ -282,7 +292,7 @@ abort_if_ssh = true          # Refuse face auth over SSH
 abort_if_lid_closed = true   # Refuse if laptop lid closed
 require_ir = true            # CRITICAL: refuse RGB-only cameras (anti-spoof)
 require_frame_variance = true # Reject static images (photo defense)
-require_landmark_liveness = true # Require landmark movement between frames
+require_landmark_liveness = false # Require landmark movement between frames (off by default)
 min_auth_frames = 3          # Minimum frames before accepting (variance check)
 
 [notification]

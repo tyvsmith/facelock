@@ -151,6 +151,14 @@ facelock bench model-load               # model loading time
 facelock bench report                   # full benchmark report
 ```
 
+## facelock restart
+
+Restart the persistent daemon. Sends a shutdown command via D-Bus and waits for it to restart via D-Bus activation.
+
+```bash
+facelock restart
+```
+
 ## User Resolution
 
 For commands that accept `--user`:

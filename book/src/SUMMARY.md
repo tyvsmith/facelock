@@ -3,6 +3,7 @@
 - [Introduction](introduction.md)
 - [Quick Start](quickstart.md)
 - [Configuration](configuration.md)
+- [GPU Acceleration](gpu.md)
 - [Architecture](architecture.md)
 - [CLI Reference](cli-reference.md)
 - [Security](security.md)

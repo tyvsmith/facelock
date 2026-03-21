@@ -6,7 +6,7 @@ Facelock is a Linux face authentication PAM module written in Rust. Single unifi
 
 ## Repository Structure
 
-Cargo workspace with 11 crates:
+Cargo workspace with 10 crates:
 
 | Crate | Type | Purpose |
 |-------|------|---------|
@@ -15,11 +15,10 @@ Cargo workspace with 11 crates:
 | `facelock-face` | lib | ONNX inference (SCRFD + ArcFace) |
 | `facelock-store` | lib | SQLite face embedding storage |
 | `facelock-daemon` | lib | Auth/enroll logic, rate limiting, liveness, audit |
-| `facelock-cli` | bin | Unified CLI (`facelock` binary) |
+| `facelock-cli` | bin | Unified CLI (`facelock` binary, includes `bench` subcommand) |
 | `pam-facelock` | cdylib | PAM module (libc + toml + serde + zbus only) |
 | `facelock-tpm` | lib | TPM-sealed key encryption, software AES-256-GCM |
 | `facelock-polkit` | bin | Polkit authentication agent |
-| `facelock-bench` | bin | Performance benchmarking (camera, inference, store) |
 | `facelock-test-support` | lib | Mocks and fixtures for testing |
 
 ## Build & Verify

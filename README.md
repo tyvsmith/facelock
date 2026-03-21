@@ -4,7 +4,7 @@
 
 > **v0.1.0-alpha** — Pre-release. Under active development. Functional, daily-driveable, but experimental. APIs will change before 1.0. See [CHANGELOG.md](CHANGELOG.md).
 
-A modern face authentication system for Linux PAM. Provides Windows Hello-style facial auth with IR anti-spoofing, configurable as a persistent daemon or daemonless one-shot.
+A modern face authentication system for Linux PAM. Provides Windows Hello-style facial auth with IR anti-spoofing, configurable as a persistent daemon or daemonless one-shot. All inference runs locally on your hardware -- no cloud services, no network requests, no telemetry. Your biometric data never leaves your machine.
 
 ## Quick Start
 
@@ -64,6 +64,7 @@ facelock tpm status     TPM status/management
 facelock bench          Benchmarks and calibration
 facelock encrypt        Encrypt stored embeddings
 facelock decrypt        Decrypt stored embeddings
+facelock restart        Restart daemon
 facelock audit          View structured audit log
 ```
 
@@ -113,6 +114,17 @@ All keys are optional. Camera is auto-detected if `device.path` is omitted.
 
 Full reference: `config/facelock.toml`.
 
+## Omarchy / Hyprlock Integration
+
+If you use [Omarchy](https://github.com/nicholasgasior/omarchy) (Hyprland desktop environment), Facelock can integrate with hyprlock:
+
+```bash
+just omarchy-enable     # add face auth icon to hyprlock placeholder
+just omarchy-disable    # remove face auth from hyprlock
+```
+
+This adds a face icon to the hyprlock password prompt and optionally sources a `hyprlock-faceauth.conf` overlay. No root required.
+
 ## Testing
 
 ```bash
@@ -125,7 +137,11 @@ just test-shell         # interactive container for manual testing
 
 See [docs/testing-safety.md](docs/testing-safety.md) before editing PAM config on your system.
 
-## Security
+## Privacy & Security
+
+**Privacy**: Facelock is 100% local. Face detection and recognition run entirely on your hardware via ONNX Runtime. No images, embeddings, or metadata are ever sent to any external server. There is no telemetry, no analytics, no phone-home behavior. Models are downloaded once during setup and verified by SHA256 checksum -- after that, Facelock never touches the network.
+
+**Security**:
 
 - IR camera enforcement on by default (anti-spoofing)
 - Frame variance + landmark liveness checks reject photo/video attacks

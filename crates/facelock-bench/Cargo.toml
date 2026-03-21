@@ -19,6 +19,3 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
-[features]
-cuda = ["facelock-face/cuda"]
-tensorrt = ["facelock-face/tensorrt"]

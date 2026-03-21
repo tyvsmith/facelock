@@ -75,7 +75,7 @@ Controls how the PAM module reaches the face engine.
 | `abort_if_lid_closed` | bool | `true` | Refuse face auth when the laptop lid is closed (camera blocked). |
 | `require_ir` | bool | `true` | Require an IR camera for authentication. RGB cameras are trivially spoofed with a printed photo. Only set to `false` for development/testing. |
 | `require_frame_variance` | bool | `true` | Require multiple frames with different embeddings before accepting. Defends against static photo attacks. |
-| `require_landmark_liveness` | bool | `true` | Require landmark movement between frames to pass liveness check. Detects static images by tracking facial landmark positions across frames. |
+| `require_landmark_liveness` | bool | `false` | Require landmark movement between frames to pass liveness check. Detects static images by tracking facial landmark positions across frames. Experimental; off by default. |
 | `suppress_unknown` | bool | `false` | Suppress warnings for unknown users (users with no enrolled face). |
 | `min_auth_frames` | u32 | `3` | Minimum number of matching frames required before accepting. Only applies when `require_frame_variance` is true. |
 

@@ -159,8 +159,9 @@
 
 # Require landmark movement between frames to pass liveness check.
 # Tracks facial landmark positions across frames to detect static images.
-# Default: true
-# require_landmark_liveness = true
+# Experimental; off by default.
+# Default: false
+# require_landmark_liveness = false
 
 # Suppress warnings for unknown users (users with no enrolled face).
 # Default: false
