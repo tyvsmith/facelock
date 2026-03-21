@@ -854,6 +854,7 @@ mod tests {
     use super::*;
 
     /// Get TCTI string from env (for swtpm in CI) or fall back to device path.
+    #[cfg(not(feature = "tpm"))]
     fn test_tcti() -> String {
         std::env::var("TCTI").unwrap_or_else(|_| "device:/dev/tpmrm0".into())
     }
