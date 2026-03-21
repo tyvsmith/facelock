@@ -33,12 +33,15 @@ cargo run --bin facelock -- --help
 
 ## GPU Support (Optional)
 
+GPU acceleration is a runtime option — no special build flags needed. Install a
+GPU-enabled ONNX Runtime package and set `execution_provider` in config:
+
 ```bash
-cargo build --workspace --features cuda      # NVIDIA CUDA
-cargo build --workspace --features tensorrt   # NVIDIA TensorRT
+sudo pacman -S onnxruntime-opt-cuda   # NVIDIA
+# Then edit /etc/facelock/config.toml: execution_provider = "cuda"
 ```
 
-CPU is the default. GPU features require CUDA toolkit or TensorRT SDK.
+Supported providers: `cpu` (default), `cuda` (NVIDIA), `rocm` (AMD), `openvino` (Intel).
 
 ## Core Rules
 

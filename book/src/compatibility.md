@@ -131,10 +131,13 @@ Facelock uses the `ort` crate (Rust bindings for ONNX Runtime). The runtime bina
 
 ### Execution Providers
 
-| Provider | Config | Build Feature | Status |
-|----------|--------|--------------|--------|
-| CPU | `execution_provider = "cpu"` | default | Working |
-| CUDA | `execution_provider = "cuda"` | `--features cuda` | Config ready, build untested |
-| TensorRT | `execution_provider = "tensorrt"` | `--features tensorrt` | Config ready, build untested |
+GPU support is runtime-only -- no special build flags needed. Install a GPU-enabled ONNX Runtime package and set `execution_provider` in config.
 
-CPU is the default and only tested provider. GPU providers require additional system libraries (CUDA toolkit, TensorRT SDK).
+| Provider | Config | Runtime Requirement | Status |
+|----------|--------|---------------------|--------|
+| CPU | `execution_provider = "cpu"` | none (default) | Working |
+| CUDA (NVIDIA) | `execution_provider = "cuda"` | CUDA toolkit + GPU-enabled ORT | Config ready, untested |
+| ROCm (AMD) | `execution_provider = "rocm"` | ROCm runtime + GPU-enabled ORT | Config ready, untested |
+| OpenVINO (Intel) | `execution_provider = "openvino"` | OpenVINO runtime + GPU-enabled ORT | Config ready, untested |
+
+CPU is the default and only tested provider.

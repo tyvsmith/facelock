@@ -364,13 +364,10 @@ impl TpmSealer {
             attributes::SessionAttributesBuilder,
             constants::SessionType,
             interface_types::{
-                algorithm::HashingAlgorithm,
-                reserved_handles::Hierarchy,
+                algorithm::HashingAlgorithm, reserved_handles::Hierarchy,
                 session_handles::PolicySession,
             },
-            structures::{
-                MaxBuffer, PcrSelectionListBuilder, SymmetricDefinition,
-            },
+            structures::{MaxBuffer, PcrSelectionListBuilder, SymmetricDefinition},
         };
 
         // Convert u32 indices to PcrSlot values
@@ -382,9 +379,7 @@ impl TpmSealer {
         let pcr_selection_list = PcrSelectionListBuilder::new()
             .with_selection(HashingAlgorithm::Sha256, &slots)
             .build()
-            .map_err(|e| {
-                FacelockError::Tpm(format!("failed to build PCR selection list: {e}"))
-            })?;
+            .map_err(|e| FacelockError::Tpm(format!("failed to build PCR selection list: {e}")))?;
 
         // Read current PCR values so the policy binds to the current state
         let (_update_counter, _pcr_selection_out, pcr_digests) = self
@@ -428,12 +423,8 @@ impl TpmSealer {
                 SymmetricDefinition::AES_256_CFB,
                 HashingAlgorithm::Sha256,
             )
-            .map_err(|e| {
-                FacelockError::Tpm(format!("failed to start trial policy session: {e}"))
-            })?
-            .ok_or_else(|| {
-                FacelockError::Tpm("trial policy session returned None".into())
-            })?;
+            .map_err(|e| FacelockError::Tpm(format!("failed to start trial policy session: {e}")))?
+            .ok_or_else(|| FacelockError::Tpm("trial policy session returned None".into()))?;
 
         // Set session attributes for encrypt/decrypt
         let (attrs, mask) = SessionAttributesBuilder::new()
@@ -445,18 +436,16 @@ impl TpmSealer {
             .tr_sess_set_attributes(trial_session, attrs, mask)
             .map_err(|e| {
                 // Clean up session before returning error
-                let _ = self.context.flush_context(
-                    tss_esapi::handles::SessionHandle::from(trial_session).into(),
-                );
-                FacelockError::Tpm(format!(
-                    "failed to set trial session attributes: {e}"
-                ))
+                let _ = self
+                    .context
+                    .flush_context(tss_esapi::handles::SessionHandle::from(trial_session).into());
+                FacelockError::Tpm(format!("failed to set trial session attributes: {e}"))
             })?;
 
         let policy_session = PolicySession::try_from(trial_session).map_err(|e| {
-            let _ = self.context.flush_context(
-                tss_esapi::handles::SessionHandle::from(trial_session).into(),
-            );
+            let _ = self
+                .context
+                .flush_context(tss_esapi::handles::SessionHandle::from(trial_session).into());
             FacelockError::Tpm(format!(
                 "failed to convert auth session to policy session: {e}"
             ))
@@ -466,9 +455,9 @@ impl TpmSealer {
         self.context
             .policy_pcr(policy_session, hashed_pcr_values, pcr_selection_list)
             .map_err(|e| {
-                let _ = self.context.flush_context(
-                    tss_esapi::handles::SessionHandle::from(trial_session).into(),
-                );
+                let _ = self
+                    .context
+                    .flush_context(tss_esapi::handles::SessionHandle::from(trial_session).into());
                 FacelockError::Tpm(format!("policy_pcr failed: {e}"))
             })?;
 
@@ -477,20 +466,16 @@ impl TpmSealer {
             .context
             .policy_get_digest(policy_session)
             .map_err(|e| {
-                let _ = self.context.flush_context(
-                    tss_esapi::handles::SessionHandle::from(trial_session).into(),
-                );
+                let _ = self
+                    .context
+                    .flush_context(tss_esapi::handles::SessionHandle::from(trial_session).into());
                 FacelockError::Tpm(format!("policy_get_digest failed: {e}"))
             })?;
 
         // Clean up the trial session
         self.context
-            .flush_context(
-                tss_esapi::handles::SessionHandle::from(trial_session).into(),
-            )
-            .map_err(|e| {
-                FacelockError::Tpm(format!("failed to flush trial session: {e}"))
-            })?;
+            .flush_context(tss_esapi::handles::SessionHandle::from(trial_session).into())
+            .map_err(|e| FacelockError::Tpm(format!("failed to flush trial session: {e}")))?;
 
         debug!(
             digest_len = digest.len(),
@@ -868,9 +853,16 @@ pub fn raw_embedding_size() -> usize {
 mod tests {
     use super::*;
 
+    /// Get TCTI string from env (for swtpm in CI) or fall back to device path.
+    #[cfg(not(feature = "tpm"))]
+    fn test_tcti() -> String {
+        std::env::var("TCTI").unwrap_or_else(|_| "device:/dev/tpmrm0".into())
+    }
+
     #[test]
+    #[cfg(not(feature = "tpm"))]
     fn seal_unseal_round_trip_passthrough() {
-        let mut sealer = TpmSealer::new("device:/dev/tpmrm0").unwrap();
+        let mut sealer = TpmSealer::new(&test_tcti()).unwrap();
         let mut emb = [0.0f32; 512];
         emb[0] = 1.0;
         emb[1] = -1.0;
@@ -1155,8 +1147,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "tpm"))]
     fn seal_bytes_passthrough() {
-        let mut sealer = TpmSealer::new("device:/dev/tpmrm0").unwrap();
+        let mut sealer = TpmSealer::new(&test_tcti()).unwrap();
         let data = b"hello world";
         let result = sealer.seal_bytes(data, None).unwrap();
 

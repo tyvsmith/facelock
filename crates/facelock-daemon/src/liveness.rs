@@ -15,7 +15,11 @@ pub struct LandmarkTracker {
 }
 
 impl LandmarkTracker {
-    pub fn new(max_frames: usize, displacement_threshold: f32, min_moving_landmarks: usize) -> Self {
+    pub fn new(
+        max_frames: usize,
+        displacement_threshold: f32,
+        min_moving_landmarks: usize,
+    ) -> Self {
         Self {
             history: Vec::with_capacity(max_frames),
             max_frames,

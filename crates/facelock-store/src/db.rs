@@ -49,7 +49,13 @@ impl FaceStore {
     }
 
     /// Add a face model with its embedding. Returns the new model ID.
-    pub fn add_model(&self, user: &str, label: &str, embedding: &FaceEmbedding, embedder_model: &str) -> Result<u32> {
+    pub fn add_model(
+        &self,
+        user: &str,
+        label: &str,
+        embedding: &FaceEmbedding,
+        embedder_model: &str,
+    ) -> Result<u32> {
         let tx = self.conn.unchecked_transaction().map_err(map_err)?;
 
         let created_at = SystemTime::now()
@@ -234,7 +240,14 @@ impl FaceStore {
     }
 
     /// Add a face model with raw bytes and a sealed flag. Returns the new model ID.
-    pub fn add_model_raw(&self, user: &str, label: &str, data: &[u8], sealed: bool, embedder_model: &str) -> Result<u32> {
+    pub fn add_model_raw(
+        &self,
+        user: &str,
+        label: &str,
+        data: &[u8],
+        sealed: bool,
+        embedder_model: &str,
+    ) -> Result<u32> {
         let tx = self.conn.unchecked_transaction().map_err(map_err)?;
 
         let created_at = SystemTime::now()
@@ -357,7 +370,12 @@ impl FaceStore {
     /// Returns `true` if the user has fewer than `max_attempts` in the last
     /// `window_secs` seconds (i.e. auth may proceed). Returns `false` if
     /// the limit has been reached.
-    pub fn check_rate_limit(&self, user: &str, max_attempts: u32, window_secs: u64) -> Result<bool> {
+    pub fn check_rate_limit(
+        &self,
+        user: &str,
+        max_attempts: u32,
+        window_secs: u64,
+    ) -> Result<bool> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)

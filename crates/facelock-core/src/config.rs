@@ -97,7 +97,7 @@ pub struct RecognitionConfig {
     pub detector_model: String,
     #[serde(default = "default_embedder_model")]
     pub embedder_model: String,
-    /// ORT execution provider: "cpu", "cuda", or "tensorrt".
+    /// ORT execution provider: "cpu", "cuda", "rocm", or "openvino".
     #[serde(default = "default_execution_provider")]
     pub execution_provider: String,
     /// Number of intra-op threads for ORT inference.

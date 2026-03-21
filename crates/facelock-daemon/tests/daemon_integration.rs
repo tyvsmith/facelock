@@ -1,6 +1,5 @@
 use facelock_core::config::Config;
 use facelock_core::ipc::{DaemonRequest, DaemonResponse};
-use facelock_core::types::MatchResult;
 use facelock_store::FaceStore;
 use facelock_test_support::fixtures;
 use facelock_test_support::{MockCamera, MockFaceEngine};
@@ -147,7 +146,7 @@ fn warmup_frames_discarded_on_camera_open() {
 
     // Track captures via a shared counter
     let capture_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let counter = capture_count.clone();
+    let _counter = capture_count.clone();
 
     let factory: Box<
         dyn Fn(&facelock_core::config::Config) -> Result<MockCamera, String> + Send + Sync,
@@ -156,8 +155,16 @@ fn warmup_frames_discarded_on_camera_open() {
         Ok(MockCamera::bright(64, 64, 20))
     });
 
-    let mut handler =
-        Handler::new(config, engine, store, rate_limiter, false, Some(factory), None).unwrap();
+    let mut handler = Handler::new(
+        config,
+        engine,
+        store,
+        rate_limiter,
+        false,
+        Some(factory),
+        None,
+    )
+    .unwrap();
 
     // Ping triggers no camera open
     let resp = handler.handle(DaemonRequest::Ping);
@@ -191,8 +198,16 @@ fn warmup_frames_zero_skips_discard() {
         dyn Fn(&facelock_core::config::Config) -> Result<MockCamera, String> + Send + Sync,
     > = Box::new(move |_cfg| Ok(MockCamera::bright(64, 64, 5)));
 
-    let mut handler =
-        Handler::new(config, engine, store, rate_limiter, false, Some(factory), None).unwrap();
+    let mut handler = Handler::new(
+        config,
+        engine,
+        store,
+        rate_limiter,
+        false,
+        Some(factory),
+        None,
+    )
+    .unwrap();
 
     // Should work fine with zero warmup
     let resp = handler.handle(DaemonRequest::PreviewFrame);

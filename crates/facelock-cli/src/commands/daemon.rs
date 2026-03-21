@@ -64,6 +64,39 @@ fn lock_handler_with_timeout(
     }
 }
 
+/// Verify the D-Bus caller is root.
+/// Used for privileged operations: enroll, remove, clear.
+async fn verify_caller_is_root(
+    hdr: &zbus::message::Header<'_>,
+    connection: &zbus::Connection,
+) -> fdo::Result<()> {
+    let sender = hdr
+        .sender()
+        .ok_or_else(|| fdo::Error::Failed("no sender in D-Bus message".into()))?;
+
+    let dbus_proxy = fdo::DBusProxy::new(connection)
+        .await
+        .map_err(|e| fdo::Error::Failed(format!("failed to create DBus proxy: {e}")))?;
+    let uid = dbus_proxy
+        .get_connection_unix_user(sender.as_ref().into())
+        .await
+        .map_err(|e| fdo::Error::Failed(format!("failed to get caller UID: {e}")))?;
+
+    if uid != 0 {
+        let caller_name = uid_to_username(uid).unwrap_or_else(|| format!("UID {uid}"));
+        warn!(
+            caller_uid = uid,
+            caller_name = %caller_name,
+            "D-Bus caller not authorized for privileged operation"
+        );
+        return Err(fdo::Error::AccessDenied(format!(
+            "root required (caller: '{caller_name}', UID {uid})"
+        )));
+    }
+
+    Ok(())
+}
+
 /// Verify the D-Bus caller is authorized to act on behalf of `user`.
 /// Root (UID 0) can act on any user. Non-root callers must match `user`.
 async fn verify_caller_authorized(
@@ -283,7 +316,7 @@ impl FacelockService {
     ) -> fdo::Result<(u32, u32)> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
         self.maybe_reload_handler();
-        verify_caller_authorized(&hdr, connection, user).await?;
+        verify_caller_is_root(&hdr, connection).await?;
         let handler = self.handler.clone();
         let user = user.to_string();
         let label = label.to_string();
@@ -349,7 +382,7 @@ impl FacelockService {
         model_id: u32,
     ) -> fdo::Result<()> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
-        verify_caller_authorized(&hdr, connection, user).await?;
+        verify_caller_is_root(&hdr, connection).await?;
         let handler = self.handler.clone();
         let user = user.to_string();
         tokio::task::spawn_blocking(move || {
@@ -375,7 +408,7 @@ impl FacelockService {
         user: &str,
     ) -> fdo::Result<()> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
-        verify_caller_authorized(&hdr, connection, user).await?;
+        verify_caller_is_root(&hdr, connection).await?;
         let handler = self.handler.clone();
         let user = user.to_string();
         tokio::task::spawn_blocking(move || {
@@ -531,9 +564,7 @@ type CameraFactory = Box<dyn Fn(&Config) -> Result<Camera<'static>, String> + Se
 
 /// Build a new handler from config. Used at startup and for live config reload.
 /// Returns the handler and idle_timeout_secs from the loaded config.
-fn build_handler(
-    config_path: Option<&str>,
-) -> Result<(ProductionHandler, u64), String> {
+fn build_handler(config_path: Option<&str>) -> Result<(ProductionHandler, u64), String> {
     let config = match config_path {
         Some(p) => Config::load_from(Path::new(p)),
         None => Config::load(),
@@ -543,9 +574,8 @@ fn build_handler(
     let quirks = QuirksDb::load();
 
     if config.device.path.is_none() {
-        let info = auto_detect_device().map_err(|e| {
-            format!("no camera device specified and auto-detection failed: {e}")
-        })?;
+        let info = auto_detect_device()
+            .map_err(|e| format!("no camera device specified and auto-detection failed: {e}"))?;
         let is_ir = is_ir_camera_with_quirks(&info, Some(&quirks));
         info!(device = %info.path, name = %info.name, ir = is_ir, "auto-detected camera device");
         config.device.path = Some(info.path);

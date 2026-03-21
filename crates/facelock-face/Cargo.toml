@@ -7,14 +7,10 @@ license.workspace = true
 
 [dependencies]
 facelock-core = { path = "../facelock-core" }
-ort = { version = "2.0.0-rc.12", features = ["download-binaries", "ndarray"] }
+ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "load-dynamic", "copy-dylibs", "api-24", "cuda", "rocm", "openvino"] }
 ndarray = "0.16"
 image = "0.25"
 sha2 = "0.10"
 serde = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
-
-[features]
-cuda = ["ort/load-dynamic", "ort/cuda", "ort/tensorrt"]
-tensorrt = ["cuda"]

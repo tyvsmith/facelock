@@ -46,5 +46,3 @@ bytemuck = "1"
 default = ["wayland"]
 wayland = ["dep:smithay-client-toolkit", "dep:wayland-client", "dep:xkbcommon"]
 tpm = ["facelock-tpm/tpm", "facelock-daemon/tpm", "dep:tss-esapi"]
-cuda = ["facelock-face/cuda", "facelock-daemon/cuda"]
-tensorrt = ["facelock-face/tensorrt", "facelock-daemon/tensorrt"]

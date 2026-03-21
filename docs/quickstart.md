@@ -72,14 +72,15 @@ You should see "Identifying face..." and authenticate by looking at the camera.
 
 ### GPU Acceleration (Optional)
 
-For NVIDIA GPUs with CUDA support:
+GPU support is runtime-only -- no special build flags needed. Install a GPU-enabled ONNX Runtime package for your hardware:
 
 ```bash
-sudo pacman -S onnxruntime-opt-cuda   # Arch: system ORT with CUDA
-just install-cuda                      # build + install with GPU
+sudo pacman -S onnxruntime-opt-cuda      # NVIDIA
+sudo pacman -S onnxruntime-opt-rocm      # AMD
+sudo pacman -S onnxruntime-opt-openvino  # Intel
 ```
 
-Set `execution_provider = "cuda"` or `"tensorrt"` in `/etc/facelock/config.toml`. CPU is the default.
+Set `execution_provider` in `/etc/facelock/config.toml` to `"cuda"`, `"rocm"`, or `"openvino"`. CPU is the default.
 
 ### Uninstall
 
@@ -103,7 +104,7 @@ Key settings:
 |---------|---------|-------------|
 | `device.path` | auto-detect | Camera path (prefers IR cameras) |
 | `recognition.threshold` | `0.80` | Cosine similarity threshold |
-| `recognition.execution_provider` | `"cpu"` | `"cpu"`, `"cuda"`, or `"tensorrt"` |
+| `recognition.execution_provider` | `"cpu"` | `"cpu"`, `"cuda"`, `"rocm"`, or `"openvino"` |
 | `daemon.mode` | `"daemon"` | `"daemon"` or `"oneshot"` |
 | `security.require_ir` | `true` | Reject RGB-only cameras |
 

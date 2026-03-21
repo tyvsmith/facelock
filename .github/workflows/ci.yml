@@ -14,24 +14,21 @@ jobs:
   build-and-test:
     name: Build, Test, Lint
     runs-on: ubuntu-latest
+    container: archlinux:base-devel
     steps:
-      - uses: actions/checkout@v4
-
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libv4l-dev \
-            libxkbcommon-dev \
-            libwayland-dev \
-            libpam0g-dev \
+          pacman -Syu --noconfirm \
+            git \
+            rust \
             clang \
-            libtss2-dev
+            v4l-utils \
+            libxkbcommon \
+            wayland \
+            pam \
+            tpm2-tss
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
+      - uses: actions/checkout@v4
 
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@v2
@@ -57,24 +54,23 @@ jobs:
   tpm-tests:
     name: TPM Tests (swtpm)
     runs-on: ubuntu-latest
+    container: archlinux:base-devel
     needs: build-and-test
     steps:
-      - uses: actions/checkout@v4
-
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libv4l-dev \
-            libxkbcommon-dev \
-            libwayland-dev \
-            libpam0g-dev \
+          pacman -Syu --noconfirm \
+            git \
+            rust \
             clang \
-            libtss2-dev \
+            v4l-utils \
+            libxkbcommon \
+            wayland \
+            pam \
+            tpm2-tss \
             swtpm
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
 
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@v2
@@ -87,8 +83,8 @@ jobs:
             --tpm2 \
             --ctrl type=tcp,port=2322 \
             --server type=tcp,port=2321 \
-            --flags not-need-init &
-          sleep 1
+            --flags startup-clear &
+          sleep 2
 
       - name: Run TPM tests
         env:
@@ -105,32 +101,15 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libv4l-dev \
-            libxkbcommon-dev \
-            libwayland-dev \
-            libpam0g-dev \
-            clang \
-            libtss2-dev \
-            podman
+          sudo apt-get install -y podman
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry and build
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build release
-        run: cargo build --release --workspace
-
-      - name: Build container
+      - name: Build release in container
         run: |
-          if [ -f test/Containerfile ]; then
-            podman build -t facelock-pam-test -f test/Containerfile .
-          else
-            echo "No Containerfile found, skipping container build"
+          if [ ! -f test/Containerfile ]; then
+            echo "No Containerfile found, skipping"
             exit 0
           fi
+          podman build -t facelock-pam-test -f test/Containerfile .
 
       - name: Run container PAM tests
         run: |

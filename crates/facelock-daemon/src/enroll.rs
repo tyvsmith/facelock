@@ -119,11 +119,15 @@ pub fn enroll<C: CameraSource, E: FaceProcessor>(
             match sealer.seal_embedding(embedding) {
                 Ok(encrypted) => match model_id {
                     None => store
-                        .add_model_raw(user, label, &encrypted, true, &config.recognition.embedder_model)
+                        .add_model_raw(
+                            user,
+                            label,
+                            &encrypted,
+                            true,
+                            &config.recognition.embedder_model,
+                        )
                         .map(Some),
-                    Some(id) => store
-                        .add_embedding_raw(id, &encrypted, true)
-                        .map(|()| None),
+                    Some(id) => store.add_embedding_raw(id, &encrypted, true).map(|()| None),
                 },
                 Err(e) => {
                     warn!("failed to encrypt embedding: {e}");
@@ -134,7 +138,9 @@ pub fn enroll<C: CameraSource, E: FaceProcessor>(
             }
         } else {
             match model_id {
-                None => store.add_model(user, label, embedding, &config.recognition.embedder_model).map(Some),
+                None => store
+                    .add_model(user, label, embedding, &config.recognition.embedder_model)
+                    .map(Some),
                 Some(id) => store.add_embedding(id, embedding).map(|()| None),
             }
         };
@@ -179,8 +185,7 @@ pub fn enroll<C: CameraSource, E: FaceProcessor>(
     }
 
     // Check angle diversity: reject if all embeddings are too similar
-    if stored_count >= MIN_CAPTURES as u32
-        && !quality::check_angle_diversity(&enrolled_embeddings)
+    if stored_count >= MIN_CAPTURES as u32 && !quality::check_angle_diversity(&enrolled_embeddings)
     {
         warn!(
             user,

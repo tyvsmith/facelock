@@ -55,7 +55,7 @@ notes = "ThinkPad integrated IR camera (various models)"
 vendor_id = "046d"
 product_id = "085e"
 force_ir = true
-warmup_frames = 10
+warmup_frames = 1
 notes = "Logitech BRIO 4K with IR sensor"
 
 # --- Microsoft Surface cameras ---

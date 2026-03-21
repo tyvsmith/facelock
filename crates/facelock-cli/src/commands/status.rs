@@ -21,10 +21,22 @@ pub fn run() -> anyhow::Result<()> {
     // 4. Models
     check_models(&config);
 
-    // 5. Encryption
+    // 5. Inference
+    check_inference(&config);
+
+    // 6. Encryption
     check_encryption(&config);
 
-    // 6. PAM
+    // 7. Enrolled faces
+    check_enrolled(&config);
+
+    // 8. Security
+    check_security(&config);
+
+    // 9. Notifications
+    check_notifications(&config);
+
+    // 10. PAM
     check_pam();
 
     Ok(())
@@ -150,6 +162,34 @@ fn check_models(config: &Option<Config>) {
     }
 }
 
+fn check_inference(config: &Option<Config>) {
+    let Some(config) = config else {
+        return;
+    };
+
+    let provider = &config.recognition.execution_provider;
+    let label = match provider.as_str() {
+        "cpu" => "CPU",
+        "cuda" => "CUDA (NVIDIA GPU)",
+        "rocm" => "ROCm (AMD GPU)",
+        "openvino" => "OpenVINO (Intel)",
+        other => other,
+    };
+    print_status_item("Execution provider", label);
+
+    // Check that the ORT library is loadable
+    let ort_paths = [
+        "/usr/lib/libonnxruntime.so",
+        "/usr/lib64/libonnxruntime.so",
+        "/usr/lib/facelock/libonnxruntime.so",
+    ];
+    if let Some(path) = ort_paths.iter().find(|p| Path::new(p).exists()) {
+        print_result(true, &format!("ONNX Runtime found at {path}"));
+    } else {
+        print_result(false, "ONNX Runtime not found (install onnxruntime)");
+    }
+}
+
 fn check_encryption(config: &Option<Config>) {
     let Some(config) = config else {
         return;
@@ -213,6 +253,118 @@ fn check_encryption(config: &Option<Config>) {
                 print_detail("plaintext", &unsealed.to_string());
             }
         }
+    }
+}
+
+fn check_enrolled(config: &Option<Config>) {
+    let Some(config) = config else {
+        return;
+    };
+
+    let user = std::env::var("SUDO_USER")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_else(|_| "unknown".into());
+
+    print_status_item("Enrolled faces", &user);
+
+    match facelock_store::FaceStore::open_readonly(Path::new(&config.storage.db_path)) {
+        Ok(store) => match store.list_models(&user) {
+            Ok(models) if models.is_empty() => {
+                print_result(false, "no faces enrolled (run 'facelock enroll')");
+            }
+            Ok(models) => {
+                print_result(true, &format!("{} model(s)", models.len()));
+                for m in &models {
+                    print_detail(&format!("#{}", m.id), &m.label);
+                }
+            }
+            Err(e) => {
+                print_result(false, &format!("error reading models: {e}"));
+            }
+        },
+        Err(_) => {
+            print_detail("database", "not accessible (may need root)");
+        }
+    }
+}
+
+fn check_security(config: &Option<Config>) {
+    let Some(config) = config else {
+        return;
+    };
+
+    print_status_item("Security", "");
+    if config.security.disabled {
+        print_result(false, "ALL SECURITY CHECKS DISABLED");
+        return;
+    }
+    print_detail(
+        "require_ir",
+        if config.security.require_ir {
+            "yes"
+        } else {
+            "no"
+        },
+    );
+    print_detail(
+        "liveness (frame variance)",
+        if config.security.require_frame_variance {
+            "yes"
+        } else {
+            "no"
+        },
+    );
+    print_detail(
+        "liveness (landmark movement)",
+        if config.security.require_landmark_liveness {
+            "yes"
+        } else {
+            "no"
+        },
+    );
+    print_detail(
+        "min_auth_frames",
+        &config.security.min_auth_frames.to_string(),
+    );
+}
+
+fn check_notifications(config: &Option<Config>) {
+    let Some(config) = config else {
+        return;
+    };
+
+    let mode_str = match config.notification.mode {
+        facelock_core::config::NotificationMode::Off => "off",
+        facelock_core::config::NotificationMode::Terminal => "terminal",
+        facelock_core::config::NotificationMode::Desktop => "desktop",
+        facelock_core::config::NotificationMode::Both => "terminal + desktop",
+    };
+    print_status_item("Notifications", mode_str);
+    if config.notification.mode != facelock_core::config::NotificationMode::Off {
+        print_detail(
+            "prompt",
+            if config.notification.notify_prompt {
+                "yes"
+            } else {
+                "no"
+            },
+        );
+        print_detail(
+            "on success",
+            if config.notification.notify_on_success {
+                "yes"
+            } else {
+                "no"
+            },
+        );
+        print_detail(
+            "on failure",
+            if config.notification.notify_on_failure {
+                "yes"
+            } else {
+                "no"
+            },
+        );
     }
 }
 

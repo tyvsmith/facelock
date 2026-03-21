@@ -7,12 +7,13 @@ use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use tracing::{info, warn};
 
-use facelock_camera::capture::Camera;
-use facelock_camera::device::{is_ir_camera, validate_device};
+use facelock_camera::Camera;
 use facelock_core::Config;
 use facelock_core::types::{FaceEmbedding, cosine_similarity};
 use facelock_face::FaceEngine;
 use facelock_store::FaceStore;
+
+use crate::direct;
 
 /// Performance targets in milliseconds.
 const TARGET_COLD_AUTH_MS: u64 = 3000;
@@ -46,6 +47,22 @@ pub enum BenchCommand {
 }
 
 pub fn run(command: BenchCommand) -> Result<()> {
+    // Auth benchmarks need to decrypt embeddings, which may require root for TPM access
+    let needs_embeddings = matches!(
+        command,
+        BenchCommand::ColdAuth
+            | BenchCommand::WarmAuth
+            | BenchCommand::Calibrate
+            | BenchCommand::Report
+    );
+    if needs_embeddings {
+        if let Ok(config) = Config::load() {
+            if config.encryption.method == facelock_core::config::EncryptionMethod::Tpm {
+                crate::ipc_client::require_root("sudo facelock bench <subcommand>")?;
+            }
+        }
+    }
+
     match command {
         BenchCommand::ColdAuth => cmd_cold_auth(),
         BenchCommand::WarmAuth => cmd_warm_auth(),
@@ -69,15 +86,9 @@ fn model_dir(config: &Config) -> &Path {
     Path::new(&config.daemon.model_dir)
 }
 
-/// Open the camera from config.
+/// Open the camera from config (with quirks and warmup frame discarding).
 fn open_camera(config: &Config) -> Result<Camera<'static>> {
-    let path_display = config.device.path.as_deref().unwrap_or("(auto-detect)");
-    if let Some(ref path) = config.device.path {
-        let device_info = validate_device(path)
-            .with_context(|| format!("Camera device {path} not accessible"))?;
-        info!(device = %path, ir = is_ir_camera(&device_info), "Camera validated");
-    }
-    Camera::open(&config.device, None).with_context(|| format!("Failed to open camera ({path_display})"))
+    direct::open_camera(config).context("Failed to open camera")
 }
 
 /// Load FaceEngine from config.
@@ -110,7 +121,7 @@ fn cmd_cold_auth() -> Result<()> {
     let store =
         FaceStore::open(Path::new(&config.storage.db_path)).context("Failed to open face store")?;
 
-    let embeddings = store.get_user_embeddings(&user)?;
+    let embeddings = direct::load_user_embeddings(&store, &config, &user)?;
     if embeddings.is_empty() {
         bail!(
             "No enrolled faces for user '{}'. Enroll first with `facelock enroll`.",
@@ -118,9 +129,22 @@ fn cmd_cold_auth() -> Result<()> {
         );
     }
 
-    // Capture and match
-    let frame = camera.capture().context("Failed to capture frame")?;
-    let faces = engine.process(&frame)?;
+    // Capture frames until we detect a face or timeout, like the real auth loop.
+    // The first few frames from a V4L2 camera are often dark/blank while the
+    // sensor adjusts exposure.
+    let timeout = std::time::Duration::from_secs(config.recognition.timeout_secs as u64);
+    let deadline = start + timeout;
+    let mut faces = Vec::new();
+    let mut frames_captured = 0u32;
+
+    while Instant::now() < deadline {
+        let frame = camera.capture().context("Failed to capture frame")?;
+        frames_captured += 1;
+        faces = engine.process(&frame)?;
+        if !faces.is_empty() {
+            break;
+        }
+    }
 
     let elapsed = start.elapsed();
     let elapsed_ms = elapsed.as_millis() as u64;
@@ -133,6 +157,7 @@ fn cmd_cold_auth() -> Result<()> {
         "Result:          {}",
         pass_fail(elapsed_ms, TARGET_COLD_AUTH_MS)
     );
+    println!("Frames captured: {}", frames_captured);
     println!("Faces detected:  {}", faces.len());
     println!(
         "Auth result:     {}",
@@ -159,7 +184,7 @@ fn cmd_warm_auth() -> Result<()> {
     let store =
         FaceStore::open(Path::new(&config.storage.db_path)).context("Failed to open face store")?;
 
-    let embeddings = store.get_user_embeddings(&user)?;
+    let embeddings = direct::load_user_embeddings(&store, &config, &user)?;
     if embeddings.is_empty() {
         bail!(
             "No enrolled faces for user '{}'. Enroll first with `facelock enroll`.",
@@ -351,7 +376,7 @@ fn cmd_calibrate() -> Result<()> {
     let store =
         FaceStore::open(Path::new(&config.storage.db_path)).context("Failed to open face store")?;
 
-    let enrolled = store.get_user_embeddings(&user)?;
+    let enrolled = direct::load_user_embeddings(&store, &config, &user)?;
     if enrolled.is_empty() {
         bail!(
             "No enrolled faces for user '{}'. Enroll first with `facelock enroll`.",
@@ -530,7 +555,7 @@ fn cmd_report() -> Result<()> {
     // Warm auth benchmark
     let store =
         FaceStore::open(Path::new(&config.storage.db_path)).context("Failed to open face store")?;
-    let embeddings = store.get_user_embeddings(&user)?;
+    let embeddings = direct::load_user_embeddings(&store, &config, &user)?;
     let has_enrolled = !embeddings.is_empty();
 
     let warm_auth_ms = if has_enrolled {
@@ -661,9 +686,10 @@ fn find_best_match(
     false
 }
 
-/// Get the current username.
+/// Get the current username, preferring SUDO_USER when running under sudo.
 fn current_user() -> String {
-    std::env::var("USER")
+    std::env::var("SUDO_USER")
+        .or_else(|_| std::env::var("USER"))
         .or_else(|_| std::env::var("LOGNAME"))
         .unwrap_or_else(|_| "unknown".to_string())
 }

@@ -1,3 +1,4 @@
+use std::mem::ManuallyDrop;
 use std::path::Path;
 
 use facelock_core::error::{FacelockError, Result};
@@ -9,7 +10,8 @@ use ort::value::Tensor;
 use crate::align::AlignedFace;
 
 pub struct FaceEmbedder {
-    session: Session,
+    // ManuallyDrop: see FaceDetector comment — avoids ORT heap corruption on exit.
+    session: ManuallyDrop<Session>,
 }
 
 impl FaceEmbedder {
@@ -40,7 +42,9 @@ impl FaceEmbedder {
             ))
         })?;
 
-        Ok(Self { session })
+        Ok(Self {
+            session: ManuallyDrop::new(session),
+        })
     }
 
     /// Extract a 512-D embedding from an aligned face image.

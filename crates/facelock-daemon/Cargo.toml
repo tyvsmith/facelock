@@ -26,8 +26,6 @@ serde_json = "1"
 
 [features]
 tpm = ["facelock-tpm/tpm"]
-cuda = ["facelock-face/cuda"]
-tensorrt = ["facelock-face/tensorrt"]
 
 [dev-dependencies]
 facelock-test-support = { path = "../facelock-test-support" }

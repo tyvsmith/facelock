@@ -1,3 +1,13 @@
+# Stage 1: Build
+FROM archlinux:latest AS builder
+
+RUN pacman -Syu --noconfirm rust clang base-devel v4l-utils libxkbcommon wayland pam tpm2-tss && pacman -Scc --noconfirm
+
+COPY . /build
+WORKDIR /build
+RUN cargo build --release --workspace
+
+# Stage 2: Test image
 FROM archlinux:latest
 
 # Install dependencies
@@ -12,7 +22,9 @@ RUN curl -sL https://sourceforge.net/projects/pamtester/files/pamtester/0.1.2/pa
 # Create test user
 RUN useradd -m testuser && echo "testuser:test" | chpasswd
 
-# Copy the repo (pre-built binaries in target/release/)
+# Copy repo with pre-built binaries from builder stage
+COPY --from=builder /build/target/release/facelock /build/target/release/facelock
+COPY --from=builder /build/target/release/libpam_facelock.so /build/target/release/libpam_facelock.so
 COPY . /build
 WORKDIR /build
 
@@ -23,23 +35,8 @@ RUN just install-files
 RUN cp models/*.onnx /var/lib/facelock/models/ 2>/dev/null || true
 RUN cp models/manifest.toml /var/lib/facelock/models/ 2>/dev/null || true
 
-# Override config for container testing (use /var/lib paths, not /tmp dev paths)
-RUN cat > /etc/facelock/config.toml <<'EOF'
-[device]
-max_height = 480
-
-[recognition]
-threshold = 0.80
-timeout_secs = 5
-
-[daemon]
-model_dir = "/var/lib/facelock/models"
-
-[security]
-disabled = false
-require_ir = false
-require_frame_variance = false
-EOF
+# Override config for container testing
+COPY test/container-config.toml /etc/facelock/config.toml
 
 # Facelock-test PAM config for pamtester
 COPY test/pam.d/facelock-test /etc/pam.d/facelock-test

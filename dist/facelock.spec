@@ -16,6 +16,7 @@ BuildRequires:  tpm2-tss-devel
 
 Requires:       pam
 Requires:       tpm2-tss
+Requires:       onnxruntime
 Recommends:     authselect
 
 %description
