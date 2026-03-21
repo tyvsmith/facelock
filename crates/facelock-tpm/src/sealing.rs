@@ -859,6 +859,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "tpm"))]
     fn seal_unseal_round_trip_passthrough() {
         let mut sealer = TpmSealer::new(&test_tcti()).unwrap();
         let mut emb = [0.0f32; 512];
@@ -1145,6 +1146,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "tpm"))]
     fn seal_bytes_passthrough() {
         let mut sealer = TpmSealer::new(&test_tcti()).unwrap();
         let data = b"hello world";
