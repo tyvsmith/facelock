@@ -1,3 +1,4 @@
+use std::mem::ManuallyDrop;
 use std::path::Path;
 
 use facelock_core::error::{FacelockError, Result};
@@ -7,7 +8,10 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::value::Tensor;
 
 pub struct FaceDetector {
-    session: Session,
+    // ManuallyDrop: ORT's Session destructor corrupts the heap on process exit
+    // when the global ORT environment is torn down before sessions. Leaking the
+    // session is safe — the OS reclaims all memory on exit anyway.
+    session: ManuallyDrop<Session>,
     input_width: u32,
     input_height: u32,
     confidence_threshold: f32,
@@ -52,7 +56,7 @@ impl FaceDetector {
         })?;
 
         Ok(Self {
-            session,
+            session: ManuallyDrop::new(session),
             input_width: 640,
             input_height: 640,
             confidence_threshold: confidence,
