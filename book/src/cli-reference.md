@@ -153,7 +153,7 @@ facelock bench report                   # full benchmark report
 
 ## facelock restart
 
-Restart the persistent daemon. Sends a shutdown command via D-Bus and waits for it to restart via D-Bus activation.
+Restart the persistent daemon. On systemd systems, runs `systemctl restart facelock-daemon.service`. Otherwise, sends a D-Bus shutdown request and the daemon restarts on next use via D-Bus activation.
 
 ```bash
 facelock restart

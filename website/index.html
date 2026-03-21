@@ -30,7 +30,7 @@
     <div class="container">
       <div class="hero-badge">Open Source / MIT + Apache 2.0</div>
       <h1><span class="accent">Facelock</span></h1>
-      <p class="hero-tagline">Face authentication for Linux. Windows Hello-style facial recognition with IR anti-spoofing, ~200ms daemon-mode latency, and complete privacy -- all inference runs locally on your hardware, with zero network calls and zero telemetry.</p>
+      <p class="hero-tagline">Face authentication for Linux. Windows Hello-style facial recognition with IR anti-spoofing, ~200ms daemon-mode latency, and complete privacy -- all authentication runs locally on your hardware with no telemetry. After initial model download, Facelock never touches the network.</p>
 
       <div class="hero-actions">
         <a href="docs/quickstart.html" class="btn btn-primary">Get Started</a>
@@ -245,7 +245,7 @@
           <div class="security-marker">NT</div>
           <div>
             <h4>No Telemetry</h4>
-            <p>Facelock contains zero analytics, tracking, or phone-home code. After the one-time model download during setup, it never contacts any server.</p>
+            <p>Zero analytics, tracking, or phone-home code. Models are downloaded once during <code>facelock setup</code> -- after that, Facelock never contacts any server.</p>
           </div>
         </div>
 
@@ -280,7 +280,6 @@
       <div class="install-block">
         <div class="install-tabs">
           <span class="install-tab active">Arch Linux</span>
-          <span class="install-tab">From source</span>
         </div>
         <div class="terminal">
           <div class="terminal-bar">
@@ -311,7 +310,7 @@
         </div>
       </div>
 
-      <p class="install-note" style="text-align: center; margin-top: 1.5rem; opacity: 0.7;">Also available as <code>.deb</code>, <code>.rpm</code>, and Nix flake. See <a href="docs/quickstart.html">docs</a> for details.</p>
+      <p class="install-note">Also available as <code>.deb</code>, <code>.rpm</code>, and Nix flake. See <a href="docs/quickstart.html">docs</a> for details.</p>
     </div>
   </section>
 
