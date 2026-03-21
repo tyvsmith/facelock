@@ -19,12 +19,15 @@ That's it. Face auth is now active for `sudo`. Keep a root shell open until you'
 
 ### GPU Acceleration (Optional)
 
-```bash
-sudo pacman -S onnxruntime-opt-cuda   # system ORT with CUDA support
-just install-cuda                      # build + install with GPU support
-```
+GPU support is runtime-only -- no special build flags needed. Install a GPU-enabled ONNX Runtime package for your hardware and set `execution_provider` in `/etc/facelock/config.toml`:
 
-Supports CUDA and TensorRT execution providers. Set `execution_provider = "cuda"` or `"tensorrt"` in `/etc/facelock/config.toml`.
+| GPU Vendor | Package (Arch) | Config value |
+|------------|---------------|--------------|
+| NVIDIA | `onnxruntime-opt-cuda` | `"cuda"` |
+| AMD | `onnxruntime-opt-rocm` | `"rocm"` |
+| Intel | `onnxruntime-opt-openvino` | `"openvino"` |
+
+Supports CUDA, ROCm, and OpenVINO execution providers. CPU is the default.
 
 ### Uninstall
 
@@ -97,7 +100,7 @@ All keys are optional. Camera is auto-detected if `device.path` is omitted.
 
 [recognition]
 # threshold = 0.80         # cosine similarity threshold
-# execution_provider = "cpu"  # "cpu", "cuda", or "tensorrt"
+# execution_provider = "cpu"  # "cpu", "cuda", "rocm", or "openvino"
 # threads = 4              # ORT inference threads
 
 [daemon]

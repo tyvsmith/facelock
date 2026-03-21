@@ -26,7 +26,7 @@ Face detection and embedding parameters.
 | `nms_threshold` | f32 | `0.4` | Non-maximum suppression threshold for overlapping detections. |
 | `detector_model` | string | `"scrfd_2.5g_bnkps.onnx"` | ONNX detector model filename. Must exist in `daemon.model_dir`. |
 | `embedder_model` | string | `"w600k_r50.onnx"` | ONNX embedder model filename. Must exist in `daemon.model_dir`. |
-| `execution_provider` | string | `"cpu"` | ONNX Runtime execution provider. Values: `"cpu"`, `"cuda"`, `"tensorrt"`. GPU providers require building with `--features cuda` or `--features tensorrt`. |
+| `execution_provider` | string | `"cpu"` | ONNX Runtime execution provider. Values: `"cpu"`, `"cuda"`, `"rocm"`, `"openvino"`. GPU providers require a GPU-enabled ONNX Runtime package installed on the system. |
 | `threads` | u32 | `4` | Number of CPU threads for ONNX inference. |
 
 ### Threshold range guide (ArcFace cosine similarity)

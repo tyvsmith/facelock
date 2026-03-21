@@ -74,8 +74,11 @@
 # embedder_model = "w600k_r50.onnx"
 
 # ONNX Runtime execution provider.
-# Values: "cpu", "cuda", "tensorrt"
-# GPU providers require building with --features cuda or --features tensorrt.
+# Values: "cpu", "cuda", "rocm", "openvino"
+# GPU providers require installing a GPU-enabled ONNX Runtime package:
+#   NVIDIA:  sudo pacman -S onnxruntime-opt-cuda
+#   AMD:     install onnxruntime with ROCm support
+#   Intel:   install openvino runtime
 # Default: "cpu"
 # execution_provider = "cpu"
 
