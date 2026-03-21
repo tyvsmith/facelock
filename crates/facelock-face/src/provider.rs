@@ -1,22 +1,25 @@
 use ort::session::builder::SessionBuilder;
 
-/// Paths to search for the system-installed libonnxruntime.so.
-/// The onnxruntime-opt-cuda package on Arch installs here.
-#[cfg(any(feature = "cuda", feature = "tensorrt"))]
+/// Paths to search for a system-installed libonnxruntime.so.
+/// A GPU-enabled system ORT (e.g. onnxruntime-opt-cuda) is preferred
+/// so that GPU execution providers work. The bundled CPU-only ORT
+/// is used as a last resort.
 const SYSTEM_ORT_PATHS: &[&str] = &[
     "/usr/lib/libonnxruntime.so",
     "/usr/lib64/libonnxruntime.so",
     "/usr/local/lib/libonnxruntime.so",
 ];
 
-/// Load the system-installed ONNX Runtime shared library.
+/// Bundled CPU-only ORT fallback, shipped with the facelock package.
+const BUNDLED_ORT_PATH: &str = "/usr/lib/facelock/libonnxruntime.so";
+
+/// Load the ONNX Runtime shared library.
 ///
-/// With `load-dynamic`, ORT is not statically linked. We must load
-/// `libonnxruntime.so` from the system before creating any sessions.
-/// The system ORT (e.g. `onnxruntime-opt-cuda`) is built against the
-/// locally installed CUDA version, so GPU EPs work correctly.
-#[cfg(any(feature = "cuda", feature = "tensorrt"))]
-fn load_system_ort() -> std::result::Result<(), String> {
+/// Search order:
+/// 1. `ORT_DYLIB_PATH` env var (explicit override)
+/// 2. System paths (may have GPU support)
+/// 3. Bundled CPU-only fallback
+fn load_ort() -> std::result::Result<(), String> {
     use std::sync::Once;
 
     static INIT: Once = Once::new();
@@ -35,7 +38,7 @@ fn load_system_ort() -> std::result::Result<(), String> {
             }
         }
 
-        // Search standard system paths
+        // Search system paths (may have GPU support)
         for path_str in SYSTEM_ORT_PATHS {
             let path = std::path::Path::new(path_str);
             if path.exists() {
@@ -51,9 +54,24 @@ fn load_system_ort() -> std::result::Result<(), String> {
             }
         }
 
+        // Fall back to bundled CPU-only ORT
+        let bundled = std::path::Path::new(BUNDLED_ORT_PATH);
+        if bundled.exists() {
+            match ort::init_from(bundled) {
+                Ok(_) => {
+                    tracing::info!("Loaded bundled CPU ONNX Runtime from {BUNDLED_ORT_PATH}");
+                    return;
+                }
+                Err(e) => {
+                    tracing::warn!("Found bundled ORT but failed to load: {e}");
+                }
+            }
+        }
+
         init_err = Some(
-            "Could not find system libonnxruntime.so. \
-             Install with: sudo pacman -S onnxruntime-opt-cuda"
+            "Could not find libonnxruntime.so. \
+             Ensure the facelock package is installed correctly, \
+             or set ORT_DYLIB_PATH to point to a compatible libonnxruntime.so"
                 .into(),
         );
     });
@@ -65,53 +83,35 @@ fn load_system_ort() -> std::result::Result<(), String> {
     }
 }
 
-/// Register an execution provider on the session builder based on the provider name.
+/// Register an execution provider on the session builder based on config.
 ///
-/// For `"cuda"` and `"tensorrt"`, loads the system ONNX Runtime (which has GPU
-/// support built in) and registers the corresponding execution provider.
-/// Falls back to CPU with a warning if GPU is unavailable.
+/// All providers load the ONNX Runtime shared library at runtime.
+/// GPU providers (cuda, rocm, openvino) require a system ORT built
+/// with the corresponding support — install the appropriate package
+/// (e.g. `onnxruntime-opt-cuda`) and it will be picked up automatically.
 pub(crate) fn register_execution_provider(
     builder: SessionBuilder,
     provider: &str,
 ) -> std::result::Result<SessionBuilder, String> {
+    load_ort()?;
+    tracing::info!("Using execution provider: {provider}");
     match provider {
         "cpu" => Ok(builder),
 
-        #[cfg(feature = "cuda")]
-        "cuda" => {
-            load_system_ort()?;
-            builder
-                .with_execution_providers([ort::ep::CUDA::default().build()])
-                .map_err(|e| format!("CUDA execution provider: {e}"))
-        }
+        "cuda" => builder
+            .with_execution_providers([ort::ep::CUDA::default().build()])
+            .map_err(|e| format!("CUDA execution provider: {e}")),
 
-        #[cfg(not(feature = "cuda"))]
-        "cuda" => Err(
-            "CUDA execution provider requested but facelock was not built with --features cuda. \
-             Rebuild with: just build-cuda"
-                .into(),
-        ),
+        "rocm" => builder
+            .with_execution_providers([ort::ep::ROCm::default().build()])
+            .map_err(|e| format!("ROCm execution provider: {e}")),
 
-        #[cfg(feature = "tensorrt")]
-        "tensorrt" => {
-            load_system_ort()?;
-            builder
-                .with_execution_providers([
-                    ort::ep::TensorRT::default().build(),
-                    ort::ep::CUDA::default().build(), // fallback
-                ])
-                .map_err(|e| format!("TensorRT execution provider: {e}"))
-        }
-
-        #[cfg(not(feature = "tensorrt"))]
-        "tensorrt" => Err(
-            "TensorRT execution provider requested but facelock was not built with --features tensorrt. \
-             Rebuild with: cargo build --workspace --features tensorrt"
-                .into(),
-        ),
+        "openvino" => builder
+            .with_execution_providers([ort::ep::OpenVINO::default().build()])
+            .map_err(|e| format!("OpenVINO execution provider: {e}")),
 
         other => Err(format!(
-            "Unknown execution provider '{other}'. Valid values: cpu, cuda, tensorrt"
+            "Unknown execution provider '{other}'. Valid values: cpu, cuda, rocm, openvino"
         )),
     }
 }
