@@ -29,6 +29,8 @@ pub fn run(user: Option<String>, label: Option<String>, skip_setup_check: bool) 
         }
     }
 
+    ipc_client::require_root("sudo facelock enroll")?;
+
     let config = Config::load().context("failed to load config")?;
 
     // Check models exist
