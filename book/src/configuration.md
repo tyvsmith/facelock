@@ -41,14 +41,15 @@ Face detection and embedding parameters.
 
 Run `facelock test` to see your similarity scores, then set the threshold below your typical match score with some margin.
 
-### Model options
+### Model tiers
 
-| Preset | Detector | Embedder | Total size | Notes |
-|--------|----------|----------|------------|-------|
-| Default | `scrfd_2.5g_bnkps.onnx` (3MB) | `w600k_r50.onnx` (166MB) | ~170MB | Good accuracy, fast |
-| High-accuracy | `det_10g.onnx` (17MB) | `glintr100.onnx` (249MB) | ~266MB | ~200ms slower |
+| Tier | Detector | Embedder | Total size | Notes |
+|------|----------|----------|------------|-------|
+| Standard | `scrfd_2.5g_bnkps.onnx` (3MB) | `w600k_r50.onnx` (166MB) | ~170MB | Fast, good accuracy (default) |
+| Balanced | `scrfd_2.5g_bnkps.onnx` (3MB) | `glintr100.onnx` (249MB) | ~252MB | ~15-30ms slower, better recognition |
+| High accuracy | `det_10g.onnx` (17MB) | `glintr100.onnx` (249MB) | ~266MB | ~40-50ms slower, best accuracy |
 
-Run `facelock setup` after changing models to download them.
+Run `facelock setup` to select a model tier interactively and download the required models.
 
 ## [daemon]
 
