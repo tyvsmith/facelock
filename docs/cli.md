@@ -4,10 +4,10 @@ All commands are subcommands of the `facelock` binary.
 
 ## facelock setup
 
-Download models and create directories.
+Interactive setup wizard. Walks through camera selection, model quality, inference device (CPU/CUDA), model downloads, encryption, enrollment, and PAM configuration. Can also be run with flags for individual setup tasks.
 
 ```bash
-facelock setup                          # download models
+facelock setup                          # interactive wizard
 facelock setup --systemd                # install systemd units
 facelock setup --systemd --disable      # disable systemd units
 facelock setup --pam                    # install to /etc/pam.d/sudo

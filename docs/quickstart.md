@@ -19,7 +19,7 @@ just build
 ### 2. Download Models and Enroll
 
 ```bash
-sudo facelock setup     # download ONNX models (~170MB)
+sudo facelock setup     # interactive wizard (camera, models, encryption)
 sudo facelock enroll    # capture your face (look at camera)
 sudo facelock test      # verify recognition works
 ```
@@ -72,7 +72,9 @@ You should see "Identifying face..." and authenticate by looking at the camera.
 
 ### GPU Acceleration (Optional)
 
-GPU support is runtime-only -- no special build flags needed. Install a GPU-enabled ONNX Runtime package for your hardware:
+GPU support is runtime-only -- no special build flags needed. The setup wizard (`facelock setup`) offers CPU or CUDA selection and warns if dependencies are missing.
+
+For manual configuration, install a GPU-enabled ONNX Runtime package:
 
 ```bash
 sudo pacman -S onnxruntime-opt-cuda      # NVIDIA

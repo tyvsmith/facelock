@@ -72,6 +72,7 @@ fn run_wizard() -> anyhow::Result<()> {
     println!();
     println!("  This wizard will walk you through initial setup:");
     println!("    - Camera detection");
+    println!("    - Model quality and inference device");
     println!("    - Model downloads");
     println!("    - Embedding encryption (TPM or software)");
     println!("    - Face enrollment");
@@ -105,8 +106,34 @@ fn run_wizard() -> anyhow::Result<()> {
         }
     }
 
-    // -- Step 2: Model download --
-    println!("\n--- Step 2: Model Download ---\n");
+    // -- Step 2: Model quality --
+    println!("\n--- Step 2: Model Quality ---\n");
+    match wizard_model_quality(&theme, &mut config) {
+        Ok(()) => {}
+        Err(e) => {
+            println!("  Model quality selection failed: {e}");
+            println!(
+                "  Continuing with current setting: {}",
+                config.recognition.detector_model
+            );
+        }
+    }
+
+    // -- Step 3: Execution provider --
+    println!("\n--- Step 3: Inference Device ---\n");
+    match wizard_execution_provider(&theme, &mut config) {
+        Ok(()) => {}
+        Err(e) => {
+            println!("  Inference device selection failed: {e}");
+            println!(
+                "  Continuing with current setting: {}",
+                config.recognition.execution_provider
+            );
+        }
+    }
+
+    // -- Step 4: Model download --
+    println!("\n--- Step 4: Model Download ---\n");
     match wizard_model_download(&theme, &config) {
         Ok(()) => {}
         Err(e) => {
@@ -115,8 +142,8 @@ fn run_wizard() -> anyhow::Result<()> {
         }
     }
 
-    // -- Step 3: Encryption setup --
-    println!("\n--- Step 3: Embedding Encryption ---\n");
+    // -- Step 5: Encryption setup --
+    println!("\n--- Step 5: Embedding Encryption ---\n");
     match wizard_encryption_setup(&theme, &mut config) {
         Ok(()) => {}
         Err(e) => {
@@ -127,8 +154,8 @@ fn run_wizard() -> anyhow::Result<()> {
         }
     }
 
-    // -- Step 4: Face enrollment --
-    println!("\n--- Step 4: Face Enrollment ---\n");
+    // -- Step 6: Face enrollment --
+    println!("\n--- Step 6: Face Enrollment ---\n");
     let enrolled = match wizard_face_enroll(&theme) {
         Ok(did_enroll) => did_enroll,
         Err(e) => {
@@ -138,9 +165,9 @@ fn run_wizard() -> anyhow::Result<()> {
         }
     };
 
-    // -- Step 5: Test recognition --
+    // -- Step 7: Test recognition --
     if enrolled {
-        println!("\n--- Step 5: Test Recognition ---\n");
+        println!("\n--- Step 7: Test Recognition ---\n");
         match wizard_test_recognition(&theme) {
             Ok(()) => {}
             Err(e) => {
@@ -149,11 +176,11 @@ fn run_wizard() -> anyhow::Result<()> {
             }
         }
     } else {
-        println!("\n--- Step 5: Test Recognition (skipped, no face enrolled) ---\n");
+        println!("\n--- Step 7: Test Recognition (skipped, no face enrolled) ---\n");
     }
 
-    // -- Step 6: Systemd setup --
-    println!("\n--- Step 6: Daemon Configuration ---\n");
+    // -- Step 8: Systemd setup --
+    println!("\n--- Step 8: Daemon Configuration ---\n");
     let systemd_enabled = match wizard_systemd_setup(&theme) {
         Ok(enabled) => enabled,
         Err(e) => {
@@ -163,8 +190,8 @@ fn run_wizard() -> anyhow::Result<()> {
         }
     };
 
-    // -- Step 7: PAM configuration --
-    println!("\n--- Step 7: PAM Configuration ---\n");
+    // -- Step 9: PAM configuration --
+    println!("\n--- Step 9: PAM Configuration ---\n");
     let pam_services = match wizard_pam_setup(&theme) {
         Ok(services) => services,
         Err(e) => {
@@ -181,11 +208,26 @@ fn run_wizard() -> anyhow::Result<()> {
         facelock_core::config::EncryptionMethod::Keyfile => "AES-256-GCM (keyfile)",
         facelock_core::config::EncryptionMethod::None => "none (NOT RECOMMENDED)",
     };
+    let model_quality_label = match (
+        config.recognition.detector_model.as_str(),
+        config.recognition.embedder_model.as_str(),
+    ) {
+        ("det_10g.onnx", "glintr100.onnx") => "high accuracy (SCRFD 10G + ArcFace R100)",
+        ("scrfd_2.5g_bnkps.onnx", "glintr100.onnx") => "balanced (SCRFD 2.5G + ArcFace R100)",
+        _ => "standard (SCRFD 2.5G + ArcFace R50)",
+    };
     println!(
         "  Camera:     {}",
         config.device.path.as_deref().unwrap_or("/dev/video0")
     );
-    println!("  Models:     {}", config.daemon.model_dir);
+    println!(
+        "  Models:     {} ({})",
+        config.daemon.model_dir, model_quality_label
+    );
+    println!(
+        "  Inference:  {}",
+        config.recognition.execution_provider.to_uppercase()
+    );
     println!("  Database:   {}", config.storage.db_path);
     println!("  Encryption: {}", encryption_label);
     println!(
@@ -275,6 +317,154 @@ fn wizard_camera_selection(theme: &ColorfulTheme, config: &mut Config) -> anyhow
     let selected = &devices[selection];
     config.device.path = Some(selected.path.clone());
     println!("  Selected: {} ({})", selected.path, selected.name);
+
+    Ok(())
+}
+
+fn wizard_model_quality(theme: &ColorfulTheme, config: &mut Config) -> anyhow::Result<()> {
+    let current_detector = &config.recognition.detector_model;
+    let current_embedder = &config.recognition.embedder_model;
+
+    let default_idx = match (current_detector.as_str(), current_embedder.as_str()) {
+        ("det_10g.onnx", "glintr100.onnx") => 2,
+        ("scrfd_2.5g_bnkps.onnx", "glintr100.onnx") => 1,
+        _ => 0,
+    };
+
+    let options = [
+        "Standard (recommended) — SCRFD 2.5G + ArcFace R50 (~170MB, fast)",
+        "Balanced — SCRFD 2.5G + ArcFace R100 (~252MB, ~15-30ms slower)",
+        "High accuracy — SCRFD 10G + ArcFace R100 (~266MB, ~40-50ms slower)",
+    ];
+
+    let selection = Select::with_theme(theme)
+        .with_prompt("Select model quality")
+        .items(&options)
+        .default(default_idx)
+        .interact()?;
+
+    match selection {
+        0 => {
+            config.recognition.detector_model = "scrfd_2.5g_bnkps.onnx".to_string();
+            config.recognition.embedder_model = "w600k_r50.onnx".to_string();
+            println!("  Selected standard models (fast, good accuracy).");
+        }
+        1 => {
+            config.recognition.detector_model = "scrfd_2.5g_bnkps.onnx".to_string();
+            config.recognition.embedder_model = "glintr100.onnx".to_string();
+            println!("  Selected balanced models (fast detection, high-accuracy embedding).");
+        }
+        _ => {
+            config.recognition.detector_model = "det_10g.onnx".to_string();
+            config.recognition.embedder_model = "glintr100.onnx".to_string();
+            println!("  Selected high-accuracy models (larger, ~40-50ms slower).");
+        }
+    }
+
+    update_config_models(config)?;
+    Ok(())
+}
+
+fn wizard_execution_provider(theme: &ColorfulTheme, config: &mut Config) -> anyhow::Result<()> {
+    let current = config.recognition.execution_provider.as_str();
+
+    let default_idx = match current {
+        "cuda" => 1,
+        _ => 0,
+    };
+
+    let options = [
+        "CPU (recommended — works everywhere)",
+        "CUDA (NVIDIA GPU — requires onnxruntime-opt-cuda package)",
+    ];
+
+    let selection = Select::with_theme(theme)
+        .with_prompt("Select inference device")
+        .items(&options)
+        .default(default_idx)
+        .interact()?;
+
+    let provider = match selection {
+        1 => "cuda",
+        _ => "cpu",
+    };
+
+    config.recognition.execution_provider = provider.to_string();
+    println!("  Selected: {}", provider);
+
+    if provider == "cuda" {
+        let has_nvidia_driver = Path::new("/dev/nvidiactl").exists();
+        let has_cuda_ort = ["/usr/lib/libonnxruntime.so", "/usr/lib64/libonnxruntime.so"]
+            .iter()
+            .any(|p| Path::new(p).exists());
+
+        if !has_nvidia_driver {
+            println!("  \u{26a0} NVIDIA driver not detected. Install the NVIDIA driver package");
+            println!("    before starting the daemon.");
+        }
+        if !has_cuda_ort {
+            println!(
+                "  \u{26a0} CUDA-enabled ONNX Runtime not found. Install onnxruntime-opt-cuda"
+            );
+            println!("    before starting the daemon, or inference will fall back to CPU.");
+        }
+    }
+
+    update_config_provider(config)?;
+    Ok(())
+}
+
+fn update_config_provider(config: &Config) -> anyhow::Result<()> {
+    let config_path = facelock_core::paths::config_path();
+    if !config_path.exists() {
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(&config_path)
+        .with_context(|| format!("failed to read {}", config_path.display()))?;
+
+    let provider = &config.recognition.execution_provider;
+
+    if content.contains("[recognition]") {
+        let mut new_content = String::new();
+        let mut in_recognition = false;
+        let mut provider_written = false;
+
+        for line in content.lines() {
+            if line.trim() == "[recognition]" {
+                in_recognition = true;
+                new_content.push_str(line);
+                new_content.push('\n');
+                continue;
+            }
+            if in_recognition && line.trim_start().starts_with("execution_provider") {
+                new_content.push_str(&format!("execution_provider = \"{provider}\"\n"));
+                provider_written = true;
+                continue;
+            }
+            if in_recognition && line.starts_with('[') {
+                if !provider_written {
+                    new_content.push_str(&format!("execution_provider = \"{provider}\"\n"));
+                }
+                in_recognition = false;
+            }
+            new_content.push_str(line);
+            new_content.push('\n');
+        }
+        if in_recognition && !provider_written {
+            new_content.push_str(&format!("execution_provider = \"{provider}\"\n"));
+        }
+        fs::write(&config_path, new_content)?;
+    } else {
+        let mut content = content;
+        if !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(&format!(
+            "\n[recognition]\nexecution_provider = \"{provider}\"\n",
+        ));
+        fs::write(&config_path, content)?;
+    }
 
     Ok(())
 }
@@ -516,6 +706,76 @@ fn update_config_encryption(config: &Config, method: &str) -> anyhow::Result<()>
         content.push_str(&format!(
             "\n[encryption]\nmethod = \"{method}\"\nkey_path = \"{}\"\n",
             config.encryption.key_path
+        ));
+        fs::write(&config_path, content)?;
+    }
+
+    Ok(())
+}
+
+fn update_config_models(config: &Config) -> anyhow::Result<()> {
+    let config_path = facelock_core::paths::config_path();
+    if !config_path.exists() {
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(&config_path)
+        .with_context(|| format!("failed to read {}", config_path.display()))?;
+
+    let detector = &config.recognition.detector_model;
+    let embedder = &config.recognition.embedder_model;
+
+    if content.contains("[recognition]") {
+        let mut new_content = String::new();
+        let mut in_recognition = false;
+        let mut detector_written = false;
+        let mut embedder_written = false;
+
+        for line in content.lines() {
+            if line.trim() == "[recognition]" {
+                in_recognition = true;
+                new_content.push_str(line);
+                new_content.push('\n');
+                continue;
+            }
+            if in_recognition && line.trim_start().starts_with("detector_model") {
+                new_content.push_str(&format!("detector_model = \"{detector}\"\n"));
+                detector_written = true;
+                continue;
+            }
+            if in_recognition && line.trim_start().starts_with("embedder_model") {
+                new_content.push_str(&format!("embedder_model = \"{embedder}\"\n"));
+                embedder_written = true;
+                continue;
+            }
+            if in_recognition && line.starts_with('[') {
+                if !detector_written {
+                    new_content.push_str(&format!("detector_model = \"{detector}\"\n"));
+                }
+                if !embedder_written {
+                    new_content.push_str(&format!("embedder_model = \"{embedder}\"\n"));
+                }
+                in_recognition = false;
+            }
+            new_content.push_str(line);
+            new_content.push('\n');
+        }
+        if in_recognition {
+            if !detector_written {
+                new_content.push_str(&format!("detector_model = \"{detector}\"\n"));
+            }
+            if !embedder_written {
+                new_content.push_str(&format!("embedder_model = \"{embedder}\"\n"));
+            }
+        }
+        fs::write(&config_path, new_content)?;
+    } else {
+        let mut content = content;
+        if !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(&format!(
+            "\n[recognition]\ndetector_model = \"{detector}\"\nembedder_model = \"{embedder}\"\n",
         ));
         fs::write(&config_path, content)?;
     }
@@ -1266,6 +1526,64 @@ account include   system-login
         let status = check_model(&path, "0000000000000000").unwrap();
         assert!(matches!(status, ModelStatus::BadChecksum));
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn update_config_models_scenarios() {
+        let dir = std::env::temp_dir().join("facelock_test_models_scenarios");
+        std::fs::create_dir_all(&dir).unwrap();
+        let config_path = dir.join("config.toml");
+
+        unsafe { std::env::set_var("FACELOCK_CONFIG", config_path.display().to_string()) };
+
+        // Scenario 1: appends [recognition] section when absent
+        std::fs::write(&config_path, "[device]\npath = \"/dev/video0\"\n").unwrap();
+        let mut config = Config::load().unwrap();
+        config.recognition.detector_model = "det_10g.onnx".to_string();
+        config.recognition.embedder_model = "glintr100.onnx".to_string();
+        update_config_models(&config).unwrap();
+
+        let result = std::fs::read_to_string(&config_path).unwrap();
+        assert!(result.contains("[recognition]"));
+        assert!(result.contains("detector_model = \"det_10g.onnx\""));
+        assert!(result.contains("embedder_model = \"glintr100.onnx\""));
+
+        // Scenario 2: updates existing model fields, preserves other fields
+        std::fs::write(
+            &config_path,
+            "[device]\npath = \"/dev/video0\"\n\n[recognition]\ndetector_model = \"scrfd_2.5g_bnkps.onnx\"\nembedder_model = \"w600k_r50.onnx\"\nthreshold = 0.80\n",
+        )
+        .unwrap();
+        let mut config = Config::load().unwrap();
+        config.recognition.detector_model = "det_10g.onnx".to_string();
+        config.recognition.embedder_model = "glintr100.onnx".to_string();
+        update_config_models(&config).unwrap();
+
+        let result = std::fs::read_to_string(&config_path).unwrap();
+        assert!(result.contains("detector_model = \"det_10g.onnx\""));
+        assert!(result.contains("embedder_model = \"glintr100.onnx\""));
+        assert!(!result.contains("scrfd_2.5g_bnkps.onnx"));
+        assert!(!result.contains("w600k_r50.onnx"));
+        assert!(result.contains("threshold = 0.80"));
+
+        // Scenario 3: adds model fields to existing [recognition] without them
+        std::fs::write(
+            &config_path,
+            "[device]\npath = \"/dev/video0\"\n\n[recognition]\nthreshold = 0.75\n",
+        )
+        .unwrap();
+        let mut config = Config::load().unwrap();
+        config.recognition.detector_model = "det_10g.onnx".to_string();
+        config.recognition.embedder_model = "glintr100.onnx".to_string();
+        update_config_models(&config).unwrap();
+
+        let result = std::fs::read_to_string(&config_path).unwrap();
+        assert!(result.contains("detector_model = \"det_10g.onnx\""));
+        assert!(result.contains("embedder_model = \"glintr100.onnx\""));
+        assert!(result.contains("threshold = 0.75"));
+
+        unsafe { std::env::remove_var("FACELOCK_CONFIG") };
         std::fs::remove_dir_all(&dir).ok();
     }
 }

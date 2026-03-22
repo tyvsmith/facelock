@@ -50,26 +50,15 @@
 # Default: 5
 # timeout_secs = 5
 
-# Minimum confidence for the face detector to report a detection.
-# Lower values detect more faces but increase false positives.
-# Default: 0.5
-# detection_confidence = 0.5
-
-# Non-maximum suppression threshold for overlapping detections.
-# Default: 0.4
-# nms_threshold = 0.4
-
 # ONNX model files (must exist in daemon.model_dir).
+# Run `facelock setup` to select a model tier and download automatically.
 #
-# Default models (~170MB total, good accuracy):
-#   detector_model = "scrfd_2.5g_bnkps.onnx"   (3MB,  SCRFD 2.5G)
-#   embedder_model = "w600k_r50.onnx"           (166MB, ArcFace R50)
+# Available tiers:
+#   Standard  (~170MB, fast) — default
+#   Balanced  (~252MB, ~15-30ms slower)
+#   High accuracy (~266MB, ~40-50ms slower)
 #
-# High-accuracy models (~266MB total, ~200ms slower):
-#   detector_model = "det_10g.onnx"             (17MB,  SCRFD 10G)
-#   embedder_model = "glintr100.onnx"           (249MB, ArcFace R100)
-#
-# Run `facelock setup` after changing models to download them.
+# Default: "scrfd_2.5g_bnkps.onnx" / "w600k_r50.onnx" (standard)
 # detector_model = "scrfd_2.5g_bnkps.onnx"
 # embedder_model = "w600k_r50.onnx"
 
