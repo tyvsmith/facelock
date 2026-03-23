@@ -273,15 +273,25 @@ jobs:
       - name: Build RPM
         run: |
           PKG_VERSION_RAW="${{ steps.version.outputs.VERSION }}"
-          # RPM Version cannot contain '-'. Map prerelease tags like
-          # 0.1.0-rc3 -> 0.1.0~rc3 so ordering is preserved.
-          PKG_VERSION="${PKG_VERSION_RAW//-/~}"
+          PKG_VERSION="$PKG_VERSION_RAW"
+          PKG_RELEASE='1%{?dist}'
+
+          # RPM Version cannot contain '-'. For prereleases, keep the base
+          # version and move the prerelease marker into Release so it sorts
+          # before final releases.
+          if [ "${PKG_VERSION_RAW#*-}" != "$PKG_VERSION_RAW" ]; then
+            PRERELEASE_SUFFIX="${PKG_VERSION_RAW#*-}"
+            PKG_VERSION="${PKG_VERSION_RAW%%-*}"
+            PRERELEASE_SUFFIX="${PRERELEASE_SUFFIX//-/.}"
+            PKG_RELEASE="0.${PRERELEASE_SUFFIX}%{?dist}"
+          fi
 
           mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
-          # Copy spec file and set version
+          # Copy spec file and set version/release
           cp dist/facelock.spec ~/rpmbuild/SPECS/facelock.spec
           sed -i "s|^Version:.*|Version:        ${PKG_VERSION}|" ~/rpmbuild/SPECS/facelock.spec
+          sed -i "s|^Release:.*|Release:        ${PKG_RELEASE}|" ~/rpmbuild/SPECS/facelock.spec
 
           # Build RPM using pre-built binaries (skip %prep and %build)
           rpmbuild --define "_topdir $HOME/rpmbuild" \
