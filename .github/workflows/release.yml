@@ -25,6 +25,8 @@ jobs:
           sudo apt-get install -y \
             libv4l-dev \
             libpam0g-dev \
+            pkg-config \
+            libssl-dev \
             clang \
             libxkbcommon-dev \
             libwayland-dev \
@@ -99,6 +101,8 @@ jobs:
           sudo apt-get install -y \
             libv4l-dev \
             libpam0g-dev \
+            pkg-config \
+            libssl-dev \
             clang \
             libxkbcommon-dev \
             libwayland-dev \
