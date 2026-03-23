@@ -38,7 +38,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release
-        run: cargo build --release --workspace --features tpm
+        run: cargo build --release --workspace
 
       - name: Prepare artifacts
         run: |
@@ -112,7 +112,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release
-        run: cargo build --release --workspace --features tpm
+        run: cargo build --release --workspace
 
       - name: Download ORT bundle
         uses: actions/download-artifact@v4
