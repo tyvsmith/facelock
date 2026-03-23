@@ -28,7 +28,8 @@ jobs:
             clang \
             libxkbcommon-dev \
             libwayland-dev \
-            libtss2-dev
+            libtss2-dev \
+            libtss2-tcti-tabrmd-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -101,7 +102,8 @@ jobs:
             clang \
             libxkbcommon-dev \
             libwayland-dev \
-            libtss2-dev
+            libtss2-dev \
+            libtss2-tcti-tabrmd-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
