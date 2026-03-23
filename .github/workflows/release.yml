@@ -272,7 +272,10 @@ jobs:
 
       - name: Build RPM
         run: |
-          PKG_VERSION="${{ steps.version.outputs.VERSION }}"
+          PKG_VERSION_RAW="${{ steps.version.outputs.VERSION }}"
+          # RPM Version cannot contain '-'. Map prerelease tags like
+          # 0.1.0-rc3 -> 0.1.0~rc3 so ordering is preserved.
+          PKG_VERSION="${PKG_VERSION_RAW//-/~}"
 
           mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
