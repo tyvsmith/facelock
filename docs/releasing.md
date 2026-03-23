@@ -44,15 +44,19 @@ git push origin main --tags
 
 The `.github/workflows/release.yml` workflow:
 
-1. Builds release binaries (with TPM feature) and creates a GitHub Release
+1. Builds release binaries and creates a GitHub Release
 2. Downloads ONNX Runtime for bundling in non-Arch packages
 3. Builds `.deb` package (with bundled ONNX Runtime) and validates contents
-4. Builds `.rpm` package in Fedora container and validates contents
+4. Builds `.rpm` package in Fedora container (with TPM feature) and validates contents
 5. Validates Nix flake evaluation
 6. Publishes to AUR (if `AUR_SSH_KEY` secret is configured)
 7. Triggers COPR rebuild (if `COPR_WEBHOOK_URL` secret is configured)
 
 Pre-release tags (containing `alpha`, `beta`, or `rc`) skip AUR/COPR publishing.
+
+Current TPM note:
+- Ubuntu-hosted `build` and `build-deb` jobs build without `--features tpm`.
+- Fedora-container `build-rpm` builds with `--features tpm`.
 
 ### Local distro validation
 
