@@ -281,7 +281,7 @@ jobs:
 
           # Copy spec file and set version
           cp dist/facelock.spec ~/rpmbuild/SPECS/facelock.spec
-          sed -i "s/^Version:.*/Version:        ${PKG_VERSION}/" ~/rpmbuild/SPECS/facelock.spec
+          sed -i "s|^Version:.*|Version:        ${PKG_VERSION}|" ~/rpmbuild/SPECS/facelock.spec
 
           # Build RPM using pre-built binaries (skip %prep and %build)
           rpmbuild --define "_topdir $HOME/rpmbuild" \
