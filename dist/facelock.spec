@@ -16,7 +16,6 @@ BuildRequires:  tpm2-tss-devel
 
 Requires:       pam
 Requires:       tpm2-tss
-Requires:       onnxruntime
 Recommends:     authselect
 
 %description
@@ -42,11 +41,20 @@ cargo build --release -p facelock-cli --features tpm
 # Binary
 install -Dm755 target/release/facelock %{buildroot}%{_bindir}/facelock
 
+# Polkit agent (optional — only if built)
+if [ -f target/release/facelock-polkit-agent ]; then
+    install -Dm755 target/release/facelock-polkit-agent %{buildroot}%{_bindir}/facelock-polkit-agent
+fi
+
 # PAM module
 install -Dm755 target/release/libpam_facelock.so %{buildroot}/%{_libdir}/security/pam_facelock.so
 
 # Configuration
 install -Dm644 config/facelock.toml %{buildroot}%{_sysconfdir}/facelock/config.toml
+
+# Quirks database
+install -dm755 %{buildroot}%{_datadir}/facelock/quirks.d
+install -Dm644 -t %{buildroot}%{_datadir}/facelock/quirks.d/ config/quirks.d/*.toml
 
 # systemd units
 install -Dm644 systemd/facelock-daemon.service %{buildroot}%{_unitdir}/facelock-daemon.service
@@ -67,6 +75,11 @@ install -Dm644 dist/authselect/facelock/system-auth %{buildroot}%{_datadir}/auth
 install -Dm644 dist/authselect/facelock/password-auth %{buildroot}%{_datadir}/authselect/vendor/facelock/password-auth
 install -Dm644 dist/authselect/facelock/postlogin %{buildroot}%{_datadir}/authselect/vendor/facelock/postlogin
 install -Dm644 dist/authselect/facelock/README %{buildroot}%{_datadir}/authselect/vendor/facelock/README
+
+# Bundled CPU ONNX Runtime (if present — added by release CI)
+if [ -f onnxruntime/lib/libonnxruntime.so ]; then
+    install -Dm755 onnxruntime/lib/libonnxruntime.so %{buildroot}%{_libdir}/facelock/libonnxruntime.so
+fi
 
 # Licenses
 install -Dm644 LICENSE-MIT %{buildroot}%{_datadir}/licenses/%{name}/LICENSE-MIT
@@ -97,8 +110,11 @@ echo "  2. sudo facelock enroll      (register your face)"
 %license LICENSE-MIT LICENSE-APACHE
 %doc config/facelock.toml
 %{_bindir}/facelock
+%{_bindir}/facelock-polkit-agent
 %{_libdir}/security/pam_facelock.so
+%{_libdir}/facelock/
 %config(noreplace) %{_sysconfdir}/facelock/config.toml
+%{_datadir}/facelock/quirks.d/
 %{_unitdir}/facelock-daemon.service
 %{_sysusersdir}/facelock.conf
 %{_tmpfilesdir}/facelock.conf

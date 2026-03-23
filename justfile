@@ -373,3 +373,107 @@ show-paths:
     @echo "D-Bus:    /usr/share/dbus-1/system.d/org.facelock.Daemon.conf"
     @echo "Service:  /usr/lib/systemd/system/facelock-daemon.service"
     @echo "Logs:     /var/log/facelock/"
+
+# Test RPM packaging in Fedora container
+test-rpm: build-release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build -t facelock-rpm-test -f test/Containerfile.fedora .
+    podman run --rm facelock-rpm-test
+
+# Test .deb packaging in Ubuntu container
+test-deb: build-release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build -t facelock-deb-test -f test/Containerfile.ubuntu .
+    podman run --rm facelock-deb-test
+
+# Quick preflight before tagging a release
+# Usage:
+#   just release-preflight                 # assume stable release
+#   just release-preflight v0.2.0-rc1      # prerelease (secrets optional)
+release-preflight tag='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    failed=0
+    TAG="{{tag}}"
+    prerelease=0
+    if [ -n "$TAG" ] && echo "$TAG" | grep -Eq '(alpha|beta|rc)'; then
+        prerelease=1
+    fi
+
+    check_cmd() {
+        local cmd="$1"
+        if command -v "$cmd" >/dev/null 2>&1; then
+            echo "OK: found '$cmd'"
+        else
+            echo "MISSING: '$cmd' not found in PATH"
+            failed=1
+        fi
+    }
+
+    echo "== Local tool checks =="
+    check_cmd git
+    check_cmd cargo
+    check_cmd just
+    check_cmd podman
+
+    echo ""
+    echo "== Packaging file checks =="
+    for f in \
+        dist/PKGBUILD \
+        dist/PKGBUILD-git \
+        dist/facelock.spec \
+        dist/debian/control \
+        dist/debian/rules \
+        .github/workflows/release.yml; do
+        if [ -f "$f" ]; then
+            echo "OK: $f"
+        else
+            echo "MISSING: $f"
+            failed=1
+        fi
+    done
+
+    echo ""
+    echo "== GitHub release secret checks =="
+    if [ "$prerelease" -eq 1 ]; then
+        echo "Mode: prerelease ($TAG) — AUR/COPR secrets are optional"
+    else
+        echo "Mode: stable release — AUR/COPR secrets are required"
+    fi
+
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        if gh secret list | grep -q '^AUR_SSH_KEY\b'; then
+            echo "OK: AUR_SSH_KEY configured"
+        else
+            echo "MISSING: AUR_SSH_KEY"
+            if [ "$prerelease" -eq 0 ]; then
+                failed=1
+            fi
+        fi
+
+        if gh secret list | grep -q '^COPR_WEBHOOK_URL\b'; then
+            echo "OK: COPR_WEBHOOK_URL configured"
+        else
+            echo "MISSING: COPR_WEBHOOK_URL"
+            if [ "$prerelease" -eq 0 ]; then
+                failed=1
+            fi
+        fi
+    else
+        echo "SKIP: gh not installed or not authenticated; cannot verify repo secrets"
+        if [ "$prerelease" -eq 0 ]; then
+            failed=1
+        fi
+    fi
+
+    echo ""
+    if [ "$failed" -ne 0 ]; then
+        echo "Release preflight: FAILED"
+        exit 1
+    fi
+
+    echo "Release preflight: OK"
+    echo "Next: run 'just check', 'just test-pam', 'just test-rpm', and 'just test-deb' before tagging."

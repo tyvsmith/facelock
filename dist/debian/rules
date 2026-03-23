@@ -12,14 +12,27 @@ override_dh_auto_install:
 	# Binary
 	install -Dm755 target/release/facelock debian/facelock/usr/bin/facelock
 
+	# Polkit agent (optional — only if built)
+	if [ -f target/release/facelock-polkit-agent ]; then \
+		install -Dm755 target/release/facelock-polkit-agent debian/facelock/usr/bin/facelock-polkit-agent; \
+	fi
+
 	# PAM module (Debian uses /lib/security/)
 	install -Dm755 target/release/libpam_facelock.so debian/facelock/lib/security/pam_facelock.so
 
 	# Configuration
 	install -Dm644 config/facelock.toml debian/facelock/etc/facelock/config.toml
 
+	# Quirks database
+	install -dm755 debian/facelock/usr/share/facelock/quirks.d
+	install -Dm644 -t debian/facelock/usr/share/facelock/quirks.d/ config/quirks.d/*.toml
+
 	# systemd units
 	install -Dm644 systemd/facelock-daemon.service debian/facelock/usr/lib/systemd/system/facelock-daemon.service
+
+	# D-Bus policy and activation service
+	install -Dm644 dbus/org.facelock.Daemon.conf debian/facelock/usr/share/dbus-1/system.d/org.facelock.Daemon.conf
+	install -Dm644 dbus/org.facelock.Daemon.service debian/facelock/usr/share/dbus-1/system-services/org.facelock.Daemon.service
 
 	# sysusers.d
 	install -Dm644 dist/facelock.sysusers debian/facelock/usr/lib/sysusers.d/facelock.conf
@@ -29,6 +42,11 @@ override_dh_auto_install:
 
 	# pam-auth-update profile
 	install -Dm644 dist/debian/pam-auth-update debian/facelock/usr/share/pam-configs/facelock
+
+	# Bundled CPU ONNX Runtime (if present — added by release CI)
+	if [ -f onnxruntime/lib/libonnxruntime.so ]; then \
+		install -Dm755 onnxruntime/lib/libonnxruntime.so debian/facelock/usr/lib/facelock/libonnxruntime.so; \
+	fi
 
 override_dh_auto_test:
 	# Tests require hardware (camera); skip in package build

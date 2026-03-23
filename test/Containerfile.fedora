@@ -1,0 +1,31 @@
+FROM fedora:latest AS builder
+
+RUN dnf -y install rust cargo clang-devel pam-devel libv4l-devel systemd-rpm-macros gcc gcc-c++ wayland-devel libxkbcommon-devel tpm2-tss-devel rpm-build && dnf clean all
+
+COPY . /build
+WORKDIR /build
+RUN cargo build --release --workspace
+
+FROM fedora:latest
+
+RUN dnf -y install pam dbus rpm-build libxkbcommon python3 systemd binutils glibc && dnf clean all
+
+COPY --from=builder /build /build
+
+RUN install -Dm755 /build/target/release/facelock /usr/bin/facelock && \
+    if [ -f /build/target/release/facelock-polkit-agent ]; then install -Dm755 /build/target/release/facelock-polkit-agent /usr/bin/facelock-polkit-agent; fi && \
+    install -Dm755 /build/target/release/libpam_facelock.so /usr/lib64/security/pam_facelock.so && \
+    install -Dm644 /build/config/facelock.toml /etc/facelock/config.toml && \
+    install -dm755 /usr/share/facelock/quirks.d && \
+    install -Dm644 /build/config/quirks.d/*.toml /usr/share/facelock/quirks.d/ && \
+    install -Dm644 /build/systemd/facelock-daemon.service /usr/lib/systemd/system/facelock-daemon.service && \
+    install -Dm644 /build/dist/facelock.sysusers /usr/lib/sysusers.d/facelock.conf && \
+    install -Dm644 /build/dist/facelock.tmpfiles /usr/lib/tmpfiles.d/facelock.conf && \
+    install -Dm644 /build/dbus/org.facelock.Daemon.conf /usr/share/dbus-1/system.d/org.facelock.Daemon.conf && \
+    install -Dm644 /build/dbus/org.facelock.Daemon.service /usr/share/dbus-1/system-services/org.facelock.Daemon.service && \
+    if [ -f /build/onnxruntime/lib/libonnxruntime.so ]; then install -Dm755 /build/onnxruntime/lib/libonnxruntime.so /usr/lib64/facelock/libonnxruntime.so; fi
+
+COPY test/pkg-validate.sh /pkg-validate.sh
+RUN chmod +x /pkg-validate.sh
+
+CMD ["/pkg-validate.sh"]

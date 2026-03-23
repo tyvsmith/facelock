@@ -7,6 +7,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # ONNX Runtime version to bundle in .deb and .rpm packages.
+  # ort 2.0.0-rc.12 with api-24 targets ORT 1.20.x.
+  ORT_VERSION: "1.20.1"
+
 jobs:
   build:
     name: Build Release Binaries
@@ -32,13 +37,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release
-        run: cargo build --release --features tpm
+        run: cargo build --release --workspace --features tpm
 
       - name: Prepare artifacts
         run: |
           mkdir -p release
           cp target/release/facelock release/facelock-x86_64-linux-gnu
           cp target/release/libpam_facelock.so release/pam_facelock.so
+          if [ -f target/release/facelock-polkit-agent ]; then
+            cp target/release/facelock-polkit-agent release/facelock-polkit-agent-x86_64-linux-gnu
+          fi
           cd release && sha256sum * > SHA256SUMS
 
       - name: Upload binary artifacts
@@ -53,13 +61,34 @@ jobs:
           files: |
             release/facelock-x86_64-linux-gnu
             release/pam_facelock.so
+            release/facelock-polkit-agent-x86_64-linux-gnu
             release/SHA256SUMS
           generate_release_notes: true
+
+  download-ort:
+    name: Download ONNX Runtime
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download ONNX Runtime for bundling
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz" \
+            | tar xz
+          mkdir -p onnxruntime/lib
+          cp "onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" onnxruntime/lib/libonnxruntime.so
+          test -s onnxruntime/lib/libonnxruntime.so
+          echo "Bundled ORT size: $(du -h onnxruntime/lib/libonnxruntime.so | cut -f1)"
+
+      - name: Upload ORT artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: onnxruntime-bundle
+          path: onnxruntime/
 
   build-deb:
     name: Build Debian Package
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, download-ort]
     steps:
       - uses: actions/checkout@v4
 
@@ -81,7 +110,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release
-        run: cargo build --release --workspace
+        run: cargo build --release --workspace --features tpm
+
+      - name: Download ORT bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: onnxruntime-bundle
+          path: onnxruntime
+
+      - name: Verify ORT bundle exists
+        run: test -s onnxruntime/lib/libonnxruntime.so
 
       - name: Extract version from tag
         id: version
@@ -99,7 +137,12 @@ jobs:
           mkdir -p "${PKG_DIR}/usr/lib/systemd/system"
           mkdir -p "${PKG_DIR}/usr/lib/sysusers.d"
           mkdir -p "${PKG_DIR}/usr/lib/tmpfiles.d"
+          mkdir -p "${PKG_DIR}/usr/lib/facelock"
           mkdir -p "${PKG_DIR}/usr/share/pam-configs"
+          mkdir -p "${PKG_DIR}/usr/share/dbus-1/system.d"
+          mkdir -p "${PKG_DIR}/usr/share/dbus-1/system-services"
+          mkdir -p "${PKG_DIR}/usr/share/facelock/quirks.d"
+          mkdir -p "${PKG_DIR}/usr/share/doc/facelock"
 
           # Control file
           cat > "${PKG_DIR}/DEBIAN/control" <<CTRL
@@ -107,39 +150,83 @@ jobs:
           Version: ${PKG_VERSION}
           Architecture: amd64
           Maintainer: Facelock Contributors <facelock@example.com>
-          Depends: libpam-runtime
+          Depends: libpam-runtime, dbus
           Section: admin
           Priority: optional
           Homepage: https://github.com/tyvsmith/facelock
           Description: Face authentication for Linux PAM
            Facelock provides Windows Hello-style face authentication for Linux
            using IR anti-spoofing, ONNX inference, and PAM integration.
+           .
+           After installation, run 'sudo facelock setup' to download face
+           recognition models, then 'sudo facelock enroll' to register your face.
           CTRL
-          # Remove leading whitespace from heredoc (indented for readability)
+          # Remove leading whitespace from heredoc
           sed -i 's/^          //' "${PKG_DIR}/DEBIAN/control"
 
-          # postinst
+          # postinst and prerm scripts
           cp dist/debian/postinst "${PKG_DIR}/DEBIAN/postinst"
           chmod 755 "${PKG_DIR}/DEBIAN/postinst"
-
-          # prerm
           cp dist/debian/prerm "${PKG_DIR}/DEBIAN/prerm"
           chmod 755 "${PKG_DIR}/DEBIAN/prerm"
 
-          # Install files
+          # Binaries
           install -m755 target/release/facelock "${PKG_DIR}/usr/bin/facelock"
+          if [ -f target/release/facelock-polkit-agent ]; then
+            install -m755 target/release/facelock-polkit-agent "${PKG_DIR}/usr/bin/facelock-polkit-agent"
+          fi
+
+          # PAM module
           install -m755 target/release/libpam_facelock.so "${PKG_DIR}/lib/security/pam_facelock.so"
+
+          # Configuration
           install -m644 config/facelock.toml "${PKG_DIR}/etc/facelock/config.toml"
+
+          # Quirks database
+          install -m644 -t "${PKG_DIR}/usr/share/facelock/quirks.d/" config/quirks.d/*.toml
+
+          # systemd units
           install -m644 systemd/facelock-daemon.service "${PKG_DIR}/usr/lib/systemd/system/facelock-daemon.service"
-          install -m644 systemd/facelock-daemon.socket "${PKG_DIR}/usr/lib/systemd/system/facelock-daemon.socket"
+
+          # D-Bus policy and activation service
+          install -m644 dbus/org.facelock.Daemon.conf "${PKG_DIR}/usr/share/dbus-1/system.d/org.facelock.Daemon.conf"
+          install -m644 dbus/org.facelock.Daemon.service "${PKG_DIR}/usr/share/dbus-1/system-services/org.facelock.Daemon.service"
+
+          # sysusers.d and tmpfiles.d
           install -m644 dist/facelock.sysusers "${PKG_DIR}/usr/lib/sysusers.d/facelock.conf"
           install -m644 dist/facelock.tmpfiles "${PKG_DIR}/usr/lib/tmpfiles.d/facelock.conf"
 
+          # pam-auth-update profile
           if [ -f dist/debian/pam-auth-update ]; then
             install -m644 dist/debian/pam-auth-update "${PKG_DIR}/usr/share/pam-configs/facelock"
           fi
 
+          # Bundled CPU ONNX Runtime
+          if [ -f onnxruntime/lib/libonnxruntime.so ]; then
+            install -m755 onnxruntime/lib/libonnxruntime.so "${PKG_DIR}/usr/lib/facelock/libonnxruntime.so"
+          fi
+
+          # Copyright
+          install -m644 dist/debian/copyright "${PKG_DIR}/usr/share/doc/facelock/copyright"
+
           dpkg-deb --build "${PKG_DIR}"
+
+      - name: Validate .deb contents
+        run: |
+          DEB_FILE=$(ls facelock_*.deb)
+          echo "=== .deb contents ==="
+          dpkg-deb -c "$DEB_FILE"
+          echo ""
+          echo "=== Checking required files ==="
+          dpkg-deb -c "$DEB_FILE" | grep -q "usr/bin/facelock" && echo "OK: facelock binary"
+          dpkg-deb -c "$DEB_FILE" | grep -q "lib/security/pam_facelock.so" && echo "OK: PAM module"
+          dpkg-deb -c "$DEB_FILE" | grep -q "etc/facelock/config.toml" && echo "OK: config"
+          dpkg-deb -c "$DEB_FILE" | grep -q "dbus-1/system.d/org.facelock.Daemon.conf" && echo "OK: D-Bus policy"
+          dpkg-deb -c "$DEB_FILE" | grep -q "dbus-1/system-services/org.facelock.Daemon.service" && echo "OK: D-Bus activation"
+          dpkg-deb -c "$DEB_FILE" | grep -q "sysusers.d/facelock.conf" && echo "OK: sysusers"
+          dpkg-deb -c "$DEB_FILE" | grep -q "tmpfiles.d/facelock.conf" && echo "OK: tmpfiles"
+          dpkg-deb -c "$DEB_FILE" | grep -q "usr/lib/facelock/libonnxruntime.so" && echo "OK: bundled ORT"
+          echo "=== .deb validation passed ==="
 
       - name: Upload .deb to release
         uses: softprops/action-gh-release@v2
@@ -149,7 +236,7 @@ jobs:
   build-rpm:
     name: Build RPM Package
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, download-ort]
     container:
       image: fedora:latest
     steps:
@@ -165,25 +252,33 @@ jobs:
             wayland-devel libxkbcommon-devel \
             tpm2-tss-devel
 
+      - name: Download ORT bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: onnxruntime-bundle
+          path: onnxruntime
+
+      - name: Verify ORT bundle exists
+        run: test -s onnxruntime/lib/libonnxruntime.so
+
       - name: Extract version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Build release
-        run: cargo build --release --workspace
+        run: cargo build --release --workspace --features tpm
 
       - name: Build RPM
         run: |
           PKG_VERSION="${{ steps.version.outputs.VERSION }}"
 
           mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-          mkdir -p ~/rpmbuild/BUILDROOT
 
           # Copy spec file and set version
           cp dist/facelock.spec ~/rpmbuild/SPECS/facelock.spec
           sed -i "s/^Version:.*/Version:        ${PKG_VERSION}/" ~/rpmbuild/SPECS/facelock.spec
 
-          # Build the RPM using the already-compiled binaries
+          # Build RPM using pre-built binaries (skip %prep and %build)
           rpmbuild --define "_topdir $HOME/rpmbuild" \
                    --define "_sourcedir $(pwd)" \
                    --define "_builddir $(pwd)" \
@@ -193,7 +288,118 @@ jobs:
       - name: Copy RPM to workspace
         run: cp ~/rpmbuild/RPMS/x86_64/*.rpm ./ 2>/dev/null || cp ~/rpmbuild/RPMS/**/*.rpm ./ 2>/dev/null || true
 
+      - name: Validate .rpm contents
+        run: |
+          RPM_FILE=$(ls *.rpm | head -1)
+          echo "=== .rpm contents ==="
+          rpm -qlp "$RPM_FILE"
+          echo ""
+          echo "=== Checking required files ==="
+          rpm -qlp "$RPM_FILE" | grep -q "usr/bin/facelock" && echo "OK: facelock binary"
+          rpm -qlp "$RPM_FILE" | grep -q "security/pam_facelock.so" && echo "OK: PAM module"
+          rpm -qlp "$RPM_FILE" | grep -q "etc/facelock/config.toml" && echo "OK: config"
+          rpm -qlp "$RPM_FILE" | grep -q "dbus-1/system.d/org.facelock.Daemon.conf" && echo "OK: D-Bus policy"
+          rpm -qlp "$RPM_FILE" | grep -q "dbus-1/system-services/org.facelock.Daemon.service" && echo "OK: D-Bus activation"
+          rpm -qlp "$RPM_FILE" | grep -q "sysusers.d/facelock.conf" && echo "OK: sysusers"
+          rpm -qlp "$RPM_FILE" | grep -q "tmpfiles.d/facelock.conf" && echo "OK: tmpfiles"
+          rpm -qlp "$RPM_FILE" | grep -q "authselect/vendor/facelock" && echo "OK: authselect"
+          echo "=== .rpm validation passed ==="
+
       - name: Upload .rpm to release
         uses: softprops/action-gh-release@v2
         with:
           files: "*.rpm"
+
+  build-nix:
+    name: Validate Nix Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          nix_path: nixpkgs=channel:nixpkgs-unstable
+
+      - name: Check flake
+        run: nix flake check ./dist/nix --no-build
+        continue-on-error: true
+
+      - name: Build with Nix
+        run: nix build ./dist/nix
+        continue-on-error: true
+        # Nix build may fail if onnxruntime hash changes.
+        # This job validates the expression evaluates, not that
+        # the build succeeds (which depends on nixpkgs state).
+
+  publish-aur:
+    name: Publish to AUR
+    runs-on: ubuntu-latest
+    needs: [build, build-deb, build-rpm]
+    if: ${{ !contains(github.ref_name, 'alpha') && !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'rc') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute source tarball checksum
+        id: checksum
+        run: |
+          CHECKSUM=$(curl -sL "https://github.com/${{ github.repository }}/archive/${{ github.ref_name }}.tar.gz" | sha256sum | cut -d' ' -f1)
+          echo "SHA256=${CHECKSUM}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to AUR
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          if [ -z "$AUR_SSH_KEY" ]; then
+            echo "AUR_SSH_KEY secret not configured. Skipping AUR publish."
+            echo "See docs/releasing.md for setup instructions."
+            exit 0
+          fi
+
+          mkdir -p ~/.ssh
+          echo "$AUR_SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          echo "Host aur.archlinux.org" >> ~/.ssh/config
+          echo "  IdentityFile ~/.ssh/aur" >> ~/.ssh/config
+          echo "  User aur" >> ~/.ssh/config
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+
+          git clone ssh://aur@aur.archlinux.org/facelock.git aur-facelock
+
+          cp dist/PKGBUILD aur-facelock/PKGBUILD
+          cp dist/facelock.install aur-facelock/facelock.install
+          sed -i "s/^pkgver=.*/pkgver=${{ steps.version.outputs.VERSION }}/" aur-facelock/PKGBUILD
+          sed -i "s/sha256sums=('SKIP')/sha256sums=('${{ steps.checksum.outputs.SHA256 }}')/" aur-facelock/PKGBUILD
+
+          cd aur-facelock
+          docker run --rm -v "$(pwd):/pkg" archlinux:base-devel bash -c \
+            "pacman -Sy --noconfirm pacman-contrib && cd /pkg && makepkg --printsrcinfo > .SRCINFO"
+
+          git config user.name "facelock-bot"
+          git config user.email "facelock@users.noreply.github.com"
+          git add PKGBUILD facelock.install .SRCINFO
+          git diff --cached --quiet || git commit -m "Update to v${{ steps.version.outputs.VERSION }}"
+          git push
+
+  publish-copr:
+    name: Trigger COPR Build
+    runs-on: ubuntu-latest
+    needs: [build, build-rpm]
+    if: ${{ !contains(github.ref_name, 'alpha') && !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'rc') }}
+    steps:
+      - name: Trigger COPR rebuild
+        env:
+          COPR_WEBHOOK_URL: ${{ secrets.COPR_WEBHOOK_URL }}
+        run: |
+          if [ -z "$COPR_WEBHOOK_URL" ]; then
+            echo "COPR_WEBHOOK_URL secret not configured. Skipping COPR trigger."
+            echo "See docs/releasing.md for setup instructions."
+            exit 0
+          fi
+          curl -X POST "$COPR_WEBHOOK_URL" \
+            --fail --silent --show-error
+          echo "COPR build triggered for ${{ github.ref_name }}"

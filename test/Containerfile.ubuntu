@@ -1,0 +1,38 @@
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential clang libpam0g-dev libv4l-dev libxkbcommon-dev libwayland-dev libtss2-dev pkg-config ca-certificates curl && rm -rf /var/lib/apt/lists/*
+
+ENV PATH=/root/.cargo/bin:$PATH
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+
+COPY . /build
+WORKDIR /build
+RUN cargo build --release --workspace
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends libpam-runtime dbus python3 systemd binutils libc6 libxkbcommon0 && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build /build
+
+RUN install -Dm755 /build/target/release/facelock /usr/bin/facelock && \
+    if [ -f /build/target/release/facelock-polkit-agent ]; then install -Dm755 /build/target/release/facelock-polkit-agent /usr/bin/facelock-polkit-agent; fi && \
+    install -Dm755 /build/target/release/libpam_facelock.so /lib/security/pam_facelock.so && \
+    install -Dm644 /build/config/facelock.toml /etc/facelock/config.toml && \
+    install -dm755 /usr/share/facelock/quirks.d && \
+    install -Dm644 /build/config/quirks.d/*.toml /usr/share/facelock/quirks.d/ && \
+    install -Dm644 /build/systemd/facelock-daemon.service /usr/lib/systemd/system/facelock-daemon.service && \
+    install -Dm644 /build/dbus/org.facelock.Daemon.conf /usr/share/dbus-1/system.d/org.facelock.Daemon.conf && \
+    install -Dm644 /build/dbus/org.facelock.Daemon.service /usr/share/dbus-1/system-services/org.facelock.Daemon.service && \
+    install -Dm644 /build/dist/facelock.sysusers /usr/lib/sysusers.d/facelock.conf && \
+    install -Dm644 /build/dist/facelock.tmpfiles /usr/lib/tmpfiles.d/facelock.conf && \
+    if [ -f /build/onnxruntime/lib/libonnxruntime.so ]; then install -Dm755 /build/onnxruntime/lib/libonnxruntime.so /usr/lib/facelock/libonnxruntime.so; fi
+
+COPY test/pkg-validate.sh /pkg-validate.sh
+RUN chmod +x /pkg-validate.sh
+
+CMD ["/pkg-validate.sh"]
