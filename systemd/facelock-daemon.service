@@ -11,6 +11,7 @@ StandardError=journal
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=1024
+UMask=0027
 
 # Phase 1: Filesystem isolation
 ProtectSystem=strict

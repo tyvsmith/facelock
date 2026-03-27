@@ -289,7 +289,7 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                     &self.config,
                     &self.store,
                     &user,
-                    &mut self.rate_limiter,
+                    &self.rate_limiter,
                     self.device_is_ir,
                 ) {
                     let (result, error) = match &resp {
@@ -349,7 +349,9 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                 // Only failed auths count against the rate limit
                 if let DaemonResponse::AuthResult(ref mr) = result {
                     if !mr.matched {
-                        self.rate_limiter.record_failure(&user);
+                        if let Err(e) = self.rate_limiter.record_failure(&self.store, &user) {
+                            warn!(user, error = %e, "failed to record auth failure");
+                        }
                     }
                 }
                 result

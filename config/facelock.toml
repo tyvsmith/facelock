@@ -4,7 +4,9 @@
 # sensible defaults. Uncomment and edit only what you need to change.
 #
 # Location: /etc/facelock/config.toml
-# Override: set FACELOCK_CONFIG=/path/to/config.toml
+# Override (unprivileged CLI only): set FACELOCK_CONFIG=/path/to/config.toml
+# Privileged PAM/root auth flows ignore the environment and use either
+# an explicit --config path or /etc/facelock/config.toml.
 
 
 # ── Camera ──────────────────────────────────────────────────────────
@@ -24,6 +26,27 @@
 # Values: 0, 90, 180, 270
 # Default: 0
 # rotation = 0
+
+# Frames to discard immediately after opening the camera so exposure
+# and gain can stabilize. Hardware quirks may override this.
+# Default: 3
+# warmup_frames = 3
+
+# Dark-frame rejection. If this fraction of pixels is below
+# dark_pixel_value, the frame is treated as unusably dark.
+# Defaults: threshold = 0.6, dark_pixel_value = 10
+# dark_threshold = 0.6
+# dark_pixel_value = 10
+
+# Attempt to enable a controllable IR emitter when the camera opens.
+# Only needed for hardware that does not auto-enable its IR LED.
+# Default: false
+# ir_emitter = false
+
+# In daemon mode, keep the camera open for this many seconds after
+# auth before releasing it to avoid repeated warmup cost.
+# Default: 5
+# camera_release_secs = 5
 
 
 # ── Face Recognition ────────────────────────────────────────────────
@@ -60,7 +83,11 @@
 #
 # Default: "scrfd_2.5g_bnkps.onnx" / "w600k_r50.onnx" (standard)
 # detector_model = "scrfd_2.5g_bnkps.onnx"
+# Bundled models are verified against the manifest automatically.
+# For custom model files, set the matching SHA256 explicitly.
+# detector_sha256 = "..."
 # embedder_model = "w600k_r50.onnx"
+# embedder_sha256 = "..."
 
 # ONNX Runtime execution provider.
 # Values: "cpu", "cuda", "rocm", "openvino"
@@ -165,6 +192,13 @@
 # [security.rate_limit]
 # max_attempts = 5   # Max auth attempts per user per window (default: 5)
 # window_secs = 60   # Rate limit window in seconds (default: 60)
+
+# PAM service policy — allow/deny specific PAM service names.
+# If allowed_services is non-empty, only those services may use facelock.
+# denied_services always takes precedence.
+# [security.pam_policy]
+# allowed_services = ["sudo", "polkit-1"]
+# denied_services = ["login", "sshd", "su"]
 
 
 # ── Encryption ────────────────────────────────────────────────────

@@ -95,8 +95,16 @@ pub struct RecognitionConfig {
     pub nms_threshold: f32,
     #[serde(default = "default_detector_model")]
     pub detector_model: String,
+    /// SHA256 for `detector_model` when the model is not covered by the bundled manifest.
+    /// Bundled models are verified against their manifest hash at load time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detector_sha256: Option<String>,
     #[serde(default = "default_embedder_model")]
     pub embedder_model: String,
+    /// SHA256 for `embedder_model` when the model is not covered by the bundled manifest.
+    /// Bundled models are verified against their manifest hash at load time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedder_sha256: Option<String>,
     /// ORT execution provider: "cpu", "cuda", "rocm", or "openvino".
     #[serde(default = "default_execution_provider")]
     pub execution_provider: String,
@@ -113,7 +121,9 @@ impl Default for RecognitionConfig {
             detection_confidence: default_confidence(),
             nms_threshold: default_nms(),
             detector_model: default_detector_model(),
+            detector_sha256: None,
             embedder_model: default_embedder_model(),
+            embedder_sha256: None,
             execution_provider: default_execution_provider(),
             threads: default_threads(),
         }
@@ -565,8 +575,28 @@ impl Config {
                 "recognition.timeout_secs must be > 0".into(),
             ));
         }
+        if let Some(ref sha256) = self.recognition.detector_sha256
+            && !is_sha256_hex(sha256)
+        {
+            return Err(ConfigError::Validation(format!(
+                "recognition.detector_sha256 must be a 64-character lowercase hex SHA256, got {}",
+                sha256
+            )));
+        }
+        if let Some(ref sha256) = self.recognition.embedder_sha256
+            && !is_sha256_hex(sha256)
+        {
+            return Err(ConfigError::Validation(format!(
+                "recognition.embedder_sha256 must be a 64-character lowercase hex SHA256, got {}",
+                sha256
+            )));
+        }
         Ok(())
     }
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 #[cfg(test)]
@@ -710,6 +740,45 @@ threads = 8
         let config = Config::parse(toml).unwrap();
         assert_eq!(config.recognition.execution_provider, "cuda");
         assert_eq!(config.recognition.threads, 8);
+    }
+
+    #[test]
+    fn recognition_sha256_fields_default_to_none() {
+        let config = RecognitionConfig::default();
+        assert!(config.detector_sha256.is_none());
+        assert!(config.embedder_sha256.is_none());
+    }
+
+    #[test]
+    fn recognition_sha256_fields_validate_format() {
+        let toml = r#"
+[device]
+path = "/dev/video0"
+[recognition]
+detector_sha256 = "not-a-sha256"
+"#;
+        let err = Config::parse(toml).unwrap_err();
+        assert!(matches!(err, ConfigError::Validation(_)));
+    }
+
+    #[test]
+    fn recognition_sha256_fields_accept_valid_hex() {
+        let toml = r#"
+[device]
+path = "/dev/video0"
+[recognition]
+detector_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+embedder_sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+"#;
+        let config = Config::parse(toml).unwrap();
+        assert_eq!(
+            config.recognition.detector_sha256.as_deref(),
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+        assert_eq!(
+            config.recognition.embedder_sha256.as_deref(),
+            Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        );
     }
 
     #[test]

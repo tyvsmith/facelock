@@ -14,7 +14,7 @@ use facelock_core::types::{Detection, FaceEmbedding, Frame};
 pub use align::{AlignedFace, align_face, compute_affine_matrix};
 pub use detector::FaceDetector;
 pub use embedder::FaceEmbedder;
-pub use models::{ModelManifest, verify_model};
+pub use models::{ModelManifest, resolve_model_sha256, verify_model};
 
 /// Full face-processing pipeline: detect, align, embed.
 pub struct FaceEngine {
@@ -27,19 +27,34 @@ impl FaceEngine {
     pub fn load(config: &RecognitionConfig, model_dir: &Path) -> Result<Self> {
         let manifest = ModelManifest::load()?;
 
-        for model in manifest.default_models() {
-            let path = model_dir.join(&model.filename);
-            if !verify_model(&path, &model.sha256)? {
-                return Err(FacelockError::Detection(format!(
-                    "Model integrity check failed for {}. Expected SHA256: {}. \
-                     Re-run `facelock setup` to re-download.",
-                    model.filename, model.sha256
-                )));
-            }
-        }
-
         let detector_path = model_dir.join(&config.detector_model);
         let embedder_path = model_dir.join(&config.embedder_model);
+        let detector_sha256 = resolve_model_sha256(
+            &manifest,
+            &config.detector_model,
+            config.detector_sha256.as_deref(),
+        )?;
+        let embedder_sha256 = resolve_model_sha256(
+            &manifest,
+            &config.embedder_model,
+            config.embedder_sha256.as_deref(),
+        )?;
+
+        if !verify_model(&detector_path, &detector_sha256)? {
+            return Err(FacelockError::Detection(format!(
+                "Model integrity check failed for {}. Expected SHA256: {}. \
+                 Re-run `facelock setup` to re-download or update the configured checksum.",
+                config.detector_model, detector_sha256
+            )));
+        }
+
+        if !verify_model(&embedder_path, &embedder_sha256)? {
+            return Err(FacelockError::Detection(format!(
+                "Model integrity check failed for {}. Expected SHA256: {}. \
+                 Re-run `facelock setup` to re-download or update the configured checksum.",
+                config.embedder_model, embedder_sha256
+            )));
+        }
 
         let detector = FaceDetector::load(
             &detector_path,

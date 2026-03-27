@@ -9,6 +9,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 
 use facelock_core::Config;
+use facelock_core::fs_security::{
+    create_truncate_file, ensure_mode, ensure_private_dir, write_file,
+};
 
 /// Embedded systemd unit file.
 const SERVICE_UNIT: &str = include_str!("../../../../systemd/facelock-daemon.service");
@@ -41,6 +44,12 @@ struct ModelEntry {
     url: String,
     #[serde(default)]
     optional: bool,
+}
+
+impl ModelManifest {
+    fn find(&self, filename: &str) -> Option<&ModelEntry> {
+        self.models.iter().find(|m| m.filename == filename)
+    }
 }
 
 /// Check whether stdin is connected to an interactive terminal.
@@ -250,6 +259,9 @@ fn run_wizard() -> anyhow::Result<()> {
     }
     println!();
 
+    let manifest: ModelManifest =
+        toml::from_str(MANIFEST_TOML).context("failed to parse model manifest")?;
+    secure_setup_paths(&config, Some(&manifest))?;
     write_setup_marker()?;
     Ok(())
 }
@@ -257,9 +269,9 @@ fn run_wizard() -> anyhow::Result<()> {
 fn write_setup_marker() -> anyhow::Result<()> {
     let path = std::path::Path::new(SETUP_COMPLETE_MARKER);
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        ensure_private_dir(parent, 0o755)?;
     }
-    std::fs::write(path, "")?;
+    write_file(path, b"", 0o644)?;
     Ok(())
 }
 
@@ -322,6 +334,8 @@ fn wizard_camera_selection(theme: &ColorfulTheme, config: &mut Config) -> anyhow
 }
 
 fn wizard_model_quality(theme: &ColorfulTheme, config: &mut Config) -> anyhow::Result<()> {
+    let manifest: ModelManifest =
+        toml::from_str(MANIFEST_TOML).context("failed to parse model manifest")?;
     let current_detector = &config.recognition.detector_model;
     let current_embedder = &config.recognition.embedder_model;
 
@@ -346,17 +360,31 @@ fn wizard_model_quality(theme: &ColorfulTheme, config: &mut Config) -> anyhow::R
     match selection {
         0 => {
             config.recognition.detector_model = "scrfd_2.5g_bnkps.onnx".to_string();
+            config.recognition.detector_sha256 = manifest
+                .find("scrfd_2.5g_bnkps.onnx")
+                .map(|m| m.sha256.clone());
             config.recognition.embedder_model = "w600k_r50.onnx".to_string();
+            config.recognition.embedder_sha256 =
+                manifest.find("w600k_r50.onnx").map(|m| m.sha256.clone());
             println!("  Selected standard models (fast, good accuracy).");
         }
         1 => {
             config.recognition.detector_model = "scrfd_2.5g_bnkps.onnx".to_string();
+            config.recognition.detector_sha256 = manifest
+                .find("scrfd_2.5g_bnkps.onnx")
+                .map(|m| m.sha256.clone());
             config.recognition.embedder_model = "glintr100.onnx".to_string();
+            config.recognition.embedder_sha256 =
+                manifest.find("glintr100.onnx").map(|m| m.sha256.clone());
             println!("  Selected balanced models (fast detection, high-accuracy embedding).");
         }
         _ => {
             config.recognition.detector_model = "det_10g.onnx".to_string();
+            config.recognition.detector_sha256 =
+                manifest.find("det_10g.onnx").map(|m| m.sha256.clone());
             config.recognition.embedder_model = "glintr100.onnx".to_string();
+            config.recognition.embedder_sha256 =
+                manifest.find("glintr100.onnx").map(|m| m.sha256.clone());
             println!("  Selected high-accuracy models (larger, ~40-50ms slower).");
         }
     }
@@ -454,7 +482,7 @@ fn update_config_provider(config: &Config) -> anyhow::Result<()> {
         if in_recognition && !provider_written {
             new_content.push_str(&format!("execution_provider = \"{provider}\"\n"));
         }
-        fs::write(&config_path, new_content)?;
+        write_file(&config_path, new_content.as_bytes(), 0o644)?;
     } else {
         let mut content = content;
         if !content.ends_with('\n') {
@@ -463,7 +491,7 @@ fn update_config_provider(config: &Config) -> anyhow::Result<()> {
         content.push_str(&format!(
             "\n[recognition]\nexecution_provider = \"{provider}\"\n",
         ));
-        fs::write(&config_path, content)?;
+        write_file(&config_path, content.as_bytes(), 0o644)?;
     }
 
     Ok(())
@@ -696,7 +724,7 @@ fn update_config_encryption(config: &Config, method: &str) -> anyhow::Result<()>
         if in_encryption && !method_written {
             new_content.push_str(&format!("method = \"{method}\"\n"));
         }
-        fs::write(&config_path, new_content)?;
+        write_file(&config_path, new_content.as_bytes(), 0o644)?;
     } else {
         // Append new section
         let mut content = content;
@@ -707,7 +735,7 @@ fn update_config_encryption(config: &Config, method: &str) -> anyhow::Result<()>
             "\n[encryption]\nmethod = \"{method}\"\nkey_path = \"{}\"\n",
             config.encryption.key_path
         ));
-        fs::write(&config_path, content)?;
+        write_file(&config_path, content.as_bytes(), 0o644)?;
     }
 
     Ok(())
@@ -721,15 +749,29 @@ fn update_config_models(config: &Config) -> anyhow::Result<()> {
 
     let content = fs::read_to_string(&config_path)
         .with_context(|| format!("failed to read {}", config_path.display()))?;
+    let manifest: ModelManifest =
+        toml::from_str(MANIFEST_TOML).context("failed to parse model manifest")?;
 
     let detector = &config.recognition.detector_model;
     let embedder = &config.recognition.embedder_model;
+    let detector_sha = resolve_configured_model_sha256(
+        &manifest,
+        detector,
+        config.recognition.detector_sha256.as_deref(),
+    )?;
+    let embedder_sha = resolve_configured_model_sha256(
+        &manifest,
+        embedder,
+        config.recognition.embedder_sha256.as_deref(),
+    )?;
 
     if content.contains("[recognition]") {
         let mut new_content = String::new();
         let mut in_recognition = false;
         let mut detector_written = false;
         let mut embedder_written = false;
+        let mut detector_sha_written = false;
+        let mut embedder_sha_written = false;
 
         for line in content.lines() {
             if line.trim() == "[recognition]" {
@@ -743,17 +785,33 @@ fn update_config_models(config: &Config) -> anyhow::Result<()> {
                 detector_written = true;
                 continue;
             }
+            if in_recognition && line.trim_start().starts_with("detector_sha256") {
+                new_content.push_str(&format!("detector_sha256 = \"{detector_sha}\"\n"));
+                detector_sha_written = true;
+                continue;
+            }
             if in_recognition && line.trim_start().starts_with("embedder_model") {
                 new_content.push_str(&format!("embedder_model = \"{embedder}\"\n"));
                 embedder_written = true;
+                continue;
+            }
+            if in_recognition && line.trim_start().starts_with("embedder_sha256") {
+                new_content.push_str(&format!("embedder_sha256 = \"{embedder_sha}\"\n"));
+                embedder_sha_written = true;
                 continue;
             }
             if in_recognition && line.starts_with('[') {
                 if !detector_written {
                     new_content.push_str(&format!("detector_model = \"{detector}\"\n"));
                 }
+                if !detector_sha_written {
+                    new_content.push_str(&format!("detector_sha256 = \"{detector_sha}\"\n"));
+                }
                 if !embedder_written {
                     new_content.push_str(&format!("embedder_model = \"{embedder}\"\n"));
+                }
+                if !embedder_sha_written {
+                    new_content.push_str(&format!("embedder_sha256 = \"{embedder_sha}\"\n"));
                 }
                 in_recognition = false;
             }
@@ -764,23 +822,53 @@ fn update_config_models(config: &Config) -> anyhow::Result<()> {
             if !detector_written {
                 new_content.push_str(&format!("detector_model = \"{detector}\"\n"));
             }
+            if !detector_sha_written {
+                new_content.push_str(&format!("detector_sha256 = \"{detector_sha}\"\n"));
+            }
             if !embedder_written {
                 new_content.push_str(&format!("embedder_model = \"{embedder}\"\n"));
             }
+            if !embedder_sha_written {
+                new_content.push_str(&format!("embedder_sha256 = \"{embedder_sha}\"\n"));
+            }
         }
-        fs::write(&config_path, new_content)?;
+        write_file(&config_path, new_content.as_bytes(), 0o644)?;
     } else {
         let mut content = content;
         if !content.ends_with('\n') {
             content.push('\n');
         }
         content.push_str(&format!(
-            "\n[recognition]\ndetector_model = \"{detector}\"\nembedder_model = \"{embedder}\"\n",
+            "\n[recognition]\ndetector_model = \"{detector}\"\ndetector_sha256 = \"{detector_sha}\"\nembedder_model = \"{embedder}\"\nembedder_sha256 = \"{embedder_sha}\"\n",
         ));
-        fs::write(&config_path, content)?;
+        write_file(&config_path, content.as_bytes(), 0o644)?;
     }
 
     Ok(())
+}
+
+fn resolve_configured_model_sha256(
+    manifest: &ModelManifest,
+    filename: &str,
+    configured_sha256: Option<&str>,
+) -> anyhow::Result<String> {
+    if let Some(entry) = manifest.find(filename) {
+        if let Some(explicit) = configured_sha256
+            && explicit != entry.sha256
+        {
+            anyhow::bail!("configured SHA256 for {filename} does not match bundled manifest");
+        }
+        return Ok(entry.sha256.clone());
+    }
+
+    if let Some(explicit) = configured_sha256 {
+        if explicit.is_empty() {
+            anyhow::bail!("custom model {filename} requires a non-empty SHA256");
+        }
+        return Ok(explicit.to_string());
+    }
+
+    anyhow::bail!("custom model {filename} requires an explicit SHA256 in config")
 }
 
 fn wizard_face_enroll(theme: &ColorfulTheme) -> anyhow::Result<bool> {
@@ -963,6 +1051,7 @@ fn run_non_interactive() -> anyhow::Result<()> {
     // 4. Auto-configure encryption
     setup_encryption_auto(&config)?;
 
+    secure_setup_paths(&config, Some(&manifest))?;
     write_setup_marker()?;
     println!("\nSetup complete. Run `facelock enroll` to register your face.");
     Ok(())
@@ -1025,31 +1114,149 @@ fn setup_encryption_auto(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn chown_path(path: &Path, uid: u32, gid: u32) -> anyhow::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = CString::new(path.as_os_str().as_bytes())
+        .with_context(|| format!("path contains embedded NUL: {}", path.display()))?;
+    let result = unsafe { libc::chown(c_path.as_ptr(), uid, gid) };
+    if result != 0 {
+        anyhow::bail!(
+            "failed to chown {}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn chown_path(_path: &Path, _uid: u32, _gid: u32) -> anyhow::Result<()> {
+    Ok(())
+}
+
+fn facelock_group_gid() -> anyhow::Result<u32> {
+    nix::unistd::Group::from_name("facelock")
+        .context("failed to look up facelock group")?
+        .map(|group| group.gid.as_raw())
+        .context(
+            "facelock group is missing; install package assets or create the facelock system group",
+        )
+}
+
+fn secure_existing_path(path: &Path, mode: u32, gid: u32) -> anyhow::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    ensure_mode(path, mode)
+        .with_context(|| format!("failed to set permissions on {}", path.display()))?;
+
+    if nix::unistd::Uid::current().is_root() {
+        chown_path(path, 0, gid)?;
+    }
+
+    Ok(())
+}
+
+fn secure_dir_if_exists(path: &Path, mode: u32, gid: u32) -> anyhow::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    if !path.is_dir() {
+        bail!(
+            "expected directory but found non-directory path: {}",
+            path.display()
+        );
+    }
+
+    ensure_private_dir(path, mode)
+        .with_context(|| format!("failed to secure directory {}", path.display()))?;
+    if nix::unistd::Uid::current().is_root() {
+        chown_path(path, 0, gid)?;
+    }
+
+    Ok(())
+}
+
+fn secure_setup_paths(config: &Config, manifest: Option<&ModelManifest>) -> anyhow::Result<()> {
+    let facelock_gid = facelock_group_gid()?;
+    let config_path = facelock_core::paths::config_path();
+    let config_dir = config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("/etc/facelock"));
+    let db_path = Path::new(&config.storage.db_path);
+    let audit_path = Path::new(&config.audit.path);
+    let key_path = Path::new(&config.encryption.key_path);
+    let sealed_key_path = Path::new(&config.encryption.sealed_key_path);
+
+    secure_dir_if_exists(config_dir, 0o755, 0)?;
+    secure_dir_if_exists(Path::new(&config.daemon.model_dir), 0o755, 0)?;
+    secure_dir_if_exists(Path::new(&config.snapshots.dir), 0o750, facelock_gid)?;
+
+    if let Some(parent) = db_path.parent() {
+        secure_dir_if_exists(parent, 0o750, facelock_gid)?;
+    }
+    if let Some(parent) = audit_path.parent() {
+        secure_dir_if_exists(parent, 0o750, facelock_gid)?;
+    }
+    if let Some(parent) = key_path.parent() {
+        secure_dir_if_exists(parent, 0o755, 0)?;
+    }
+    if let Some(parent) = sealed_key_path.parent() {
+        secure_dir_if_exists(parent, 0o755, 0)?;
+    }
+
+    secure_existing_path(&config_path, 0o644, 0)?;
+    secure_existing_path(db_path, 0o640, facelock_gid)?;
+    secure_existing_path(audit_path, 0o640, facelock_gid)?;
+    secure_existing_path(key_path, 0o600, 0)?;
+    secure_existing_path(sealed_key_path, 0o600, 0)?;
+    secure_existing_path(Path::new(SETUP_COMPLETE_MARKER), 0o644, 0)?;
+
+    if let Some(manifest) = manifest {
+        for entry in &manifest.models {
+            let model_path = Path::new(&config.daemon.model_dir).join(&entry.filename);
+            secure_existing_path(&model_path, 0o644, 0)?;
+        }
+    }
+
+    Ok(())
+}
+
 fn create_directories(config: &Config) -> anyhow::Result<()> {
-    let mut all_dirs: Vec<String> = vec![
-        config.daemon.model_dir.clone(),
-        config.snapshots.dir.clone(),
+    let config_path = facelock_core::paths::config_path();
+    let mut dirs: Vec<(&Path, u32)> = vec![
+        (Path::new(&config.daemon.model_dir), 0o755),
+        (Path::new(&config.snapshots.dir), 0o750),
     ];
 
-    // Also ensure parent dir for db
-    for path_str in [&config.storage.db_path] {
-        if let Some(parent) = Path::new(path_str.as_str()).parent() {
-            all_dirs.push(parent.to_string_lossy().to_string());
+    for (path, mode) in [
+        (&config.storage.db_path, 0o750),
+        (&config.audit.path, 0o750),
+        (&config.encryption.key_path, 0o755),
+        (&config.encryption.sealed_key_path, 0o755),
+    ] {
+        if let Some(parent) = Path::new(path.as_str()).parent() {
+            dirs.push((parent, mode));
         }
     }
 
-    for dir in &all_dirs {
-        if !dir.is_empty() {
-            fs::create_dir_all(dir)
-                .with_context(|| format!("failed to create directory: {dir}"))?;
-            tracing::debug!("ensured directory: {dir}");
-        }
+    if let Some(parent) = config_path.parent() {
+        dirs.push((parent, 0o755));
     }
 
-    // Config directory
-    if let Some(parent) = Path::new(&facelock_core::paths::config_path()).parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create config directory: {}", parent.display()))?;
+    for (dir, mode) in dirs {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+
+        ensure_private_dir(dir, mode)
+            .with_context(|| format!("failed to create directory {}", dir.display()))?;
+        tracing::debug!("ensured directory: {}", dir.display());
     }
 
     println!("  Directories created.");
@@ -1063,13 +1270,13 @@ fn create_default_config() -> anyhow::Result<()> {
     }
 
     if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent).context("failed to create config directory")?;
+        ensure_private_dir(parent, 0o755).context("failed to create config directory")?;
     }
 
     let default_config = r#"[device]
 path = "/dev/video0"
 "#;
-    fs::write(&config_path, default_config).with_context(|| {
+    write_file(&config_path, default_config.as_bytes(), 0o644).with_context(|| {
         format!(
             "failed to write default config to {}",
             config_path.display()
@@ -1150,7 +1357,7 @@ fn download_model(entry: &ModelEntry, dest: &Path) -> anyhow::Result<()> {
 
     // Write atomically: write to temp file first, then rename
     let tmp_path = dest.with_extension("tmp");
-    let mut file = fs::File::create(&tmp_path)
+    let mut file = create_truncate_file(&tmp_path, 0o644)
         .with_context(|| format!("failed to create {}", tmp_path.display()))?;
     file.write_all(&bytes)?;
     file.sync_all()?;
@@ -1158,6 +1365,7 @@ fn download_model(entry: &ModelEntry, dest: &Path) -> anyhow::Result<()> {
 
     fs::rename(&tmp_path, dest)
         .with_context(|| format!("failed to rename temp file to {}", dest.display()))?;
+    ensure_mode(dest, 0o644).with_context(|| format!("failed to secure {}", dest.display()))?;
 
     Ok(())
 }
@@ -1329,6 +1537,10 @@ const DBUS_SYSTEM_SERVICES_DIR: &str = "/usr/share/dbus-1/system-services";
 const DBUS_SYSTEM_CONF_DIR: &str = "/usr/share/dbus-1/system.d";
 const DBUS_SERVICE_FILENAME: &str = "org.facelock.Daemon.service";
 const DBUS_POLICY_FILENAME: &str = "org.facelock.Daemon.conf";
+const LEGACY_SYSTEMD_UNIT_PATH: &str = "/etc/systemd/system/facelock-daemon.service";
+const LEGACY_DBUS_SYSTEM_SERVICE_PATH: &str =
+    "/etc/dbus-1/system-services/org.facelock.Daemon.service";
+const LEGACY_DBUS_SYSTEM_CONF_PATH: &str = "/etc/dbus-1/system.d/org.facelock.Daemon.conf";
 
 fn check_systemd() -> anyhow::Result<()> {
     if !Path::new("/run/systemd/system").exists() {
@@ -1357,6 +1569,23 @@ fn run_cmd(program: &str, args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn refresh_legacy_copy_if_present(path: &Path, contents: &str, marker: &str) -> anyhow::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let existing = fs::read_to_string(path)
+        .with_context(|| format!("failed to read existing legacy file {}", path.display()))?;
+    if !existing.contains(marker) {
+        return Ok(());
+    }
+
+    write_file(path, contents.as_bytes(), 0o644)
+        .with_context(|| format!("failed to refresh {}", path.display()))?;
+    println!("  Refreshed legacy {}", path.display());
+    Ok(())
+}
+
 pub fn run_systemd(disable: bool) -> anyhow::Result<()> {
     check_root()?;
     check_systemd()?;
@@ -1374,9 +1603,14 @@ pub fn run_systemd(disable: bool) -> anyhow::Result<()> {
             .with_context(|| format!("failed to create {SYSTEMD_UNIT_DIR}"))?;
 
         let service_path = unit_dir.join(SERVICE_FILENAME);
-        fs::write(&service_path, SERVICE_UNIT)
+        write_file(&service_path, SERVICE_UNIT.as_bytes(), 0o644)
             .with_context(|| format!("failed to write {}", service_path.display()))?;
         println!("  Wrote {}", service_path.display());
+        refresh_legacy_copy_if_present(
+            Path::new(LEGACY_SYSTEMD_UNIT_PATH),
+            SERVICE_UNIT,
+            "ExecStart=/usr/bin/facelock daemon",
+        )?;
 
         // Install D-Bus policy file
         let conf_dir = Path::new(DBUS_SYSTEM_CONF_DIR);
@@ -1384,9 +1618,14 @@ pub fn run_systemd(disable: bool) -> anyhow::Result<()> {
             .with_context(|| format!("failed to create {DBUS_SYSTEM_CONF_DIR}"))?;
 
         let policy_path = conf_dir.join(DBUS_POLICY_FILENAME);
-        fs::write(&policy_path, DBUS_POLICY)
+        write_file(&policy_path, DBUS_POLICY.as_bytes(), 0o644)
             .with_context(|| format!("failed to write {}", policy_path.display()))?;
         println!("  Wrote {}", policy_path.display());
+        refresh_legacy_copy_if_present(
+            Path::new(LEGACY_DBUS_SYSTEM_CONF_PATH),
+            DBUS_POLICY,
+            "org.facelock.Daemon",
+        )?;
 
         // Install D-Bus activation service
         let svc_dir = Path::new(DBUS_SYSTEM_SERVICES_DIR);
@@ -1394,9 +1633,14 @@ pub fn run_systemd(disable: bool) -> anyhow::Result<()> {
             .with_context(|| format!("failed to create {DBUS_SYSTEM_SERVICES_DIR}"))?;
 
         let dbus_svc_path = svc_dir.join(DBUS_SERVICE_FILENAME);
-        fs::write(&dbus_svc_path, DBUS_SERVICE)
+        write_file(&dbus_svc_path, DBUS_SERVICE.as_bytes(), 0o644)
             .with_context(|| format!("failed to write {}", dbus_svc_path.display()))?;
         println!("  Wrote {}", dbus_svc_path.display());
+        refresh_legacy_copy_if_present(
+            Path::new(LEGACY_DBUS_SYSTEM_SERVICE_PATH),
+            DBUS_SERVICE,
+            "org.facelock.Daemon",
+        )?;
 
         run_cmd("systemctl", &["daemon-reload"])?;
         println!("  systemctl daemon-reload done.");
@@ -1547,7 +1791,13 @@ account include   system-login
         let result = std::fs::read_to_string(&config_path).unwrap();
         assert!(result.contains("[recognition]"));
         assert!(result.contains("detector_model = \"det_10g.onnx\""));
+        assert!(result.contains(
+            "detector_sha256 = \"5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91\""
+        ));
         assert!(result.contains("embedder_model = \"glintr100.onnx\""));
+        assert!(result.contains(
+            "embedder_sha256 = \"4ab1d6435d639628a6f3e5008dd4f929edf4c4124b1a7169e1048f9fef534cdf\""
+        ));
 
         // Scenario 2: updates existing model fields, preserves other fields
         std::fs::write(
@@ -1562,7 +1812,13 @@ account include   system-login
 
         let result = std::fs::read_to_string(&config_path).unwrap();
         assert!(result.contains("detector_model = \"det_10g.onnx\""));
+        assert!(result.contains(
+            "detector_sha256 = \"5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91\""
+        ));
         assert!(result.contains("embedder_model = \"glintr100.onnx\""));
+        assert!(result.contains(
+            "embedder_sha256 = \"4ab1d6435d639628a6f3e5008dd4f929edf4c4124b1a7169e1048f9fef534cdf\""
+        ));
         assert!(!result.contains("scrfd_2.5g_bnkps.onnx"));
         assert!(!result.contains("w600k_r50.onnx"));
         assert!(result.contains("threshold = 0.80"));
@@ -1580,7 +1836,13 @@ account include   system-login
 
         let result = std::fs::read_to_string(&config_path).unwrap();
         assert!(result.contains("detector_model = \"det_10g.onnx\""));
+        assert!(result.contains(
+            "detector_sha256 = \"5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91\""
+        ));
         assert!(result.contains("embedder_model = \"glintr100.onnx\""));
+        assert!(result.contains(
+            "embedder_sha256 = \"4ab1d6435d639628a6f3e5008dd4f929edf4c4124b1a7169e1048f9fef534cdf\""
+        ));
         assert!(result.contains("threshold = 0.75"));
 
         unsafe { std::env::remove_var("FACELOCK_CONFIG") };

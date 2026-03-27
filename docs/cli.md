@@ -155,6 +155,8 @@ facelock bench report                   # full benchmark report
 
 Restart the persistent daemon. On systemd systems, runs `systemctl restart facelock-daemon.service`. Otherwise, sends a D-Bus shutdown request and the daemon restarts on next use via D-Bus activation.
 
+Requires root. If run interactively as a non-root user, the CLI prompts to re-run via `sudo`.
+
 ```bash
 facelock restart
 ```
@@ -171,5 +173,5 @@ For commands that accept `--user`:
 
 | Variable | Purpose |
 |----------|---------|
-| `FACELOCK_CONFIG` | Override config file path |
+| `FACELOCK_CONFIG` | Override config file path for unprivileged CLI commands. Ignored by privileged PAM/root auth flows; use `--config` there. |
 | `RUST_LOG` | Control log verbosity (e.g., `facelock_daemon=debug`) |

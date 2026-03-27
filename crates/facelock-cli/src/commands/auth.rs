@@ -11,6 +11,7 @@ use facelock_core::ipc::DaemonResponse;
 use facelock_core::types::MatchResult;
 use facelock_daemon::audit::{self, AuditEntry};
 use facelock_daemon::auth;
+use facelock_daemon::rate_limit::RateLimiter;
 use facelock_face::FaceEngine;
 use facelock_store::FaceStore;
 use tracing::{error, info};
@@ -85,8 +86,10 @@ pub fn run(user: String, config_path: Option<String>) -> i32 {
     };
 
     // SQLite-based rate limiting: survives across oneshot process invocations.
+    // Only failed authentications consume the budget.
     let rl = &config.security.rate_limit;
-    match store.check_rate_limit(&user, rl.max_attempts, rl.window_secs) {
+    let rate_limiter = RateLimiter::new(rl.max_attempts, rl.window_secs);
+    match rate_limiter.check(&store, &user) {
         Ok(true) => {}
         Ok(false) => {
             error!(user = %user, "rate limited");
@@ -97,15 +100,6 @@ pub fn run(user: String, config_path: Option<String>) -> i32 {
             return 2;
         }
     }
-
-    // Record attempt *before* auth so the window tracks even failed attempts.
-    if let Err(e) = store.record_auth_attempt(&user) {
-        error!("rate limit record: {e}");
-        return 2;
-    }
-
-    // Opportunistically clean up stale rate-limit rows.
-    let _ = store.cleanup_rate_limit(rl.window_secs);
 
     match store.has_models(&user) {
         Ok(true) => {}
@@ -177,6 +171,15 @@ pub fn run(user: String, config_path: Option<String>) -> i32 {
     // Note: authenticate_inner already writes audit entries for the camera-based
     // auth loop. The oneshot path relies on those entries, so no additional audit
     // logging is needed here for the auth result itself.
+
+    if matches!(
+        response,
+        DaemonResponse::AuthResult(MatchResult { matched: false, .. })
+    ) {
+        if let Err(e) = rate_limiter.record_failure(&store, &user) {
+            error!("rate limit record: {e}");
+        }
+    }
 
     match response {
         DaemonResponse::AuthResult(MatchResult {

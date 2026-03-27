@@ -1,9 +1,10 @@
 [device]
 max_height = 480
+dark_threshold = 1.0
 
 [recognition]
 threshold = 0.80
-timeout_secs = 5
+timeout_secs = 10
 
 [daemon]
 model_dir = "/var/lib/facelock/models"

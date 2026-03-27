@@ -3,6 +3,8 @@ pub mod direct;
 mod ipc_client;
 pub mod notifications;
 
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
@@ -12,6 +14,9 @@ use commands::bench::BenchCommand;
 #[derive(Parser)]
 #[command(name = "facelock", about = "Linux face authentication", version)]
 struct Cli {
+    /// Path to config file
+    #[arg(long, global = true)]
+    config: Option<String>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -156,11 +161,24 @@ enum Commands {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    let Cli { config, command } = cli;
 
-    match cli.command {
+    if let Some(path) = config {
+        facelock_core::paths::set_process_config_override(PathBuf::from(path));
+    }
+
+    match command {
         // Daemon and auth init their own tracing, so handle them separately
-        Commands::Daemon { config } => commands::daemon::run(config),
+        Commands::Daemon { config } => {
+            if let Some(ref path) = config {
+                facelock_core::paths::set_process_config_override(PathBuf::from(path));
+            }
+            commands::daemon::run(config)
+        }
         Commands::Auth { user, config } => {
+            if let Some(ref path) = config {
+                facelock_core::paths::set_process_config_override(PathBuf::from(path));
+            }
             let exit_code = commands::auth::run(user, config);
             std::process::exit(exit_code);
         }

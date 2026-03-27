@@ -1,6 +1,8 @@
 # Configuration Reference
 
-Facelock reads its configuration from `/etc/facelock/config.toml`. Override the path with the `FACELOCK_CONFIG` environment variable.
+Facelock reads its configuration from `/etc/facelock/config.toml`.
+Unprivileged CLI commands may override the path with `FACELOCK_CONFIG`.
+Privileged PAM and root auth flows ignore that environment variable and use either an explicit `--config` path or `/etc/facelock/config.toml`.
 
 All settings are optional. Facelock auto-detects the camera and uses sensible defaults. The annotated config file at `config/facelock.toml` in the repository serves as the canonical example.
 
@@ -13,6 +15,11 @@ Camera settings.
 | `path` | string (optional) | Auto-detect | Camera device path (e.g., `/dev/video2`). When omitted, Facelock auto-detects the best available camera, preferring IR over RGB. |
 | `max_height` | u32 | `480` | Maximum frame height in pixels. Frames taller than this are downscaled to improve processing speed. |
 | `rotation` | u16 | `0` | Rotate captured frames. Values: `0`, `90`, `180`, `270`. Useful for cameras mounted sideways. |
+| `warmup_frames` | u32 | `3` | Frames to discard immediately after opening the camera to let exposure and gain stabilize. Device quirks may override this. |
+| `dark_threshold` | f32 | `0.6` | Fraction of pixels that must be darker than `dark_pixel_value` before the frame is treated as unusably dark. |
+| `dark_pixel_value` | u8 | `10` | Pixel brightness cutoff used by the dark-frame check. |
+| `ir_emitter` | bool | `false` | Attempt to enable a controllable IR emitter when the camera opens. Only needed for hardware that does not auto-enable its IR LED. |
+| `camera_release_secs` | u32 | `5` | Seconds to keep the camera open after daemon-mode auth before releasing it, to avoid repeated warmup cost on back-to-back requests. |
 
 ## [recognition]
 
@@ -24,8 +31,10 @@ Face detection and embedding parameters.
 | `timeout_secs` | u32 | `5` | Maximum seconds to attempt recognition before giving up. Must be > 0. |
 | `detection_confidence` | f32 | `0.5` | Minimum confidence for the face detector to report a detection. Lower values detect more faces but increase false positives. |
 | `nms_threshold` | f32 | `0.4` | Non-maximum suppression threshold for overlapping detections. |
-| `detector_model` | string | `"scrfd_2.5g_bnkps.onnx"` | ONNX detector model filename. Must exist in `daemon.model_dir`. |
-| `embedder_model` | string | `"w600k_r50.onnx"` | ONNX embedder model filename. Must exist in `daemon.model_dir`. |
+| `detector_model` | string | `"scrfd_2.5g_bnkps.onnx"` | ONNX detector model filename. Must exist in `daemon.model_dir`. Bundled models are verified against the manifest; custom models require `detector_sha256`. |
+| `detector_sha256` | string (optional) | unset | SHA256 for `detector_model`. Required for custom model files. Bundled models use the manifest hash. |
+| `embedder_model` | string | `"w600k_r50.onnx"` | ONNX embedder model filename. Must exist in `daemon.model_dir`. Bundled models are verified against the manifest; custom models require `embedder_sha256`. |
+| `embedder_sha256` | string (optional) | unset | SHA256 for `embedder_model`. Required for custom model files. Bundled models use the manifest hash. |
 | `execution_provider` | string | `"cpu"` | ONNX Runtime execution provider. Values: `"cpu"`, `"cuda"`, `"rocm"`, `"openvino"`. GPU providers require a GPU-enabled ONNX Runtime package installed on the system. |
 | `threads` | u32 | `4` | Number of CPU threads for ONNX inference. |
 
@@ -50,6 +59,7 @@ Run `facelock test` to see your similarity scores, then set the threshold below 
 | High accuracy | `det_10g.onnx` (17MB) | `glintr100.onnx` (249MB) | ~266MB | ~40-50ms slower, best accuracy |
 
 Run `facelock setup` to select a model tier interactively and download the required models.
+If you point `detector_model` or `embedder_model` at a custom file, you must also set the matching SHA256 so the daemon can verify it at load time.
 
 ## [daemon]
 
@@ -86,6 +96,13 @@ Controls how the PAM module reaches the face engine.
 |-----|------|---------|-------------|
 | `max_attempts` | u32 | `5` | Maximum auth attempts per user per window. |
 | `window_secs` | u64 | `60` | Rate limit window in seconds. |
+
+### [security.pam_policy]
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `allowed_services` | list of strings | `[]` | If non-empty, only these PAM services may use facelock. |
+| `denied_services` | list of strings | `[]` | PAM services that must always skip facelock, even if otherwise allowed. |
 
 ## [notification]
 

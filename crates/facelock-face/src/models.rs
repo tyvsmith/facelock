@@ -34,15 +34,14 @@ impl ModelManifest {
     pub fn default_models(&self) -> Vec<&ModelEntry> {
         self.models.iter().filter(|m| !m.optional).collect()
     }
+
+    pub fn find_by_filename(&self, filename: &str) -> Option<&ModelEntry> {
+        self.models.iter().find(|m| m.filename == filename)
+    }
 }
 
 /// Verify a model file's SHA256 checksum.
-/// If `expected_sha256` is empty, returns `Ok(true)` (no verification needed).
 pub fn verify_model(path: &Path, expected_sha256: &str) -> Result<bool> {
-    if expected_sha256.is_empty() {
-        return Ok(true);
-    }
-
     let data = std::fs::read(path)?;
     let mut hasher = Sha256::new();
     hasher.update(&data);
@@ -50,6 +49,33 @@ pub fn verify_model(path: &Path, expected_sha256: &str) -> Result<bool> {
     let hex = format!("{result:x}");
 
     Ok(hex == expected_sha256)
+}
+
+/// Resolve the integrity hash for a configured model filename.
+///
+/// Bundled models are verified against the manifest. Custom models must provide
+/// an explicit checksum in config so we never load an unsigned file silently.
+pub fn resolve_model_sha256(
+    manifest: &ModelManifest,
+    filename: &str,
+    configured_sha256: Option<&str>,
+) -> Result<String> {
+    if let Some(entry) = manifest.find_by_filename(filename) {
+        if let Some(explicit) = configured_sha256 {
+            if explicit != entry.sha256 {
+                return Err(FacelockError::Detection(format!(
+                    "configured SHA256 for {filename} does not match bundled manifest"
+                )));
+            }
+        }
+        return Ok(entry.sha256.clone());
+    }
+
+    configured_sha256.map(str::to_string).ok_or_else(|| {
+        FacelockError::Detection(format!(
+            "custom model {filename} requires an explicit SHA256 in config"
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -77,12 +103,6 @@ mod tests {
     }
 
     #[test]
-    fn verify_model_empty_sha256_returns_true() {
-        let result = verify_model(Path::new("/nonexistent"), "").unwrap();
-        assert!(result);
-    }
-
-    #[test]
     fn verify_model_correct_sha256() {
         let dir = std::env::temp_dir().join("facelock_test_verify");
         std::fs::create_dir_all(&dir).unwrap();
@@ -103,5 +123,52 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_model_sha256_uses_manifest_for_bundled_models() {
+        let manifest = ModelManifest::load().unwrap();
+        let sha = resolve_model_sha256(&manifest, "scrfd_2.5g_bnkps.onnx", None).unwrap();
+        assert_eq!(
+            sha,
+            manifest
+                .find_by_filename("scrfd_2.5g_bnkps.onnx")
+                .unwrap()
+                .sha256
+        );
+    }
+
+    #[test]
+    fn resolve_model_sha256_rejects_mismatched_bundled_override() {
+        let manifest = ModelManifest::load().unwrap();
+        let err = resolve_model_sha256(
+            &manifest,
+            "scrfd_2.5g_bnkps.onnx",
+            Some("0000000000000000000000000000000000000000000000000000000000000000"),
+        )
+        .unwrap_err();
+        assert!(matches!(err, FacelockError::Detection(_)));
+    }
+
+    #[test]
+    fn resolve_model_sha256_requires_custom_checksum() {
+        let manifest = ModelManifest::load().unwrap();
+        let err = resolve_model_sha256(&manifest, "custom.onnx", None).unwrap_err();
+        assert!(matches!(err, FacelockError::Detection(_)));
+    }
+
+    #[test]
+    fn resolve_model_sha256_accepts_custom_checksum() {
+        let manifest = ModelManifest::load().unwrap();
+        let sha = resolve_model_sha256(
+            &manifest,
+            "custom.onnx",
+            Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"),
+        )
+        .unwrap();
+        assert_eq!(
+            sha,
+            "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+        );
     }
 }

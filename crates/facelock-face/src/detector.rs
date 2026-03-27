@@ -32,6 +32,9 @@ impl FaceDetector {
         threads: u32,
         execution_provider: &str,
     ) -> Result<Self> {
+        crate::provider::ensure_runtime_loaded()
+            .map_err(|e| FacelockError::Detection(format!("Failed to load ONNX Runtime: {e}")))?;
+
         let builder = Session::builder()
             .map_err(|e| {
                 FacelockError::Detection(format!("Failed to create session builder: {e}"))
