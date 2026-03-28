@@ -94,9 +94,9 @@ mod tests {
 
     static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
-    // These tests must run sequentially in a single test because they mutate
-    // a shared process-wide env var. Separate #[test] functions race when
-    // cargo runs tests in parallel.
+    // These tests mutate shared process-wide state (env vars, process overrides)
+    // and must not run concurrently. We keep them as separate #[test] functions
+    // but serialize them with TEST_MUTEX to avoid races when cargo runs tests in
     #[test]
     fn config_path_default_and_env_override() {
         let _guard = TEST_MUTEX.lock().unwrap();
