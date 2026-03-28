@@ -1,0 +1,14 @@
+# Exclude build artifacts (huge — 43GB+)
+target/
+# Re-include the release binaries needed by Containerfiles
+!target/release/facelock
+!target/release/libpam_facelock.so
+!target/release/facelock-polkit-agent
+
+# Git history not needed in containers
+.git/
+
+# Editor swap files
+*.swp
+*.swo
+*~
