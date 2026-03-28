@@ -8,8 +8,8 @@ use std::path::Path;
 use anyhow::{Context, bail};
 use facelock_camera::quirks::QuirksDb;
 use facelock_camera::{
-    Camera, DeviceInfo, auto_detect_device, is_ir_camera, is_ir_camera_with_quirks,
-    list_devices, validate_device,
+    Camera, DeviceInfo, auto_detect_device, is_ir_camera, is_ir_camera_with_quirks, list_devices,
+    validate_device,
 };
 use facelock_core::config::DeviceConfig;
 use facelock_core::config::{Config, EncryptionMethod};
@@ -55,7 +55,9 @@ fn resolve_camera_device(config: &Config) -> anyhow::Result<ResolvedCameraDevice
     let device_info = match config.device.path.as_deref() {
         Some(path) => validate_device(path)
             .with_context(|| format!("failed to query configured camera {path}"))?,
-        None => auto_detect_device().context("no camera device specified and auto-detection failed")?,
+        None => {
+            auto_detect_device().context("no camera device specified and auto-detection failed")?
+        }
     };
 
     Ok(build_resolved_camera_device(config, device_info, &quirks))
