@@ -1,0 +1,30 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "labels": ["dependencies"],
+  "rangeStrategy": "bump",
+  "packageRules": [
+    {
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["patch"],
+      "groupName": "rust patch updates",
+      "automerge": true
+    },
+    {
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor"],
+      "groupName": "rust minor updates"
+    },
+    {
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["major"],
+      "separateMinorPatch": true
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions",
+      "automerge": true
+    }
+  ],
+  "schedule": ["before 9am on monday"]
+}
