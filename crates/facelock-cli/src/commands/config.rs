@@ -144,6 +144,7 @@ fn restart_daemon() {
 
 /// Restart the facelock daemon. Called by `facelock restart`.
 pub fn restart() -> anyhow::Result<()> {
+    crate::ipc_client::require_root("sudo facelock restart")?;
     restart_daemon();
     Ok(())
 }

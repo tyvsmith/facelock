@@ -9,8 +9,13 @@ case "$1" in
 
         # Set ownership on data directories
         chown root:facelock /var/lib/facelock 2>/dev/null || true
+        chmod 750 /var/lib/facelock 2>/dev/null || true
+        chown root:root /var/lib/facelock/models 2>/dev/null || true
+        chmod 755 /var/lib/facelock/models 2>/dev/null || true
         chown root:facelock /var/log/facelock 2>/dev/null || true
+        chmod 750 /var/log/facelock 2>/dev/null || true
         chown root:facelock /var/log/facelock/snapshots 2>/dev/null || true
+        chmod 750 /var/log/facelock/snapshots 2>/dev/null || true
 
         # Reload systemd for D-Bus activation
         if [ -d /run/systemd/system ]; then

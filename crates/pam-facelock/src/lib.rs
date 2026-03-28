@@ -8,6 +8,7 @@
 
 use std::ffi::{CStr, CString};
 use std::panic;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -495,12 +496,66 @@ fn daemon_authenticate(config: &PamConfig, user: &str) -> Result<AuthResponse, S
 // ---------------------------------------------------------------------------
 
 fn load_config() -> Result<PamConfig, String> {
-    let config_path =
-        std::env::var("FACELOCK_CONFIG").unwrap_or_else(|_| DEFAULT_CONFIG_PATH.to_string());
+    let config_path = DEFAULT_CONFIG_PATH;
 
-    let content = std::fs::read_to_string(&config_path).map_err(|e| format!("read config: {e}"))?;
+    let content = std::fs::read_to_string(config_path).map_err(|e| format!("read config: {e}"))?;
 
     toml::from_str(&content).map_err(|e| format!("parse config: {e}"))
+}
+
+fn validate_auth_bin(path: &str) -> Result<PathBuf, String> {
+    if path.is_empty() {
+        return Err("auth_bin must not be empty".into());
+    }
+
+    let candidate = Path::new(path);
+    if !candidate.is_absolute() {
+        return Err("auth_bin must be an absolute path".into());
+    }
+
+    let canonical = candidate
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve auth_bin: {e}"))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let metadata = std::fs::metadata(&canonical)
+            .map_err(|e| format!("failed to stat auth_bin {}: {e}", canonical.display()))?;
+
+        validate_root_owned_nonwritable(
+            metadata.uid(),
+            metadata.permissions().mode(),
+            &format!("auth_bin {}", canonical.display()),
+        )?;
+
+        let mut current = canonical.parent();
+        while let Some(dir) = current {
+            let meta = std::fs::metadata(dir)
+                .map_err(|e| format!("failed to stat parent dir {}: {e}", dir.display()))?;
+            validate_root_owned_nonwritable(
+                meta.uid(),
+                meta.permissions().mode(),
+                &format!("parent dir {}", dir.display()),
+            )?;
+
+            current = dir.parent();
+        }
+    }
+
+    Ok(canonical)
+}
+
+#[cfg(unix)]
+fn validate_root_owned_nonwritable(uid: u32, mode: u32, label: &str) -> Result<(), String> {
+    if uid != 0 {
+        return Err(format!("{label} must be owned by root"));
+    }
+    if mode & 0o022 != 0 {
+        return Err(format!("{label} must not be group- or world-writable"));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -514,16 +569,25 @@ fn run_oneshot_auth(service: &str, user: &str, config: &PamConfig) -> libc::c_in
 
     let timeout_secs = config.recognition.timeout_secs as u64 + 3; // buffer for model load
 
-    // Resolve config path (same logic as load_config)
-    let config_path =
-        std::env::var("FACELOCK_CONFIG").unwrap_or_else(|_| DEFAULT_CONFIG_PATH.to_string());
+    let auth_bin = match validate_auth_bin(&config.daemon.auth_bin) {
+        Ok(path) => path,
+        Err(e) => {
+            log_auth(
+                service,
+                &format!("error: unsafe_auth_bin: {e}"),
+                user,
+                LOG_WARNING,
+            );
+            return PAM_IGNORE;
+        }
+    };
 
-    let result = Command::new(&config.daemon.auth_bin)
+    let result = Command::new(&auth_bin)
         .arg("auth")
         .arg("--user")
         .arg(user)
         .arg("--config")
-        .arg(&config_path)
+        .arg(DEFAULT_CONFIG_PATH)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -853,5 +917,33 @@ db_path = "/tmp/test.db"
 "#;
         let config: PamConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.daemon.mode, "daemon");
+    }
+
+    #[test]
+    fn validate_auth_bin_rejects_relative_paths() {
+        let err = validate_auth_bin("facelock").unwrap_err();
+        assert!(err.contains("absolute"));
+    }
+
+    #[test]
+    fn validate_auth_bin_rejects_missing_paths() {
+        let err = validate_auth_bin("/definitely/missing/facelock").unwrap_err();
+        assert!(err.contains("failed to resolve"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_root_owned_nonwritable_rejects_group_writable_mode() {
+        let err =
+            validate_root_owned_nonwritable(0, 0o100775, "auth_bin /usr/bin/facelock").unwrap_err();
+        assert!(err.contains("group- or world-writable"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_root_owned_nonwritable_rejects_non_root_owner() {
+        let err = validate_root_owned_nonwritable(1000, 0o100755, "auth_bin /usr/bin/facelock")
+            .unwrap_err();
+        assert!(err.contains("owned by root"));
     }
 }

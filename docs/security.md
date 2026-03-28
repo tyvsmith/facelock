@@ -168,6 +168,11 @@ chown root:facelock /var/lib/facelock/facelock.db
 chmod 640 /var/lib/facelock/facelock.db
 ```
 
+Runtime note:
+- The daemon/setup paths must also secure SQLite `-wal` and `-shm` sidecar files to `0640`
+- Audit logs and snapshots must be created with explicit restrictive modes instead of relying on ambient umask
+- The systemd service should set `UMask=0027` as a baseline defense-in-depth default
+
 #### B. Embedding Sensitivity Warning (Required)
 
 Face embeddings are **biometric data**. Unlike passwords, they cannot be changed. Document this:
@@ -187,36 +192,39 @@ For high-security deployments, embeddings can be encrypted with AES-256-GCM usin
 
 #### A. D-Bus System Bus Policy (Required)
 
-Access to the daemon is restricted by the D-Bus system bus policy defined in `dbus/org.facelock.Daemon.conf`. Only root and members of the `facelock` group are allowed to send messages to the daemon interface. The policy file is installed to `/etc/dbus-1/system.d/` and enforced by the bus daemon itself.
+Access to the daemon is restricted by the D-Bus system bus policy defined in `dbus/org.facelock.Daemon.conf`. Only root and members of the `facelock` group are allowed to send messages to the daemon interface. The policy file is installed to `/usr/share/dbus-1/system.d/` and enforced by the bus daemon itself. Setup and package install may also refresh a legacy `/etc/dbus-1/system.d/` copy when present, but `/usr/share/...` is the canonical install path.
+
+The daemon must also verify the caller UID via `GetConnectionUnixUser` on every method call and apply method-level authorization:
+- `Authenticate`, `ListModels`, `PreviewDetectFrame`: root or the matching Unix user
+- `Enroll`, `RemoveModel`, `ClearModels`, `PreviewFrame`, `Shutdown`: root only
+- `ReleaseCamera`: root or the Unix user that owns the active preview camera session
+- `ListDevices`: root or a caller in the `facelock` group
 
 #### B. D-Bus Message Size Limits (Enforced by Bus)
 
 The D-Bus bus daemon enforces message size limits (typically 128MB by default, configurable in the bus configuration). This prevents oversized messages from consuming daemon memory without requiring application-level size checks.
 
-#### C. Rate Limiting (Recommended)
+#### C. Persistent Rate Limiting (Implemented)
 
 Throttle authentication attempts to prevent brute-force:
 
 ```rust
-struct RateLimiter {
-    attempts: HashMap<String, Vec<Instant>>,
-    max_attempts: usize,    // 5
-    window: Duration,       // 60 seconds
+let rate_limiter = RateLimiter::new(5, 60);
+if !rate_limiter.check(&store, user)? {
+    return Err("rate limited");
 }
 
-impl RateLimiter {
-    fn check(&mut self, user: &str) -> bool {
-        let now = Instant::now();
-        let attempts = self.attempts.entry(user.to_string()).or_default();
-        attempts.retain(|t| now.duration_since(*t) < self.window);
-        if attempts.len() >= self.max_attempts {
-            return false;  // Rate limited
-        }
-        attempts.push(now);
-        true
-    }
+// ... authentication attempt ...
+
+if auth_failed {
+    rate_limiter.record_failure(&store, user)?;
 }
 ```
+
+Implementation note:
+- Failed attempts are stored in the shared SQLite `rate_limit` table
+- Daemon mode and oneshot mode use the same window and thresholds
+- Restarting the daemon must not reset a user's lockout state
 
 ### 5. PAM Module Hardening
 
@@ -272,13 +280,13 @@ caps::clear(None, CapSet::Permitted)?;
 
 The systemd unit (`systemd/facelock-daemon.service`) includes layered hardening:
 
-**Phase 1 (safe):** `ProtectSystem=strict`, `ProtectHome=yes`, `ReadWritePaths=/var/lib/facelock /var/log/facelock`, `PrivateTmp=yes`, `NoNewPrivileges=yes`
+**Phase 1 (shipped):** `ProtectSystem=strict`, `InaccessiblePaths=/home /root`, `ReadWritePaths=/var/lib/facelock /var/log/facelock`, `PrivateTmp=yes`, `NoNewPrivileges=yes`, `UMask=0027`
 
-**Phase 2 (kernel):** `ProtectKernelTunables/Modules/ControlGroups=yes`, `RestrictNamespaces=yes`, `LockPersonality=yes`, `RestrictRealtime=yes`, `RestrictSUIDSGID=yes`
+**Phase 2 (shipped):** `ProtectKernelTunables/Modules/ControlGroups=yes`, `RestrictNamespaces=yes`, `LockPersonality=yes`, `RestrictRealtime=yes`, `RestrictSUIDSGID=yes`
 
-**Phase 3 (devices/syscalls):** `DeviceAllow=/dev/video* rw`, `DeviceAllow=/dev/tpmrm0 rw`, `SystemCallFilter=@system-service @io-event`
+**Deferred device/seccomp phase:** `DevicePolicy`/`DeviceAllow` is intentionally omitted because cgroup device ACLs interfered with camera auto-detection, and seccomp filtering is deferred to future work. Standard Unix permissions still restrict `/dev/video*` and `/dev/tpmrm0`.
 
-**GPU compatibility note:** `MemoryDenyWriteExecute=yes` is commented out because it breaks CUDA and TensorRT GPU inference (JIT compilation requires W+X pages). Enable it only when using the CPU execution provider. Verify hardening score with:
+**GPU compatibility note:** `MemoryDenyWriteExecute=yes` is still intentionally omitted because it breaks ONNX Runtime JIT paths such as CUDA and TensorRT. Verify hardening score with:
 ```bash
 systemd-analyze security facelock-daemon.service
 ```

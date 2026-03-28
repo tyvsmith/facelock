@@ -8,8 +8,10 @@ use std::path::Path;
 use anyhow::{Context, bail};
 use facelock_camera::quirks::QuirksDb;
 use facelock_camera::{
-    Camera, is_ir_camera, is_ir_camera_with_quirks, list_devices, validate_device,
+    Camera, DeviceInfo, auto_detect_device, is_ir_camera, is_ir_camera_with_quirks, list_devices,
+    validate_device,
 };
+use facelock_core::config::DeviceConfig;
 use facelock_core::config::{Config, EncryptionMethod};
 use facelock_core::ipc::DaemonResponse;
 use facelock_core::types::MatchResult;
@@ -21,24 +23,57 @@ pub fn open_store(config: &Config) -> anyhow::Result<FaceStore> {
     FaceStore::open(Path::new(&config.storage.db_path)).context("failed to open database")
 }
 
-/// Open camera with quirks support and warmup frame discarding.
-pub fn open_camera(config: &Config) -> anyhow::Result<Camera<'static>> {
-    let quirks = QuirksDb::load();
-    let device_quirk = config
-        .device
-        .path
-        .as_deref()
-        .and_then(|p| validate_device(p).ok())
-        .and_then(|info| quirks.find_match(&info).cloned());
+#[derive(Clone)]
+struct ResolvedCameraDevice {
+    device: DeviceConfig,
+    device_quirk: Option<facelock_camera::quirks::Quirk>,
+    device_is_ir: bool,
+}
 
-    let mut camera =
-        Camera::open(&config.device, device_quirk.as_ref()).context("failed to open camera")?;
+struct OpenedCamera {
+    camera: Camera<'static>,
+    device_is_ir: bool,
+}
+
+fn build_resolved_camera_device(
+    config: &Config,
+    device_info: DeviceInfo,
+    quirks: &QuirksDb,
+) -> ResolvedCameraDevice {
+    let mut device = config.device.clone();
+    device.path = Some(device_info.path.clone());
+
+    ResolvedCameraDevice {
+        device,
+        device_quirk: quirks.find_match(&device_info).cloned(),
+        device_is_ir: is_ir_camera_with_quirks(&device_info, Some(quirks)),
+    }
+}
+
+fn resolve_camera_device(config: &Config) -> anyhow::Result<ResolvedCameraDevice> {
+    let quirks = QuirksDb::load();
+    let device_info = match config.device.path.as_deref() {
+        Some(path) => validate_device(path)
+            .with_context(|| format!("failed to query configured camera {path}"))?,
+        None => {
+            auto_detect_device().context("no camera device specified and auto-detection failed")?
+        }
+    };
+
+    Ok(build_resolved_camera_device(config, device_info, &quirks))
+}
+
+fn open_camera_context(config: &Config) -> anyhow::Result<OpenedCamera> {
+    let resolved = resolve_camera_device(config)?;
+    let mut camera = Camera::open(&resolved.device, resolved.device_quirk.as_ref())
+        .context("failed to open camera")?;
 
     // Discard warmup frames for AGC/AE stabilization.
     // Quirk override takes precedence over config value.
-    let warmup = device_quirk
+    let warmup = resolved
+        .device_quirk
         .and_then(|q| q.warmup_frames)
-        .unwrap_or(config.device.warmup_frames);
+        .unwrap_or(resolved.device.warmup_frames);
     if warmup > 0 {
         debug!(warmup, "discarding warmup frames");
         for _ in 0..warmup {
@@ -46,7 +81,15 @@ pub fn open_camera(config: &Config) -> anyhow::Result<Camera<'static>> {
         }
     }
 
-    Ok(camera)
+    Ok(OpenedCamera {
+        camera,
+        device_is_ir: resolved.device_is_ir,
+    })
+}
+
+/// Open camera with quirks support and warmup frame discarding.
+pub fn open_camera(config: &Config) -> anyhow::Result<Camera<'static>> {
+    Ok(open_camera_context(config)?.camera)
 }
 
 pub fn load_engine(config: &Config) -> anyhow::Result<FaceEngine> {
@@ -62,17 +105,11 @@ pub fn authenticate(config: &Config, user: &str) -> anyhow::Result<bool> {
         return Ok(false);
     }
 
-    let mut camera = open_camera(config)?;
+    let OpenedCamera {
+        mut camera,
+        device_is_ir,
+    } = open_camera_context(config)?;
     let mut engine = load_engine(config)?;
-
-    let quirks = QuirksDb::load();
-    let device_is_ir = config
-        .device
-        .path
-        .as_deref()
-        .and_then(|p| validate_device(p).ok())
-        .map(|dev| is_ir_camera_with_quirks(&dev, Some(&quirks)))
-        .unwrap_or(false);
 
     // Load embeddings with encryption support, matching the daemon handler path.
     let stored = load_user_embeddings(&store, config, user)?;
@@ -189,7 +226,7 @@ pub fn load_user_embeddings(
 /// Direct enrollment — returns (model_id, embedding_count).
 pub fn enroll(config: &Config, user: &str, label: &str) -> anyhow::Result<(u32, u32)> {
     let store = open_store(config)?;
-    let mut camera = open_camera(config)?;
+    let mut camera = open_camera_context(config)?.camera;
     let mut engine = load_engine(config)?;
 
     // Initialize sealer if encryption is configured
@@ -484,6 +521,91 @@ mod facelock_daemon_auth {
             label: None,
             similarity: best_similarity,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use facelock_camera::FormatInfo;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_config() -> Config {
+        Config::parse(
+            r#"
+[device]
+warmup_frames = 2
+"#,
+        )
+        .unwrap()
+    }
+
+    fn make_device(path: &str, name: &str, fourcc: &str) -> DeviceInfo {
+        DeviceInfo {
+            path: path.to_string(),
+            name: name.to_string(),
+            driver: "uvcvideo".to_string(),
+            capabilities: vec!["VIDEO_CAPTURE".to_string()],
+            formats: vec![FormatInfo {
+                fourcc: fourcc.to_string(),
+                description: "Test".to_string(),
+                sizes: vec![(640, 480)],
+            }],
+        }
+    }
+
+    fn write_quirks_dir(contents: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("facelock-direct-tests-{unique}"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("test.toml"), contents).unwrap();
+        dir
+    }
+
+    #[test]
+    fn auto_detected_device_inherits_quirk_state() {
+        let config = test_config();
+        let device = make_device("/dev/video2", "Logitech BRIO IR", "MJPG");
+        let dir = write_quirks_dir(
+            r#"
+[[quirk]]
+name_pattern = "(?i)brio.*ir"
+force_ir = true
+warmup_frames = 9
+"#,
+        );
+        let mut quirks = QuirksDb::default();
+        quirks.load_dir(&dir);
+
+        let resolved = build_resolved_camera_device(&config, device, &quirks);
+
+        assert_eq!(resolved.device.path.as_deref(), Some("/dev/video2"));
+        assert!(resolved.device_is_ir);
+        assert_eq!(
+            resolved.device_quirk.as_ref().and_then(|q| q.warmup_frames),
+            Some(9)
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unmatched_device_keeps_default_warmup_and_non_ir_state() {
+        let config = test_config();
+        let device = make_device("/dev/video3", "USB Camera", "MJPG");
+        let quirks = QuirksDb::default();
+
+        let resolved = build_resolved_camera_device(&config, device, &quirks);
+
+        assert_eq!(resolved.device.path.as_deref(), Some("/dev/video3"));
+        assert_eq!(resolved.device.warmup_frames, 2);
+        assert!(!resolved.device_is_ir);
+        assert!(resolved.device_quirk.is_none());
     }
 }
 

@@ -59,11 +59,13 @@ The CLI silently falls back to direct mode when the daemon is not available on D
 | `/etc/facelock/config.toml` | root:root | 644 | Configuration |
 | `/var/lib/facelock/facelock.db` | root:facelock | 640 | Face embeddings |
 | `/var/lib/facelock/models/` | root:root | 755 | ONNX models |
+| `/var/log/facelock/audit.jsonl` | root:facelock | 640 | Structured audit log |
 | `/var/log/facelock/snapshots/` | root:facelock | 750 | Auth snapshots |
 | `/usr/bin/facelock` | root:root | 755 | CLI binary |
 | `/lib/security/pam_facelock.so` | root:root | 755 | PAM module |
 
-All paths overridable via config. `FACELOCK_CONFIG` env var overrides config location.
+All paths overridable via config. `FACELOCK_CONFIG` is honored for unprivileged processes, but privileged PAM/root auth flows ignore the environment and use either an explicit `--config` path or `/etc/facelock/config.toml`.
+Runtime-created DB sidecars (`-wal`, `-shm`), audit logs, and snapshots are created with explicit restrictive modes. The packaged systemd unit also sets `UMask=0027`.
 
 ## Config Schema
 
@@ -73,11 +75,11 @@ TOML format. All keys optional — camera auto-detected, sensible defaults for e
 
 | Section | Key fields |
 |---------|-----------|
-| `[device]` | `path` (Option), `max_height`, `rotation` |
-| `[recognition]` | `threshold`, `timeout_secs`, `detector_model`, `embedder_model`, `threads`, `execution_provider` |
+| `[device]` | `path` (Option), `max_height`, `rotation`, `warmup_frames`, `dark_threshold`, `dark_pixel_value`, `ir_emitter`, `camera_release_secs` |
+| `[recognition]` | `threshold`, `timeout_secs`, `detector_model`, `detector_sha256`, `embedder_model`, `embedder_sha256`, `threads`, `execution_provider` |
 | `[daemon]` | `mode` (DaemonMode enum), `model_dir`, `idle_timeout_secs` |
 | `[storage]` | `db_path` |
-| `[security]` | `disabled`, `suppress_unknown`, `require_landmark_liveness`, `require_ir`, `require_frame_variance`, `min_auth_frames`, `abort_if_ssh`, `abort_if_lid_closed`, rate_limit sub-section |
+| `[security]` | `disabled`, `suppress_unknown`, `require_landmark_liveness`, `require_ir`, `require_frame_variance`, `min_auth_frames`, `abort_if_ssh`, `abort_if_lid_closed`, `pam_policy`, `rate_limit` |
 | `[notification]` | `mode` (off/terminal/desktop/both), `notify_prompt`, `notify_on_success`, `notify_on_failure` |
 | `[snapshots]` | `mode` (off/all/failure/success), `dir` |
 | `[encryption]` | `method` (none/keyfile/tpm), `key_path`, `sealed_key_path` |
@@ -111,7 +113,14 @@ CREATE TABLE face_embeddings (
     embedding BLOB NOT NULL,  -- 512 x f32 = 2048 bytes (or encrypted blob)
     sealed INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE rate_limit (
+    user TEXT NOT NULL,
+    attempt_time INTEGER NOT NULL
+);
 ```
+
+Only failed authentication attempts are recorded in `rate_limit`. Daemon mode and oneshot mode share the same SQLite-backed window, so daemon restarts do not clear lockout state.
 
 ## IPC Protocol
 
@@ -125,6 +134,12 @@ The daemon registers on the system bus via D-Bus activation.
 
 ### Methods
 `Authenticate`, `Enroll`, `ListModels`, `RemoveModel`, `ClearModels`, `PreviewFrame`, `PreviewDetectFrame`, `ListDevices`, `ReleaseCamera`, `Ping`, `Shutdown`
+
+Method authorization contract:
+- `Authenticate`, `ListModels`, `PreviewDetectFrame`: root or the matching Unix user.
+- `Enroll`, `RemoveModel`, `ClearModels`, `PreviewFrame`, `Shutdown`: root only.
+- `ReleaseCamera`: root or the Unix user that owns the active preview camera session.
+- `ListDevices`, `Ping`: resolve caller UID before replying and rely on the system bus policy for admission control.
 
 ### Response types
 `AuthResult`, `Enrolled`, `Models`, `Removed`, `Frame`, `DetectFrame`, `Devices`, `Ok`, `Error`
@@ -168,3 +183,4 @@ These defaults must not be weakened without security review.
 | ArcFace R100 | `glintr100.onnx` | ~249MB | Optional |
 
 Configurable via `recognition.detector_model` and `recognition.embedder_model`.
+Bundled model filenames are verified against the manifest hash at load time. Custom model files require matching `recognition.detector_sha256` or `recognition.embedder_sha256`.

@@ -1,89 +1,93 @@
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use facelock_store::FaceStore;
 
-/// Per-user authentication rate limiter.
-/// Only failed attempts count against the limit — successful auths don't
-/// consume the budget so normal unlock usage never triggers rate limiting.
+/// Per-user authentication rate limiter backed by the shared SQLite store.
+/// Only failed attempts are recorded, so successful unlocks never consume the
+/// budget and daemon restarts do not clear the window.
 pub struct RateLimiter {
-    failures: HashMap<String, Vec<Instant>>,
     max_failures: u32,
-    window: Duration,
+    window_secs: u64,
 }
 
 impl RateLimiter {
     pub fn new(max_failures: u32, window_secs: u64) -> Self {
         Self {
-            failures: HashMap::new(),
             max_failures,
-            window: Duration::from_secs(window_secs),
+            window_secs,
         }
     }
 
     /// Check if the user is rate-limited. Returns true if auth may proceed.
-    pub fn check(&mut self, user: &str) -> bool {
-        let now = Instant::now();
-        let failures = self.failures.entry(user.to_string()).or_default();
-        failures.retain(|t| now.duration_since(*t) < self.window);
-        failures.len() < self.max_failures as usize
+    pub fn check(&self, store: &FaceStore, user: &str) -> Result<bool, String> {
+        // Stale rows do not affect correctness, but opportunistic cleanup keeps
+        // the shared table bounded over time.
+        let _ = store.cleanup_rate_limit(self.window_secs);
+        store
+            .check_rate_limit(user, self.max_failures, self.window_secs)
+            .map_err(|e| e.to_string())
     }
 
     /// Record a failed authentication attempt for the user.
-    pub fn record_failure(&mut self, user: &str) {
-        let failures = self.failures.entry(user.to_string()).or_default();
-        failures.push(Instant::now());
+    pub fn record_failure(&self, store: &FaceStore, user: &str) -> Result<(), String> {
+        store.record_auth_attempt(user).map_err(|e| e.to_string())?;
+        let _ = store.cleanup_rate_limit(self.window_secs);
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use facelock_store::FaceStore;
+
     use super::*;
 
     #[test]
     fn allows_under_limit() {
-        let mut rl = RateLimiter::new(3, 60);
-        assert!(rl.check("alice"));
-        rl.record_failure("alice");
-        assert!(rl.check("alice"));
-        rl.record_failure("alice");
-        assert!(rl.check("alice"));
+        let store = FaceStore::open_memory().unwrap();
+        let rl = RateLimiter::new(3, 60);
+        assert!(rl.check(&store, "alice").unwrap());
+        rl.record_failure(&store, "alice").unwrap();
+        assert!(rl.check(&store, "alice").unwrap());
+        rl.record_failure(&store, "alice").unwrap();
+        assert!(rl.check(&store, "alice").unwrap());
     }
 
     #[test]
     fn blocks_over_limit() {
-        let mut rl = RateLimiter::new(2, 60);
-        assert!(rl.check("bob"));
-        rl.record_failure("bob");
-        assert!(rl.check("bob"));
-        rl.record_failure("bob");
-        assert!(!rl.check("bob"));
+        let store = FaceStore::open_memory().unwrap();
+        let rl = RateLimiter::new(2, 60);
+        assert!(rl.check(&store, "bob").unwrap());
+        rl.record_failure(&store, "bob").unwrap();
+        assert!(rl.check(&store, "bob").unwrap());
+        rl.record_failure(&store, "bob").unwrap();
+        assert!(!rl.check(&store, "bob").unwrap());
     }
 
     #[test]
     fn success_does_not_count() {
-        let mut rl = RateLimiter::new(2, 60);
-        // Two checks without recording failure — should never block
-        assert!(rl.check("alice"));
-        assert!(rl.check("alice"));
-        assert!(rl.check("alice"));
-        // Now record failures
-        rl.record_failure("alice");
-        rl.record_failure("alice");
-        assert!(!rl.check("alice"));
+        let store = FaceStore::open_memory().unwrap();
+        let rl = RateLimiter::new(2, 60);
+        assert!(rl.check(&store, "alice").unwrap());
+        assert!(rl.check(&store, "alice").unwrap());
+        assert!(rl.check(&store, "alice").unwrap());
+        rl.record_failure(&store, "alice").unwrap();
+        rl.record_failure(&store, "alice").unwrap();
+        assert!(!rl.check(&store, "alice").unwrap());
     }
 
     #[test]
     fn separate_users() {
-        let mut rl = RateLimiter::new(1, 60);
-        assert!(rl.check("alice"));
-        rl.record_failure("alice");
-        assert!(!rl.check("alice"));
-        // Different user is unaffected
-        assert!(rl.check("bob"));
+        let store = FaceStore::open_memory().unwrap();
+        let rl = RateLimiter::new(1, 60);
+        assert!(rl.check(&store, "alice").unwrap());
+        rl.record_failure(&store, "alice").unwrap();
+        assert!(!rl.check(&store, "alice").unwrap());
+        assert!(rl.check(&store, "bob").unwrap());
     }
 
     #[test]
     fn zero_limit_blocks_all() {
-        let mut rl = RateLimiter::new(0, 60);
-        assert!(!rl.check("alice"));
+        let store = FaceStore::open_memory().unwrap();
+        let rl = RateLimiter::new(0, 60);
+        assert!(!rl.check(&store, "alice").unwrap());
     }
 }

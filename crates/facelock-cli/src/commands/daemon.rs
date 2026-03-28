@@ -15,6 +15,7 @@ use facelock_daemon::rate_limit::RateLimiter;
 use facelock_face::FaceEngine;
 use facelock_store::FaceStore;
 use futures_util::StreamExt;
+use nix::unistd::{Group, Uid, User};
 use tracing::{error, info, warn};
 use zbus::{fdo, interface, object_server::SignalEmitter};
 
@@ -64,12 +65,25 @@ fn lock_handler_with_timeout(
     }
 }
 
-/// Verify the D-Bus caller is root.
-/// Used for privileged operations: enroll, remove, clear.
-async fn verify_caller_is_root(
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CallerIdentity {
+    uid: u32,
+    username: Option<String>,
+    in_facelock_group: bool,
+}
+
+impl CallerIdentity {
+    fn display_name(&self) -> String {
+        self.username
+            .clone()
+            .unwrap_or_else(|| format!("UID {}", self.uid))
+    }
+}
+
+async fn resolve_caller_identity(
     hdr: &zbus::message::Header<'_>,
     connection: &zbus::Connection,
-) -> fdo::Result<()> {
+) -> fdo::Result<CallerIdentity> {
     let sender = hdr
         .sender()
         .ok_or_else(|| fdo::Error::Failed("no sender in D-Bus message".into()))?;
@@ -82,86 +96,149 @@ async fn verify_caller_is_root(
         .await
         .map_err(|e| fdo::Error::Failed(format!("failed to get caller UID: {e}")))?;
 
-    if uid != 0 {
-        let caller_name = uid_to_username(uid).unwrap_or_else(|| format!("UID {uid}"));
-        warn!(
-            caller_uid = uid,
-            caller_name = %caller_name,
-            "D-Bus caller not authorized for privileged operation"
-        );
-        return Err(fdo::Error::AccessDenied(format!(
-            "root required (caller: '{caller_name}', UID {uid})"
-        )));
-    }
-
-    Ok(())
+    let username = uid_to_username(uid);
+    Ok(CallerIdentity {
+        uid,
+        in_facelock_group: is_facelock_group_member(uid, username.as_deref()),
+        username,
+    })
 }
 
-/// Verify the D-Bus caller is authorized to act on behalf of `user`.
-/// Root (UID 0) can act on any user. Non-root callers must match `user`.
+fn require_root(caller: &CallerIdentity, operation: &str) -> fdo::Result<()> {
+    if caller.uid == 0 {
+        return Ok(());
+    }
+
+    let caller_name = caller.display_name();
+    warn!(
+        operation = operation,
+        caller_uid = caller.uid,
+        caller_name = %caller_name,
+        "D-Bus caller not authorized for privileged operation"
+    );
+    Err(fdo::Error::AccessDenied(format!(
+        "{operation} requires root (caller: '{caller_name}', UID {})",
+        caller.uid
+    )))
+}
+
+fn require_user_authorized(
+    caller: &CallerIdentity,
+    user: &str,
+    operation: &str,
+) -> fdo::Result<()> {
+    if caller.uid == 0 {
+        return Ok(());
+    }
+
+    let caller_name = caller.username.clone().ok_or_else(|| {
+        fdo::Error::Failed(format!("failed to resolve UID {} to username", caller.uid))
+    })?;
+
+    if caller_name == user {
+        return Ok(());
+    }
+
+    warn!(
+        operation = operation,
+        caller_uid = caller.uid,
+        caller_name = %caller_name,
+        requested_user = %user,
+        "D-Bus caller not authorized to act on behalf of requested user"
+    );
+    Err(fdo::Error::AccessDenied(format!(
+        "{operation} not authorized: caller '{caller_name}' (UID {}) cannot act as '{user}'",
+        caller.uid
+    )))
+}
+
+fn require_camera_owner_or_root(
+    caller: &CallerIdentity,
+    owner_uid: Option<u32>,
+    operation: &str,
+) -> fdo::Result<()> {
+    if caller.uid == 0 {
+        return Ok(());
+    }
+
+    if owner_uid == Some(caller.uid) {
+        return Ok(());
+    }
+
+    let caller_name = caller.display_name();
+    warn!(
+        operation = operation,
+        caller_uid = caller.uid,
+        caller_name = %caller_name,
+        owner_uid,
+        "D-Bus caller does not own the active preview camera session"
+    );
+    Err(fdo::Error::AccessDenied(format!(
+        "{operation} not authorized: caller '{caller_name}' (UID {}) does not own the active preview camera session",
+        caller.uid
+    )))
+}
+
+fn require_facelock_access(caller: &CallerIdentity, operation: &str) -> fdo::Result<()> {
+    if caller.uid == 0 || caller.in_facelock_group {
+        return Ok(());
+    }
+
+    let caller_name = caller.display_name();
+    warn!(
+        operation = operation,
+        caller_uid = caller.uid,
+        caller_name = %caller_name,
+        "D-Bus caller is not in facelock group"
+    );
+    Err(fdo::Error::AccessDenied(format!(
+        "{operation} requires root or facelock group membership (caller: '{caller_name}', UID {})",
+        caller.uid
+    )))
+}
+
+async fn verify_caller_is_root(
+    hdr: &zbus::message::Header<'_>,
+    connection: &zbus::Connection,
+    operation: &str,
+) -> fdo::Result<()> {
+    let caller = resolve_caller_identity(hdr, connection).await?;
+    require_root(&caller, operation)
+}
+
 async fn verify_caller_authorized(
     hdr: &zbus::message::Header<'_>,
     connection: &zbus::Connection,
     user: &str,
+    operation: &str,
 ) -> fdo::Result<()> {
-    let sender = hdr
-        .sender()
-        .ok_or_else(|| fdo::Error::Failed("no sender in D-Bus message".into()))?;
-
-    // Ask the bus daemon for the sender's Unix UID
-    let dbus_proxy = fdo::DBusProxy::new(connection)
-        .await
-        .map_err(|e| fdo::Error::Failed(format!("failed to create DBus proxy: {e}")))?;
-    let uid = dbus_proxy
-        .get_connection_unix_user(sender.as_ref().into())
-        .await
-        .map_err(|e| fdo::Error::Failed(format!("failed to get caller UID: {e}")))?;
-
-    // Root can operate on any user
-    if uid == 0 {
-        return Ok(());
-    }
-
-    // Resolve UID to username
-    let caller_name = uid_to_username(uid)
-        .ok_or_else(|| fdo::Error::Failed(format!("failed to resolve UID {uid} to username")))?;
-
-    if caller_name != user {
-        warn!(
-            caller_uid = uid,
-            caller_name = %caller_name,
-            requested_user = %user,
-            "D-Bus caller not authorized to act on behalf of requested user"
-        );
-        return Err(fdo::Error::AccessDenied(format!(
-            "caller '{caller_name}' (UID {uid}) not authorized to act as '{user}'"
-        )));
-    }
-
-    Ok(())
+    let caller = resolve_caller_identity(hdr, connection).await?;
+    require_user_authorized(&caller, user, operation)
 }
 
-/// Resolve a Unix UID to a username via getpwuid_r.
 fn uid_to_username(uid: u32) -> Option<String> {
-    use std::ffi::CStr;
-    let mut buf = vec![0u8; 4096];
-    let mut passwd = std::mem::MaybeUninit::<libc::passwd>::uninit();
-    let mut result: *mut libc::passwd = std::ptr::null_mut();
-    let ret = unsafe {
-        libc::getpwuid_r(
-            uid,
-            passwd.as_mut_ptr(),
-            buf.as_mut_ptr() as *mut libc::c_char,
-            buf.len(),
-            &mut result,
-        )
+    User::from_uid(Uid::from_raw(uid))
+        .ok()
+        .flatten()
+        .map(|user| user.name)
+}
+
+fn is_facelock_group_member(uid: u32, username: Option<&str>) -> bool {
+    let Some(group) = Group::from_name("facelock").ok().flatten() else {
+        return false;
     };
-    if ret != 0 || result.is_null() {
-        return None;
-    }
-    let passwd = unsafe { passwd.assume_init() };
-    let name = unsafe { CStr::from_ptr(passwd.pw_name) };
-    name.to_str().ok().map(|s| s.to_string())
+
+    let in_primary_group = User::from_uid(Uid::from_raw(uid))
+        .ok()
+        .flatten()
+        .map(|user| user.gid == group.gid)
+        .unwrap_or(false);
+
+    let listed_in_group = username
+        .map(|name| group.mem.iter().any(|member| member == name))
+        .unwrap_or(false);
+
+    in_primary_group || listed_in_group
 }
 
 /// Current time as seconds since an arbitrary epoch (Instant-based).
@@ -179,9 +256,27 @@ struct FacelockService {
     /// Config file mtime when the handler was last built.
     /// Used to detect config changes and reload on next request.
     config_mtime: Arc<Mutex<Option<std::time::SystemTime>>>,
+    /// UID of the caller that currently owns preview camera cleanup rights.
+    camera_owner_uid: Arc<Mutex<Option<u32>>>,
 }
 
 impl FacelockService {
+    fn clear_camera_owner(&self) {
+        if let Ok(mut owner) = self.camera_owner_uid.lock() {
+            *owner = None;
+        }
+    }
+
+    fn set_camera_owner(&self, uid: u32) {
+        if let Ok(mut owner) = self.camera_owner_uid.lock() {
+            *owner = Some(uid);
+        }
+    }
+
+    fn camera_owner_uid(&self) -> Option<u32> {
+        self.camera_owner_uid.lock().ok().and_then(|owner| *owner)
+    }
+
     /// Check if the config file has been modified since the handler was built.
     /// If so, reload config, rebuild the engine/store/handler, and swap it in.
     /// Called at the start of authenticate and enroll — the two methods that
@@ -218,6 +313,7 @@ impl FacelockService {
         if let Ok(mut guard) = self.handler.lock() {
             *guard = new_handler;
         }
+        self.clear_camera_owner();
 
         // Update stored mtime
         if let Ok(mut stored) = self.config_mtime.lock() {
@@ -239,7 +335,8 @@ impl FacelockService {
     ) -> fdo::Result<AuthResult> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
         self.maybe_reload_handler();
-        verify_caller_authorized(&hdr, connection, user).await?;
+        verify_caller_authorized(&hdr, connection, user, "Authenticate").await?;
+        self.clear_camera_owner();
         let handler = self.handler.clone();
         let user = user.to_string();
         let signal_user = user.clone();
@@ -316,7 +413,8 @@ impl FacelockService {
     ) -> fdo::Result<(u32, u32)> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
         self.maybe_reload_handler();
-        verify_caller_is_root(&hdr, connection).await?;
+        verify_caller_is_root(&hdr, connection, "Enroll").await?;
+        self.clear_camera_owner();
         let handler = self.handler.clone();
         let user = user.to_string();
         let label = label.to_string();
@@ -346,7 +444,7 @@ impl FacelockService {
         user: &str,
     ) -> fdo::Result<Vec<ModelInfo>> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
-        verify_caller_authorized(&hdr, connection, user).await?;
+        verify_caller_authorized(&hdr, connection, user, "ListModels").await?;
         let handler = self.handler.clone();
         let user = user.to_string();
         tokio::task::spawn_blocking(move || {
@@ -382,7 +480,7 @@ impl FacelockService {
         model_id: u32,
     ) -> fdo::Result<()> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
-        verify_caller_is_root(&hdr, connection).await?;
+        verify_caller_is_root(&hdr, connection, "RemoveModel").await?;
         let handler = self.handler.clone();
         let user = user.to_string();
         tokio::task::spawn_blocking(move || {
@@ -408,7 +506,7 @@ impl FacelockService {
         user: &str,
     ) -> fdo::Result<()> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
-        verify_caller_is_root(&hdr, connection).await?;
+        verify_caller_is_root(&hdr, connection, "ClearModels").await?;
         let handler = self.handler.clone();
         let user = user.to_string();
         tokio::task::spawn_blocking(move || {
@@ -427,10 +525,16 @@ impl FacelockService {
         .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
     }
 
-    async fn preview_frame(&self) -> fdo::Result<Vec<u8>> {
+    async fn preview_frame(
+        &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] connection: &zbus::Connection,
+    ) -> fdo::Result<Vec<u8>> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
+        let caller = resolve_caller_identity(&hdr, connection).await?;
+        require_root(&caller, "PreviewFrame")?;
         let handler = self.handler.clone();
-        tokio::task::spawn_blocking(move || {
+        let result = tokio::task::spawn_blocking(move || {
             let mut handler = lock_handler_with_timeout(&handler)?;
             let request = DaemonRequest::PreviewFrame;
             let response = handler.handle(request);
@@ -443,7 +547,11 @@ impl FacelockService {
             }
         })
         .await
-        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
+        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?;
+        if result.is_ok() {
+            self.set_camera_owner(caller.uid);
+        }
+        result
     }
 
     async fn preview_detect_frame(
@@ -453,10 +561,11 @@ impl FacelockService {
         user: &str,
     ) -> fdo::Result<(Vec<u8>, Vec<PreviewFaceInfo>)> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
-        verify_caller_authorized(&hdr, connection, user).await?;
+        let caller = resolve_caller_identity(&hdr, connection).await?;
+        require_user_authorized(&caller, user, "PreviewDetectFrame")?;
         let handler = self.handler.clone();
         let user = user.to_string();
-        tokio::task::spawn_blocking(move || {
+        let result = tokio::task::spawn_blocking(move || {
             let mut handler = lock_handler_with_timeout(&handler)?;
             let request = DaemonRequest::PreviewDetectFrame { user };
             let response = handler.handle(request);
@@ -483,11 +592,21 @@ impl FacelockService {
             }
         })
         .await
-        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
+        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?;
+        if result.is_ok() {
+            self.set_camera_owner(caller.uid);
+        }
+        result
     }
 
-    async fn list_devices(&self) -> fdo::Result<Vec<DeviceInfo>> {
+    async fn list_devices(
+        &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] connection: &zbus::Connection,
+    ) -> fdo::Result<Vec<DeviceInfo>> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
+        let caller = resolve_caller_identity(&hdr, connection).await?;
+        require_facelock_access(&caller, "ListDevices")?;
         let handler = self.handler.clone();
         tokio::task::spawn_blocking(move || {
             let mut handler = lock_handler_with_timeout(&handler)?;
@@ -513,10 +632,16 @@ impl FacelockService {
         .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
     }
 
-    async fn release_camera(&self) -> fdo::Result<()> {
+    async fn release_camera(
+        &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] connection: &zbus::Connection,
+    ) -> fdo::Result<()> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
+        let caller = resolve_caller_identity(&hdr, connection).await?;
+        require_camera_owner_or_root(&caller, self.camera_owner_uid(), "ReleaseCamera")?;
         let handler = self.handler.clone();
-        tokio::task::spawn_blocking(move || {
+        let result = tokio::task::spawn_blocking(move || {
             let mut handler = lock_handler_with_timeout(&handler)?;
             let request = DaemonRequest::ReleaseCamera;
             let response = handler.handle(request);
@@ -529,21 +654,41 @@ impl FacelockService {
             }
         })
         .await
-        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
+        .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?;
+        if result.is_ok() {
+            self.clear_camera_owner();
+        }
+        result
     }
 
-    async fn ping(&self) -> fdo::Result<String> {
+    async fn ping(
+        &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] connection: &zbus::Connection,
+    ) -> fdo::Result<String> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
+        let _ = resolve_caller_identity(&hdr, connection).await?;
         Ok("pong".to_string())
     }
 
-    async fn shutdown(&self) -> fdo::Result<()> {
+    async fn shutdown(
+        &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] connection: &zbus::Connection,
+    ) -> fdo::Result<()> {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
+        verify_caller_is_root(&hdr, connection, "Shutdown").await?;
+        self.clear_camera_owner();
         let handler = self.handler.clone();
         tokio::task::spawn_blocking(move || {
             let mut handler = lock_handler_with_timeout(&handler)?;
-            handler.shutdown_requested = true;
-            Ok::<(), fdo::Error>(())
+            match handler.handle(DaemonRequest::Shutdown) {
+                DaemonResponse::Ok => Ok(()),
+                DaemonResponse::Error { message } => Err(fdo::Error::Failed(message)),
+                other => Err(fdo::Error::Failed(format!(
+                    "unexpected response: {other:?}"
+                ))),
+            }
         })
         .await
         .map_err(|e| fdo::Error::Failed(format!("task join error: {e}")))?
@@ -746,6 +891,7 @@ async fn run_dbus_server(
         handler: handler.clone(),
         last_activity: last_activity.clone(),
         config_mtime: Arc::new(Mutex::new(startup_config_mtime)),
+        camera_owner_uid: Arc::new(Mutex::new(None)),
     };
 
     let _connection = zbus::connection::Builder::system()?
@@ -884,9 +1030,81 @@ async fn poll_shutdown(
 mod tests {
     use super::*;
 
+    fn caller(uid: u32, username: Option<&str>) -> CallerIdentity {
+        CallerIdentity {
+            uid,
+            in_facelock_group: false,
+            username: username.map(str::to_string),
+        }
+    }
+
+    fn facelock_caller(uid: u32, username: Option<&str>) -> CallerIdentity {
+        CallerIdentity {
+            uid,
+            in_facelock_group: true,
+            username: username.map(str::to_string),
+        }
+    }
+
     #[test]
     fn bus_name_constants() {
         assert_eq!(BUS_NAME, "org.facelock.Daemon");
         assert_eq!(OBJECT_PATH, "/org/facelock/Daemon");
+    }
+
+    #[test]
+    fn root_is_allowed_for_privileged_operations() {
+        assert!(require_root(&caller(0, Some("root")), "Shutdown").is_ok());
+    }
+
+    #[test]
+    fn same_user_is_allowed_for_user_scoped_methods() {
+        assert!(
+            require_user_authorized(&caller(1000, Some("alice")), "alice", "Authenticate").is_ok()
+        );
+    }
+
+    #[test]
+    fn different_user_is_denied_for_user_scoped_methods() {
+        let err = require_user_authorized(&caller(1000, Some("alice")), "bob", "Authenticate")
+            .unwrap_err();
+        assert!(matches!(err, fdo::Error::AccessDenied(_)));
+    }
+
+    #[test]
+    fn facelock_group_member_can_access_group_scoped_methods() {
+        assert!(
+            require_facelock_access(&facelock_caller(1000, Some("alice")), "ListDevices").is_ok()
+        );
+    }
+
+    #[test]
+    fn non_member_cannot_access_group_scoped_methods() {
+        let err = require_facelock_access(&caller(1000, Some("alice")), "ListDevices").unwrap_err();
+        assert!(matches!(err, fdo::Error::AccessDenied(_)));
+    }
+
+    #[test]
+    fn preview_owner_can_release_camera() {
+        assert!(
+            require_camera_owner_or_root(&caller(1000, Some("alice")), Some(1000), "ReleaseCamera")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn root_can_release_camera() {
+        assert!(
+            require_camera_owner_or_root(&caller(0, Some("root")), Some(1000), "ReleaseCamera")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn non_owner_cannot_release_camera() {
+        let err =
+            require_camera_owner_or_root(&caller(1001, Some("bob")), Some(1000), "ReleaseCamera")
+                .unwrap_err();
+        assert!(matches!(err, fdo::Error::AccessDenied(_)));
     }
 }

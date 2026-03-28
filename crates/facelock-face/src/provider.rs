@@ -83,6 +83,13 @@ fn load_ort() -> std::result::Result<(), String> {
     }
 }
 
+/// Ensure the ONNX Runtime shared library is loaded before any session builders
+/// are created. Some ORT builds can deadlock if session construction re-enters
+/// runtime initialization.
+pub(crate) fn ensure_runtime_loaded() -> std::result::Result<(), String> {
+    load_ort()
+}
+
 /// Register an execution provider on the session builder based on config.
 ///
 /// All providers load the ONNX Runtime shared library at runtime.

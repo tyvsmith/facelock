@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::params;
 
 use facelock_core::error::{FacelockError, Result};
+use facelock_core::fs_security::ensure_mode;
 use facelock_core::types::{FaceEmbedding, FaceModelInfo};
 
 use crate::migrations::run_migrations;
@@ -23,6 +24,7 @@ impl FaceStore {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .map_err(map_err)?;
         run_migrations(&conn)?;
+        secure_database_files(db_path)?;
         Ok(Self { conn })
     }
 
@@ -350,7 +352,7 @@ impl FaceStore {
         Ok(results)
     }
 
-    /// Record an authentication attempt for rate limiting.
+    /// Record a failed authentication attempt for rate limiting.
     /// Inserts the current unix timestamp for the given user.
     pub fn record_auth_attempt(&self, user: &str) -> Result<()> {
         let now = SystemTime::now()
@@ -449,6 +451,23 @@ impl FaceStore {
             .map_err(map_err)?;
         Ok(count > 0)
     }
+}
+
+fn secure_database_files(db_path: &Path) -> Result<()> {
+    for path in [
+        db_path.to_path_buf(),
+        db_path.with_extension("db-wal"),
+        db_path.with_extension("db-shm"),
+    ] {
+        ensure_mode(&path, 0o640).map_err(|e| {
+            FacelockError::Storage(format!(
+                "failed to secure database file {}: {e}",
+                path.display()
+            ))
+        })?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -777,6 +796,29 @@ mod tests {
         let store = FaceStore::open_memory().unwrap();
         // With max_attempts=0, even zero attempts should block
         assert!(!store.check_rate_limit("alice", 0, 60).unwrap());
+    }
+
+    #[test]
+    fn test_rate_limit_persists_across_reopen() {
+        let db_path = std::env::temp_dir().join(format!(
+            "facelock-rate-limit-{}-{}.db",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        let store = FaceStore::open(&db_path).unwrap();
+        store.record_auth_attempt("alice").unwrap();
+        drop(store);
+
+        let reopened = FaceStore::open(&db_path).unwrap();
+        assert!(!reopened.check_rate_limit("alice", 1, 60).unwrap());
+
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
     }
 
     #[test]

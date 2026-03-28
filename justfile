@@ -121,17 +121,29 @@ install-files:
 
     # systemd unit
     install -Dm644 systemd/facelock-daemon.service /usr/lib/systemd/system/facelock-daemon.service
+    if [ -f /etc/systemd/system/facelock-daemon.service ] && \
+       grep -q 'ExecStart=/usr/bin/facelock daemon' /etc/systemd/system/facelock-daemon.service; then
+        install -Dm644 systemd/facelock-daemon.service /etc/systemd/system/facelock-daemon.service
+    fi
 
     # D-Bus policy and activation
     install -Dm644 dbus/org.facelock.Daemon.conf /usr/share/dbus-1/system.d/org.facelock.Daemon.conf
     install -Dm644 dbus/org.facelock.Daemon.service /usr/share/dbus-1/system-services/org.facelock.Daemon.service
+    if [ -f /etc/dbus-1/system.d/org.facelock.Daemon.conf ] && \
+       grep -q 'org.facelock.Daemon' /etc/dbus-1/system.d/org.facelock.Daemon.conf; then
+        install -Dm644 dbus/org.facelock.Daemon.conf /etc/dbus-1/system.d/org.facelock.Daemon.conf
+    fi
+    if [ -f /etc/dbus-1/system-services/org.facelock.Daemon.service ] && \
+       grep -q 'org.facelock.Daemon' /etc/dbus-1/system-services/org.facelock.Daemon.service; then
+        install -Dm644 dbus/org.facelock.Daemon.service /etc/dbus-1/system-services/org.facelock.Daemon.service
+    fi
 
     # Polkit agent binary (optional, do NOT install autostart — agent is not production-ready
     # and will steal polkit auth from the DE's agent, causing all privilege prompts to hang)
     [ -f target/release/facelock-polkit-agent ] && install -Dm755 target/release/facelock-polkit-agent /usr/bin/facelock-polkit-agent || true
 
     # Directories
-    install -dm770 -o root -g facelock /var/lib/facelock
+    install -dm750 -o root -g facelock /var/lib/facelock
     install -dm755 -o root -g root /var/lib/facelock/models
     install -dm750 -o root -g facelock /var/log/facelock
     install -dm750 -o root -g facelock /var/log/facelock/snapshots
@@ -146,8 +158,17 @@ install-files:
     fi
 
     # Fix permissions on existing data
+    [ -d /etc/facelock ] && chown root:root /etc/facelock && chmod 755 /etc/facelock || true
+    [ -f /etc/facelock/config.toml ] && chown root:root /etc/facelock/config.toml && chmod 644 /etc/facelock/config.toml || true
+    [ -f /etc/facelock/config.toml.default ] && chown root:root /etc/facelock/config.toml.default && chmod 644 /etc/facelock/config.toml.default || true
+    [ -d /var/lib/facelock ] && chown root:facelock /var/lib/facelock && chmod 750 /var/lib/facelock || true
+    [ -d /var/lib/facelock/models ] && chown root:root /var/lib/facelock/models && chmod 755 /var/lib/facelock/models || true
+    [ -d /var/log/facelock ] && chown root:facelock /var/log/facelock && chmod 750 /var/log/facelock || true
+    [ -d /var/log/facelock/snapshots ] && chown root:facelock /var/log/facelock/snapshots && chmod 750 /var/log/facelock/snapshots || true
     [ -d /var/lib/facelock/models ] && chmod 644 /var/lib/facelock/models/*.onnx 2>/dev/null || true
     [ -f /var/lib/facelock/facelock.db ] && chown root:facelock /var/lib/facelock/facelock.db && chmod 640 /var/lib/facelock/facelock.db || true
+    [ -f /var/lib/facelock/facelock.db-wal ] && chown root:facelock /var/lib/facelock/facelock.db-wal && chmod 640 /var/lib/facelock/facelock.db-wal || true
+    [ -f /var/lib/facelock/facelock.db-shm ] && chown root:facelock /var/lib/facelock/facelock.db-shm && chmod 640 /var/lib/facelock/facelock.db-shm || true
 
     echo ""
     echo ""

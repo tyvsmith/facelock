@@ -1,5 +1,9 @@
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use facelock_core::config::Config;
 use facelock_core::ipc::{DaemonRequest, DaemonResponse};
+use facelock_core::types::MatchResult;
 use facelock_store::FaceStore;
 use facelock_test_support::fixtures;
 use facelock_test_support::{MockCamera, MockFaceEngine};
@@ -27,6 +31,25 @@ use facelock_test_support::{MockCamera, MockFaceEngine};
 fn test_config() -> Config {
     let toml = fixtures::test_config_toml("/tmp/facelock-test-integ.db");
     Config::parse(&toml).unwrap()
+}
+
+fn temp_db_path(test_name: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "facelock-{test_name}-{}-{unique}.db",
+        std::process::id()
+    ))
+}
+
+fn cleanup_db(path: &Path) {
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(path.with_extension("db-wal"));
+    let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+    let _ = std::fs::remove_file(format!("{}-wal", path.display()));
 }
 
 #[test]
@@ -215,4 +238,81 @@ fn warmup_frames_zero_skips_discard() {
         !matches!(resp, DaemonResponse::Error { .. }),
         "expected successful preview with zero warmup, got: {resp:?}"
     );
+}
+
+#[test]
+fn failed_auth_rate_limit_persists_across_handler_restart() {
+    use facelock_daemon::handler::Handler;
+    use facelock_daemon::rate_limit::RateLimiter;
+
+    let db_path = temp_db_path("rate-limit-persist");
+    cleanup_db(&db_path);
+
+    let db_path_str = db_path.to_string_lossy().into_owned();
+    let mut config = Config::parse(&fixtures::test_config_toml(&db_path_str)).unwrap();
+    config.recognition.timeout_secs = 0;
+    config.security.rate_limit.max_attempts = 1;
+    config.security.require_frame_variance = false;
+    config.security.require_landmark_liveness = false;
+
+    {
+        let store = FaceStore::open(&db_path).unwrap();
+        store
+            .add_model("testuser", "front", &fixtures::known_embedding(0), "")
+            .unwrap();
+    }
+
+    let factory1: Box<
+        dyn Fn(&facelock_core::config::Config) -> Result<MockCamera, String> + Send + Sync,
+    > = Box::new(move |_cfg| Ok(MockCamera::bright(64, 64, 1)));
+
+    let mut first_handler = Handler::new(
+        config.clone(),
+        MockFaceEngine::no_faces(),
+        FaceStore::open(&db_path).unwrap(),
+        RateLimiter::new(
+            config.security.rate_limit.max_attempts,
+            config.security.rate_limit.window_secs,
+        ),
+        false,
+        Some(factory1),
+        None,
+    )
+    .unwrap();
+
+    let first = first_handler.handle(DaemonRequest::Authenticate {
+        user: "testuser".into(),
+    });
+    assert!(matches!(
+        first,
+        DaemonResponse::AuthResult(MatchResult { matched: false, .. })
+    ));
+
+    let factory2: Box<
+        dyn Fn(&facelock_core::config::Config) -> Result<MockCamera, String> + Send + Sync,
+    > = Box::new(move |_cfg| Ok(MockCamera::bright(64, 64, 1)));
+
+    let mut restarted_handler = Handler::new(
+        config.clone(),
+        MockFaceEngine::no_faces(),
+        FaceStore::open(&db_path).unwrap(),
+        RateLimiter::new(
+            config.security.rate_limit.max_attempts,
+            config.security.rate_limit.window_secs,
+        ),
+        false,
+        Some(factory2),
+        None,
+    )
+    .unwrap();
+
+    let second = restarted_handler.handle(DaemonRequest::Authenticate {
+        user: "testuser".into(),
+    });
+    assert!(matches!(
+        second,
+        DaemonResponse::Error { ref message } if message.contains("rate limited")
+    ));
+
+    cleanup_db(&db_path);
 }

@@ -4,6 +4,7 @@ use std::time::Instant;
 use facelock_camera::capture::is_dark_with_config;
 use facelock_camera::preprocess::check_ir_texture;
 use facelock_core::config::{Config, SnapshotConfig};
+use facelock_core::fs_security::{ensure_dir, ensure_private_dir, write_file};
 use facelock_core::ipc::DaemonResponse;
 use facelock_core::traits::{CameraSource, FaceProcessor};
 use facelock_core::types::{
@@ -12,6 +13,7 @@ use facelock_core::types::{
 };
 use facelock_store::FaceStore;
 use image::codecs::jpeg::JpegEncoder;
+use nix::unistd::Uid;
 use tracing::{debug, info, warn};
 
 use crate::audit::{self, AuditEntry};
@@ -24,7 +26,7 @@ pub fn pre_check(
     config: &Config,
     store: &FaceStore,
     user: &str,
-    rate_limiter: &mut RateLimiter,
+    rate_limiter: &RateLimiter,
     device_is_ir: bool,
 ) -> Option<DaemonResponse> {
     if config.security.disabled {
@@ -72,11 +74,20 @@ pub fn pre_check(
         }));
     }
 
-    if !rate_limiter.check(user) {
-        warn!(user, "rate limited");
-        return Some(DaemonResponse::Error {
-            message: "rate limited".into(),
-        });
+    match rate_limiter.check(store, user) {
+        Ok(true) => {}
+        Ok(false) => {
+            warn!(user, "rate limited");
+            return Some(DaemonResponse::Error {
+                message: "rate limited".into(),
+            });
+        }
+        Err(e) => {
+            warn!(user, error = %e, "rate limit check failed");
+            return Some(DaemonResponse::Error {
+                message: format!("rate limit check failed: {e}"),
+            });
+        }
     }
 
     if config.security.require_ir && !device_is_ir {
@@ -148,8 +159,13 @@ pub fn authenticate_with_embeddings<C: CameraSource, E: FaceProcessor>(
 /// Failures are logged but never propagate — snapshots must not block auth.
 fn save_snapshot(snapshot_config: &SnapshotConfig, user: &str, similarity: f32, frame: &Frame) {
     let dir = Path::new(&snapshot_config.dir);
-    if let Err(e) = std::fs::create_dir_all(dir) {
-        warn!(dir = %dir.display(), error = %e, "failed to create snapshot directory");
+    let ensure_snapshot_dir = if Uid::current().is_root() {
+        ensure_private_dir(dir, 0o750)
+    } else {
+        ensure_dir(dir, 0o750)
+    };
+    if let Err(e) = ensure_snapshot_dir {
+        warn!(dir = %dir.display(), error = %e, "failed to secure snapshot directory");
         return;
     }
 
@@ -172,7 +188,7 @@ fn save_snapshot(snapshot_config: &SnapshotConfig, user: &str, similarity: f32, 
         return;
     }
 
-    if let Err(e) = std::fs::write(&path, &buf) {
+    if let Err(e) = write_file(&path, &buf, 0o640) {
         warn!(path = %path.display(), error = %e, "failed to write snapshot");
         return;
     }

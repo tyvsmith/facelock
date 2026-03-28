@@ -1,9 +1,10 @@
-use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use facelock_core::config::AuditConfig;
+use facelock_core::fs_security::{ensure_dir, ensure_private_dir, open_append_file};
+use nix::unistd::Uid;
 use serde::Serialize;
 use tracing::{debug, warn};
 
@@ -47,8 +48,16 @@ pub fn write_audit_entry(config: &AuditConfig, entry: &AuditEntry) {
 
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            warn!("failed to create audit log directory: {e}");
+        let ensure_parent = if Uid::current().is_root() {
+            ensure_private_dir(parent, 0o750)
+        } else {
+            ensure_dir(parent, 0o750)
+        };
+        if let Err(e) = ensure_parent {
+            warn!(
+                "failed to secure audit log directory {}: {e}",
+                parent.display()
+            );
             return;
         }
     }
@@ -70,7 +79,7 @@ pub fn write_audit_entry(config: &AuditConfig, entry: &AuditEntry) {
         }
     };
 
-    match OpenOptions::new().create(true).append(true).open(path) {
+    match open_append_file(path, 0o640) {
         Ok(mut file) => {
             if let Err(e) = writeln!(file, "{line}") {
                 warn!("failed to write audit entry: {e}");

@@ -52,6 +52,15 @@ in
 
     # Configuration file
     environment.etc."facelock/config.toml".source = configFile;
+    environment.etc."dbus-1/system.d/org.facelock.Daemon.conf".source =
+      "${facelockPackage}/share/dbus-1/system.d/org.facelock.Daemon.conf";
+    environment.etc."dbus-1/system-services/org.facelock.Daemon.service".text = ''
+      [D-BUS Service]
+      Name=org.facelock.Daemon
+      Exec=${facelockPackage}/bin/facelock daemon
+      User=root
+      SystemdService=facelock-daemon.service
+    '';
 
     # Create facelock group
     users.groups.facelock = { };
@@ -60,14 +69,29 @@ in
     systemd.services.facelock-daemon = {
       description = "Facelock Face Authentication Daemon";
       after = [ "local-fs.target" ];
+      wantedBy = [ "multi-user.target" ];
       serviceConfig = {
-        Type = "simple";
+        Type = "dbus";
+        BusName = "org.facelock.Daemon";
         ExecStart = "${facelockPackage}/bin/facelock daemon";
         StandardOutput = "journal";
         StandardError = "journal";
         Restart = "on-failure";
         RestartSec = 3;
         LimitNOFILE = 1024;
+        UMask = "0027";
+        ProtectSystem = "strict";
+        InaccessiblePaths = [ "/home" "/root" ];
+        ReadWritePaths = [ "/var/lib/facelock" "/var/log/facelock" ];
+        PrivateTmp = true;
+        NoNewPrivileges = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        RestrictNamespaces = true;
+        LockPersonality = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
       };
     };
 
