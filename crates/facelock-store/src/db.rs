@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::params;
@@ -456,8 +457,8 @@ impl FaceStore {
 fn secure_database_files(db_path: &Path) -> Result<()> {
     for path in [
         db_path.to_path_buf(),
-        db_path.with_extension("db-wal"),
-        db_path.with_extension("db-shm"),
+        sqlite_sidecar_path(db_path, "-wal"),
+        sqlite_sidecar_path(db_path, "-shm"),
     ] {
         ensure_mode(&path, 0o640).map_err(|e| {
             FacelockError::Storage(format!(
@@ -470,9 +471,18 @@ fn secure_database_files(db_path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn sqlite_sidecar_path(db_path: &Path, suffix: &str) -> PathBuf {
+    let mut path = OsString::from(db_path.as_os_str());
+    path.push(suffix);
+    PathBuf::from(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     fn test_embedding() -> FaceEmbedding {
         let mut e = [0.0f32; 512];
@@ -817,8 +827,50 @@ mod tests {
         assert!(!reopened.check_rate_limit("alice", 1, 60).unwrap());
 
         let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
-        let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+        let _ = std::fs::remove_file(sqlite_sidecar_path(&db_path, "-wal"));
+        let _ = std::fs::remove_file(sqlite_sidecar_path(&db_path, "-shm"));
+    }
+
+    #[test]
+    fn test_sqlite_sidecar_paths_append_to_full_filename() {
+        assert_eq!(
+            sqlite_sidecar_path(Path::new("/tmp/facelock.sqlite"), "-wal"),
+            PathBuf::from("/tmp/facelock.sqlite-wal")
+        );
+        assert_eq!(
+            sqlite_sidecar_path(Path::new("/tmp/facelock"), "-shm"),
+            PathBuf::from("/tmp/facelock-shm")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_secure_database_files_secures_real_sqlite_sidecars() {
+        let db_path = std::env::temp_dir().join(format!(
+            "facelock-sidecars-{}-{}.sqlite",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let wal_path = sqlite_sidecar_path(&db_path, "-wal");
+        let shm_path = sqlite_sidecar_path(&db_path, "-shm");
+
+        std::fs::write(&db_path, b"db").unwrap();
+        std::fs::write(&wal_path, b"wal").unwrap();
+        std::fs::write(&shm_path, b"shm").unwrap();
+
+        secure_database_files(&db_path).unwrap();
+
+        for path in [&db_path, &wal_path, &shm_path] {
+            let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o640, "unexpected mode for {}", path.display());
+        }
+
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&wal_path);
+        let _ = std::fs::remove_file(&shm_path);
     }
 
     #[test]

@@ -579,7 +579,7 @@ impl Config {
             && !is_sha256_hex(sha256)
         {
             return Err(ConfigError::Validation(format!(
-                "recognition.detector_sha256 must be a 64-character lowercase hex SHA256, got {}",
+                "recognition.detector_sha256 must be a 64-character hex SHA256, got {}",
                 sha256
             )));
         }
@@ -587,7 +587,7 @@ impl Config {
             && !is_sha256_hex(sha256)
         {
             return Err(ConfigError::Validation(format!(
-                "recognition.embedder_sha256 must be a 64-character lowercase hex SHA256, got {}",
+                "recognition.embedder_sha256 must be a 64-character hex SHA256, got {}",
                 sha256
             )));
         }
@@ -779,6 +779,35 @@ embedder_sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
             config.recognition.embedder_sha256.as_deref(),
             Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         );
+    }
+
+    #[test]
+    fn recognition_sha256_fields_accept_uppercase_hex() {
+        let toml = r#"
+[device]
+path = "/dev/video0"
+[recognition]
+detector_sha256 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+"#;
+        let config = Config::parse(toml).unwrap();
+        assert_eq!(
+            config.recognition.detector_sha256.as_deref(),
+            Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+        );
+    }
+
+    #[test]
+    fn recognition_sha256_validation_message_matches_allowed_format() {
+        let toml = r#"
+[device]
+path = "/dev/video0"
+[recognition]
+detector_sha256 = "not-a-sha256"
+"#;
+        let err = Config::parse(toml).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("64-character hex SHA256"));
+        assert!(!msg.contains("lowercase"));
     }
 
     #[test]
