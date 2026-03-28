@@ -37,11 +37,13 @@ run_test_contains() {
     local pattern="$3"
 
     echo -n "TEST: $name ... "
+    set +o pipefail
     if eval "$cmd" > /tmp/test-output 2>&1; then
         result=0
     else
         result=$?
     fi
+    set -o pipefail
 
     if [ "$result" -eq 0 ] && grep -q -- "$pattern" /tmp/test-output; then
         echo "PASS"
