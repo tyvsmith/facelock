@@ -1779,11 +1779,21 @@ account include   system-login
         std::fs::create_dir_all(&dir).unwrap();
         let config_path = dir.join("config.toml");
 
-        unsafe { std::env::set_var("FACELOCK_CONFIG", config_path.display().to_string()) };
+        struct ProcessConfigOverrideGuard;
+
+        impl Drop for ProcessConfigOverrideGuard {
+            fn drop(&mut self) {
+                facelock_core::paths::clear_process_config_override();
+            }
+        }
+
+        facelock_core::paths::clear_process_config_override();
+        facelock_core::paths::set_process_config_override(config_path.clone());
+        let _override_guard = ProcessConfigOverrideGuard;
 
         // Scenario 1: appends [recognition] section when absent
         std::fs::write(&config_path, "[device]\npath = \"/dev/video0\"\n").unwrap();
-        let mut config = Config::load().unwrap();
+        let mut config = Config::load_from(&config_path).unwrap();
         config.recognition.detector_model = "det_10g.onnx".to_string();
         config.recognition.embedder_model = "glintr100.onnx".to_string();
         update_config_models(&config).unwrap();
@@ -1805,7 +1815,7 @@ account include   system-login
             "[device]\npath = \"/dev/video0\"\n\n[recognition]\ndetector_model = \"scrfd_2.5g_bnkps.onnx\"\nembedder_model = \"w600k_r50.onnx\"\nthreshold = 0.80\n",
         )
         .unwrap();
-        let mut config = Config::load().unwrap();
+        let mut config = Config::load_from(&config_path).unwrap();
         config.recognition.detector_model = "det_10g.onnx".to_string();
         config.recognition.embedder_model = "glintr100.onnx".to_string();
         update_config_models(&config).unwrap();
@@ -1829,7 +1839,7 @@ account include   system-login
             "[device]\npath = \"/dev/video0\"\n\n[recognition]\nthreshold = 0.75\n",
         )
         .unwrap();
-        let mut config = Config::load().unwrap();
+        let mut config = Config::load_from(&config_path).unwrap();
         config.recognition.detector_model = "det_10g.onnx".to_string();
         config.recognition.embedder_model = "glintr100.onnx".to_string();
         update_config_models(&config).unwrap();
@@ -1845,7 +1855,6 @@ account include   system-login
         ));
         assert!(result.contains("threshold = 0.75"));
 
-        unsafe { std::env::remove_var("FACELOCK_CONFIG") };
         std::fs::remove_dir_all(&dir).ok();
     }
 }
