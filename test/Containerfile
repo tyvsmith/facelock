@@ -1,13 +1,4 @@
-# Stage 1: Build
-FROM archlinux:latest AS builder
-
-RUN pacman -Syu --noconfirm rust clang base-devel v4l-utils libxkbcommon wayland pam tpm2-tss && pacman -Scc --noconfirm
-
-COPY . /build
-WORKDIR /build
-RUN cargo build --release --workspace
-
-# Stage 2: Test image
+# Single-stage test image — uses host-built release binaries (from `just build-release`)
 FROM archlinux:latest
 
 # Install dependencies
@@ -22,18 +13,25 @@ RUN curl -sL https://sourceforge.net/projects/pamtester/files/pamtester/0.1.2/pa
 # Create test user
 RUN useradd -m testuser && echo "testuser:test" | chpasswd
 
-# Copy repo with pre-built binaries from builder stage
-COPY --from=builder /build/target/release/facelock /build/target/release/facelock
-COPY --from=builder /build/target/release/libpam_facelock.so /build/target/release/libpam_facelock.so
-COPY . /build
+# Copy host-built release binaries
+COPY target/release/facelock /build/target/release/facelock
+COPY target/release/libpam_facelock.so /build/target/release/libpam_facelock.so
+
+# Copy project files needed for install
+COPY justfile /build/justfile
+COPY config/ /build/config/
+COPY systemd/ /build/systemd/
+COPY dbus/ /build/dbus/
+COPY dist/ /build/dist/
+COPY models/ /build/models/
 WORKDIR /build
 
 # Install using the real install path
 RUN just install-files
 
 # Copy models to the configured model_dir for integration tests
-RUN cp models/*.onnx /var/lib/facelock/models/ 2>/dev/null || true
-RUN cp models/manifest.toml /var/lib/facelock/models/ 2>/dev/null || true
+RUN cp models/*.onnx /var/lib/facelock/models/ 2>/dev/null || true && \
+    cp models/manifest.toml /var/lib/facelock/models/ 2>/dev/null || true
 
 # Override config for container testing
 COPY test/container-config.toml /etc/facelock/config.toml

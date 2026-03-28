@@ -33,23 +33,18 @@ fmt:
 # Run all checks (test + lint + format)
 check: test lint fmt-check
 
+# Build the PAM test container image (uses host-built release binaries)
+_build-test-container: build-release
+    podman build -t facelock-pam-test -f test/Containerfile .
+
 # Run container PAM smoke tests
-test-pam: build-release
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ -f test/Containerfile ]; then
-        podman build -t facelock-pam-test -f test/Containerfile .
-        podman run --rm facelock-pam-test
-    else
-        echo "No test/Containerfile found"
-        exit 1
-    fi
+test-pam: _build-test-container
+    podman run --rm facelock-pam-test
 
 # Run end-to-end integration tests in container (requires camera)
-test-integration: build-release
+test-integration: _build-test-container
     #!/usr/bin/env bash
     set -euo pipefail
-    podman build -t facelock-pam-test -f test/Containerfile .
     devices=""
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
@@ -57,10 +52,9 @@ test-integration: build-release
     podman run --rm $devices facelock-pam-test /run-integration-tests.sh
 
 # Run oneshot (daemonless) end-to-end tests in container (requires camera)
-test-oneshot: build-release
+test-oneshot: _build-test-container
     #!/usr/bin/env bash
     set -euo pipefail
-    podman build -t facelock-pam-test -f test/Containerfile .
     devices=""
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
@@ -68,10 +62,9 @@ test-oneshot: build-release
     podman run --rm $devices facelock-pam-test /run-oneshot-tests.sh
 
 # Open interactive shell in PAM test container (requires camera)
-test-shell: build-release
+test-shell: _build-test-container
     #!/usr/bin/env bash
     set -euo pipefail
-    podman build -t facelock-pam-test -f test/Containerfile .
     devices=""
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"

@@ -1,16 +1,15 @@
-FROM fedora:latest AS builder
-
-RUN dnf -y install rust cargo clang-devel pam-devel libv4l-devel systemd-rpm-macros gcc gcc-c++ wayland-devel libxkbcommon-devel tpm2-tss-devel rpm-build && dnf clean all
-
-COPY . /build
-WORKDIR /build
-RUN cargo build --release --workspace
-
+# Single-stage test image — uses host-built release binaries (from `just build-release`)
 FROM fedora:latest
 
-RUN dnf -y install pam dbus rpm-build libxkbcommon python3 systemd binutils glibc && dnf clean all
+RUN dnf -y install pam dbus rpm-build libxkbcommon python3 systemd binutils glibc tpm2-tss && dnf clean all
 
-COPY --from=builder /build /build
+# Copy host-built release binaries and project files
+COPY target/release/facelock /build/target/release/facelock
+COPY target/release/libpam_facelock.so /build/target/release/libpam_facelock.so
+COPY config/ /build/config/
+COPY systemd/ /build/systemd/
+COPY dbus/ /build/dbus/
+COPY dist/ /build/dist/
 
 RUN install -Dm755 /build/target/release/facelock /usr/bin/facelock && \
     if [ -f /build/target/release/facelock-polkit-agent ]; then install -Dm755 /build/target/release/facelock-polkit-agent /usr/bin/facelock-polkit-agent; fi && \

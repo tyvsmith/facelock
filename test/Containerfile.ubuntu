@@ -1,23 +1,17 @@
-FROM ubuntu:24.04 AS builder
-
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential clang libpam0g-dev libv4l-dev libxkbcommon-dev libwayland-dev libtss2-dev pkg-config ca-certificates curl && rm -rf /var/lib/apt/lists/*
-
-ENV PATH=/root/.cargo/bin:$PATH
-RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
-
-COPY . /build
-WORKDIR /build
-RUN cargo build --release --workspace
-
+# Single-stage test image — uses host-built release binaries (from `just build-release`)
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends libpam-runtime dbus python3 systemd binutils libc6 libxkbcommon0 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libpam-runtime dbus python3 systemd binutils libc6 libxkbcommon0 libtss2-esys-3.0.2-0t64 libtss2-tctildr0t64 && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build /build
+# Copy host-built release binaries and project files
+COPY target/release/facelock /build/target/release/facelock
+COPY target/release/libpam_facelock.so /build/target/release/libpam_facelock.so
+COPY config/ /build/config/
+COPY systemd/ /build/systemd/
+COPY dbus/ /build/dbus/
+COPY dist/ /build/dist/
 
 RUN install -Dm755 /build/target/release/facelock /usr/bin/facelock && \
     if [ -f /build/target/release/facelock-polkit-agent ]; then install -Dm755 /build/target/release/facelock-polkit-agent /usr/bin/facelock-polkit-agent; fi && \
