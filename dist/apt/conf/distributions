@@ -1,0 +1,15 @@
+Origin: tysmith
+Label: Ty Smith Packages
+Codename: main
+Architectures: amd64
+Components: facelock
+Description: Facelock APT repository - TPM enabled (modern Debian/Ubuntu)
+SignWith: default
+
+Origin: tysmith
+Label: Ty Smith Packages
+Codename: legacy
+Architectures: amd64
+Components: facelock
+Description: Facelock APT repository - non-TPM (older Debian/Ubuntu)
+SignWith: default

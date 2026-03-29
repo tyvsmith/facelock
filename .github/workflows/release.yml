@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 env:
   # ONNX Runtime version to bundle in .deb and .rpm packages.
@@ -131,9 +132,9 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Build .deb package
+      - name: Build .deb package (legacy)
         run: |
-          PKG_VERSION="${{ steps.version.outputs.VERSION }}"
+          PKG_VERSION="${{ steps.version.outputs.VERSION }}-1~legacy1"
           PKG_DIR="facelock_${PKG_VERSION}_amd64"
 
           mkdir -p "${PKG_DIR}/DEBIAN"
@@ -155,14 +156,17 @@ jobs:
           Package: facelock
           Version: ${PKG_VERSION}
           Architecture: amd64
-          Maintainer: Facelock Contributors <facelock@example.com>
+          Maintainer: Facelock Contributors <facelock@m.tysmith.me>
           Depends: libpam-runtime, dbus
           Section: admin
           Priority: optional
           Homepage: https://github.com/tyvsmith/facelock
-          Description: Face authentication for Linux PAM
+          Description: Face authentication for Linux PAM (legacy, no TPM)
            Facelock provides Windows Hello-style face authentication for Linux
            using IR anti-spoofing, ONNX inference, and PAM integration.
+           .
+           This is the legacy build without TPM support, for systems that lack
+           libtss2-esys >= 4.1.3 (e.g. Ubuntu 24.04, Debian bookworm).
            .
            After installation, run 'sudo facelock setup' to download face
            recognition models, then 'sudo facelock enroll' to register your face.
@@ -233,6 +237,193 @@ jobs:
           dpkg-deb -c "$DEB_FILE" | grep -q "tmpfiles.d/facelock.conf" && echo "OK: tmpfiles"
           dpkg-deb -c "$DEB_FILE" | grep -q "usr/lib/facelock/libonnxruntime.so" && echo "OK: bundled ORT"
           echo "=== .deb validation passed ==="
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-deb-legacy
+          path: facelock_*.deb
+
+      - name: Upload .deb to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: facelock_*.deb
+
+  build-deb-tpm:
+    name: Build Debian Package (TPM)
+    runs-on: ubuntu-latest
+    needs: [build, download-ort]
+    container:
+      image: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            build-essential \
+            curl \
+            pkg-config \
+            libssl-dev \
+            clang \
+            libv4l-dev \
+            libpam0g-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libtss2-dev \
+            libtss2-tcti-tabrmd-dev
+
+      - name: Detect libtss2-esys package name and version
+        id: tss
+        run: |
+          TSS_PKG=$(dpkg -l 'libtss2-esys*' 2>/dev/null | awk '/^ii/{print $2}' | head -1)
+          TSS_VER=$(dpkg -l 'libtss2-esys*' 2>/dev/null | awk '/^ii/{print $3}' | head -1)
+          if [ -z "$TSS_PKG" ]; then
+            echo "ERROR: No libtss2-esys package found"
+            exit 1
+          fi
+          echo "TSS_PKG=${TSS_PKG}" >> "$GITHUB_OUTPUT"
+          echo "TSS_VER=${TSS_VER}" >> "$GITHUB_OUTPUT"
+          echo "Found: ${TSS_PKG} ${TSS_VER}"
+
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build release with TPM
+        run: |
+          . "$HOME/.cargo/env"
+          cargo build --release --workspace --features tpm
+
+      - name: Download ORT bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: onnxruntime-bundle
+          path: onnxruntime
+
+      - name: Verify ORT bundle exists
+        run: test -s onnxruntime/lib/libonnxruntime.so
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build .deb package (TPM)
+        run: |
+          PKG_VERSION="${{ steps.version.outputs.VERSION }}-1"
+          PKG_DIR="facelock_${PKG_VERSION}_amd64"
+
+          mkdir -p "${PKG_DIR}/DEBIAN"
+          mkdir -p "${PKG_DIR}/usr/bin"
+          mkdir -p "${PKG_DIR}/lib/security"
+          mkdir -p "${PKG_DIR}/etc/facelock"
+          mkdir -p "${PKG_DIR}/usr/lib/systemd/system"
+          mkdir -p "${PKG_DIR}/usr/lib/sysusers.d"
+          mkdir -p "${PKG_DIR}/usr/lib/tmpfiles.d"
+          mkdir -p "${PKG_DIR}/usr/lib/facelock"
+          mkdir -p "${PKG_DIR}/usr/share/pam-configs"
+          mkdir -p "${PKG_DIR}/usr/share/dbus-1/system.d"
+          mkdir -p "${PKG_DIR}/usr/share/dbus-1/system-services"
+          mkdir -p "${PKG_DIR}/usr/share/facelock/quirks.d"
+          mkdir -p "${PKG_DIR}/usr/share/doc/facelock"
+
+          # Control file
+          cat > "${PKG_DIR}/DEBIAN/control" <<CTRL
+          Package: facelock
+          Version: ${PKG_VERSION}
+          Architecture: amd64
+          Maintainer: Facelock Contributors <facelock@m.tysmith.me>
+          Depends: libpam-runtime, dbus, ${{ steps.tss.outputs.TSS_PKG }} (>= ${{ steps.tss.outputs.TSS_VER }})
+          Section: admin
+          Priority: optional
+          Homepage: https://github.com/tyvsmith/facelock
+          Description: Face authentication for Linux PAM (TPM enabled)
+           Facelock provides Windows Hello-style face authentication for Linux
+           using IR anti-spoofing, ONNX inference, and PAM integration.
+           .
+           This build includes TPM 2.0 support for hardware-sealed face
+           template encryption. Requires libtss2-esys >= 4.1.3.
+           .
+           After installation, run 'sudo facelock setup' to download face
+           recognition models, then 'sudo facelock enroll' to register your face.
+          CTRL
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' "${PKG_DIR}/DEBIAN/control"
+
+          # postinst and prerm scripts
+          cp dist/debian/postinst "${PKG_DIR}/DEBIAN/postinst"
+          chmod 755 "${PKG_DIR}/DEBIAN/postinst"
+          cp dist/debian/prerm "${PKG_DIR}/DEBIAN/prerm"
+          chmod 755 "${PKG_DIR}/DEBIAN/prerm"
+
+          # Binaries
+          install -m755 target/release/facelock "${PKG_DIR}/usr/bin/facelock"
+          if [ -f target/release/facelock-polkit-agent ]; then
+            install -m755 target/release/facelock-polkit-agent "${PKG_DIR}/usr/bin/facelock-polkit-agent"
+          fi
+
+          # PAM module
+          install -m755 target/release/libpam_facelock.so "${PKG_DIR}/lib/security/pam_facelock.so"
+
+          # Configuration
+          install -m644 config/facelock.toml "${PKG_DIR}/etc/facelock/config.toml"
+
+          # Quirks database
+          install -m644 -t "${PKG_DIR}/usr/share/facelock/quirks.d/" config/quirks.d/*.toml
+
+          # systemd units
+          install -m644 systemd/facelock-daemon.service "${PKG_DIR}/usr/lib/systemd/system/facelock-daemon.service"
+
+          # D-Bus policy and activation service
+          install -m644 dbus/org.facelock.Daemon.conf "${PKG_DIR}/usr/share/dbus-1/system.d/org.facelock.Daemon.conf"
+          install -m644 dbus/org.facelock.Daemon.service "${PKG_DIR}/usr/share/dbus-1/system-services/org.facelock.Daemon.service"
+
+          # sysusers.d and tmpfiles.d
+          install -m644 dist/facelock.sysusers "${PKG_DIR}/usr/lib/sysusers.d/facelock.conf"
+          install -m644 dist/facelock.tmpfiles "${PKG_DIR}/usr/lib/tmpfiles.d/facelock.conf"
+
+          # pam-auth-update profile
+          if [ -f dist/debian/pam-auth-update ]; then
+            install -m644 dist/debian/pam-auth-update "${PKG_DIR}/usr/share/pam-configs/facelock"
+          fi
+
+          # Bundled CPU ONNX Runtime
+          if [ -f onnxruntime/lib/libonnxruntime.so ]; then
+            install -m755 onnxruntime/lib/libonnxruntime.so "${PKG_DIR}/usr/lib/facelock/libonnxruntime.so"
+          fi
+
+          # Copyright
+          install -m644 dist/debian/copyright "${PKG_DIR}/usr/share/doc/facelock/copyright"
+
+          dpkg-deb --build "${PKG_DIR}"
+
+      - name: Validate .deb contents
+        run: |
+          DEB_FILE=$(ls facelock_*.deb)
+          echo "=== .deb contents ==="
+          dpkg-deb -c "$DEB_FILE"
+          echo ""
+          echo "=== Control info ==="
+          dpkg-deb -I "$DEB_FILE"
+          echo ""
+          echo "=== Checking required files ==="
+          dpkg-deb -c "$DEB_FILE" | grep -q "usr/bin/facelock" && echo "OK: facelock binary"
+          dpkg-deb -c "$DEB_FILE" | grep -q "lib/security/pam_facelock.so" && echo "OK: PAM module"
+          dpkg-deb -c "$DEB_FILE" | grep -q "etc/facelock/config.toml" && echo "OK: config"
+          dpkg-deb -c "$DEB_FILE" | grep -q "dbus-1/system.d/org.facelock.Daemon.conf" && echo "OK: D-Bus policy"
+          dpkg-deb -c "$DEB_FILE" | grep -q "dbus-1/system-services/org.facelock.Daemon.service" && echo "OK: D-Bus activation"
+          dpkg-deb -c "$DEB_FILE" | grep -q "sysusers.d/facelock.conf" && echo "OK: sysusers"
+          dpkg-deb -c "$DEB_FILE" | grep -q "tmpfiles.d/facelock.conf" && echo "OK: tmpfiles"
+          dpkg-deb -c "$DEB_FILE" | grep -q "usr/lib/facelock/libonnxruntime.so" && echo "OK: bundled ORT"
+          echo "=== .deb validation passed ==="
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-deb-tpm
+          path: facelock_*.deb
 
       - name: Upload .deb to release
         uses: softprops/action-gh-release@v2
@@ -357,7 +548,7 @@ jobs:
   publish-aur:
     name: Publish to AUR
     runs-on: ubuntu-latest
-    needs: [build, build-deb, build-rpm]
+    needs: [build, build-deb, build-deb-tpm, build-rpm]
     if: ${{ !contains(github.ref_name, 'alpha') && !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'rc') }}
     steps:
       - uses: actions/checkout@v4
@@ -425,3 +616,115 @@ jobs:
           curl -X POST "$COPR_WEBHOOK_URL" \
             --fail --silent --show-error
           echo "COPR build triggered for ${{ github.ref_name }}"
+
+  publish-apt:
+    name: Publish APT Repository
+    runs-on: ubuntu-latest
+    needs: [build-deb, build-deb-tpm]
+    if: ${{ !contains(github.ref_name, 'alpha') && !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'rc') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y reprepro gnupg
+
+      - name: Download TPM .deb artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-deb-tpm
+          path: debs/tpm
+
+      - name: Download legacy .deb artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-deb-legacy
+          path: debs/legacy
+
+      - name: Import GPG signing key and preset passphrase
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+        run: |
+          if [ -z "$APT_GPG_PRIVATE_KEY" ]; then
+            echo "APT_GPG_PRIVATE_KEY secret not configured. Skipping APT publish."
+            echo "See docs/releasing.md for setup instructions."
+            exit 1
+          fi
+
+          # Configure GPG agent for non-interactive signing
+          mkdir -p ~/.gnupg
+          chmod 700 ~/.gnupg
+          echo "allow-preset-passphrase" >> ~/.gnupg/gpg-agent.conf
+          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+          gpgconf --kill gpg-agent
+          gpg-agent --daemon
+
+          # Import key
+          echo "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
+
+          # Trust the imported key ultimately
+          KEY_FPR=$(gpg --list-keys --with-colons | awk -F: '/^pub/{found=1} found && /^fpr/{print $10; exit}')
+          echo "${KEY_FPR}:6:" | gpg --import-ownertrust
+
+          # Preset passphrase into gpg-agent so reprepro can sign non-interactively
+          KEY_GRIP=$(gpg --list-keys --with-keygrip --with-colons | awk -F: '/^grp/{print $10; exit}')
+          /usr/lib/gnupg/gpg-preset-passphrase --preset --passphrase "${APT_GPG_PASSPHRASE}" "${KEY_GRIP}"
+
+          echo "GPG key imported and passphrase preset: ${KEY_FPR}"
+
+      - name: Build APT repository with reprepro
+        run: |
+          set -euo pipefail
+
+          # Set up reprepro base directory
+          REPO_DIR="$(pwd)/apt-repo"
+          mkdir -p "${REPO_DIR}/conf"
+          cp dist/apt/conf/distributions "${REPO_DIR}/conf/distributions"
+
+          # Add TPM .deb to 'main' suite
+          TPM_DEB=$(ls debs/tpm/facelock_*.deb)
+          echo "Adding TPM .deb to main: ${TPM_DEB}"
+          reprepro -b "${REPO_DIR}" includedeb main "${TPM_DEB}"
+
+          # Add legacy .deb to 'legacy' suite
+          LEGACY_DEB=$(ls debs/legacy/facelock_*.deb)
+          echo "Adding legacy .deb to legacy: ${LEGACY_DEB}"
+          reprepro -b "${REPO_DIR}" includedeb legacy "${LEGACY_DEB}"
+
+          echo "=== APT repo structure ==="
+          find "${REPO_DIR}" -type f | sort
+          echo ""
+          echo "=== Release file (main) ==="
+          cat "${REPO_DIR}/dists/main/Release" || true
+
+      - name: Export public keyring
+        run: |
+          REPO_DIR="$(pwd)/apt-repo"
+          gpg --export > "${REPO_DIR}/tysmith-archive-keyring.gpg"
+          echo "Public keyring exported ($(du -h "${REPO_DIR}/tysmith-archive-keyring.gpg" | cut -f1))"
+
+      - name: Package APT repo artifact
+        run: |
+          REPO_DIR="$(pwd)/apt-repo"
+          # Remove reprepro internals (conf/, db/) — only ship dists/, pool/, and keyring
+          tar -czf apt-repo.tar.gz -C "${REPO_DIR}" \
+            --exclude='conf' --exclude='db' \
+            dists pool tysmith-archive-keyring.gpg
+          echo "APT repo tarball: $(du -h apt-repo.tar.gz | cut -f1)"
+
+      - name: Upload APT repo to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apt-repo.tar.gz
+
+  trigger-pages:
+    name: Trigger Pages Rebuild
+    runs-on: ubuntu-latest
+    needs: [publish-apt]
+    steps:
+      - name: Trigger GitHub Pages workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run pages.yml --repo "${{ github.repository }}"
+          echo "Triggered Pages rebuild to include updated APT repository"

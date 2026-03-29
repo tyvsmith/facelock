@@ -1,6 +1,67 @@
 # Quick Start
 
-## Prerequisites
+## Package Install
+
+### Arch Linux (AUR)
+
+```bash
+yay -S facelock           # or paru -S facelock
+```
+
+### Debian / Ubuntu (APT)
+
+For **modern systems** (Debian trixie+, Ubuntu 25.04+) with TPM support:
+
+```bash
+# Add signing key
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://tysmith.me/facelock/apt/tysmith-archive-keyring.gpg \
+  | sudo tee /etc/apt/keyrings/tysmith-archive-keyring.gpg >/dev/null
+
+# Add repository (main = TPM enabled)
+echo "deb [signed-by=/etc/apt/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt main facelock" \
+  | sudo tee /etc/apt/sources.list.d/facelock.list
+
+# Install
+sudo apt update
+sudo apt install facelock
+```
+
+For **older systems** (Ubuntu 24.04, Debian bookworm) without TPM:
+
+```bash
+# Add signing key (same as above)
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://tysmith.me/facelock/apt/tysmith-archive-keyring.gpg \
+  | sudo tee /etc/apt/keyrings/tysmith-archive-keyring.gpg >/dev/null
+
+# Add repository (legacy = non-TPM)
+echo "deb [signed-by=/etc/apt/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt legacy facelock" \
+  | sudo tee /etc/apt/sources.list.d/facelock.list
+
+# Install
+sudo apt update
+sudo apt install facelock
+```
+
+### Fedora / RHEL (COPR)
+
+```bash
+sudo dnf copr enable tyvsmith/facelock
+sudo dnf install facelock
+```
+
+### Post-Install
+
+```bash
+sudo facelock setup       # download models, configure PAM
+sudo facelock enroll      # register your face
+sudo facelock test        # verify recognition
+```
+
+---
+
+## Prerequisites (Building from Source)
 
 - Rust 1.85+ (`rustup update`)
 - [just](https://github.com/casey/just) task runner
