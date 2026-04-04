@@ -46,17 +46,24 @@ The `.github/workflows/release.yml` workflow:
 
 1. Builds release binaries and creates a GitHub Release
 2. Downloads ONNX Runtime for bundling in non-Arch packages
-3. Builds `.deb` package (with bundled ONNX Runtime) and validates contents
+3. Builds `.deb` package — **TPM** (Debian trixie container) and **legacy** (Ubuntu 24.04)
 4. Builds `.rpm` package in Fedora container (with TPM feature) and validates contents
 5. Validates Nix flake evaluation
 6. Publishes to AUR (if `AUR_SSH_KEY` secret is configured)
 7. Triggers COPR rebuild (if `COPR_WEBHOOK_URL` secret is configured)
+8. Publishes signed APT repository (if `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE` are configured)
+9. Triggers GitHub Pages rebuild to include updated APT repo
 
-Pre-release tags (containing `alpha`, `beta`, or `rc`) skip AUR/COPR publishing.
+Pre-release tags (containing `alpha`, `beta`, or `rc`) skip AUR, COPR, and APT publishing.
 
-Current TPM note:
-- Ubuntu-hosted `build` and `build-deb` jobs build without `--features tpm`.
-- Fedora-container `build-rpm` builds with `--features tpm`.
+#### Debian package channels
+
+| Channel | Build env | TPM | Version suffix | Use case |
+|---------|-----------|-----|----------------|----------|
+| `main` | Debian trixie container | Yes | `X.Y.Z-1` | Modern systems (trixie+, Ubuntu 25.04+) |
+| `legacy` | Ubuntu 24.04 runner | No | `X.Y.Z-1~legacy1` | Older systems (bookworm, Ubuntu 24.04) |
+
+Both `.deb` packages are uploaded to the GitHub Release for direct download. For `apt install`, they are published to the signed APT repository at `https://tysmith.me/facelock/apt/`.
 
 ### Local distro validation
 
@@ -86,7 +93,7 @@ just test-deb
 ```
 
 `just release-preflight` checks local tools, required packaging files, and whether
-`AUR_SSH_KEY` / `COPR_WEBHOOK_URL` are configured in GitHub secrets (via `gh`).
+`AUR_SSH_KEY`, `COPR_WEBHOOK_URL`, `APT_GPG_PRIVATE_KEY`, and `APT_GPG_PASSPHRASE` are configured in GitHub secrets (via `gh`).
 
 ### Package repository setup (one-time)
 
@@ -156,6 +163,40 @@ Automated after setup. The release workflow triggers a COPR rebuild when `COPR_W
    Or use the web UI: https://github.com/tyvsmith/facelock/settings/secrets/actions
 
 Alternatively, configure COPR to build from the GitHub source directly using the SCM integration (points at `dist/facelock.spec`).
+
+#### APT (Debian/Ubuntu)
+
+Automated after setup. The release workflow publishes a signed APT repository to GitHub Pages when `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE` are configured.
+
+**One-time setup (~15 minutes):**
+
+1. Generate a GPG signing key (if you don't have one):
+   ```bash
+   gpg --full-generate-key
+   # Select RSA 4096, expiry 3y
+   # UID: Ty Smith Package Signing <packages@tysmith.me>
+   ```
+
+2. Export and add the private key as a GitHub secret:
+   ```bash
+   gpg --armor --export-secret-keys "packages@tysmith.me" | gh secret set APT_GPG_PRIVATE_KEY
+   ```
+
+3. Add the passphrase as a GitHub secret:
+   ```bash
+   gh secret set APT_GPG_PASSPHRASE --body "your-passphrase"
+   ```
+
+   Or use the web UI: https://github.com/tyvsmith/facelock/settings/secrets/actions
+
+The repository configuration lives in `dist/apt/conf/distributions`. Two suites are published:
+
+- **`main`**: TPM-enabled build (Debian trixie+, Ubuntu 25.04+)
+- **`legacy`**: Non-TPM build (Ubuntu 24.04, Debian bookworm)
+
+The APT repo is hosted at `https://tysmith.me/facelock/apt/` alongside the docs site. The public keyring is at `https://tysmith.me/facelock/apt/tysmith-archive-keyring.gpg`.
+
+**GPG key rotation**: When the signing key expires, generate a new key, update the `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE` secrets, and cut a new release. The public keyring is re-exported on every release, so users who re-fetch it will get the updated key.
 
 #### Manual AUR update (fallback)
 

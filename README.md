@@ -6,10 +6,50 @@
 
 A modern face authentication system for Linux PAM. Provides Windows Hello-style facial auth with IR anti-spoofing, configurable as a persistent daemon or daemonless one-shot. All inference runs locally on your hardware -- no cloud services, no network requests, no telemetry. Your biometric data never leaves your machine.
 
-## Quick Start
+## Install
+
+### Arch Linux (AUR)
+
+```bash
+yay -S facelock           # or paru -S facelock
+```
+
+### Debian / Ubuntu (APT)
+
+```bash
+# Add signing key
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://tysmith.me/facelock/apt/tysmith-archive-keyring.gpg \
+  | sudo tee /etc/apt/keyrings/tysmith-archive-keyring.gpg >/dev/null
+
+# Add repository — pick ONE:
+# Modern (Debian trixie+, Ubuntu 25.04+) — TPM enabled:
+echo "deb [signed-by=/etc/apt/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt main facelock" \
+  | sudo tee /etc/apt/sources.list.d/facelock.list
+
+# Legacy (Ubuntu 24.04, Debian bookworm) — no TPM:
+# echo "deb [signed-by=/etc/apt/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt legacy facelock" \
+#   | sudo tee /etc/apt/sources.list.d/facelock.list
+
+sudo apt update && sudo apt install facelock
+```
+
+### Fedora / RHEL (COPR)
+
+```bash
+sudo dnf copr enable tyvsmith/facelock
+sudo dnf install facelock
+```
+
+### From Source
 
 ```bash
 just install              # build + install binaries, systemd, D-Bus, PAM
+```
+
+### Post-Install
+
+```bash
 sudo facelock setup       # download face models (~170MB)
 sudo facelock enroll      # register your face
 sudo facelock test        # verify recognition
@@ -166,7 +206,7 @@ just release 0.2.0        # bump version across all packaging files
 git push origin main --tags  # trigger CI release workflow
 ```
 
-Tagging `vX.Y.Z` builds release binaries, `.deb`, and `.rpm` via GitHub Actions. See [docs/releasing.md](docs/releasing.md) for the full process and versioning contract.
+Tagging `vX.Y.Z` builds release binaries, `.deb` (TPM + legacy), `.rpm`, publishes to AUR/COPR/APT via GitHub Actions. See [docs/releasing.md](docs/releasing.md) for the full process and versioning contract.
 
 ## License
 

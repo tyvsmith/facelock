@@ -348,7 +348,7 @@ release version:
     # 4. dist/debian/changelog (prepend new entry)
     if [ -f dist/debian/changelog ]; then
         DATE=$(date -R)
-        sed -i "1i facelock ($VERSION-1) unstable; urgency=medium\n\n  * Release v$VERSION.\n\n -- Facelock Contributors <facelock@example.com>  $DATE\n" dist/debian/changelog
+        sed -i "1i facelock ($VERSION-1) unstable; urgency=medium\n\n  * Release v$VERSION.\n\n -- Facelock Contributors <facelock@m.tysmith.me>  $DATE\n" dist/debian/changelog
         echo "  ✓ dist/debian/changelog"
     fi
 
@@ -402,6 +402,65 @@ test-deb: build-release
     podman build -t facelock-deb-test -f test/Containerfile.ubuntu .
     podman run --rm facelock-deb-test
 
+# Test APT repo generation locally (requires reprepro + gpg)
+test-apt-repo:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Check tools
+    for cmd in reprepro dpkg-deb; do
+        command -v "$cmd" >/dev/null || { echo "Error: '$cmd' not found. Install it first."; exit 1; }
+    done
+
+    # Verify config exists
+    if [ ! -f dist/apt/conf/distributions ]; then
+        echo "Error: dist/apt/conf/distributions not found"
+        exit 1
+    fi
+
+    TMPDIR=$(mktemp -d)
+    trap 'rm -rf "$TMPDIR"' EXIT
+
+    REPO_DIR="${TMPDIR}/repo"
+    mkdir -p "${REPO_DIR}/conf"
+    cp dist/apt/conf/distributions "${REPO_DIR}/conf/distributions"
+
+    # For local testing without GPG, strip SignWith lines
+    sed -i '/^SignWith:/d' "${REPO_DIR}/conf/distributions"
+
+    # Find any .deb files (from just test-deb or CI artifacts)
+    DEB_FILES=$({ find . -maxdepth 1 -name 'facelock_*.deb'; find ./target -maxdepth 1 -name 'facelock_*.deb' 2>/dev/null; } | head -2)
+    if [ -z "$DEB_FILES" ]; then
+        echo "No .deb files found. Building a test .deb is not required."
+        echo "Validating reprepro config only..."
+        reprepro -b "${REPO_DIR}" check
+        echo ""
+        echo "APT repo config: OK"
+        echo "To test with real .deb files, build them first with CI or 'just test-deb'."
+        exit 0
+    fi
+
+    # Add first .deb to main, second to legacy (or same to both)
+    FIRST_DEB=$(echo "$DEB_FILES" | head -1)
+    SECOND_DEB=$(echo "$DEB_FILES" | tail -1)
+
+    reprepro -b "${REPO_DIR}" includedeb main "$FIRST_DEB"
+    reprepro -b "${REPO_DIR}" includedeb legacy "$SECOND_DEB"
+
+    echo ""
+    echo "=== APT repo structure ==="
+    find "${REPO_DIR}" -type f -not -path '*/db/*' -not -path '*/conf/*' | sort
+
+    # Validate expected structure
+    for SUITE in main legacy; do
+        [ -f "${REPO_DIR}/dists/${SUITE}/Release" ] && echo "OK: dists/${SUITE}/Release"
+        [ -d "${REPO_DIR}/dists/${SUITE}/facelock/binary-amd64" ] && echo "OK: dists/${SUITE}/facelock/binary-amd64/"
+    done
+    [ -d "${REPO_DIR}/pool/facelock" ] && echo "OK: pool/facelock/"
+
+    echo ""
+    echo "APT repo generation: OK"
+
 # Quick preflight before tagging a release
 # Usage:
 #   just release-preflight                 # assume stable release
@@ -441,6 +500,7 @@ release-preflight tag='':
         dist/facelock.spec \
         dist/debian/control \
         dist/debian/rules \
+        dist/apt/conf/distributions \
         .github/workflows/release.yml; do
         if [ -f "$f" ]; then
             echo "OK: $f"
@@ -472,6 +532,24 @@ release-preflight tag='':
             echo "OK: COPR_WEBHOOK_URL configured"
         else
             echo "MISSING: COPR_WEBHOOK_URL"
+            if [ "$prerelease" -eq 0 ]; then
+                failed=1
+            fi
+        fi
+
+        if gh secret list | grep -q '^APT_GPG_PRIVATE_KEY\b'; then
+            echo "OK: APT_GPG_PRIVATE_KEY configured"
+        else
+            echo "MISSING: APT_GPG_PRIVATE_KEY"
+            if [ "$prerelease" -eq 0 ]; then
+                failed=1
+            fi
+        fi
+
+        if gh secret list | grep -q '^APT_GPG_PASSPHRASE\b'; then
+            echo "OK: APT_GPG_PASSPHRASE configured"
+        else
+            echo "MISSING: APT_GPG_PASSPHRASE"
             if [ "$prerelease" -eq 0 ]; then
                 failed=1
             fi
