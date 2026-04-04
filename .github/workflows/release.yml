@@ -21,18 +21,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libv4l-dev \
-            libpam0g-dev \
-            pkg-config \
-            libssl-dev \
-            clang \
-            libxkbcommon-dev \
-            libwayland-dev \
-            libtss2-dev \
-            libtss2-tcti-tabrmd-dev
+        run: .github/workflows/scripts/install-ubuntu-deps.sh
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -97,18 +86,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libv4l-dev \
-            libpam0g-dev \
-            pkg-config \
-            libssl-dev \
-            clang \
-            libxkbcommon-dev \
-            libwayland-dev \
-            libtss2-dev \
-            libtss2-tcti-tabrmd-dev
+        run: .github/workflows/scripts/install-ubuntu-deps.sh
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -133,110 +111,10 @@ jobs:
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Build .deb package (legacy)
-        run: |
-          PKG_VERSION="${{ steps.version.outputs.VERSION }}-1~legacy1"
-          PKG_DIR="facelock_${PKG_VERSION}_amd64"
-
-          mkdir -p "${PKG_DIR}/DEBIAN"
-          mkdir -p "${PKG_DIR}/usr/bin"
-          mkdir -p "${PKG_DIR}/lib/security"
-          mkdir -p "${PKG_DIR}/etc/facelock"
-          mkdir -p "${PKG_DIR}/usr/lib/systemd/system"
-          mkdir -p "${PKG_DIR}/usr/lib/sysusers.d"
-          mkdir -p "${PKG_DIR}/usr/lib/tmpfiles.d"
-          mkdir -p "${PKG_DIR}/usr/lib/facelock"
-          mkdir -p "${PKG_DIR}/usr/share/pam-configs"
-          mkdir -p "${PKG_DIR}/usr/share/dbus-1/system.d"
-          mkdir -p "${PKG_DIR}/usr/share/dbus-1/system-services"
-          mkdir -p "${PKG_DIR}/usr/share/facelock/quirks.d"
-          mkdir -p "${PKG_DIR}/usr/share/doc/facelock"
-
-          # Control file
-          cat > "${PKG_DIR}/DEBIAN/control" <<CTRL
-          Package: facelock
-          Version: ${PKG_VERSION}
-          Architecture: amd64
-          Maintainer: Facelock Contributors <facelock@m.tysmith.me>
-          Depends: libpam-runtime, dbus
-          Section: admin
-          Priority: optional
-          Homepage: https://github.com/tyvsmith/facelock
-          Description: Face authentication for Linux PAM (legacy, no TPM)
-           Facelock provides Windows Hello-style face authentication for Linux
-           using IR anti-spoofing, ONNX inference, and PAM integration.
-           .
-           This is the legacy build without TPM support, for systems that lack
-           libtss2-esys >= 4.1.3 (e.g. Ubuntu 24.04, Debian bookworm).
-           .
-           After installation, run 'sudo facelock setup' to download face
-           recognition models, then 'sudo facelock enroll' to register your face.
-          CTRL
-          # Remove leading whitespace from heredoc
-          sed -i 's/^          //' "${PKG_DIR}/DEBIAN/control"
-
-          # postinst and prerm scripts
-          cp dist/debian/postinst "${PKG_DIR}/DEBIAN/postinst"
-          chmod 755 "${PKG_DIR}/DEBIAN/postinst"
-          cp dist/debian/prerm "${PKG_DIR}/DEBIAN/prerm"
-          chmod 755 "${PKG_DIR}/DEBIAN/prerm"
-
-          # Binaries
-          install -m755 target/release/facelock "${PKG_DIR}/usr/bin/facelock"
-          if [ -f target/release/facelock-polkit-agent ]; then
-            install -m755 target/release/facelock-polkit-agent "${PKG_DIR}/usr/bin/facelock-polkit-agent"
-          fi
-
-          # PAM module
-          install -m755 target/release/libpam_facelock.so "${PKG_DIR}/lib/security/pam_facelock.so"
-
-          # Configuration
-          install -m644 config/facelock.toml "${PKG_DIR}/etc/facelock/config.toml"
-
-          # Quirks database
-          install -m644 -t "${PKG_DIR}/usr/share/facelock/quirks.d/" config/quirks.d/*.toml
-
-          # systemd units
-          install -m644 systemd/facelock-daemon.service "${PKG_DIR}/usr/lib/systemd/system/facelock-daemon.service"
-
-          # D-Bus policy and activation service
-          install -m644 dbus/org.facelock.Daemon.conf "${PKG_DIR}/usr/share/dbus-1/system.d/org.facelock.Daemon.conf"
-          install -m644 dbus/org.facelock.Daemon.service "${PKG_DIR}/usr/share/dbus-1/system-services/org.facelock.Daemon.service"
-
-          # sysusers.d and tmpfiles.d
-          install -m644 dist/facelock.sysusers "${PKG_DIR}/usr/lib/sysusers.d/facelock.conf"
-          install -m644 dist/facelock.tmpfiles "${PKG_DIR}/usr/lib/tmpfiles.d/facelock.conf"
-
-          # pam-auth-update profile
-          if [ -f dist/debian/pam-auth-update ]; then
-            install -m644 dist/debian/pam-auth-update "${PKG_DIR}/usr/share/pam-configs/facelock"
-          fi
-
-          # Bundled CPU ONNX Runtime
-          if [ -f onnxruntime/lib/libonnxruntime.so ]; then
-            install -m755 onnxruntime/lib/libonnxruntime.so "${PKG_DIR}/usr/lib/facelock/libonnxruntime.so"
-          fi
-
-          # Copyright
-          install -m644 dist/debian/copyright "${PKG_DIR}/usr/share/doc/facelock/copyright"
-
-          dpkg-deb --build "${PKG_DIR}"
+        run: .github/workflows/scripts/build-deb.sh "${{ steps.version.outputs.VERSION }}" "legacy"
 
       - name: Validate .deb contents
-        run: |
-          DEB_FILE=$(ls facelock_*.deb)
-          echo "=== .deb contents ==="
-          dpkg-deb -c "$DEB_FILE"
-          echo ""
-          echo "=== Checking required files ==="
-          dpkg-deb -c "$DEB_FILE" | grep -q "usr/bin/facelock" && echo "OK: facelock binary"
-          dpkg-deb -c "$DEB_FILE" | grep -q "lib/security/pam_facelock.so" && echo "OK: PAM module"
-          dpkg-deb -c "$DEB_FILE" | grep -q "etc/facelock/config.toml" && echo "OK: config"
-          dpkg-deb -c "$DEB_FILE" | grep -q "dbus-1/system.d/org.facelock.Daemon.conf" && echo "OK: D-Bus policy"
-          dpkg-deb -c "$DEB_FILE" | grep -q "dbus-1/system-services/org.facelock.Daemon.service" && echo "OK: D-Bus activation"
-          dpkg-deb -c "$DEB_FILE" | grep -q "sysusers.d/facelock.conf" && echo "OK: sysusers"
-          dpkg-deb -c "$DEB_FILE" | grep -q "tmpfiles.d/facelock.conf" && echo "OK: tmpfiles"
-          dpkg-deb -c "$DEB_FILE" | grep -q "usr/lib/facelock/libonnxruntime.so" && echo "OK: bundled ORT"
-          echo "=== .deb validation passed ==="
+        run: .github/workflows/scripts/validate-deb.sh facelock_*.deb
 
       - name: Upload .deb artifact
         uses: actions/upload-artifact@v4
@@ -312,112 +190,11 @@ jobs:
 
       - name: Build .deb package (TPM)
         run: |
-          PKG_VERSION="${{ steps.version.outputs.VERSION }}-1"
-          PKG_DIR="facelock_${PKG_VERSION}_amd64"
-
-          mkdir -p "${PKG_DIR}/DEBIAN"
-          mkdir -p "${PKG_DIR}/usr/bin"
-          mkdir -p "${PKG_DIR}/lib/security"
-          mkdir -p "${PKG_DIR}/etc/facelock"
-          mkdir -p "${PKG_DIR}/usr/lib/systemd/system"
-          mkdir -p "${PKG_DIR}/usr/lib/sysusers.d"
-          mkdir -p "${PKG_DIR}/usr/lib/tmpfiles.d"
-          mkdir -p "${PKG_DIR}/usr/lib/facelock"
-          mkdir -p "${PKG_DIR}/usr/share/pam-configs"
-          mkdir -p "${PKG_DIR}/usr/share/dbus-1/system.d"
-          mkdir -p "${PKG_DIR}/usr/share/dbus-1/system-services"
-          mkdir -p "${PKG_DIR}/usr/share/facelock/quirks.d"
-          mkdir -p "${PKG_DIR}/usr/share/doc/facelock"
-
-          # Control file
-          cat > "${PKG_DIR}/DEBIAN/control" <<CTRL
-          Package: facelock
-          Version: ${PKG_VERSION}
-          Architecture: amd64
-          Maintainer: Facelock Contributors <facelock@m.tysmith.me>
-          Depends: libpam-runtime, dbus, ${{ steps.tss.outputs.TSS_PKG }} (>= ${{ steps.tss.outputs.TSS_VER }})
-          Section: admin
-          Priority: optional
-          Homepage: https://github.com/tyvsmith/facelock
-          Description: Face authentication for Linux PAM (TPM enabled)
-           Facelock provides Windows Hello-style face authentication for Linux
-           using IR anti-spoofing, ONNX inference, and PAM integration.
-           .
-           This build includes TPM 2.0 support for hardware-sealed face
-           template encryption. Requires libtss2-esys >= 4.1.3.
-           .
-           After installation, run 'sudo facelock setup' to download face
-           recognition models, then 'sudo facelock enroll' to register your face.
-          CTRL
-          # Remove leading whitespace from heredoc
-          sed -i 's/^          //' "${PKG_DIR}/DEBIAN/control"
-
-          # postinst and prerm scripts
-          cp dist/debian/postinst "${PKG_DIR}/DEBIAN/postinst"
-          chmod 755 "${PKG_DIR}/DEBIAN/postinst"
-          cp dist/debian/prerm "${PKG_DIR}/DEBIAN/prerm"
-          chmod 755 "${PKG_DIR}/DEBIAN/prerm"
-
-          # Binaries
-          install -m755 target/release/facelock "${PKG_DIR}/usr/bin/facelock"
-          if [ -f target/release/facelock-polkit-agent ]; then
-            install -m755 target/release/facelock-polkit-agent "${PKG_DIR}/usr/bin/facelock-polkit-agent"
-          fi
-
-          # PAM module
-          install -m755 target/release/libpam_facelock.so "${PKG_DIR}/lib/security/pam_facelock.so"
-
-          # Configuration
-          install -m644 config/facelock.toml "${PKG_DIR}/etc/facelock/config.toml"
-
-          # Quirks database
-          install -m644 -t "${PKG_DIR}/usr/share/facelock/quirks.d/" config/quirks.d/*.toml
-
-          # systemd units
-          install -m644 systemd/facelock-daemon.service "${PKG_DIR}/usr/lib/systemd/system/facelock-daemon.service"
-
-          # D-Bus policy and activation service
-          install -m644 dbus/org.facelock.Daemon.conf "${PKG_DIR}/usr/share/dbus-1/system.d/org.facelock.Daemon.conf"
-          install -m644 dbus/org.facelock.Daemon.service "${PKG_DIR}/usr/share/dbus-1/system-services/org.facelock.Daemon.service"
-
-          # sysusers.d and tmpfiles.d
-          install -m644 dist/facelock.sysusers "${PKG_DIR}/usr/lib/sysusers.d/facelock.conf"
-          install -m644 dist/facelock.tmpfiles "${PKG_DIR}/usr/lib/tmpfiles.d/facelock.conf"
-
-          # pam-auth-update profile
-          if [ -f dist/debian/pam-auth-update ]; then
-            install -m644 dist/debian/pam-auth-update "${PKG_DIR}/usr/share/pam-configs/facelock"
-          fi
-
-          # Bundled CPU ONNX Runtime
-          if [ -f onnxruntime/lib/libonnxruntime.so ]; then
-            install -m755 onnxruntime/lib/libonnxruntime.so "${PKG_DIR}/usr/lib/facelock/libonnxruntime.so"
-          fi
-
-          # Copyright
-          install -m644 dist/debian/copyright "${PKG_DIR}/usr/share/doc/facelock/copyright"
-
-          dpkg-deb --build "${PKG_DIR}"
+          . "$HOME/.cargo/env"
+          .github/workflows/scripts/build-deb.sh "${{ steps.version.outputs.VERSION }}" "tpm" "${{ steps.tss.outputs.TSS_PKG }} (>= ${{ steps.tss.outputs.TSS_VER }})"
 
       - name: Validate .deb contents
-        run: |
-          DEB_FILE=$(ls facelock_*.deb)
-          echo "=== .deb contents ==="
-          dpkg-deb -c "$DEB_FILE"
-          echo ""
-          echo "=== Control info ==="
-          dpkg-deb -I "$DEB_FILE"
-          echo ""
-          echo "=== Checking required files ==="
-          dpkg-deb -c "$DEB_FILE" | grep -q "usr/bin/facelock" && echo "OK: facelock binary"
-          dpkg-deb -c "$DEB_FILE" | grep -q "lib/security/pam_facelock.so" && echo "OK: PAM module"
-          dpkg-deb -c "$DEB_FILE" | grep -q "etc/facelock/config.toml" && echo "OK: config"
-          dpkg-deb -c "$DEB_FILE" | grep -q "dbus-1/system.d/org.facelock.Daemon.conf" && echo "OK: D-Bus policy"
-          dpkg-deb -c "$DEB_FILE" | grep -q "dbus-1/system-services/org.facelock.Daemon.service" && echo "OK: D-Bus activation"
-          dpkg-deb -c "$DEB_FILE" | grep -q "sysusers.d/facelock.conf" && echo "OK: sysusers"
-          dpkg-deb -c "$DEB_FILE" | grep -q "tmpfiles.d/facelock.conf" && echo "OK: tmpfiles"
-          dpkg-deb -c "$DEB_FILE" | grep -q "usr/lib/facelock/libonnxruntime.so" && echo "OK: bundled ORT"
-          echo "=== .deb validation passed ==="
+        run: .github/workflows/scripts/validate-deb.sh facelock_*.deb
 
       - name: Upload .deb artifact
         uses: actions/upload-artifact@v4
@@ -466,57 +243,13 @@ jobs:
         run: cargo build --release --workspace --features tpm
 
       - name: Build RPM
-        run: |
-          PKG_VERSION_RAW="${{ steps.version.outputs.VERSION }}"
-          PKG_VERSION="$PKG_VERSION_RAW"
-          PKG_RELEASE='1%{?dist}'
-
-          # RPM Version cannot contain '-'. For prereleases, keep the base
-          # version and move the prerelease marker into Release so it sorts
-          # before final releases.
-          if [ "${PKG_VERSION_RAW#*-}" != "$PKG_VERSION_RAW" ]; then
-            PRERELEASE_SUFFIX="${PKG_VERSION_RAW#*-}"
-            PKG_VERSION="${PKG_VERSION_RAW%%-*}"
-            PRERELEASE_SUFFIX="${PRERELEASE_SUFFIX//-/.}"
-            PKG_RELEASE="0.${PRERELEASE_SUFFIX}%{?dist}"
-          fi
-
-          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-
-          # Copy spec file and set version/release
-          cp dist/facelock.spec ~/rpmbuild/SPECS/facelock.spec
-          sed -i "s|^Version:.*|Version:        ${PKG_VERSION}|" ~/rpmbuild/SPECS/facelock.spec
-          sed -i "s|^Release:.*|Release:        ${PKG_RELEASE}|" ~/rpmbuild/SPECS/facelock.spec
-
-          # Build source tarball expected by Source0 so rpmbuild can run the
-          # full %prep/%build/%install pipeline.
-          tar --exclude=.git --exclude=target \
-              --transform "s|^|facelock-${PKG_VERSION}/|" \
-              -czf "${HOME}/rpmbuild/SOURCES/facelock-${PKG_VERSION}.tar.gz" .
-
-          # Build RPM using spec-defined build/install steps.
-          rpmbuild --define "_topdir $HOME/rpmbuild" \
-                   -bb ~/rpmbuild/SPECS/facelock.spec
+        run: .github/workflows/scripts/build-rpm.sh "${{ steps.version.outputs.VERSION }}"
 
       - name: Copy RPM to workspace
         run: cp ~/rpmbuild/RPMS/x86_64/*.rpm ./ 2>/dev/null || cp ~/rpmbuild/RPMS/**/*.rpm ./ 2>/dev/null || true
 
       - name: Validate .rpm contents
-        run: |
-          RPM_FILE=$(ls *.rpm | head -1)
-          echo "=== .rpm contents ==="
-          rpm -qlp "$RPM_FILE"
-          echo ""
-          echo "=== Checking required files ==="
-          rpm -qlp "$RPM_FILE" | grep -q "usr/bin/facelock" && echo "OK: facelock binary"
-          rpm -qlp "$RPM_FILE" | grep -q "security/pam_facelock.so" && echo "OK: PAM module"
-          rpm -qlp "$RPM_FILE" | grep -q "etc/facelock/config.toml" && echo "OK: config"
-          rpm -qlp "$RPM_FILE" | grep -q "dbus-1/system.d/org.facelock.Daemon.conf" && echo "OK: D-Bus policy"
-          rpm -qlp "$RPM_FILE" | grep -q "dbus-1/system-services/org.facelock.Daemon.service" && echo "OK: D-Bus activation"
-          rpm -qlp "$RPM_FILE" | grep -q "sysusers.d/facelock.conf" && echo "OK: sysusers"
-          rpm -qlp "$RPM_FILE" | grep -q "tmpfiles.d/facelock.conf" && echo "OK: tmpfiles"
-          rpm -qlp "$RPM_FILE" | grep -q "authselect/vendor/facelock" && echo "OK: authselect"
-          echo "=== .rpm validation passed ==="
+        run: .github/workflows/scripts/validate-rpm.sh "$(ls *.rpm | head -1)"
 
       - name: Upload .rpm to release
         uses: softprops/action-gh-release@v2
@@ -566,37 +299,7 @@ jobs:
       - name: Publish to AUR
         env:
           AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
-        run: |
-          if [ -z "$AUR_SSH_KEY" ]; then
-            echo "AUR_SSH_KEY secret not configured. Skipping AUR publish."
-            echo "See docs/releasing.md for setup instructions."
-            exit 0
-          fi
-
-          mkdir -p ~/.ssh
-          echo "$AUR_SSH_KEY" > ~/.ssh/aur
-          chmod 600 ~/.ssh/aur
-          echo "Host aur.archlinux.org" >> ~/.ssh/config
-          echo "  IdentityFile ~/.ssh/aur" >> ~/.ssh/config
-          echo "  User aur" >> ~/.ssh/config
-          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
-
-          git clone ssh://aur@aur.archlinux.org/facelock.git aur-facelock
-
-          cp dist/PKGBUILD aur-facelock/PKGBUILD
-          cp dist/facelock.install aur-facelock/facelock.install
-          sed -i "s/^pkgver=.*/pkgver=${{ steps.version.outputs.VERSION }}/" aur-facelock/PKGBUILD
-          sed -i "s/sha256sums=('SKIP')/sha256sums=('${{ steps.checksum.outputs.SHA256 }}')/" aur-facelock/PKGBUILD
-
-          cd aur-facelock
-          docker run --rm -v "$(pwd):/pkg" archlinux:base-devel bash -c \
-            "pacman -Sy --noconfirm pacman-contrib && cd /pkg && makepkg --printsrcinfo > .SRCINFO"
-
-          git config user.name "facelock-bot"
-          git config user.email "facelock@users.noreply.github.com"
-          git add PKGBUILD facelock.install .SRCINFO
-          git diff --cached --quiet || git commit -m "Update to v${{ steps.version.outputs.VERSION }}"
-          git push
+        run: .github/workflows/scripts/publish-aur.sh "${{ steps.version.outputs.VERSION }}" "${{ steps.checksum.outputs.SHA256 }}"
 
   publish-copr:
     name: Trigger COPR Build
@@ -604,18 +307,12 @@ jobs:
     needs: [build, build-rpm]
     if: ${{ !contains(github.ref_name, 'alpha') && !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'rc') }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Trigger COPR rebuild
         env:
           COPR_WEBHOOK_URL: ${{ secrets.COPR_WEBHOOK_URL }}
-        run: |
-          if [ -z "$COPR_WEBHOOK_URL" ]; then
-            echo "COPR_WEBHOOK_URL secret not configured. Skipping COPR trigger."
-            echo "See docs/releasing.md for setup instructions."
-            exit 0
-          fi
-          curl -X POST "$COPR_WEBHOOK_URL" \
-            --fail --silent --show-error
-          echo "COPR build triggered for ${{ github.ref_name }}"
+        run: .github/workflows/scripts/publish-copr.sh
 
   publish-apt:
     name: Publish APT Repository
@@ -640,68 +337,14 @@ jobs:
           name: release-deb-legacy
           path: debs/legacy
 
-      - name: Import GPG signing key and preset passphrase
+      - name: Build APT repository
         env:
           APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
           APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
         run: |
-          if [ -z "$APT_GPG_PRIVATE_KEY" ]; then
-            echo "APT_GPG_PRIVATE_KEY secret not configured. Skipping APT publish."
-            echo "See docs/releasing.md for setup instructions."
-            exit 1
-          fi
-
-          # Configure GPG agent for non-interactive signing
-          mkdir -p ~/.gnupg
-          chmod 700 ~/.gnupg
-          echo "allow-preset-passphrase" >> ~/.gnupg/gpg-agent.conf
-          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
-          gpgconf --kill gpg-agent
-          gpg-agent --daemon
-
-          # Import key
-          echo "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
-
-          # Trust the imported key ultimately
-          KEY_FPR=$(gpg --list-keys --with-colons | awk -F: '/^pub/{found=1} found && /^fpr/{print $10; exit}')
-          echo "${KEY_FPR}:6:" | gpg --import-ownertrust
-
-          # Preset passphrase into gpg-agent so reprepro can sign non-interactively
-          KEY_GRIP=$(gpg --list-keys --with-keygrip --with-colons | awk -F: '/^grp/{print $10; exit}')
-          /usr/lib/gnupg/gpg-preset-passphrase --preset --passphrase "${APT_GPG_PASSPHRASE}" "${KEY_GRIP}"
-
-          echo "GPG key imported and passphrase preset: ${KEY_FPR}"
-
-      - name: Build APT repository with reprepro
-        run: |
-          set -euo pipefail
-
-          # Set up reprepro base directory
-          REPO_DIR="$(pwd)/apt-repo"
-          mkdir -p "${REPO_DIR}/conf"
-          cp dist/apt/conf/distributions "${REPO_DIR}/conf/distributions"
-
-          # Add TPM .deb to 'main' suite
           TPM_DEB=$(ls debs/tpm/facelock_*.deb)
-          echo "Adding TPM .deb to main: ${TPM_DEB}"
-          reprepro -b "${REPO_DIR}" includedeb main "${TPM_DEB}"
-
-          # Add legacy .deb to 'legacy' suite
           LEGACY_DEB=$(ls debs/legacy/facelock_*.deb)
-          echo "Adding legacy .deb to legacy: ${LEGACY_DEB}"
-          reprepro -b "${REPO_DIR}" includedeb legacy "${LEGACY_DEB}"
-
-          echo "=== APT repo structure ==="
-          find "${REPO_DIR}" -type f | sort
-          echo ""
-          echo "=== Release file (main) ==="
-          cat "${REPO_DIR}/dists/main/Release" || true
-
-      - name: Export public keyring
-        run: |
-          REPO_DIR="$(pwd)/apt-repo"
-          gpg --export > "${REPO_DIR}/tysmith-archive-keyring.gpg"
-          echo "Public keyring exported ($(du -h "${REPO_DIR}/tysmith-archive-keyring.gpg" | cut -f1))"
+          .github/workflows/scripts/publish-apt.sh "${TPM_DEB}" "${LEGACY_DEB}" "$(pwd)/apt-repo"
 
       - name: Package APT repo artifact
         run: |
