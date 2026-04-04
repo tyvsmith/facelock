@@ -3,8 +3,9 @@ set -euo pipefail
 
 RPM_FILE="${1:?Usage: validate-rpm.sh <RPM_FILE>}"
 
+CONTENTS=$(rpm -qlp "$RPM_FILE")
 echo "=== .rpm contents ==="
-rpm -qlp "$RPM_FILE"
+echo "$CONTENTS"
 echo ""
 echo "=== Checking required files ==="
 
@@ -23,7 +24,7 @@ FAILED=0
 for check in "${CHECKS[@]}"; do
   pattern="${check%%:*}"
   label="${check#*:}"
-  if rpm -qlp "$RPM_FILE" | grep -q "$pattern"; then
+  if echo "$CONTENTS" | grep -q "$pattern"; then
     echo "OK: $label"
   else
     echo "FAIL: $label (missing $pattern)"

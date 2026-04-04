@@ -3,8 +3,9 @@ set -euo pipefail
 
 DEB_FILE="${1:?Usage: validate-deb.sh <DEB_FILE>}"
 
+CONTENTS=$(dpkg-deb -c "$DEB_FILE")
 echo "=== .deb contents ==="
-dpkg-deb -c "$DEB_FILE"
+echo "$CONTENTS"
 echo ""
 echo "=== Checking required files ==="
 
@@ -23,7 +24,7 @@ FAILED=0
 for check in "${CHECKS[@]}"; do
   pattern="${check%%:*}"
   label="${check#*:}"
-  if dpkg-deb -c "$DEB_FILE" | grep -q "$pattern"; then
+  if echo "$CONTENTS" | grep -q "$pattern"; then
     echo "OK: $label"
   else
     echo "FAIL: $label (missing $pattern)"
