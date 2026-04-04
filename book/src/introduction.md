@@ -56,6 +56,7 @@ pam_facelock.so (PAM module)
 | `facelock-store` | lib | SQLite face embedding storage |
 | `facelock-daemon` | lib | Auth/enroll logic, liveness, audit, rate limiting, request handler |
 | `facelock-cli` | bin | All CLI commands, daemon runner, direct mode, benchmarks |
+| `facelock-bench` | bin | Standalone benchmark and calibration utility |
 | `pam-facelock` | cdylib | PAM module (libc + toml + serde + zbus only) |
 | `facelock-tpm` | lib | Optional TPM-bound encryption for embeddings at rest |
 | `facelock-polkit` | bin | Polkit authentication agent for face auth |

@@ -15,7 +15,7 @@ cargo build --workspace
 
 ## Workspace structure
 
-Facelock is a Cargo workspace with 10 crates:
+Facelock is a Cargo workspace with 11 crates:
 
 | Crate | Type | Purpose |
 |-------|------|---------|
@@ -25,6 +25,7 @@ Facelock is a Cargo workspace with 10 crates:
 | `facelock-store` | lib | SQLite face embedding storage |
 | `facelock-daemon` | lib | Auth/enroll logic, rate limiting, liveness, audit |
 | `facelock-cli` | bin | Unified CLI (`facelock` binary, includes `bench` subcommand) |
+| `facelock-bench` | bin | Standalone benchmark and calibration utility |
 | `pam-facelock` | cdylib | PAM module (libc + toml + serde, zbus only) |
 | `facelock-tpm` | lib | Optional TPM encryption |
 | `facelock-polkit` | bin | Polkit face authentication agent |
