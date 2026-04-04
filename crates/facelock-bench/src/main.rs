@@ -8,7 +8,7 @@ use tracing::{info, warn};
 use facelock_camera::capture::Camera;
 use facelock_camera::device::{is_ir_camera, validate_device};
 use facelock_core::Config;
-use facelock_core::types::{cosine_similarity, FaceEmbedding};
+use facelock_core::types::{FaceEmbedding, cosine_similarity};
 use facelock_face::FaceEngine;
 use facelock_store::FaceStore;
 
@@ -26,7 +26,10 @@ const WARM_ITERATIONS: u32 = 10;
 const ENROLLMENT_SNAPSHOTS: u32 = 5;
 
 #[derive(Parser)]
-#[command(name = "facelock-bench", about = "Benchmark and calibration tool for facelock")]
+#[command(
+    name = "facelock-bench",
+    about = "Benchmark and calibration tool for facelock"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -86,7 +89,8 @@ fn open_camera(config: &Config) -> Result<Camera<'static>> {
             .with_context(|| format!("Camera device {path} not accessible"))?;
         info!(device = %path, ir = is_ir_camera(&device_info), "Camera validated");
     }
-    Camera::open(&config.device, None).with_context(|| format!("Failed to open camera ({path_display})"))
+    Camera::open(&config.device, None)
+        .with_context(|| format!("Failed to open camera ({path_display})"))
 }
 
 /// Load FaceEngine from config.
@@ -116,8 +120,8 @@ fn cmd_cold_auth() -> Result<()> {
     let mut camera = open_camera(&config)?;
 
     // Open store
-    let store = FaceStore::open(Path::new(&config.storage.db_path))
-        .context("Failed to open face store")?;
+    let store =
+        FaceStore::open(Path::new(&config.storage.db_path)).context("Failed to open face store")?;
 
     let embeddings = store.get_user_embeddings(&user)?;
     if embeddings.is_empty() {
@@ -165,8 +169,8 @@ fn cmd_warm_auth() -> Result<()> {
     // Pre-load everything
     let mut engine = load_engine(&config)?;
     let mut camera = open_camera(&config)?;
-    let store = FaceStore::open(Path::new(&config.storage.db_path))
-        .context("Failed to open face store")?;
+    let store =
+        FaceStore::open(Path::new(&config.storage.db_path)).context("Failed to open face store")?;
 
     let embeddings = store.get_user_embeddings(&user)?;
     if embeddings.is_empty() {
@@ -245,7 +249,10 @@ fn cmd_preview() -> Result<()> {
         capture_times.push(cap_ms);
         detect_times.push(det_ms);
         total_times.push(total_ms);
-        info!(iteration = i + 1, cap_ms, det_ms, total_ms, "preview iteration");
+        info!(
+            iteration = i + 1,
+            cap_ms, det_ms, total_ms, "preview iteration"
+        );
     }
 
     let cap_median = percentile(&mut capture_times, 50);
@@ -354,8 +361,8 @@ fn cmd_calibrate() -> Result<()> {
 
     let mut engine = load_engine(&config)?;
     let mut camera = open_camera(&config)?;
-    let store = FaceStore::open(Path::new(&config.storage.db_path))
-        .context("Failed to open face store")?;
+    let store =
+        FaceStore::open(Path::new(&config.storage.db_path)).context("Failed to open face store")?;
 
     let enrolled = store.get_user_embeddings(&user)?;
     if enrolled.is_empty() {
@@ -367,10 +374,7 @@ fn cmd_calibrate() -> Result<()> {
 
     // Capture several test frames to get live embeddings
     let num_test_frames = 10u32;
-    println!(
-        "Capturing {} test frames from camera...",
-        num_test_frames
-    );
+    println!("Capturing {} test frames from camera...", num_test_frames);
 
     let mut live_embeddings: Vec<FaceEmbedding> = Vec::new();
     for _ in 0..num_test_frames {
@@ -385,7 +389,10 @@ fn cmd_calibrate() -> Result<()> {
         bail!("No faces detected in test frames. Ensure you are facing the camera.");
     }
 
-    println!("Captured {} face embeddings from live frames", live_embeddings.len());
+    println!(
+        "Captured {} face embeddings from live frames",
+        live_embeddings.len()
+    );
     println!();
 
     // Compute all similarities between live and enrolled embeddings
@@ -397,17 +404,20 @@ fn cmd_calibrate() -> Result<()> {
     }
 
     let avg_sim = similarities.iter().sum::<f32>() / similarities.len().max(1) as f32;
-    let max_sim = similarities.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let max_sim = similarities
+        .iter()
+        .cloned()
+        .fold(f32::NEG_INFINITY, f32::max);
     let min_sim = similarities.iter().cloned().fold(f32::INFINITY, f32::min);
 
-    println!("Similarity stats: min={:.4} avg={:.4} max={:.4}", min_sim, avg_sim, max_sim);
+    println!(
+        "Similarity stats: min={:.4} avg={:.4} max={:.4}",
+        min_sim, avg_sim, max_sim
+    );
     println!();
 
     // Threshold sweep
-    println!(
-        "{:<12} {:<10} {:<12}",
-        "Threshold", "Matches", "Match Rate"
-    );
+    println!("{:<12} {:<10} {:<12}", "Threshold", "Matches", "Match Rate");
     println!("{}", "-".repeat(34));
 
     let mut best_threshold = config.recognition.threshold;
@@ -448,10 +458,7 @@ fn cmd_calibrate() -> Result<()> {
     println!("=== Detector Confidence Sweep ===");
     println!("Sweeping detection_confidence from 0.30 to 0.90 (step 0.10)");
     println!();
-    println!(
-        "{:<12} {:<15}",
-        "Confidence", "Detections"
-    );
+    println!("{:<12} {:<15}", "Confidence", "Detections");
     println!("{}", "-".repeat(27));
 
     // Re-capture a single frame for detection sweep
@@ -464,16 +471,14 @@ fn cmd_calibrate() -> Result<()> {
         sweep_config.detection_confidence = confidence;
 
         match FaceEngine::load(&sweep_config, model_dir(&config)) {
-            Ok(mut sweep_engine) => {
-                match sweep_engine.process(&frame) {
-                    Ok(faces) => {
-                        println!("{:<12.2} {:<15}", confidence, faces.len());
-                    }
-                    Err(e) => {
-                        println!("{:<12.2} error: {}", confidence, e);
-                    }
+            Ok(mut sweep_engine) => match sweep_engine.process(&frame) {
+                Ok(faces) => {
+                    println!("{:<12.2} {:<15}", confidence, faces.len());
                 }
-            }
+                Err(e) => {
+                    println!("{:<12.2} error: {}", confidence, e);
+                }
+            },
             Err(e) => {
                 println!("{:<12.2} load error: {}", confidence, e);
             }
@@ -500,7 +505,10 @@ fn cmd_report() -> Result<()> {
     println!("- Hostname: {}", hostname);
     println!("- CPU: {}", cpu_info);
     println!("- OS: {}", os_info);
-    println!("- Camera: {}", config.device.path.as_deref().unwrap_or("(auto-detect)"));
+    println!(
+        "- Camera: {}",
+        config.device.path.as_deref().unwrap_or("(auto-detect)")
+    );
     println!("- Model pack: SCRFD 2.5G + ArcFace R50");
     println!("- Build: release");
     println!("- User: {}", user);
@@ -533,8 +541,8 @@ fn cmd_report() -> Result<()> {
     };
 
     // Warm auth benchmark
-    let store = FaceStore::open(Path::new(&config.storage.db_path))
-        .context("Failed to open face store")?;
+    let store =
+        FaceStore::open(Path::new(&config.storage.db_path)).context("Failed to open face store")?;
     let embeddings = store.get_user_embeddings(&user)?;
     let has_enrolled = !embeddings.is_empty();
 
@@ -544,8 +552,7 @@ fn cmd_report() -> Result<()> {
             let start = Instant::now();
             let frame = camera.capture().context("Failed to capture frame")?;
             let faces = engine.process(&frame)?;
-            let _matched =
-                find_best_match(&faces, &embeddings, config.recognition.threshold);
+            let _matched = find_best_match(&faces, &embeddings, config.recognition.threshold);
             times.push(start.elapsed().as_millis() as u64);
         }
         Some(percentile(&mut times, 50))
@@ -582,10 +589,7 @@ fn cmd_report() -> Result<()> {
         "| {:<25} | {:<10} | {:<10} | {:<6} |",
         "Metric", "Value", "Target", "Pass?"
     );
-    println!(
-        "|{:-<27}|{:-<12}|{:-<12}|{:-<8}|",
-        "", "", "", ""
-    );
+    println!("|{:-<27}|{:-<12}|{:-<12}|{:-<8}|", "", "", "", "");
 
     print_report_row("Model load", model_load_ms, TARGET_MODEL_LOAD_MS);
     print_report_row("Preview frame", preview_ms, TARGET_PREVIEW_MS);
@@ -595,7 +599,10 @@ fn cmd_report() -> Result<()> {
     } else {
         println!(
             "| {:<25} | {:<10} | {:<10} | {:<6} |",
-            "Warm auth", "N/A", format!("<{}ms", TARGET_WARM_AUTH_MS), "SKIP"
+            "Warm auth",
+            "N/A",
+            format!("<{}ms", TARGET_WARM_AUTH_MS),
+            "SKIP"
         );
     }
 
@@ -604,7 +611,10 @@ fn cmd_report() -> Result<()> {
     } else {
         println!(
             "| {:<25} | {:<10} | {:<10} | {:<6} |",
-            "Cold auth", "N/A", format!("<{}ms", TARGET_COLD_AUTH_MS), "SKIP"
+            "Cold auth",
+            "N/A",
+            format!("<{}ms", TARGET_COLD_AUTH_MS),
+            "SKIP"
         );
     }
 
@@ -618,10 +628,7 @@ fn cmd_report() -> Result<()> {
 
     // Calibration summary
     println!("## Calibration");
-    println!(
-        "- Current threshold: {:.2}",
-        config.recognition.threshold
-    );
+    println!("- Current threshold: {:.2}", config.recognition.threshold);
     if has_enrolled {
         println!("- Run `facelock-bench calibrate` for threshold sweep");
     } else {
@@ -630,10 +637,16 @@ fn cmd_report() -> Result<()> {
 
     println!();
     println!("## Notes");
-    println!("- Preview and warm-auth are median of {} iterations", WARM_ITERATIONS);
+    println!(
+        "- Preview and warm-auth are median of {} iterations",
+        WARM_ITERATIONS
+    );
     println!("- Cold auth includes model reload");
     if !has_enrolled {
-        println!("- Auth benchmarks skipped: no enrolled faces for user '{}'", user);
+        println!(
+            "- Auth benchmarks skipped: no enrolled faces for user '{}'",
+            user
+        );
     }
 
     Ok(())

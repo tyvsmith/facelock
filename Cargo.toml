@@ -7,6 +7,7 @@ members = [
     "crates/facelock-store",
     "crates/facelock-daemon",
     "crates/facelock-cli",
+    "crates/facelock-bench",
     "crates/pam-facelock",
     "crates/facelock-test-support",
     "crates/facelock-tpm",

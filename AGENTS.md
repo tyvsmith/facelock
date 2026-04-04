@@ -6,7 +6,7 @@ Facelock is a Linux face authentication PAM module written in Rust. Single unifi
 
 ## Repository Structure
 
-Cargo workspace with 10 crates:
+Cargo workspace with 11 crates:
 
 | Crate | Type | Purpose |
 |-------|------|---------|
@@ -16,6 +16,7 @@ Cargo workspace with 10 crates:
 | `facelock-store` | lib | SQLite face embedding storage |
 | `facelock-daemon` | lib | Auth/enroll logic, rate limiting, liveness, audit |
 | `facelock-cli` | bin | Unified CLI (`facelock` binary, includes `bench` subcommand) |
+| `facelock-bench` | bin | Standalone benchmark and calibration utility |
 | `pam-facelock` | cdylib | PAM module (libc + toml + serde + zbus only) |
 | `facelock-tpm` | lib | TPM-sealed key encryption, software AES-256-GCM |
 | `facelock-polkit` | bin | Polkit authentication agent |
@@ -81,6 +82,7 @@ Supported providers: `cpu` (default), `cuda` (NVIDIA), `rocm` (AMD), `openvino` 
 | facelock-store | facelock-core, rusqlite (bundled), bytemuck |
 | facelock-daemon | facelock-core, facelock-camera, facelock-face, facelock-store, facelock-tpm, signal-hook, nix |
 | facelock-cli | facelock-core + all above, clap, reqwest, zbus, tokio, dialoguer |
+| facelock-bench | facelock-core, facelock-camera, facelock-face, facelock-store, clap, anyhow, tracing |
 | pam-facelock | **libc, toml, serde, zbus ONLY** |
 | facelock-tpm | facelock-core, tracing, aes-gcm, rand, zeroize, tss-esapi (optional) |
 | facelock-polkit | facelock-core, zbus, tokio, nix, anyhow |

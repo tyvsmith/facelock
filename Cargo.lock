@@ -1014,6 +1014,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "facelock-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "facelock-camera",
+ "facelock-core",
+ "facelock-face",
+ "facelock-store",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "facelock-camera"
 version = "0.1.0"
 dependencies = [
