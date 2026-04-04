@@ -429,7 +429,7 @@ test-apt-repo:
     sed -i '/^SignWith:/d' "${REPO_DIR}/conf/distributions"
 
     # Find any .deb files (from just test-deb or CI artifacts)
-    DEB_FILES=$(find . -maxdepth 1 -name 'facelock_*.deb' -o -path './target/*.deb' 2>/dev/null | head -2)
+    DEB_FILES=$({ find . -maxdepth 1 -name 'facelock_*.deb'; find ./target -maxdepth 1 -name 'facelock_*.deb' 2>/dev/null; } | head -2)
     if [ -z "$DEB_FILES" ]; then
         echo "No .deb files found. Building a test .deb is not required."
         echo "Validating reprepro config only..."

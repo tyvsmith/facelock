@@ -37,7 +37,10 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/apt-download
 
-          if gh release download --pattern 'apt-repo.tar.gz' --dir /tmp/apt-download --repo "${{ github.repository }}" 2>/dev/null; then
+          # Check if latest release has the apt-repo asset
+          if gh release view --json assets --jq '.assets[].name' --repo "${{ github.repository }}" 2>/dev/null | grep -qx 'apt-repo.tar.gz'; then
+            # Asset exists — download must succeed or we fail to avoid wiping the existing APT repo
+            gh release download --pattern 'apt-repo.tar.gz' --dir /tmp/apt-download --repo "${{ github.repository }}"
             echo "Downloaded apt-repo.tar.gz from latest release"
             mkdir -p _site/apt
             tar -xzf /tmp/apt-download/apt-repo.tar.gz -C _site/apt/

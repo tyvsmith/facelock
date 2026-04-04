@@ -51,7 +51,7 @@ The `.github/workflows/release.yml` workflow:
 5. Validates Nix flake evaluation
 6. Publishes to AUR (if `AUR_SSH_KEY` secret is configured)
 7. Triggers COPR rebuild (if `COPR_WEBHOOK_URL` secret is configured)
-8. Publishes signed APT repository (if `APT_GPG_PRIVATE_KEY` is configured)
+8. Publishes signed APT repository (if `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE` are configured)
 9. Triggers GitHub Pages rebuild to include updated APT repo
 
 Pre-release tags (containing `alpha`, `beta`, or `rc`) skip AUR, COPR, and APT publishing.

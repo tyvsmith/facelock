@@ -52,8 +52,8 @@ reprepro -b "${REPO_DIR}" includedeb main "${TPM_DEB}"
 echo "Adding legacy .deb to legacy: ${LEGACY_DEB}"
 reprepro -b "${REPO_DIR}" includedeb legacy "${LEGACY_DEB}"
 
-# Export public keyring
-gpg --export > "${REPO_DIR}/tysmith-archive-keyring.gpg"
+# Export only the signing key (not the entire keyring)
+gpg --export "${KEY_FPR}" > "${REPO_DIR}/tysmith-archive-keyring.gpg"
 echo "Public keyring exported ($(du -h "${REPO_DIR}/tysmith-archive-keyring.gpg" | cut -f1))"
 
 echo "=== APT repo structure ==="
