@@ -423,6 +423,34 @@ test-rpm-e2e: build-release
     podman build -t facelock-rpm-e2e -f test/Containerfile.rpm-e2e .
     podman run --rm facelock-rpm-e2e
 
+# Interactive shell in .deb package container (requires camera)
+test-deb-e2e-shell: build-release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build -t facelock-deb-e2e -f test/Containerfile.deb-e2e .
+    devices=""
+    for d in /dev/video*; do
+        [ -e "$d" ] && devices="$devices --device $d"
+    done
+    echo "Starting interactive shell (Ubuntu 24.04, .deb installed). Try:"
+    echo "  facelock enroll --user root --label myface"
+    echo "  facelock test --user root"
+    podman run --rm -it $devices facelock-deb-e2e /bin/bash
+
+# Interactive shell in .rpm package container (requires camera)
+test-rpm-e2e-shell: build-release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build -t facelock-rpm-e2e -f test/Containerfile.rpm-e2e .
+    devices=""
+    for d in /dev/video*; do
+        [ -e "$d" ] && devices="$devices --device $d"
+    done
+    echo "Starting interactive shell (Fedora, .rpm installed). Try:"
+    echo "  facelock enroll --user root --label myface"
+    echo "  facelock test --user root"
+    podman run --rm -it $devices facelock-rpm-e2e /bin/bash
+
 # Test APT repo generation locally (requires reprepro + gpg)
 test-apt-repo:
     #!/usr/bin/env bash
