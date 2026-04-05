@@ -69,17 +69,23 @@ test-shell: _build-test-container
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
     done
-    models=""
+    mounts=""
     if [ -d /var/lib/facelock/models ]; then
-        models="-v /var/lib/facelock/models:/var/lib/facelock/models:ro"
+        mounts="$mounts -v /var/lib/facelock/models:/var/lib/facelock/models:ro"
     fi
+    for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
+        if [ -f "$ort" ]; then
+            mounts="$mounts -v $ort:/usr/lib/libonnxruntime.so:ro"
+            break
+        fi
+    done
     echo "Starting interactive shell (Arch, binary install). Try:"
     echo "  facelock daemon &"
     echo "  sleep 2"
     echo "  facelock enroll --user testuser --label myface"
     echo "  facelock test --user testuser"
     echo "  pamtester facelock-test testuser authenticate"
-    podman run --rm -it $devices $models facelock-pam-test /bin/bash
+    podman run --rm -it $devices $mounts facelock-pam-test /bin/bash
 
 # Build release and install to system
 # Run as: just install (builds as you, installs as root)
@@ -436,14 +442,20 @@ test-deb-shell: build-release
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
     done
-    models=""
+    mounts=""
     if [ -d /var/lib/facelock/models ]; then
-        models="-v /var/lib/facelock/models:/var/lib/facelock/models:ro"
+        mounts="$mounts -v /var/lib/facelock/models:/var/lib/facelock/models:ro"
     fi
+    for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
+        if [ -f "$ort" ]; then
+            mounts="$mounts -v $ort:/usr/lib/libonnxruntime.so:ro"
+            break
+        fi
+    done
     echo "Starting interactive shell (Ubuntu 24.04, .deb installed). Try:"
     echo "  facelock enroll --user root --label myface"
     echo "  facelock test --user root"
-    podman run --rm -it $devices $models facelock-deb-e2e /bin/bash
+    podman run --rm -it $devices $mounts facelock-deb-e2e /bin/bash
 
 # Interactive shell in .rpm package container (requires camera)
 test-rpm-shell: build-release
@@ -454,14 +466,20 @@ test-rpm-shell: build-release
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
     done
-    models=""
+    mounts=""
     if [ -d /var/lib/facelock/models ]; then
-        models="-v /var/lib/facelock/models:/var/lib/facelock/models:ro"
+        mounts="$mounts -v /var/lib/facelock/models:/var/lib/facelock/models:ro"
     fi
+    for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
+        if [ -f "$ort" ]; then
+            mounts="$mounts -v $ort:/usr/lib/libonnxruntime.so:ro"
+            break
+        fi
+    done
     echo "Starting interactive shell (Fedora, .rpm installed). Try:"
     echo "  facelock enroll --user root --label myface"
     echo "  facelock test --user root"
-    podman run --rm -it $devices $models facelock-rpm-e2e /bin/bash
+    podman run --rm -it $devices $mounts facelock-rpm-e2e /bin/bash
 
 # Test APT repo generation locally (requires reprepro + gpg)
 test-apt-repo:
