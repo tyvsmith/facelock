@@ -70,9 +70,9 @@ test-shell: _build-test-container
         [ -e "$d" ] && devices="$devices --device $d"
     done
     mounts=""
-    if [ -d /var/lib/facelock/models ]; then
-        mounts="$mounts -v /var/lib/facelock/models:/var/lib/facelock/models"
-    fi
+    for f in /var/lib/facelock/models/*.onnx /var/lib/facelock/models/*.toml; do
+        [ -f "$f" ] && mounts="$mounts -v $f:/var/lib/facelock/models/$(basename $f):ro"
+    done
     for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
         if [ -f "$ort" ]; then
             mounts="$mounts -v $ort:/usr/lib/libonnxruntime.so:ro"
@@ -443,9 +443,9 @@ test-deb-shell: build-release
         [ -e "$d" ] && devices="$devices --device $d"
     done
     mounts=""
-    if [ -d /var/lib/facelock/models ]; then
-        mounts="$mounts -v /var/lib/facelock/models:/var/lib/facelock/models"
-    fi
+    for f in /var/lib/facelock/models/*.onnx /var/lib/facelock/models/*.toml; do
+        [ -f "$f" ] && mounts="$mounts -v $f:/var/lib/facelock/models/$(basename $f):ro"
+    done
     for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
         if [ -f "$ort" ]; then
             mounts="$mounts -v $ort:/usr/lib/libonnxruntime.so:ro"
@@ -467,9 +467,9 @@ test-rpm-shell: build-release
         [ -e "$d" ] && devices="$devices --device $d"
     done
     mounts=""
-    if [ -d /var/lib/facelock/models ]; then
-        mounts="$mounts -v /var/lib/facelock/models:/var/lib/facelock/models"
-    fi
+    for f in /var/lib/facelock/models/*.onnx /var/lib/facelock/models/*.toml; do
+        [ -f "$f" ] && mounts="$mounts -v $f:/var/lib/facelock/models/$(basename $f):ro"
+    done
     for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
         if [ -f "$ort" ]; then
             mounts="$mounts -v $ort:/usr/lib/libonnxruntime.so:ro"
