@@ -13,6 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxkbcommon0 \
     libtss2-esys-3.0.2-0t64 \
     libtss2-tctildr0t64 \
+    ca-certificates \
+    libssl3t64 \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 

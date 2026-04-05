@@ -2,7 +2,7 @@
 # Uses host-built release binaries (from `just build-release`); no Rust compilation in container.
 FROM fedora:latest
 
-RUN dnf -y install pam dbus rpm-build systemd binutils glibc libxkbcommon tpm2-tss python3 && dnf clean all
+RUN dnf -y install pam dbus rpm-build systemd binutils glibc libxkbcommon tpm2-tss ca-certificates openssl-libs python3 && dnf clean all
 
 WORKDIR /build
 
