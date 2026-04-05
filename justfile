@@ -74,8 +74,9 @@ test-shell: _build-test-container
         [ -f "$f" ] && mounts="$mounts -v $f:/var/lib/facelock/models/$(basename $f):ro"
     done
     for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
-        if [ -f "$ort" ]; then
-            mounts="$mounts -v $ort:/usr/lib/libonnxruntime.so:ro"
+        if [ -e "$ort" ]; then
+            real_ort="$(readlink -f "$ort")"
+            mounts="$mounts -v $real_ort:/usr/lib/libonnxruntime.so:ro"
             break
         fi
     done
@@ -447,8 +448,9 @@ test-deb-shell: build-release
         [ -f "$f" ] && mounts="$mounts -v $f:/var/lib/facelock/models/$(basename $f):ro"
     done
     for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
-        if [ -f "$ort" ]; then
-            mounts="$mounts -v $ort:/usr/lib/libonnxruntime.so:ro"
+        if [ -e "$ort" ]; then
+            real_ort="$(readlink -f "$ort")"
+            mounts="$mounts -v $real_ort:/usr/lib/libonnxruntime.so:ro"
             break
         fi
     done
@@ -471,8 +473,9 @@ test-rpm-shell: build-release
         [ -f "$f" ] && mounts="$mounts -v $f:/var/lib/facelock/models/$(basename $f):ro"
     done
     for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
-        if [ -f "$ort" ]; then
-            mounts="$mounts -v $ort:/usr/lib/libonnxruntime.so:ro"
+        if [ -e "$ort" ]; then
+            real_ort="$(readlink -f "$ort")"
+            mounts="$mounts -v $real_ort:/usr/lib/libonnxruntime.so:ro"
             break
         fi
     done
