@@ -69,13 +69,17 @@ test-shell: _build-test-container
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
     done
-    echo "Starting interactive shell. Try:"
+    models=""
+    if [ -d /var/lib/facelock/models ]; then
+        models="-v /var/lib/facelock/models:/var/lib/facelock/models:ro"
+    fi
+    echo "Starting interactive shell (Arch, binary install). Try:"
     echo "  facelock daemon &"
     echo "  sleep 2"
     echo "  facelock enroll --user testuser --label myface"
     echo "  facelock test --user testuser"
     echo "  pamtester facelock-test testuser authenticate"
-    podman run --rm -it $devices facelock-pam-test /bin/bash
+    podman run --rm -it $devices $models facelock-pam-test /bin/bash
 
 # Build release and install to system
 # Run as: just install (builds as you, installs as root)
@@ -424,7 +428,7 @@ test-rpm-e2e: build-release
     podman run --rm facelock-rpm-e2e
 
 # Interactive shell in .deb package container (requires camera)
-test-deb-e2e-shell: build-release
+test-deb-shell: build-release
     #!/usr/bin/env bash
     set -euo pipefail
     podman build -t facelock-deb-e2e -f test/Containerfile.deb-e2e .
@@ -432,13 +436,17 @@ test-deb-e2e-shell: build-release
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
     done
+    models=""
+    if [ -d /var/lib/facelock/models ]; then
+        models="-v /var/lib/facelock/models:/var/lib/facelock/models:ro"
+    fi
     echo "Starting interactive shell (Ubuntu 24.04, .deb installed). Try:"
     echo "  facelock enroll --user root --label myface"
     echo "  facelock test --user root"
-    podman run --rm -it $devices facelock-deb-e2e /bin/bash
+    podman run --rm -it $devices $models facelock-deb-e2e /bin/bash
 
 # Interactive shell in .rpm package container (requires camera)
-test-rpm-e2e-shell: build-release
+test-rpm-shell: build-release
     #!/usr/bin/env bash
     set -euo pipefail
     podman build -t facelock-rpm-e2e -f test/Containerfile.rpm-e2e .
@@ -446,10 +454,14 @@ test-rpm-e2e-shell: build-release
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
     done
+    models=""
+    if [ -d /var/lib/facelock/models ]; then
+        models="-v /var/lib/facelock/models:/var/lib/facelock/models:ro"
+    fi
     echo "Starting interactive shell (Fedora, .rpm installed). Try:"
     echo "  facelock enroll --user root --label myface"
     echo "  facelock test --user root"
-    podman run --rm -it $devices facelock-rpm-e2e /bin/bash
+    podman run --rm -it $devices $models facelock-rpm-e2e /bin/bash
 
 # Test APT repo generation locally (requires reprepro + gpg)
 test-apt-repo:
