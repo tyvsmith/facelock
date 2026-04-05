@@ -71,7 +71,7 @@ test-shell: _build-test-container
     done
     mounts=""
     if [ -d /var/lib/facelock/models ]; then
-        mounts="$mounts -v /var/lib/facelock/models:/var/lib/facelock/models:ro"
+        mounts="$mounts -v /var/lib/facelock/models:/var/lib/facelock/models"
     fi
     for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
         if [ -f "$ort" ]; then
@@ -444,7 +444,7 @@ test-deb-shell: build-release
     done
     mounts=""
     if [ -d /var/lib/facelock/models ]; then
-        mounts="$mounts -v /var/lib/facelock/models:/var/lib/facelock/models:ro"
+        mounts="$mounts -v /var/lib/facelock/models:/var/lib/facelock/models"
     fi
     for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
         if [ -f "$ort" ]; then
@@ -468,7 +468,7 @@ test-rpm-shell: build-release
     done
     mounts=""
     if [ -d /var/lib/facelock/models ]; then
-        mounts="$mounts -v /var/lib/facelock/models:/var/lib/facelock/models:ro"
+        mounts="$mounts -v /var/lib/facelock/models:/var/lib/facelock/models"
     fi
     for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
         if [ -f "$ort" ]; then
