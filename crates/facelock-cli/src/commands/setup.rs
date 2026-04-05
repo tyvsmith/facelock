@@ -43,6 +43,7 @@ struct ModelEntry {
     #[serde(default)]
     url: String,
     #[serde(default)]
+    #[allow(dead_code)] // parsed from manifest TOML; used in tests
     optional: bool,
 }
 
@@ -505,12 +506,13 @@ fn wizard_model_download(theme: &ColorfulTheme, config: &Config) -> anyhow::Resu
     let configured_detector = &config.recognition.detector_model;
     let configured_embedder = &config.recognition.embedder_model;
 
+    // Only download the models actually selected in the config.
+    // Non-optional (default) models that aren't selected are skipped — the user
+    // chose different models, so there is no point fetching the defaults too.
     let needed: Vec<&ModelEntry> = manifest
         .models
         .iter()
-        .filter(|m| {
-            !m.optional || m.filename == *configured_detector || m.filename == *configured_embedder
-        })
+        .filter(|m| m.filename == *configured_detector || m.filename == *configured_embedder)
         .collect();
 
     // Check which models actually need downloading
@@ -1003,18 +1005,18 @@ fn run_non_interactive() -> anyhow::Result<()> {
 
     let model_dir = Path::new(&config.daemon.model_dir);
 
-    // 3. Check and download needed models:
-    //    - All non-optional models (defaults)
-    //    - Any model whose filename matches the current config (user switched to optional models)
+    // 3. Check and download only the models actually selected in the config.
+    //    Non-optional (default) models that aren't referenced by the config are
+    //    skipped — if the user chose different models there is no reason to fetch
+    //    the defaults as well.  On a first run the config defaults resolve to the
+    //    standard models (scrfd_2.5g + w600k_r50) so those are still downloaded.
     let configured_detector = &config.recognition.detector_model;
     let configured_embedder = &config.recognition.embedder_model;
 
     let needed: Vec<&ModelEntry> = manifest
         .models
         .iter()
-        .filter(|m| {
-            !m.optional || m.filename == *configured_detector || m.filename == *configured_embedder
-        })
+        .filter(|m| m.filename == *configured_detector || m.filename == *configured_embedder)
         .collect();
 
     println!("Checking {} model(s)...\n", needed.len());
