@@ -1,0 +1,43 @@
+# E2E package test — builds a real .deb and installs via dpkg
+# Uses host-built release binaries (from `just build-release`); no Rust compilation in container.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpam-runtime \
+    dbus \
+    dpkg-dev \
+    systemd \
+    binutils \
+    libxkbcommon0 \
+    libtss2-esys-3.0.2-0t64 \
+    libtss2-tctildr0t64 \
+    python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy host-built release binaries
+COPY target/release/facelock /build/target/release/facelock
+COPY target/release/libpam_facelock.so /build/target/release/libpam_facelock.so
+
+# Copy project files needed by build-deb.sh
+COPY config/ /build/config/
+COPY systemd/ /build/systemd/
+COPY dbus/ /build/dbus/
+COPY dist/ /build/dist/
+COPY .github/workflows/scripts/build-deb.sh /build/.github/workflows/scripts/build-deb.sh
+
+# Copy test validation script
+COPY test/pkg-validate.sh /pkg-validate.sh
+RUN chmod +x /pkg-validate.sh
+
+# Build the .deb from the host-built binaries and install it
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+RUN bash /build/.github/workflows/scripts/build-deb.sh "0.0.0-test" "legacy" && \
+    (dpkg -i facelock_0.0.0-test-1~legacy1_amd64.deb || true) && \
+    apt-get install -f -y && \
+    rm -rf facelock_0.0.0-test-1~legacy1_amd64 facelock_0.0.0-test-1~legacy1_amd64.deb
+
+CMD ["/pkg-validate.sh"]

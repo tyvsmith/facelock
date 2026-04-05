@@ -1,0 +1,35 @@
+# E2E package test — builds a real .rpm and installs via dnf
+# Uses host-built release binaries (from `just build-release`); no Rust compilation in container.
+FROM fedora:latest
+
+RUN dnf -y install pam dbus rpm-build systemd binutils glibc libxkbcommon tpm2-tss python3 && dnf clean all
+
+WORKDIR /build
+
+# Copy host-built release binaries
+COPY target/release/facelock /build/target/release/facelock
+COPY target/release/libpam_facelock.so /build/target/release/libpam_facelock.so
+
+# Copy project files needed for RPM packaging
+COPY config/ /build/config/
+COPY systemd/ /build/systemd/
+COPY dbus/ /build/dbus/
+COPY dist/ /build/dist/
+COPY LICENSE-MIT /build/LICENSE-MIT
+COPY LICENSE-APACHE /build/LICENSE-APACHE
+
+# Copy helper script and test validation
+COPY test/build-rpm-prebuilt.sh /build/test/build-rpm-prebuilt.sh
+COPY test/pkg-validate.sh /pkg-validate.sh
+RUN chmod +x /build/test/build-rpm-prebuilt.sh /pkg-validate.sh
+
+# Create placeholder for polkit agent (spec %files lists it unconditionally)
+RUN touch /build/target/release/facelock-polkit-agent && \
+    chmod 755 /build/target/release/facelock-polkit-agent
+
+# Build the .rpm from pre-built binaries and install it
+RUN bash /build/test/build-rpm-prebuilt.sh "0.0.0" && \
+    dnf install -y --disablerepo='*' ./*.rpm && \
+    rm -rf ~/rpmbuild ./*.rpm
+
+CMD ["/pkg-validate.sh"]

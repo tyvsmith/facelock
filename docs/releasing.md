@@ -70,14 +70,19 @@ Both `.deb` packages are uploaded to the GitHub Release for direct download. For
 Before releasing, validate packages build and install correctly on each target:
 
 ```bash
-just test-pam    # Arch container PAM smoke tests (existing)
-just test-rpm    # Fedora container — build, install, validate file layout
-just test-deb    # Ubuntu container — build, install, validate file layout
+just test-pam        # Arch container PAM smoke tests (existing)
+just test-rpm        # Fedora container — build, install, validate file layout
+just test-deb        # Ubuntu container — build, install, validate file layout
+just test-deb-e2e      # Ubuntu 24.04 — build real legacy .deb, install via dpkg, validate
+just test-deb-tpm-e2e  # Debian trixie — build real TPM .deb, install via dpkg, validate
+just test-rpm-e2e      # Fedora — build real .rpm, install via dnf, validate
 ```
 
-These containers don't need camera hardware. They validate that the package installs
-all required files to the correct paths, PAM symbols are exported, D-Bus policy is
-valid, and systemd units are present.
+These containers don't need camera hardware. The `test-rpm` / `test-deb` recipes validate
+file layout from manually installed binaries. The `test-rpm-e2e` / `test-deb-e2e` recipes
+go further: they build real packages using the same scripts as CI, install them with the
+actual package manager (`dnf` / `dpkg`), and validate the result — testing postinst
+scripts, dependency resolution, sysusers/tmpfiles triggers, and the full install path.
 
 ### Release preflight (recommended)
 
@@ -90,6 +95,9 @@ just check
 just test-pam
 just test-rpm
 just test-deb
+just test-deb-e2e
+just test-deb-tpm-e2e
+just test-rpm-e2e
 ```
 
 `just release-preflight` checks local tools, required packaging files, and whether

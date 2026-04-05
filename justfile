@@ -402,6 +402,27 @@ test-deb: build-release
     podman build -t facelock-deb-test -f test/Containerfile.ubuntu .
     podman run --rm facelock-deb-test
 
+# End-to-end .deb package test — build real .deb, install via dpkg, validate
+test-deb-e2e: build-release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build -t facelock-deb-e2e -f test/Containerfile.deb-e2e .
+    podman run --rm facelock-deb-e2e
+
+# End-to-end TPM .deb package test — build real .deb (trixie), install via dpkg, validate
+test-deb-tpm-e2e: build-release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build -t facelock-deb-tpm-e2e -f test/Containerfile.deb-tpm-e2e .
+    podman run --rm facelock-deb-tpm-e2e
+
+# End-to-end .rpm package test — build real .rpm, install via dnf, validate
+test-rpm-e2e: build-release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build -t facelock-rpm-e2e -f test/Containerfile.rpm-e2e .
+    podman run --rm facelock-rpm-e2e
+
 # Test APT repo generation locally (requires reprepro + gpg)
 test-apt-repo:
     #!/usr/bin/env bash
