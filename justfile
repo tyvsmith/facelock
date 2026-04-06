@@ -400,6 +400,11 @@ show-paths:
     @echo "Service:  /usr/lib/systemd/system/facelock-daemon.service"
     @echo "Logs:     /var/log/facelock/"
 
+# Detect host ONNX Runtime version for container builds.
+# Local binaries are built against the host ORT, so bundled ORT must match.
+# CI uses 1.20.1 (set in release.yml); local builds use whatever is installed.
+_ort-version := `for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do if [ -e "$ort" ]; then readlink -f "$ort" | grep -oP '\d+\.\d+\.\d+$'; exit; fi; done; echo "1.20.1"`
+
 # Test RPM packaging in Fedora container
 test-rpm: build-release
     #!/usr/bin/env bash
@@ -418,28 +423,28 @@ test-deb: build-release
 test-deb-e2e: build-release
     #!/usr/bin/env bash
     set -euo pipefail
-    podman build -t facelock-deb-e2e -f test/Containerfile.deb-e2e .
+    podman build --build-arg ORT_VERSION={{_ort-version}} -t facelock-deb-e2e -f test/Containerfile.deb-e2e .
     podman run --rm facelock-deb-e2e
 
 # End-to-end TPM .deb package test — build real .deb (trixie), install via dpkg, validate
 test-deb-tpm-e2e: build-release
     #!/usr/bin/env bash
     set -euo pipefail
-    podman build -t facelock-deb-tpm-e2e -f test/Containerfile.deb-tpm-e2e .
+    podman build --build-arg ORT_VERSION={{_ort-version}} -t facelock-deb-tpm-e2e -f test/Containerfile.deb-tpm-e2e .
     podman run --rm facelock-deb-tpm-e2e
 
 # End-to-end .rpm package test — build real .rpm, install via dnf, validate
 test-rpm-e2e: build-release
     #!/usr/bin/env bash
     set -euo pipefail
-    podman build -t facelock-rpm-e2e -f test/Containerfile.rpm-e2e .
+    podman build --build-arg ORT_VERSION={{_ort-version}} -t facelock-rpm-e2e -f test/Containerfile.rpm-e2e .
     podman run --rm facelock-rpm-e2e
 
 # Interactive shell in .deb package container (requires camera)
 test-deb-shell: build-release
     #!/usr/bin/env bash
     set -euo pipefail
-    podman build -t facelock-deb-e2e -f test/Containerfile.deb-e2e .
+    podman build --build-arg ORT_VERSION={{_ort-version}} -t facelock-deb-e2e -f test/Containerfile.deb-e2e .
     devices=""
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
@@ -459,7 +464,7 @@ test-deb-shell: build-release
 test-rpm-shell: build-release
     #!/usr/bin/env bash
     set -euo pipefail
-    podman build -t facelock-rpm-e2e -f test/Containerfile.rpm-e2e .
+    podman build --build-arg ORT_VERSION={{_ort-version}} -t facelock-rpm-e2e -f test/Containerfile.rpm-e2e .
     devices=""
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
