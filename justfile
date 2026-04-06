@@ -478,11 +478,12 @@ test-deb-shell: build-release _ensure-portable-ort
     done
     ort_cache="/tmp/facelock-ort-portable/libonnxruntime.so"
     mounts="$mounts -v $ort_cache:/usr/lib/libonnxruntime.so:ro"
-    mounts="$mounts -v $(pwd)/test/container-config.toml:/etc/facelock/config.toml:ro"
+    mounts="$mounts -v $(pwd)/test/container-config.toml:/tmp/container-config.toml:ro"
     echo "Starting interactive shell (Ubuntu 24.04, .deb installed). Try:"
     echo "  facelock enroll --user root --label myface"
     echo "  facelock test --user root"
-    podman run --rm -it $devices $mounts facelock-deb-e2e /bin/bash
+    podman run --rm -it $devices $mounts facelock-deb-e2e \
+        bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; exec bash"
 
 # Interactive shell in .rpm package container (requires camera)
 test-rpm-shell: build-release _ensure-portable-ort
@@ -499,11 +500,12 @@ test-rpm-shell: build-release _ensure-portable-ort
     done
     ort_cache="/tmp/facelock-ort-portable/libonnxruntime.so"
     mounts="$mounts -v $ort_cache:/usr/lib/libonnxruntime.so:ro"
-    mounts="$mounts -v $(pwd)/test/container-config.toml:/etc/facelock/config.toml:ro"
+    mounts="$mounts -v $(pwd)/test/container-config.toml:/tmp/container-config.toml:ro"
     echo "Starting interactive shell (Fedora, .rpm installed). Try:"
     echo "  facelock enroll --user root --label myface"
     echo "  facelock test --user root"
-    podman run --rm -it $devices $mounts facelock-rpm-e2e /bin/bash
+    podman run --rm -it $devices $mounts facelock-rpm-e2e \
+        bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; exec bash"
 
 # Test APT repo generation locally (requires reprepro + gpg)
 test-apt-repo:
