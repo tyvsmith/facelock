@@ -36,6 +36,14 @@ COPY .github/workflows/scripts/build-deb.sh /build/.github/workflows/scripts/bui
 COPY test/pkg-validate.sh /pkg-validate.sh
 RUN chmod +x /pkg-validate.sh
 
+# Download portable CPU-only ONNX Runtime (same as CI bundles in release packages)
+ARG ORT_VERSION=1.20.1
+ADD https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz /tmp/ort.tgz
+RUN mkdir -p /build/onnxruntime/lib && \
+    tar xzf /tmp/ort.tgz -C /tmp && \
+    cp /tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION} /build/onnxruntime/lib/libonnxruntime.so && \
+    rm -rf /tmp/ort.tgz /tmp/onnxruntime-linux-x64-${ORT_VERSION}
+
 # Build the TPM .deb from host-built binaries and install it
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 RUN bash /build/.github/workflows/scripts/build-deb.sh "0.0.0-test" "tpm" && \

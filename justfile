@@ -435,37 +435,8 @@ test-rpm-e2e: build-release
     podman build -t facelock-rpm-e2e -f test/Containerfile.rpm-e2e .
     podman run --rm facelock-rpm-e2e
 
-# Download portable CPU-only ONNX Runtime for cross-distro container testing.
-# Host ORT (e.g. Arch onnxruntime package) has distro-specific deps that don't
-# work inside Fedora/Ubuntu containers. Cached in /tmp/facelock-ort-portable/.
-_ensure-portable-ort:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    ORT_CACHE="/tmp/facelock-ort-portable"
-    if [ -f "$ORT_CACHE/libonnxruntime.so" ]; then
-        exit 0
-    fi
-    # Detect host ORT version to download a matching portable build
-    ORT_VER=""
-    for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
-        if [ -e "$ort" ]; then
-            ORT_VER="$(readlink -f "$ort" | grep -oP '\d+\.\d+\.\d+$')"
-            break
-        fi
-    done
-    if [ -z "$ORT_VER" ]; then
-        echo "Warning: no system libonnxruntime.so found, using 1.20.1"
-        ORT_VER="1.20.1"
-    fi
-    echo "Downloading portable ONNX Runtime ${ORT_VER}..."
-    mkdir -p "$ORT_CACHE"
-    curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VER}/onnxruntime-linux-x64-${ORT_VER}.tgz" \
-        | tar xz -C "$ORT_CACHE" --strip-components=2 "onnxruntime-linux-x64-${ORT_VER}/lib/libonnxruntime.so.${ORT_VER}"
-    mv "$ORT_CACHE/libonnxruntime.so.${ORT_VER}" "$ORT_CACHE/libonnxruntime.so"
-    echo "Cached portable ORT at $ORT_CACHE/libonnxruntime.so"
-
 # Interactive shell in .deb package container (requires camera)
-test-deb-shell: build-release _ensure-portable-ort
+test-deb-shell: build-release
     #!/usr/bin/env bash
     set -euo pipefail
     podman build -t facelock-deb-e2e -f test/Containerfile.deb-e2e .
@@ -477,8 +448,6 @@ test-deb-shell: build-release _ensure-portable-ort
     for f in /var/lib/facelock/models/*.onnx /var/lib/facelock/models/*.toml; do
         [ -f "$f" ] && mounts="$mounts -v $f:/tmp/host-models/$(basename $f):ro"
     done
-    ort_cache="/tmp/facelock-ort-portable/libonnxruntime.so"
-    mounts="$mounts -v $ort_cache:/usr/lib/libonnxruntime.so:ro"
     mounts="$mounts -v $(pwd)/test/container-config.toml:/tmp/container-config.toml:ro"
     echo "Starting interactive shell (Ubuntu 24.04, .deb installed). Try:"
     echo "  facelock enroll --user root --label myface"
@@ -487,7 +456,7 @@ test-deb-shell: build-release _ensure-portable-ort
         bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; cp /tmp/host-models/* /var/lib/facelock/models/ 2>/dev/null; exec bash"
 
 # Interactive shell in .rpm package container (requires camera)
-test-rpm-shell: build-release _ensure-portable-ort
+test-rpm-shell: build-release
     #!/usr/bin/env bash
     set -euo pipefail
     podman build -t facelock-rpm-e2e -f test/Containerfile.rpm-e2e .
@@ -499,8 +468,6 @@ test-rpm-shell: build-release _ensure-portable-ort
     for f in /var/lib/facelock/models/*.onnx /var/lib/facelock/models/*.toml; do
         [ -f "$f" ] && mounts="$mounts -v $f:/tmp/host-models/$(basename $f):ro"
     done
-    ort_cache="/tmp/facelock-ort-portable/libonnxruntime.so"
-    mounts="$mounts -v $ort_cache:/usr/lib/libonnxruntime.so:ro"
     mounts="$mounts -v $(pwd)/test/container-config.toml:/tmp/container-config.toml:ro"
     echo "Starting interactive shell (Fedora, .rpm installed). Try:"
     echo "  facelock enroll --user root --label myface"
