@@ -71,7 +71,7 @@ test-shell: _build-test-container
     done
     mounts=""
     for f in /var/lib/facelock/models/*.onnx /var/lib/facelock/models/*.toml; do
-        [ -f "$f" ] && mounts="$mounts -v $f:/var/lib/facelock/models/$(basename $f):ro"
+        [ -f "$f" ] && mounts="$mounts -v $f:/tmp/host-models/$(basename $f):ro"
     done
     for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
         if [ -e "$ort" ]; then
@@ -86,7 +86,8 @@ test-shell: _build-test-container
     echo "  facelock enroll --user testuser --label myface"
     echo "  facelock test --user testuser"
     echo "  pamtester facelock-test testuser authenticate"
-    podman run --rm -it $devices $mounts facelock-pam-test /bin/bash
+    podman run --rm -it $devices $mounts facelock-pam-test \
+        bash -c "cp /tmp/host-models/* /var/lib/facelock/models/ 2>/dev/null; exec bash"
 
 # Build release and install to system
 # Run as: just install (builds as you, installs as root)
@@ -474,7 +475,7 @@ test-deb-shell: build-release _ensure-portable-ort
     done
     mounts=""
     for f in /var/lib/facelock/models/*.onnx /var/lib/facelock/models/*.toml; do
-        [ -f "$f" ] && mounts="$mounts -v $f:/var/lib/facelock/models/$(basename $f):ro"
+        [ -f "$f" ] && mounts="$mounts -v $f:/tmp/host-models/$(basename $f):ro"
     done
     ort_cache="/tmp/facelock-ort-portable/libonnxruntime.so"
     mounts="$mounts -v $ort_cache:/usr/lib/libonnxruntime.so:ro"
@@ -483,7 +484,7 @@ test-deb-shell: build-release _ensure-portable-ort
     echo "  facelock enroll --user root --label myface"
     echo "  facelock test --user root"
     podman run --rm -it $devices $mounts facelock-deb-e2e \
-        bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; exec bash"
+        bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; cp /tmp/host-models/* /var/lib/facelock/models/ 2>/dev/null; exec bash"
 
 # Interactive shell in .rpm package container (requires camera)
 test-rpm-shell: build-release _ensure-portable-ort
@@ -496,7 +497,7 @@ test-rpm-shell: build-release _ensure-portable-ort
     done
     mounts=""
     for f in /var/lib/facelock/models/*.onnx /var/lib/facelock/models/*.toml; do
-        [ -f "$f" ] && mounts="$mounts -v $f:/var/lib/facelock/models/$(basename $f):ro"
+        [ -f "$f" ] && mounts="$mounts -v $f:/tmp/host-models/$(basename $f):ro"
     done
     ort_cache="/tmp/facelock-ort-portable/libonnxruntime.so"
     mounts="$mounts -v $ort_cache:/usr/lib/libonnxruntime.so:ro"
@@ -505,7 +506,7 @@ test-rpm-shell: build-release _ensure-portable-ort
     echo "  facelock enroll --user root --label myface"
     echo "  facelock test --user root"
     podman run --rm -it $devices $mounts facelock-rpm-e2e \
-        bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; exec bash"
+        bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; cp /tmp/host-models/* /var/lib/facelock/models/ 2>/dev/null; exec bash"
 
 # Test APT repo generation locally (requires reprepro + gpg)
 test-apt-repo:
