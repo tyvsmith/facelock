@@ -70,19 +70,30 @@ Both `.deb` packages are uploaded to the GitHub Release for direct download. For
 Before releasing, validate packages build and install correctly on each target:
 
 ```bash
-just test-pam        # Arch container PAM smoke tests (existing)
-just test-rpm        # Fedora container — build, install, validate file layout
-just test-deb        # Ubuntu container — build, install, validate file layout
-just test-deb-e2e      # Ubuntu 24.04 — build real legacy .deb, install via dpkg, validate
-just test-deb-tpm-e2e  # Debian trixie — build real TPM .deb, install via dpkg, validate
-just test-rpm-e2e      # Fedora — build real .rpm, install via dnf, validate
+# Automated (no camera needed)
+just test-pam            # Arch container PAM smoke tests
+just test-rpm            # Fedora — validate file layout from manual install
+just test-deb            # Ubuntu — validate file layout from manual install
+just test-deb-pkg        # Ubuntu 24.04 — build real .deb, install via dpkg, validate
+just test-deb-tpm-pkg    # Debian trixie — build real TPM .deb, install via dpkg, validate
+just test-rpm-pkg        # Fedora — build real .rpm, install via dnf, validate
+
+# Interactive (requires camera)
+just test-deb-dev-shell      # Ubuntu .deb with host models — fast iteration
+just test-rpm-dev-shell      # Fedora .rpm with host models — fast iteration
+just test-deb-release-shell  # Ubuntu .deb clean room — real user experience
+just test-rpm-release-shell  # Fedora .rpm clean room — real user experience
 ```
 
-These containers don't need camera hardware. The `test-rpm` / `test-deb` recipes validate
-file layout from manually installed binaries. The `test-rpm-e2e` / `test-deb-e2e` recipes
-go further: they build real packages using the same scripts as CI, install them with the
-actual package manager (`dnf` / `dpkg`), and validate the result — testing postinst
-scripts, dependency resolution, sysusers/tmpfiles triggers, and the full install path.
+The `test-rpm` / `test-deb` recipes validate file layout from manually installed binaries.
+The `*-pkg` recipes build real packages using the same scripts as CI, install them with
+the actual package manager (`dnf` / `dpkg`), and validate the result — testing postinst
+scripts, dependency resolution, ORT bundling, sysusers/tmpfiles triggers, and the full
+install path.
+
+The `*-dev-shell` recipes mount host models for fast interactive camera testing.
+The `*-release-shell` recipes start from a clean package install with nothing from the
+host — run `facelock setup` to download models, then enroll and test.
 
 ### Release preflight (recommended)
 
@@ -95,9 +106,9 @@ just check
 just test-pam
 just test-rpm
 just test-deb
-just test-deb-e2e
-just test-deb-tpm-e2e
-just test-rpm-e2e
+just test-deb-pkg
+just test-deb-tpm-pkg
+just test-rpm-pkg
 ```
 
 `just release-preflight` checks local tools, required packaging files, and whether
