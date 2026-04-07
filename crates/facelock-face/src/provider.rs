@@ -68,7 +68,9 @@ fn load_ort() -> std::result::Result<(), String> {
                         return;
                     }
                     Err(e) => {
-                        tracing::warn!("Found bundled ORT at {bundled_path} but failed to load: {e}");
+                        tracing::warn!(
+                            "Found bundled ORT at {bundled_path} but failed to load: {e}"
+                        );
                     }
                 }
             }
