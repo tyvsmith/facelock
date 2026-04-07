@@ -59,7 +59,7 @@ RUN mkdir -p /build/onnxruntime/lib && \
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 RUN bash /build/.github/workflows/scripts/build-deb.sh "0.0.0-test" "legacy" && \
     (dpkg -i facelock_0.0.0-test-1~legacy1_amd64.deb || true) && \
-    apt-get install -f -y && \
+    apt-get update && apt-get install -f -y && \
     rm -rf facelock_0.0.0-test-1~legacy1_amd64 facelock_0.0.0-test-1~legacy1_amd64.deb
 
 CMD ["/pkg-validate.sh"]

@@ -5,15 +5,19 @@ FROM debian:trixie
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Detect libtss2 package names dynamically (version-suffixed, changes across releases)
+RUN apt-get update && \
+    TSS2_ESYS_PKG="$(apt-cache pkgnames libtss2-esys- 2>/dev/null | sort -V | tail -n1)" && \
+    TSS2_TCTILDR_PKG="$(apt-cache pkgnames libtss2-tctildr 2>/dev/null | grep '^libtss2-tctildr' | sort -V | tail -n1)" && \
+    apt-get install -y --no-install-recommends \
     libpam-runtime \
     dbus \
     dpkg-dev \
     systemd \
     binutils \
     libxkbcommon0 \
-    libtss2-esys-3.0.2-0t64 \
-    libtss2-tctildr0t64 \
+    ${TSS2_ESYS_PKG} \
+    ${TSS2_TCTILDR_PKG} \
     ca-certificates \
     libssl3t64 \
     python3 \
@@ -59,7 +63,7 @@ RUN mkdir -p /build/onnxruntime/lib && \
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 RUN bash /build/.github/workflows/scripts/build-deb.sh "0.0.0-test" "tpm" && \
     (dpkg -i facelock_0.0.0-test-1_amd64.deb || true) && \
-    apt-get install -f -y && \
+    apt-get update && apt-get install -f -y && \
     rm -rf facelock_0.0.0-test-1_amd64 facelock_0.0.0-test-1_amd64.deb
 
 CMD ["/pkg-validate.sh"]

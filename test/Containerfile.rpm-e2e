@@ -34,9 +34,9 @@ COPY test/pkg-validate.sh /pkg-validate.sh
 COPY test/pam.d/facelock-test /etc/pam.d/facelock-test
 RUN chmod +x /build/test/build-rpm-prebuilt.sh /pkg-validate.sh
 
-# Create placeholder for polkit agent (spec %files lists it unconditionally)
-RUN touch /build/target/release/facelock-polkit-agent && \
-    chmod 755 /build/target/release/facelock-polkit-agent
+# Patch spec to remove polkit agent from %files (not built from host binaries).
+# Only remove the standalone %files entry, not the install command.
+RUN sed -i '/^%{_bindir}\/facelock-polkit-agent$/d' /build/dist/facelock.spec
 
 # Download portable CPU-only ONNX Runtime (same as CI bundles in release packages)
 ARG ORT_VERSION=1.20.1
@@ -48,7 +48,7 @@ RUN mkdir -p /build/onnxruntime/lib && \
 
 # Build the .rpm from pre-built binaries and install it
 RUN bash /build/test/build-rpm-prebuilt.sh "0.0.0" && \
-    dnf install -y --disablerepo='*' ./*.rpm && \
+    dnf install -y ./*.rpm && \
     rm -rf ~/rpmbuild ./*.rpm
 
 CMD ["/pkg-validate.sh"]
