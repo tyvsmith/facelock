@@ -4,6 +4,16 @@ FROM fedora:latest
 
 RUN dnf -y install pam dbus rpm-build systemd binutils glibc libxkbcommon tpm2-tss ca-certificates openssl-libs python3 && dnf clean all
 
+# Build pamtester from source (not in Fedora repos)
+RUN dnf -y install gcc gcc-c++ pam-devel make curl && \
+    curl -sL https://sourceforge.net/projects/pamtester/files/pamtester/0.1.2/pamtester-0.1.2.tar.gz/download | tar xz -C /tmp && \
+    cd /tmp/pamtester-0.1.2 && ./configure --prefix=/usr CFLAGS="-Wno-implicit-function-declaration" && make && make install && \
+    rm -rf /tmp/pamtester-0.1.2 && \
+    dnf -y remove gcc gcc-c++ pam-devel make && dnf clean all
+
+# Create test user for PAM tests
+RUN useradd -m testuser && echo "testuser:test" | chpasswd
+
 WORKDIR /build
 
 # Copy host-built release binaries
@@ -18,9 +28,10 @@ COPY dist/ /build/dist/
 COPY LICENSE-MIT /build/LICENSE-MIT
 COPY LICENSE-APACHE /build/LICENSE-APACHE
 
-# Copy helper script and test validation
+# Copy helper script, test validation, and PAM test config
 COPY test/build-rpm-prebuilt.sh /build/test/build-rpm-prebuilt.sh
 COPY test/pkg-validate.sh /pkg-validate.sh
+COPY test/pam.d/facelock-test /etc/pam.d/facelock-test
 RUN chmod +x /build/test/build-rpm-prebuilt.sh /pkg-validate.sh
 
 # Create placeholder for polkit agent (spec %files lists it unconditionally)

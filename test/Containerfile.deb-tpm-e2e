@@ -19,6 +19,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 
+# Build pamtester from source (not in Ubuntu/Debian repos)
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential libpam0g-dev curl && \
+    curl -sL https://sourceforge.net/projects/pamtester/files/pamtester/0.1.2/pamtester-0.1.2.tar.gz/download | tar xz -C /tmp && \
+    cd /tmp/pamtester-0.1.2 && ./configure --prefix=/usr CFLAGS="-Wno-implicit-function-declaration" && make && make install && \
+    rm -rf /tmp/pamtester-0.1.2 && \
+    apt-get purge -y build-essential libpam0g-dev && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
+# Create test user for PAM tests
+RUN useradd -m testuser && echo "testuser:test" | chpasswd
+
 WORKDIR /build
 
 # Copy host-built release binaries
@@ -32,8 +42,9 @@ COPY dbus/ /build/dbus/
 COPY dist/ /build/dist/
 COPY .github/workflows/scripts/build-deb.sh /build/.github/workflows/scripts/build-deb.sh
 
-# Copy test validation script
+# Copy test validation script and PAM test config
 COPY test/pkg-validate.sh /pkg-validate.sh
+COPY test/pam.d/facelock-test /etc/pam.d/facelock-test
 RUN chmod +x /pkg-validate.sh
 
 # Download portable CPU-only ONNX Runtime (same as CI bundles in release packages)

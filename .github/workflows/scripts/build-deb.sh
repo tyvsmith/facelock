@@ -76,6 +76,9 @@ Description: ${DESCRIPTION}
 ${DESCRIPTION_LONG}
 CTRL
 
+# conffiles — preserve config on remove/upgrade
+echo "/etc/facelock/config.toml" > "${PKG_DIR}/DEBIAN/conffiles"
+
 # postinst and prerm scripts
 cp dist/debian/postinst "${PKG_DIR}/DEBIAN/postinst"
 chmod 755 "${PKG_DIR}/DEBIAN/postinst"
