@@ -1,0 +1,69 @@
+# E2E package test — builds a real TPM-enabled .deb and installs via dpkg
+# Uses host-built release binaries (from `just build-release`); no Rust compilation in container.
+# Mirrors the CI TPM .deb build which targets Debian trixie.
+FROM debian:trixie
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Detect libtss2 package names dynamically (version-suffixed, changes across releases)
+RUN apt-get update && \
+    TSS2_ESYS_PKG="$(apt-cache pkgnames libtss2-esys- 2>/dev/null | sort -V | tail -n1)" && \
+    TSS2_TCTILDR_PKG="$(apt-cache pkgnames libtss2-tctildr 2>/dev/null | grep '^libtss2-tctildr' | sort -V | tail -n1)" && \
+    apt-get install -y --no-install-recommends \
+    libpam-runtime \
+    dbus \
+    dpkg-dev \
+    systemd \
+    binutils \
+    libxkbcommon0 \
+    ${TSS2_ESYS_PKG} \
+    ${TSS2_TCTILDR_PKG} \
+    ca-certificates \
+    libssl3t64 \
+    python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build pamtester from source (not in Ubuntu/Debian repos)
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential libpam0g-dev curl && \
+    curl -sL https://sourceforge.net/projects/pamtester/files/pamtester/0.1.2/pamtester-0.1.2.tar.gz/download | tar xz -C /tmp && \
+    cd /tmp/pamtester-0.1.2 && ./configure --prefix=/usr CFLAGS="-Wno-implicit-function-declaration" && make && make install && \
+    rm -rf /tmp/pamtester-0.1.2 && \
+    apt-get purge -y build-essential libpam0g-dev && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
+# Create test user for PAM tests
+RUN useradd -m testuser && echo "testuser:test" | chpasswd
+
+WORKDIR /build
+
+# Copy host-built release binaries
+COPY target/release/facelock /build/target/release/facelock
+COPY target/release/libpam_facelock.so /build/target/release/libpam_facelock.so
+
+# Copy project files needed by build-deb.sh
+COPY config/ /build/config/
+COPY systemd/ /build/systemd/
+COPY dbus/ /build/dbus/
+COPY dist/ /build/dist/
+COPY .github/workflows/scripts/build-deb.sh /build/.github/workflows/scripts/build-deb.sh
+
+# Copy test validation script and PAM test config
+COPY test/pkg-validate.sh /pkg-validate.sh
+COPY test/pam.d/facelock-test /etc/pam.d/facelock-test
+RUN chmod +x /pkg-validate.sh
+
+# Download portable CPU-only ONNX Runtime (same as CI bundles in release packages)
+ARG ORT_VERSION=1.20.1
+ADD https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz /tmp/ort.tgz
+RUN mkdir -p /build/onnxruntime/lib && \
+    tar xzf /tmp/ort.tgz -C /tmp && \
+    cp /tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION} /build/onnxruntime/lib/libonnxruntime.so && \
+    rm -rf /tmp/ort.tgz /tmp/onnxruntime-linux-x64-${ORT_VERSION}
+
+# Build the TPM .deb from host-built binaries and install it
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+RUN bash /build/.github/workflows/scripts/build-deb.sh "0.0.0-test" "tpm" && \
+    (dpkg -i facelock_0.0.0-test-1_amd64.deb || true) && \
+    apt-get update && apt-get install -f -y && \
+    rm -rf facelock_0.0.0-test-1_amd64 facelock_0.0.0-test-1_amd64.deb
+
+CMD ["/pkg-validate.sh"]

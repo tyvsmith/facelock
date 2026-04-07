@@ -11,7 +11,11 @@ const SYSTEM_ORT_PATHS: &[&str] = &[
 ];
 
 /// Bundled CPU-only ORT fallback, shipped with the facelock package.
-const BUNDLED_ORT_PATH: &str = "/usr/lib/facelock/libonnxruntime.so";
+/// Debian/Ubuntu use /usr/lib/, Fedora/RHEL use /usr/lib64/ on x86_64.
+const BUNDLED_ORT_PATHS: &[&str] = &[
+    "/usr/lib/facelock/libonnxruntime.so",
+    "/usr/lib64/facelock/libonnxruntime.so",
+];
 
 /// Load the ONNX Runtime shared library.
 ///
@@ -55,15 +59,19 @@ fn load_ort() -> std::result::Result<(), String> {
         }
 
         // Fall back to bundled CPU-only ORT
-        let bundled = std::path::Path::new(BUNDLED_ORT_PATH);
-        if bundled.exists() {
-            match ort::init_from(bundled) {
-                Ok(_) => {
-                    tracing::info!("Loaded bundled CPU ONNX Runtime from {BUNDLED_ORT_PATH}");
-                    return;
-                }
-                Err(e) => {
-                    tracing::warn!("Found bundled ORT but failed to load: {e}");
+        for bundled_path in BUNDLED_ORT_PATHS {
+            let bundled = std::path::Path::new(bundled_path);
+            if bundled.exists() {
+                match ort::init_from(bundled) {
+                    Ok(_) => {
+                        tracing::info!("Loaded bundled CPU ONNX Runtime from {bundled_path}");
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Found bundled ORT at {bundled_path} but failed to load: {e}"
+                        );
+                    }
                 }
             }
         }

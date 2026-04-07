@@ -37,12 +37,12 @@ check: test lint fmt-check
 _build-test-container: build-release
     podman build -t facelock-pam-test -f test/Containerfile .
 
-# Run container PAM smoke tests
-test-pam: _build-test-container
+# Automated PAM smoke tests (Arch container)
+test-arch-pam: _build-test-container
     podman run --rm facelock-pam-test
 
-# Run end-to-end integration tests in container (requires camera)
-test-integration: _build-test-container
+# Automated daemon integration tests (Arch, requires camera)
+test-arch-integration: _build-test-container
     #!/usr/bin/env bash
     set -euo pipefail
     devices=""
@@ -51,8 +51,8 @@ test-integration: _build-test-container
     done
     podman run --rm $devices facelock-pam-test /run-integration-tests.sh
 
-# Run oneshot (daemonless) end-to-end tests in container (requires camera)
-test-oneshot: _build-test-container
+# Automated oneshot (daemonless) integration tests (Arch, requires camera)
+test-arch-oneshot: _build-test-container
     #!/usr/bin/env bash
     set -euo pipefail
     devices=""
@@ -61,17 +61,37 @@ test-oneshot: _build-test-container
     done
     podman run --rm $devices facelock-pam-test /run-oneshot-tests.sh
 
-# Open interactive shell in PAM test container (requires camera)
-test-shell: _build-test-container
+# Dev shell — interactive Arch container with host models for fast iteration (requires camera)
+test-arch-dev-shell: _build-test-container
     #!/usr/bin/env bash
     set -euo pipefail
     devices=""
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
     done
-    echo "Starting interactive shell. Try:"
+    mounts=""
+    for f in /var/lib/facelock/models/*.onnx /var/lib/facelock/models/*.toml; do
+        [ -f "$f" ] && mounts="$mounts -v $f:/tmp/host-models/$(basename $f):ro"
+    done
+    echo "Starting dev shell (Arch, binary install, host models). Try:"
     echo "  facelock daemon &"
     echo "  sleep 2"
+    echo "  facelock enroll --user testuser --label myface"
+    echo "  facelock test --user testuser"
+    echo "  pamtester facelock-test testuser authenticate"
+    podman run --rm -it $devices $mounts facelock-pam-test \
+        bash -c "cp /tmp/host-models/* /var/lib/facelock/models/ 2>/dev/null; exec bash"
+
+# Release shell — clean-room Arch container, real user experience (requires camera)
+test-arch-release-shell: _build-test-container
+    #!/usr/bin/env bash
+    set -euo pipefail
+    devices=""
+    for d in /dev/video*; do
+        [ -e "$d" ] && devices="$devices --device $d"
+    done
+    echo "Starting release shell (Arch, binary install, clean room). Try:"
+    echo "  facelock setup"
     echo "  facelock enroll --user testuser --label myface"
     echo "  facelock test --user testuser"
     echo "  pamtester facelock-test testuser authenticate"
@@ -388,6 +408,11 @@ show-paths:
     @echo "Service:  /usr/lib/systemd/system/facelock-daemon.service"
     @echo "Logs:     /var/log/facelock/"
 
+# Detect host ONNX Runtime version for container builds.
+# Local binaries are built against the host ORT, so bundled ORT must match.
+# CI uses 1.20.1 (set in release.yml); local builds use whatever is installed.
+_ort-version := `for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do if [ -e "$ort" ]; then readlink -f "$ort" | grep -oP '\d+\.\d+\.\d+$'; exit; fi; done; echo "1.20.1"`
+
 # Test RPM packaging in Fedora container
 test-rpm: build-release
     #!/usr/bin/env bash
@@ -401,6 +426,101 @@ test-deb: build-release
     set -euo pipefail
     podman build -t facelock-deb-test -f test/Containerfile.ubuntu .
     podman run --rm facelock-deb-test
+
+# Package test — build real .deb, install via dpkg, run automated validation
+test-deb-pkg: build-release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build --build-arg ORT_VERSION={{_ort-version}} -t facelock-deb-pkg -f test/Containerfile.deb-e2e .
+    podman run --rm facelock-deb-pkg
+
+# Package test — build real TPM .deb (trixie), install via dpkg, run automated validation
+test-deb-tpm-pkg: build-release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build --build-arg ORT_VERSION={{_ort-version}} -t facelock-deb-tpm-pkg -f test/Containerfile.deb-tpm-e2e .
+    podman run --rm facelock-deb-tpm-pkg
+
+# Package test — build real .rpm, install via dnf, run automated validation
+test-rpm-pkg: build-release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build --build-arg ORT_VERSION={{_ort-version}} -t facelock-rpm-pkg -f test/Containerfile.rpm-e2e .
+    podman run --rm facelock-rpm-pkg
+
+# Dev shell — interactive .deb container with host models for fast iteration (requires camera)
+test-deb-dev-shell: build-release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build --build-arg ORT_VERSION={{_ort-version}} -t facelock-deb-pkg -f test/Containerfile.deb-e2e .
+    devices=""
+    for d in /dev/video*; do
+        [ -e "$d" ] && devices="$devices --device $d"
+    done
+    mounts=""
+    for f in /var/lib/facelock/models/*.onnx /var/lib/facelock/models/*.toml; do
+        [ -f "$f" ] && mounts="$mounts -v $f:/tmp/host-models/$(basename $f):ro"
+    done
+    mounts="$mounts -v $(pwd)/test/container-config.toml:/tmp/container-config.toml:ro"
+    echo "Starting dev shell (Ubuntu 24.04, .deb installed, host models). Try:"
+    echo "  facelock enroll --user root --label myface"
+    echo "  facelock test --user root"
+    podman run --rm -it $devices $mounts facelock-deb-pkg \
+        bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; cp /tmp/host-models/* /var/lib/facelock/models/ 2>/dev/null; exec bash"
+
+# Dev shell — interactive .rpm container with host models for fast iteration (requires camera)
+test-rpm-dev-shell: build-release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build --build-arg ORT_VERSION={{_ort-version}} -t facelock-rpm-pkg -f test/Containerfile.rpm-e2e .
+    devices=""
+    for d in /dev/video*; do
+        [ -e "$d" ] && devices="$devices --device $d"
+    done
+    mounts=""
+    for f in /var/lib/facelock/models/*.onnx /var/lib/facelock/models/*.toml; do
+        [ -f "$f" ] && mounts="$mounts -v $f:/tmp/host-models/$(basename $f):ro"
+    done
+    mounts="$mounts -v $(pwd)/test/container-config.toml:/tmp/container-config.toml:ro"
+    echo "Starting dev shell (Fedora, .rpm installed, host models). Try:"
+    echo "  facelock enroll --user root --label myface"
+    echo "  facelock test --user root"
+    podman run --rm -it $devices $mounts facelock-rpm-pkg \
+        bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; cp /tmp/host-models/* /var/lib/facelock/models/ 2>/dev/null; exec bash"
+
+# Release shell — clean-room .deb container, real user experience (requires camera)
+test-deb-release-shell: build-release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build --build-arg ORT_VERSION={{_ort-version}} -t facelock-deb-pkg -f test/Containerfile.deb-e2e .
+    devices=""
+    for d in /dev/video*; do
+        [ -e "$d" ] && devices="$devices --device $d"
+    done
+    mounts="-v $(pwd)/test/container-config.toml:/tmp/container-config.toml:ro"
+    echo "Starting release shell (Ubuntu 24.04, .deb installed, clean room). Try:"
+    echo "  facelock setup"
+    echo "  facelock enroll --user root --label myface"
+    echo "  facelock test --user root"
+    podman run --rm -it $devices $mounts facelock-deb-pkg \
+        bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; exec bash"
+
+# Release shell — clean-room .rpm container, real user experience (requires camera)
+test-rpm-release-shell: build-release
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build --build-arg ORT_VERSION={{_ort-version}} -t facelock-rpm-pkg -f test/Containerfile.rpm-e2e .
+    devices=""
+    for d in /dev/video*; do
+        [ -e "$d" ] && devices="$devices --device $d"
+    done
+    mounts="-v $(pwd)/test/container-config.toml:/tmp/container-config.toml:ro"
+    echo "Starting release shell (Fedora, .rpm installed, clean room). Try:"
+    echo "  facelock setup"
+    echo "  facelock enroll --user root --label myface"
+    echo "  facelock test --user root"
+    podman run --rm -it $devices $mounts facelock-rpm-pkg \
+        bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; exec bash"
 
 # Test APT repo generation locally (requires reprepro + gpg)
 test-apt-repo:

@@ -70,14 +70,30 @@ Both `.deb` packages are uploaded to the GitHub Release for direct download. For
 Before releasing, validate packages build and install correctly on each target:
 
 ```bash
-just test-pam    # Arch container PAM smoke tests (existing)
-just test-rpm    # Fedora container — build, install, validate file layout
-just test-deb    # Ubuntu container — build, install, validate file layout
+# Automated (no camera needed)
+just test-arch-pam       # Arch container PAM smoke tests
+just test-rpm            # Fedora — validate file layout from manual install
+just test-deb            # Ubuntu — validate file layout from manual install
+just test-deb-pkg        # Ubuntu 24.04 — build real .deb, install via dpkg, validate
+just test-deb-tpm-pkg    # Debian trixie — build real TPM .deb, install via dpkg, validate
+just test-rpm-pkg        # Fedora — build real .rpm, install via dnf, validate
+
+# Interactive (requires camera)
+just test-deb-dev-shell      # Ubuntu .deb with host models — fast iteration
+just test-rpm-dev-shell      # Fedora .rpm with host models — fast iteration
+just test-deb-release-shell  # Ubuntu .deb clean room — real user experience
+just test-rpm-release-shell  # Fedora .rpm clean room — real user experience
 ```
 
-These containers don't need camera hardware. They validate that the package installs
-all required files to the correct paths, PAM symbols are exported, D-Bus policy is
-valid, and systemd units are present.
+The `test-rpm` / `test-deb` recipes validate file layout from manually installed binaries.
+The `*-pkg` recipes build real packages using the same scripts as CI, install them with
+the actual package manager (`dnf` / `dpkg`), and validate the result — testing postinst
+scripts, dependency resolution, ORT bundling, sysusers/tmpfiles triggers, and the full
+install path.
+
+The `*-dev-shell` recipes mount host models for fast interactive camera testing.
+The `*-release-shell` recipes start from a clean package install with nothing from the
+host — run `facelock setup` to download models, then enroll and test.
 
 ### Release preflight (recommended)
 
@@ -87,9 +103,12 @@ Run this before creating/pushing a release tag:
 just release-preflight              # stable release checks
 just release-preflight v0.2.0-rc1  # prerelease checks (AUR/COPR secrets optional)
 just check
-just test-pam
+just test-arch-pam
 just test-rpm
 just test-deb
+just test-deb-pkg
+just test-deb-tpm-pkg
+just test-rpm-pkg
 ```
 
 `just release-preflight` checks local tools, required packaging files, and whether
@@ -249,7 +268,7 @@ The bundled ORT version is pinned in `.github/workflows/release.yml` as `ORT_VER
 Since facelock is a PAM module, broken releases can lock users out. Every release must:
 
 1. Pass `just check` (tests + clippy + fmt)
-2. Pass `just test-pam` (container PAM smoke tests)
+2. Pass `just test-arch-pam` (Arch container PAM smoke tests)
 3. Pass `just test-rpm` and `just test-deb` (multi-distro package validation)
 4. Not change PAM auth semantics without explicit changelog entry
 5. Preserve `/etc/pam.d/sudo` backup on install (`sudo.facelock-backup`)
