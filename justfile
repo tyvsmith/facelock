@@ -37,12 +37,12 @@ check: test lint fmt-check
 _build-test-container: build-release
     podman build -t facelock-pam-test -f test/Containerfile .
 
-# Run container PAM smoke tests
-test-pam: _build-test-container
+# Automated PAM smoke tests (Arch container)
+test-arch-pam: _build-test-container
     podman run --rm facelock-pam-test
 
-# Run end-to-end integration tests in container (requires camera)
-test-integration: _build-test-container
+# Automated daemon integration tests (Arch, requires camera)
+test-arch-integration: _build-test-container
     #!/usr/bin/env bash
     set -euo pipefail
     devices=""
@@ -51,8 +51,8 @@ test-integration: _build-test-container
     done
     podman run --rm $devices facelock-pam-test /run-integration-tests.sh
 
-# Run oneshot (daemonless) end-to-end tests in container (requires camera)
-test-oneshot: _build-test-container
+# Automated oneshot (daemonless) integration tests (Arch, requires camera)
+test-arch-oneshot: _build-test-container
     #!/usr/bin/env bash
     set -euo pipefail
     devices=""
@@ -61,8 +61,8 @@ test-oneshot: _build-test-container
     done
     podman run --rm $devices facelock-pam-test /run-oneshot-tests.sh
 
-# Open interactive shell in PAM test container (requires camera)
-test-shell: _build-test-container
+# Dev shell — interactive Arch container with host models for fast iteration (requires camera)
+test-arch-dev-shell: _build-test-container
     #!/usr/bin/env bash
     set -euo pipefail
     devices=""
@@ -73,14 +73,7 @@ test-shell: _build-test-container
     for f in /var/lib/facelock/models/*.onnx /var/lib/facelock/models/*.toml; do
         [ -f "$f" ] && mounts="$mounts -v $f:/tmp/host-models/$(basename $f):ro"
     done
-    for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
-        if [ -e "$ort" ]; then
-            real_ort="$(readlink -f "$ort")"
-            mounts="$mounts -v $real_ort:/usr/lib/libonnxruntime.so:ro"
-            break
-        fi
-    done
-    echo "Starting interactive shell (Arch, binary install). Try:"
+    echo "Starting dev shell (Arch, binary install, host models). Try:"
     echo "  facelock daemon &"
     echo "  sleep 2"
     echo "  facelock enroll --user testuser --label myface"
@@ -88,6 +81,21 @@ test-shell: _build-test-container
     echo "  pamtester facelock-test testuser authenticate"
     podman run --rm -it $devices $mounts facelock-pam-test \
         bash -c "cp /tmp/host-models/* /var/lib/facelock/models/ 2>/dev/null; exec bash"
+
+# Release shell — clean-room Arch container, real user experience (requires camera)
+test-arch-release-shell: _build-test-container
+    #!/usr/bin/env bash
+    set -euo pipefail
+    devices=""
+    for d in /dev/video*; do
+        [ -e "$d" ] && devices="$devices --device $d"
+    done
+    echo "Starting release shell (Arch, binary install, clean room). Try:"
+    echo "  facelock setup"
+    echo "  facelock enroll --user testuser --label myface"
+    echo "  facelock test --user testuser"
+    echo "  pamtester facelock-test testuser authenticate"
+    podman run --rm -it $devices facelock-pam-test /bin/bash
 
 # Build release and install to system
 # Run as: just install (builds as you, installs as root)

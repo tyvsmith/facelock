@@ -171,10 +171,10 @@ This adds a face icon to the hyprlock password prompt and optionally sources a `
 
 ```bash
 just check              # unit tests + clippy + fmt
-just test-pam           # container PAM smoke tests
-just test-integration   # end-to-end with camera (daemon mode)
-just test-oneshot       # end-to-end with camera (no daemon)
-just test-shell         # interactive container for manual testing
+just test-arch-pam          # Arch container PAM smoke tests
+just test-arch-integration  # end-to-end with camera (daemon mode)
+just test-arch-oneshot      # end-to-end with camera (no daemon)
+just test-arch-dev-shell    # interactive container for manual testing
 ```
 
 See [docs/testing-safety.md](docs/testing-safety.md) before editing PAM config on your system.

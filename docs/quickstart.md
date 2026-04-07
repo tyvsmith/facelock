@@ -40,10 +40,10 @@ sudo facelock bench warm-auth    # measure auth latency
 
 ```bash
 just check                # unit tests + clippy + fmt
-just test-pam             # container PAM smoke tests (no camera)
-just test-integration     # end-to-end with camera (daemon mode)
-just test-oneshot         # end-to-end with camera (no daemon)
-just test-shell           # interactive container shell
+just test-arch-pam          # Arch container PAM smoke tests (no camera)
+just test-arch-integration  # end-to-end with camera (daemon mode)
+just test-arch-oneshot      # end-to-end with camera (no daemon)
+just test-arch-dev-shell    # interactive container shell
 ```
 
 ## System Installation

@@ -71,7 +71,7 @@ Before releasing, validate packages build and install correctly on each target:
 
 ```bash
 # Automated (no camera needed)
-just test-pam            # Arch container PAM smoke tests
+just test-arch-pam       # Arch container PAM smoke tests
 just test-rpm            # Fedora — validate file layout from manual install
 just test-deb            # Ubuntu — validate file layout from manual install
 just test-deb-pkg        # Ubuntu 24.04 — build real .deb, install via dpkg, validate
@@ -103,7 +103,7 @@ Run this before creating/pushing a release tag:
 just release-preflight              # stable release checks
 just release-preflight v0.2.0-rc1  # prerelease checks (AUR/COPR secrets optional)
 just check
-just test-pam
+just test-arch-pam
 just test-rpm
 just test-deb
 just test-deb-pkg
@@ -268,7 +268,7 @@ The bundled ORT version is pinned in `.github/workflows/release.yml` as `ORT_VER
 Since facelock is a PAM module, broken releases can lock users out. Every release must:
 
 1. Pass `just check` (tests + clippy + fmt)
-2. Pass `just test-pam` (container PAM smoke tests)
+2. Pass `just test-arch-pam` (Arch container PAM smoke tests)
 3. Pass `just test-rpm` and `just test-deb` (multi-distro package validation)
 4. Not change PAM auth semantics without explicit changelog entry
 5. Preserve `/etc/pam.d/sudo` backup on install (`sudo.facelock-backup`)

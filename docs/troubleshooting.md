@@ -103,7 +103,7 @@ cp /etc/pam.d/sudo.facelock-backup /etc/pam.d/sudo
 
 ### Prevention
 
-- Always test in containers first (`just test-pam`).
+- Always test in containers first (`just test-arch-pam`).
 - Keep a root shell open during PAM testing.
 - Start with `sudo` only -- do not add Facelock to `login` or `sddm` until `sudo` works reliably.
 - Set `security.disabled = true` as an emergency kill switch (PAM returns IGNORE).
