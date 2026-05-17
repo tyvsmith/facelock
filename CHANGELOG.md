@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.1.2] - 2026-05-17
+
+Patch release fixing the AUR publish job. No runtime code changes.
+
+### Fixed
+
+- **AUR publish**: `publish-aur.sh` now runs `makepkg --printsrcinfo` as a non-root `builder` user inside the Arch container (makepkg refuses to run as root). Host-runner ownership is restored after the container exits.
+
 ## [0.1.1] - 2026-05-17
 
 Patch release fixing publish-job failures from the v0.1.0 release workflow run. No runtime code changes.
