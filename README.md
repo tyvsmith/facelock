@@ -2,7 +2,7 @@
 
 # Facelock: Face Authentication for Linux
 
-> **v0.1.0-alpha** — Pre-release. Under active development. Functional, daily-driveable, but experimental. APIs will change before 1.0. See [CHANGELOG.md](CHANGELOG.md).
+> **v0.1.0** — Stable release. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 A modern face authentication system for Linux PAM. Provides Windows Hello-style facial auth with IR anti-spoofing, configurable as a persistent daemon or daemonless one-shot. All inference runs locally on your hardware -- no cloud services, no network requests, no telemetry. Your biometric data never leaves your machine.
 
@@ -113,15 +113,17 @@ facelock audit          View structured audit log
 ## Architecture
 
 ```
-facelock-core       Config, types, errors, D-Bus interface
+facelock-core       Config, types, errors, D-Bus interface, traits
 facelock-camera     V4L2 capture, auto-detection, preprocessing
 facelock-face       ONNX inference (SCRFD detection + ArcFace embedding)
 facelock-store      SQLite face embedding storage
 facelock-daemon     Auth/enroll logic, rate limiting, liveness, audit
 facelock-cli        Unified CLI binary (facelock)
+facelock-bench      Standalone benchmark and calibration utility
 facelock-tpm        TPM-sealed key encryption, software AES-256-GCM
 facelock-polkit     Polkit authentication agent
 pam-facelock        PAM module (libc + toml + serde + zbus only)
+facelock-test-support  Mocks and fixtures for testing
 ```
 
 ### Face Recognition Pipeline

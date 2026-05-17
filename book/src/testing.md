@@ -50,10 +50,10 @@ Disposable VM with snapshots. USB camera passthrough for real hardware testing. 
 
 Safety checklist:
 1. Open root shell in separate terminal -- **keep it open**
-2. `sudo cp /etc/pam.d/sudo /etc/pam.d/sudo.bak`
+2. `sudo cp /etc/pam.d/sudo /etc/pam.d/sudo.facelock-backup`
 3. `sudo facelock setup --pam --service sudo`
 4. Test in NEW terminal: `sudo echo test`
-5. If broken, revert from root shell: `sudo cp /etc/pam.d/sudo.bak /etc/pam.d/sudo`
+5. If broken, revert from root shell: `sudo cp /etc/pam.d/sudo.facelock-backup /etc/pam.d/sudo`
 6. **Never** modify `system-auth` or `login` until sudo works perfectly
 
 Emergency recovery: boot from USB, mount partition, remove PAM line, reboot.

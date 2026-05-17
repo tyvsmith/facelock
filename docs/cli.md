@@ -2,12 +2,21 @@
 
 All commands are subcommands of the `facelock` binary.
 
+## Global flags
+
+The following flag is accepted by every subcommand (declared `global = true`):
+
+| Flag | Description |
+|------|-------------|
+| `--config <PATH>` | Override the config file path. Takes precedence over `FACELOCK_CONFIG`. |
+
 ## facelock setup
 
-Interactive setup wizard. Walks through camera selection, model quality, inference device (CPU/CUDA), model downloads, encryption, enrollment, and PAM configuration. Can also be run with flags for individual setup tasks.
+Interactive setup wizard. Walks through camera selection, model quality, inference device (CPU / CUDA / ROCm / OpenVINO), model downloads, encryption, enrollment, and PAM configuration. Can also be run with flags for individual setup tasks.
 
 ```bash
 facelock setup                          # interactive wizard
+facelock setup --non-interactive        # run wizard without prompts
 facelock setup --systemd                # install systemd units
 facelock setup --systemd --disable      # disable systemd units
 facelock setup --pam                    # install to /etc/pam.d/sudo
@@ -47,6 +56,20 @@ List enrolled face models.
 facelock list                           # current user
 facelock list --user alice              # specific user
 facelock list --json                    # JSON output
+```
+
+`--json` emits an array of objects:
+
+```json
+[
+  {
+    "id": 1,
+    "label": "office",
+    "user": "alice",
+    "created_at": 1700000000,
+    "embedder_model": "arcface_r50"
+  }
+]
 ```
 
 ## facelock remove
@@ -116,6 +139,7 @@ Run the persistent authentication daemon.
 
 ```bash
 facelock daemon                         # use default config
+facelock daemon -c /path/to/config.toml # short alias for --config
 facelock daemon --config /path/to/config.toml
 ```
 
@@ -132,7 +156,11 @@ facelock auth --user alice --config /etc/facelock/config.toml
 
 Exit codes: 0 = matched, 1 = no match, 2 = error.
 
-## facelock tpm status
+## facelock tpm
+
+TPM integration status and management.
+
+### facelock tpm status
 
 Report TPM availability and configuration.
 
@@ -140,16 +168,81 @@ Report TPM availability and configuration.
 facelock tpm status
 ```
 
+### facelock tpm seal-key
+
+Seal the AES encryption key with the TPM, migrating from a plaintext keyfile to TPM-backed storage.
+
+```bash
+facelock tpm seal-key
+```
+
+### facelock tpm unseal-key
+
+Unseal the AES key from the TPM back to a plaintext keyfile, migrating from TPM-backed to keyfile storage.
+
+```bash
+facelock tpm unseal-key
+```
+
+### facelock tpm pcr-baseline
+
+Display the current PCR values for all configured PCR indices.
+
+```bash
+facelock tpm pcr-baseline
+```
+
 ## facelock bench
 
 Benchmark and calibration tools.
 
 ```bash
-facelock bench cold-auth                # cold start authentication latency
-facelock bench warm-auth                # warm authentication latency
-facelock bench model-load               # model loading time
+facelock bench cold-auth                # cold start authentication latency (model load + first auth)
+facelock bench warm-auth                # warm authentication latency (pre-loaded models, 10 iterations)
+facelock bench preview                  # frame capture + face detection latency
+facelock bench enrollment               # time to capture and embed snapshots (dry run, embeddings not stored)
+facelock bench model-load               # ONNX model load time (SCRFD + ArcFace)
+facelock bench calibrate                # sweep FAR/FRR thresholds and recommend optimal value
 facelock bench report                   # full benchmark report
 ```
+
+`cold-auth`, `warm-auth`, `calibrate`, and `report` require enrolled faces. When encryption method is `tpm`, these subcommands require root.
+
+## facelock encrypt
+
+Encrypt all unencrypted embeddings in the database with AES-256-GCM.
+
+```bash
+facelock encrypt                        # encrypt using the configured key
+facelock encrypt --generate-key         # generate a new key file (or seal a new TPM key) WITHOUT re-encrypting embeddings
+```
+
+`--generate-key` only creates the key material. Run `facelock encrypt` (without the flag) afterwards to encrypt the embeddings.
+
+## facelock decrypt
+
+Decrypt all software-encrypted embeddings in the database (reverting AES-256-GCM encryption).
+
+```bash
+facelock decrypt
+```
+
+## facelock audit
+
+View the structured audit log of authentication events.
+
+```bash
+facelock audit                          # show last 20 entries (default)
+facelock audit -l 50                    # show last 50 entries
+facelock audit --lines 50               # long form
+facelock audit -f                       # follow mode: stream new entries as they arrive
+facelock audit --follow                 # long form
+```
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--follow` | `-f` | false | Watch for new entries (like `tail -f`) |
+| `--lines N` | `-l` | 20 | Number of recent entries to display |
 
 ## facelock restart
 

@@ -8,6 +8,7 @@ Stable contracts. Do not change without updating this document.
 |--------|-------|---------|
 | `facelock` | facelock-cli | Unified CLI (daemon, auth, enroll, test, setup, etc.) |
 | `pam_facelock.so` | pam-facelock | PAM authentication module |
+| `facelock-polkit-agent` | facelock-polkit | Polkit face authentication agent (not production-ready — do not autostart; will steal polkit auth from the DE's agent) |
 
 ## CLI Subcommands
 
@@ -28,6 +29,9 @@ Stable contracts. Do not change without updating this document.
 | `facelock daemon` | Run persistent daemon |
 | `facelock auth --user X` | One-shot auth (PAM helper) |
 | `facelock tpm status` | TPM status |
+| `facelock encrypt` | Encrypt face database |
+| `facelock decrypt` | Decrypt face database |
+| `facelock audit` | View audit log |
 | `facelock bench` | Benchmarks |
 | `facelock restart` | Restart daemon |
 
@@ -59,7 +63,7 @@ The CLI silently falls back to direct mode when the daemon is not available on D
 | `/usr/bin/facelock` | root:root | 755 | CLI binary |
 | `/lib/security/pam_facelock.so` | root:root | 755 | PAM module |
 
-All paths overridable via config. `FACELOCK_CONFIG` env var overrides config location.
+All paths overridable via config. `FACELOCK_CONFIG` is honored for unprivileged processes, but privileged PAM/root auth flows ignore the environment and use either an explicit `--config` path or `/etc/facelock/config.toml`.
 
 ## Config Schema
 
@@ -69,11 +73,11 @@ TOML format. All keys optional -- camera auto-detected, sensible defaults for ev
 
 | Section | Key fields |
 |---------|-----------|
-| `[device]` | `path` (Option), `max_height`, `rotation` |
+| `[device]` | `path` (Option), `max_height`, `rotation`, `warmup_frames`, `dark_threshold`, `dark_pixel_value`, `ir_emitter`, `camera_release_secs` |
 | `[recognition]` | `threshold`, `timeout_secs`, `detector_model`, `embedder_model`, `threads`, `execution_provider` |
 | `[daemon]` | `mode` (DaemonMode enum), `model_dir`, `idle_timeout_secs` |
 | `[storage]` | `db_path` |
-| `[security]` | `require_ir`, `require_frame_variance`, `min_auth_frames`, `abort_if_ssh`, `abort_if_lid_closed`, rate_limit sub-section |
+| `[security]` | `disabled`, `suppress_unknown`, `require_ir`, `require_frame_variance`, `min_auth_frames`, `abort_if_ssh`, `abort_if_lid_closed`, `rate_limit` sub-section |
 | `[notification]` | `mode` (off/terminal/desktop/both), `notify_prompt`, `notify_on_success`, `notify_on_failure` |
 | `[snapshots]` | `mode` (off/all/failure/success), `dir` |
 | `[encryption]` | `method` (none/keyfile/tpm), `key_path`, `sealed_key_path` |
@@ -104,9 +108,17 @@ CREATE TABLE face_models (
 CREATE TABLE face_embeddings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     model_id INTEGER NOT NULL REFERENCES face_models(id) ON DELETE CASCADE,
-    embedding BLOB NOT NULL  -- 512 x f32 = 2048 bytes
+    embedding BLOB NOT NULL,  -- 512 x f32 = 2048 bytes (or encrypted blob)
+    sealed INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE rate_limit (
+    user TEXT NOT NULL,
+    attempt_time INTEGER NOT NULL
 );
 ```
+
+Only failed authentication attempts are recorded in `rate_limit`. Daemon mode and oneshot mode share the same SQLite-backed window, so daemon restarts do not clear lockout state.
 
 ## IPC Protocol
 
@@ -153,7 +165,7 @@ These defaults must not be weakened without security review.
 |-------|------|------|---------|
 | SCRFD 2.5G | `scrfd_2.5g_bnkps.onnx` | ~3MB | Yes |
 | ArcFace R50 | `w600k_r50.onnx` | ~166MB | Yes |
-| SCRFD 10G | `det_10g.onnx` | ~16MB | Optional |
+| SCRFD 10G | `det_10g.onnx` | ~17MB | Optional |
 | ArcFace R100 | `glintr100.onnx` | ~249MB | Optional |
 
 Configurable via `recognition.detector_model` and `recognition.embedder_model`.

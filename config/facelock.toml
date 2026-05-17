@@ -29,8 +29,8 @@
 
 # Frames to discard immediately after opening the camera so exposure
 # and gain can stabilize. Hardware quirks may override this.
-# Default: 3
-# warmup_frames = 3
+# Default: 2
+# warmup_frames = 2
 
 # Dark-frame rejection. If this fraction of pixels is below
 # dark_pixel_value, the frame is treated as unusably dark.
@@ -179,6 +179,14 @@
 # Default: false
 # require_landmark_liveness = false
 
+# Minimum pixel displacement for a landmark to count as "moving" between frames.
+# Default: 1.5
+# landmark_displacement_px = 1.5
+
+# Number of facial landmarks (out of 5) that must show movement to pass liveness.
+# Default: 3
+# landmark_min_moving = 3
+
 # Suppress warnings for unknown users (users with no enrolled face).
 # Default: false
 # suppress_unknown = false
@@ -189,13 +197,17 @@
 # min_auth_frames = 3
 
 # Rate limiting — prevents brute-force attempts.
+#
 # [security.rate_limit]
-# max_attempts = 5   # Max auth attempts per user per window (default: 5)
-# window_secs = 60   # Rate limit window in seconds (default: 60)
+# # Max auth attempts per user per window (default: 5)
+# max_attempts = 5
+# # Rate limit window in seconds (default: 60)
+# window_secs = 60
 
 # PAM service policy — allow/deny specific PAM service names.
 # If allowed_services is non-empty, only those services may use facelock.
 # denied_services always takes precedence.
+#
 # [security.pam_policy]
 # allowed_services = ["sudo", "polkit-1"]
 # denied_services = ["login", "sshd", "su"]
@@ -307,6 +319,7 @@
 # 32-byte AES key is sealed/unsealed by the TPM at daemon startup.
 #
 # [tpm]
+# seal_database = false          # Seal the SQLite database file with the TPM key (default: false)
 # pcr_binding = false            # Bind sealed key to boot state (PCR values)
 # pcr_indices = [0, 1, 2, 3, 7] # PCR registers to verify on unseal
 # tcti = "device:/dev/tpmrm0"   # TPM communication interface

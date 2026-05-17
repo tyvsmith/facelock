@@ -19,14 +19,14 @@ Facelock is a Cargo workspace with 11 crates:
 
 | Crate | Type | Purpose |
 |-------|------|---------|
-| `facelock-core` | lib | Config, types, errors, IPC protocol, traits |
+| `facelock-core` | lib | Config, types, errors, D-Bus interface, traits |
 | `facelock-camera` | lib | V4L2 capture, auto-detection, preprocessing |
 | `facelock-face` | lib | ONNX inference (SCRFD + ArcFace) |
 | `facelock-store` | lib | SQLite face embedding storage |
 | `facelock-daemon` | lib | Auth/enroll logic, rate limiting, liveness, audit |
 | `facelock-cli` | bin | Unified CLI (`facelock` binary, includes `bench` subcommand) |
 | `facelock-bench` | bin | Standalone benchmark and calibration utility |
-| `pam-facelock` | cdylib | PAM module (libc + toml + serde, zbus only) |
+| `pam-facelock` | cdylib | PAM module (libc, toml, serde, zbus only) |
 | `facelock-tpm` | lib | Optional TPM encryption |
 | `facelock-polkit` | bin | Polkit face authentication agent |
 | `facelock-test-support` | lib | Mocks and fixtures for testing |
@@ -98,7 +98,7 @@ Read `docs/security.md` before implementing any auth-related code. Key rules:
 - `security.require_ir` defaults to **true**. Never weaken this default.
 - Frame variance checks must remain in the auth path.
 - Model files are SHA256-verified at load time.
-- IPC messages have size limits (10MB max). Never allocate unbounded buffers.
+- IPC messages have size limits enforced by the D-Bus daemon (see `dbus/org.facelock.Daemon.conf`). Never allocate unbounded buffers.
 - D-Bus system bus policy restricts daemon access.
 - The PAM module logs all auth attempts to syslog.
 - Rate limiting is enforced in the daemon (5 attempts/user/60s default).

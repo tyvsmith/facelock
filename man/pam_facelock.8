@@ -8,7 +8,7 @@ pam_facelock \- PAM module for face authentication
 is a PAM module that provides face-based authentication for Linux systems.
 It is a thin client that first attempts to connect to the
 .BR facelock (1)
-daemon via a Unix domain socket. If the daemon is unavailable, it falls back
+daemon via the D-Bus system bus (\fBorg.facelock.Daemon\fR). If the daemon is unavailable, it falls back
 to spawning
 .B facelock auth
 as a one-shot process.
@@ -88,11 +88,15 @@ presentation attacks (e.g., holding a photo or video in front of the camera).
 The daemon enforces rate limiting (5 attempts per user per 60 seconds by
 default) to prevent brute-force attacks.
 .SS IPC Security
-Communication between the PAM module and daemon uses a Unix domain socket
-.RI ( /run/facelock/facelock.sock ).
-Peer credentials are verified via
-.B SO_PEERCRED
-and message sizes are limited to 10MB.
+Communication between the PAM module and daemon uses the D-Bus system bus.
+The system bus policy
+.RI ( /usr/share/dbus-1/system.d/org.facelock.Daemon.conf )
+applies a deny-all default, restricting access to root and members of the
+.B facelock
+group. The daemon verifies the caller UID via
+.B GetConnectionUnixUser
+before executing any method. Message size limits are enforced by the D-Bus
+daemon.
 .SS Syslog Logging
 All authentication attempts (success, failure, and error) are logged to
 syslog under the AUTH facility with the identifier
@@ -126,8 +130,11 @@ Main configuration file.
 .I /usr/lib/security/pam_facelock.so
 The PAM module shared library.
 .TP
-.I /run/facelock/facelock.sock
-Unix domain socket for daemon communication.
+.I /usr/share/dbus-1/system.d/org.facelock.Daemon.conf
+D-Bus system bus policy file for the facelock daemon.
+.TP
+.I /usr/share/dbus-1/system-services/org.facelock.Daemon.service
+D-Bus activation file for the facelock daemon service.
 .TP
 .I /var/lib/facelock/facelock.db
 Face embedding database.
