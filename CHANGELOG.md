@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.1.1] - 2026-05-17
+
+Patch release fixing publish-job failures from the v0.1.0 release workflow run. No runtime code changes.
+
+### Fixed
+
+- **APT publish**: `publish-apt.sh` no longer exits when a `gpg-agent` is already running on the GitHub runner — falls back to `gpgconf --launch gpg-agent`
+- **COPR publish**: added `.copr/Makefile` so the COPR `make srpm` build method can produce the source RPM from `dist/facelock.spec` via `git archive` + `rpmbuild -bs`
+
 ## [0.1.0] - 2026-05-17
 
 Initial open-source release.
