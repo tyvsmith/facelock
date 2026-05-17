@@ -1325,7 +1325,7 @@ fn download_model(entry: &ModelEntry, dest: &Path) -> anyhow::Result<()> {
         .build()
         .context("failed to create HTTP client")?;
 
-    let response = client
+    let mut response = client
         .get(url)
         .send()
         .with_context(|| format!("failed to download {}", entry.name))?;
@@ -1351,15 +1351,27 @@ fn download_model(entry: &ModelEntry, dest: &Path) -> anyhow::Result<()> {
         .progress_chars("#>-"),
     );
 
-    let bytes = response.bytes().context("failed to read response body")?;
-    pb.set_position(bytes.len() as u64);
-    pb.finish_and_clear();
-
     // Write atomically: write to temp file first, then rename
     let tmp_path = dest.with_extension("tmp");
     let mut file = create_truncate_file(&tmp_path, 0o644)
         .with_context(|| format!("failed to create {}", tmp_path.display()))?;
-    file.write_all(&bytes)?;
+
+    let mut downloaded: u64 = 0;
+    let mut buffer = vec![0u8; 8192];
+    loop {
+        use std::io::Read as _;
+        let n = response
+            .read(&mut buffer)
+            .context("failed to read response")?;
+        if n == 0 {
+            break;
+        }
+        file.write_all(&buffer[..n])
+            .context("failed to write to temp file")?;
+        downloaded += n as u64;
+        pb.set_position(downloaded);
+    }
+    pb.finish_and_clear();
     file.sync_all()?;
     drop(file);
 
