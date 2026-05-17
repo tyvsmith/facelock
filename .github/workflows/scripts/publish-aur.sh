@@ -30,10 +30,19 @@ cp dist/facelock.install aur-facelock/facelock.install
 sed -i "s/^pkgver=.*/pkgver=${VERSION}/" aur-facelock/PKGBUILD
 sed -i "s/sha256sums=('SKIP')/sha256sums=('${CHECKSUM}')/" aur-facelock/PKGBUILD
 
-# Generate .SRCINFO via Arch container
+# Generate .SRCINFO via Arch container.
+# makepkg refuses to run as root, so we create a non-root builder user
+# inside the container and restore host-runner ownership afterwards.
 cd aur-facelock
-docker run --rm -v "$(pwd):/pkg" archlinux:base-devel bash -c \
-  "pacman -Sy --noconfirm pacman-contrib && cd /pkg && makepkg --printsrcinfo > .SRCINFO"
+RUNNER_UID="$(id -u)"
+RUNNER_GID="$(id -g)"
+docker run --rm -v "$(pwd):/pkg" -w /pkg archlinux:base-devel bash -c "
+  pacman -Sy --noconfirm pacman-contrib >/dev/null
+  useradd -m builder
+  chown -R builder:builder /pkg
+  su builder -c 'makepkg --printsrcinfo > .SRCINFO'
+  chown -R ${RUNNER_UID}:${RUNNER_GID} /pkg
+"
 
 # Commit and push if changed
 git config user.name "facelock-bot"
