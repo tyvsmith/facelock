@@ -24,8 +24,8 @@ mkdir -p ~/.gnupg
 chmod 700 ~/.gnupg
 echo "allow-preset-passphrase" >> ~/.gnupg/gpg-agent.conf
 echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
-gpgconf --kill gpg-agent
-gpg-agent --daemon
+gpgconf --kill gpg-agent || true
+gpg-agent --daemon 2>/dev/null || gpgconf --launch gpg-agent
 
 # Import key
 echo "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
