@@ -69,10 +69,10 @@ Requires a connected camera and downloaded models. These tests are marked `#[ign
 ### Tier 3: Container tests (requires podman)
 
 ```bash
-just test-pam          # PAM smoke tests (no camera)
-just test-integration  # end-to-end with camera (daemon mode)
-just test-oneshot      # end-to-end with camera (no daemon)
-just test-shell        # interactive container shell for debugging
+just test-arch-pam          # Arch PAM smoke tests (no camera)
+just test-arch-integration  # end-to-end with camera (daemon mode)
+just test-arch-oneshot      # end-to-end with camera (no daemon)
+just test-arch-dev-shell    # interactive container shell for debugging
 ```
 
 Container tests validate PAM integration without risking host lockout.

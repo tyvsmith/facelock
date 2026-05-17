@@ -93,9 +93,9 @@ Supported providers: `cpu` (default), `cuda` (NVIDIA), `rocm` (AMD), `openvino` 
 |------|------|-----|
 | 1 | Unit tests | `cargo test --workspace` |
 | 2 | Hardware tests | `cargo test --workspace -- --ignored` |
-| 3 | Container PAM smoke | `just test-pam` |
-| 3b | Container E2E (daemon) | `just test-integration` |
-| 3c | Container E2E (oneshot) | `just test-oneshot` |
+| 3 | Arch container PAM smoke | `just test-arch-pam` |
+| 3b | Arch container E2E (daemon) | `just test-arch-integration` |
+| 3c | Arch container E2E (oneshot) | `just test-arch-oneshot` |
 | 4 | VM testing | Disposable VM with snapshots |
 | 5 | Host PAM | After tiers 3-4, with root shell backup |
 

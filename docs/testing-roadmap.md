@@ -30,7 +30,7 @@ locally before merging camera-related changes.
 
 ### Tier 3a: Container PAM Smoke Tests
 
-**How:** `just test-pam` (podman, Arch Linux container)
+**How:** `just test-arch-pam` (podman, Arch Linux container)
 **Status:** Active, runs in CI (`container-pam-test` job). 13 tests.
 
 Validates the PAM module in an isolated container without a camera:
@@ -47,7 +47,7 @@ Validates the PAM module in an isolated container without a camera:
 
 ### Tier 3b: Container E2E (Daemon Mode)
 
-**How:** `just test-integration` (podman, passes `/dev/video*` devices)
+**How:** `just test-arch-integration` (podman, passes `/dev/video*` devices)
 **Status:** Active locally. Cannot run in CI (needs camera). 7 tests.
 
 Full daemon-mode flow inside a container with a real camera:
@@ -61,7 +61,7 @@ Full daemon-mode flow inside a container with a real camera:
 
 ### Tier 3c: Container E2E (Oneshot Mode)
 
-**How:** `just test-oneshot` (podman, passes `/dev/video*` devices)
+**How:** `just test-arch-oneshot` (podman, passes `/dev/video*` devices)
 **Status:** Active locally. Cannot run in CI (needs camera). 10 tests.
 
 Same as 3b but fully daemonless: verifies no socket exists, enrollment,

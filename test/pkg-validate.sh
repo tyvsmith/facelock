@@ -79,6 +79,44 @@ run_test "facelock group exists (sysusers)" "if command -v systemd-sysusers >/de
 
 run_test "facelock runtime directories exist (tmpfiles)" "if command -v systemd-tmpfiles >/dev/null 2>&1; then systemd-tmpfiles --create >/dev/null 2>&1 || true; fi; [ -d /var/lib/facelock ] && [ -d /var/log/facelock ]"
 
+# PAM tests (only if pamtester is available)
+if command -v pamtester >/dev/null 2>&1 && [ -f /etc/pam.d/facelock-test ]; then
+    run_test "PAM module loads via pamtester" "pamtester facelock-test testuser authenticate < /dev/null 2>&1 | grep -qiE '(successfully|authentication failure)'"
+fi
+
+# D-Bus tests (only if dbus-daemon is available)
+if command -v dbus-daemon >/dev/null 2>&1; then
+    # Start a system bus for testing
+    run_test "D-Bus system bus starts" "mkdir -p /run/dbus && dbus-daemon --system --fork --nopidfile 2>/dev/null"
+
+    # Verify the facelock service is visible on the bus
+    if command -v busctl >/dev/null 2>&1; then
+        run_test "D-Bus facelock service activatable" "busctl --system list --activatable 2>/dev/null | grep -q org.facelock.Daemon"
+    elif command -v dbus-send >/dev/null 2>&1; then
+        run_test "D-Bus facelock service activatable" "dbus-send --system --dest=org.freedesktop.DBus --print-reply /org/freedesktop/DBus org.freedesktop.DBus.ListActivatableNames 2>/dev/null | grep -q org.facelock.Daemon"
+    fi
+fi
+
+# Package removal test — must come last since it removes the package
+echo ""
+echo "=== Package Removal Test ==="
+
+if command -v dpkg >/dev/null 2>&1; then
+    run_test "Package removal via dpkg" "dpkg -r facelock"
+    run_test "facelock binary removed after dpkg -r" "[ ! -f /usr/bin/facelock ]"
+    run_test "PAM module removed after dpkg -r" \
+        "[ ! -f /lib/security/pam_facelock.so ] && [ ! -f /usr/lib/security/pam_facelock.so ] && [ ! -f /usr/lib64/security/pam_facelock.so ]"
+    run_test "Config preserved after dpkg -r (conffile)" "[ -f /etc/facelock/config.toml ]"
+elif command -v rpm >/dev/null 2>&1; then
+    # Modify config so RPM treats it as user-edited and preserves it as .rpmsave
+    echo "# modified by test" >> /etc/facelock/config.toml
+    run_test "Package removal via rpm" "rpm -e facelock"
+    run_test "facelock binary removed after rpm -e" "[ ! -f /usr/bin/facelock ]"
+    run_test "PAM module removed after rpm -e" \
+        "[ ! -f /lib/security/pam_facelock.so ] && [ ! -f /usr/lib/security/pam_facelock.so ] && [ ! -f /usr/lib64/security/pam_facelock.so ]"
+    run_test "Config preserved after rpm -e (config(noreplace))" "[ -f /etc/facelock/config.toml ] || [ -f /etc/facelock/config.toml.rpmsave ]"
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 

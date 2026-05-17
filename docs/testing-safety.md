@@ -28,10 +28,10 @@ Requires camera and downloaded ONNX models. Tests capture, model loading, full p
 ### Tier 3: Container Tests (requires podman)
 
 ```bash
-just test-pam             # PAM smoke tests (no camera needed)
-just test-integration     # full E2E with camera (daemon mode)
-just test-oneshot         # full E2E with camera (no daemon)
-just test-shell           # interactive shell for manual testing
+just test-arch-pam          # Arch PAM smoke tests (no camera needed)
+just test-arch-integration  # full E2E with camera (daemon mode)
+just test-arch-oneshot      # full E2E with camera (no daemon)
+just test-arch-dev-shell    # interactive shell for manual testing
 ```
 
 Container tests validate:
@@ -136,8 +136,8 @@ Local full CI: `bash test/run-tests.sh`
 | `just test` | Unit tests |
 | `just lint` | Clippy |
 | `just check` | test + lint + fmt |
-| `just test-pam` | Container PAM smoke |
-| `just test-integration` | E2E daemon mode |
-| `just test-oneshot` | E2E oneshot mode |
-| `just test-shell` | Interactive container |
+| `just test-arch-pam` | Arch container PAM smoke |
+| `just test-arch-integration` | E2E daemon mode |
+| `just test-arch-oneshot` | E2E oneshot mode |
+| `just test-arch-dev-shell` | Interactive container |
 | `just install` | System install (root) |

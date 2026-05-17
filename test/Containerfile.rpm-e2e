@@ -1,0 +1,54 @@
+# E2E package test — builds a real .rpm and installs via dnf
+# Uses host-built release binaries (from `just build-release`); no Rust compilation in container.
+FROM fedora:latest
+
+RUN dnf -y install pam dbus rpm-build systemd binutils glibc libxkbcommon tpm2-tss ca-certificates openssl-libs python3 && dnf clean all
+
+# Build pamtester from source (not in Fedora repos)
+RUN dnf -y install gcc gcc-c++ pam-devel make curl && \
+    curl -sL https://sourceforge.net/projects/pamtester/files/pamtester/0.1.2/pamtester-0.1.2.tar.gz/download | tar xz -C /tmp && \
+    cd /tmp/pamtester-0.1.2 && ./configure --prefix=/usr CFLAGS="-Wno-implicit-function-declaration" && make && make install && \
+    rm -rf /tmp/pamtester-0.1.2 && \
+    dnf -y remove gcc gcc-c++ pam-devel make && dnf clean all
+
+# Create test user for PAM tests
+RUN useradd -m testuser && echo "testuser:test" | chpasswd
+
+WORKDIR /build
+
+# Copy host-built release binaries
+COPY target/release/facelock /build/target/release/facelock
+COPY target/release/libpam_facelock.so /build/target/release/libpam_facelock.so
+
+# Copy project files needed for RPM packaging
+COPY config/ /build/config/
+COPY systemd/ /build/systemd/
+COPY dbus/ /build/dbus/
+COPY dist/ /build/dist/
+COPY LICENSE-MIT /build/LICENSE-MIT
+COPY LICENSE-APACHE /build/LICENSE-APACHE
+
+# Copy helper script, test validation, and PAM test config
+COPY test/build-rpm-prebuilt.sh /build/test/build-rpm-prebuilt.sh
+COPY test/pkg-validate.sh /pkg-validate.sh
+COPY test/pam.d/facelock-test /etc/pam.d/facelock-test
+RUN chmod +x /build/test/build-rpm-prebuilt.sh /pkg-validate.sh
+
+# Patch spec to remove polkit agent from %files (not built from host binaries).
+# Only remove the standalone %files entry, not the install command.
+RUN sed -i '/^%{_bindir}\/facelock-polkit-agent$/d' /build/dist/facelock.spec
+
+# Download portable CPU-only ONNX Runtime (same as CI bundles in release packages)
+ARG ORT_VERSION=1.20.1
+ADD https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz /tmp/ort.tgz
+RUN mkdir -p /build/onnxruntime/lib && \
+    tar xzf /tmp/ort.tgz -C /tmp && \
+    cp /tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION} /build/onnxruntime/lib/libonnxruntime.so && \
+    rm -rf /tmp/ort.tgz /tmp/onnxruntime-linux-x64-${ORT_VERSION}
+
+# Build the .rpm from pre-built binaries and install it
+RUN bash /build/test/build-rpm-prebuilt.sh "0.0.0" && \
+    dnf install -y ./*.rpm && \
+    rm -rf ~/rpmbuild ./*.rpm
+
+CMD ["/pkg-validate.sh"]
