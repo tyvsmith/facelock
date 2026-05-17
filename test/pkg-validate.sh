@@ -101,13 +101,13 @@ fi
 echo ""
 echo "=== Package Removal Test ==="
 
-if command -v dpkg >/dev/null 2>&1; then
+if command -v dpkg >/dev/null 2>&1 && dpkg -s facelock >/dev/null 2>&1; then
     run_test "Package removal via dpkg" "dpkg -r facelock"
     run_test "facelock binary removed after dpkg -r" "[ ! -f /usr/bin/facelock ]"
     run_test "PAM module removed after dpkg -r" \
         "[ ! -f /lib/security/pam_facelock.so ] && [ ! -f /usr/lib/security/pam_facelock.so ] && [ ! -f /usr/lib64/security/pam_facelock.so ]"
     run_test "Config preserved after dpkg -r (conffile)" "[ -f /etc/facelock/config.toml ]"
-elif command -v rpm >/dev/null 2>&1; then
+elif command -v rpm >/dev/null 2>&1 && rpm -q facelock >/dev/null 2>&1; then
     # Modify config so RPM treats it as user-edited and preserves it as .rpmsave
     echo "# modified by test" >> /etc/facelock/config.toml
     run_test "Package removal via rpm" "rpm -e facelock"
@@ -115,6 +115,8 @@ elif command -v rpm >/dev/null 2>&1; then
     run_test "PAM module removed after rpm -e" \
         "[ ! -f /lib/security/pam_facelock.so ] && [ ! -f /usr/lib/security/pam_facelock.so ] && [ ! -f /usr/lib64/security/pam_facelock.so ]"
     run_test "Config preserved after rpm -e (config(noreplace))" "[ -f /etc/facelock/config.toml ] || [ -f /etc/facelock/config.toml.rpmsave ]"
+else
+    echo "(no package-manager-installed facelock — skipping removal tests)"
 fi
 
 echo ""
