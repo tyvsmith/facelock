@@ -1,6 +1,6 @@
 # Testing Strategy, Coverage Gaps, and Deployment Roadmap
 
-Last updated: 2026-03-14
+Last updated: 2026-05-17
 
 ## 1. Current Testing Tiers
 
@@ -166,18 +166,19 @@ production-ready in the justfile install recipe.
 
 ## 4. Deployment Roadmap
 
-### Current state: dev builds only
-- `just install` / `just uninstall` for local development
-- No published packages in any repository
+### Current state: v0.1.0 released
+- **v0.1.0 released on 2026-05-17** (tag-driven CI)
+- Published packages: `.deb` (APT with signing key), `.rpm` (Fedora COPR), PKGBUILD (awaiting AUR submission)
+- `just install` / `just uninstall` for local development still available
 
 ### Packaging status
 
 | Format | Location | Status |
 |--------|----------|--------|
-| Raw binaries | `release.yml` | Working. Triggered on `v*` tags. Uploads `facelock-x86_64-linux-gnu`, `pam_facelock.so`, SHA256SUMS to GitHub Releases. |
-| `.deb` | `release.yml` (build-deb job) | Working. Built in CI, uploaded to GitHub Release. Not in any PPA. |
-| `.rpm` | `release.yml` (build-rpm job) | Working. Built on Fedora container in CI, uploaded to GitHub Release. Includes authselect profile. Not in COPR. |
-| PKGBUILD (Arch) | `dist/PKGBUILD` | Exists but not submitted to AUR. References `facelock.install` file. |
+| Raw binaries | `release.yml` | Released. Triggered on `v*` tags. Uploads `facelock-x86_64-linux-gnu`, `pam_facelock.so`, SHA256SUMS to GitHub Releases. |
+| `.deb` | `release.yml` (build-deb job) | Released. Built in CI, uploaded to GitHub Release. Signed APT repository at `tysmith.me/facelock/apt` (main/legacy variants). |
+| `.rpm` | `release.yml` (build-rpm job) | Released. Built in CI. Fedora COPR webhook (`tyvsmith/facelock`) active per `releasing.md`. |
+| PKGBUILD (Arch) | `dist/PKGBUILD` | Exists. Automated via tag CI; awaiting first published push to AUR. References `facelock.install` file. |
 | Nix flake | `dist/nix/flake.nix` | Exists with NixOS module (`module.nix`), derivation (`default.nix`), and dev shell. Not in nixpkgs. `doCheck = false` (needs camera). |
 | openrc | `dist/openrc/facelock-daemon` | Init script exists. |
 | runit | `dist/runit/run`, `dist/runit/log/run` | Service scripts exist. |

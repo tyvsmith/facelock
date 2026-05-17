@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Facelock reads its configuration from `/etc/facelock/config.toml`. Override the path with the `FACELOCK_CONFIG` environment variable.
+Facelock reads its configuration from `/etc/facelock/config.toml`. Override the path with the `FACELOCK_CONFIG` environment variable. Note: `FACELOCK_CONFIG` is ignored by privileged PAM and root auth flows, which always use either an explicit `--config` path or `/etc/facelock/config.toml`.
 
 All settings are optional. Facelock auto-detects the camera and uses sensible defaults. The annotated config file at `config/facelock.toml` in the repository serves as the canonical example.
 
@@ -13,6 +13,11 @@ Camera settings.
 | `path` | string (optional) | Auto-detect | Camera device path (e.g., `/dev/video2`). When omitted, Facelock auto-detects the best available camera, preferring IR over RGB. |
 | `max_height` | u32 | `480` | Maximum frame height in pixels. Frames taller than this are downscaled to improve processing speed. |
 | `rotation` | u16 | `0` | Rotate captured frames. Values: `0`, `90`, `180`, `270`. Useful for cameras mounted sideways. |
+| `warmup_frames` | u32 | `2` | Frames to discard immediately after opening the camera to let exposure and gain stabilize. Device quirks may override this. |
+| `dark_threshold` | f32 | `0.6` | Fraction of pixels that must be darker than `dark_pixel_value` before the frame is treated as unusably dark. |
+| `dark_pixel_value` | u8 | `10` | Pixel brightness cutoff used by the dark-frame check. |
+| `ir_emitter` | bool | `false` | Attempt to enable a controllable IR emitter when the camera opens. Only needed for hardware that does not auto-enable its IR LED. |
+| `camera_release_secs` | u32 | `5` | Seconds to keep the camera open after daemon-mode auth before releasing it, to avoid repeated warmup cost on back-to-back requests. |
 
 ## [recognition]
 
@@ -24,8 +29,8 @@ Face detection and embedding parameters.
 | `timeout_secs` | u32 | `5` | Maximum seconds to attempt recognition before giving up. Must be > 0. |
 | `detection_confidence` | f32 | `0.5` | Minimum confidence for the face detector to report a detection. Lower values detect more faces but increase false positives. |
 | `nms_threshold` | f32 | `0.4` | Non-maximum suppression threshold for overlapping detections. |
-| `detector_model` | string | `"scrfd_2.5g_bnkps.onnx"` | ONNX detector model filename. Must exist in `daemon.model_dir`. |
-| `embedder_model` | string | `"w600k_r50.onnx"` | ONNX embedder model filename. Must exist in `daemon.model_dir`. |
+| `detector_model` | string | `"scrfd_2.5g_bnkps.onnx"` | ONNX detector model filename. Must exist in `daemon.model_dir`. Bundled models are verified against the manifest; custom models require `detector_sha256`. |
+| `embedder_model` | string | `"w600k_r50.onnx"` | ONNX embedder model filename. Must exist in `daemon.model_dir`. Bundled models are verified against the manifest; custom models require `embedder_sha256`. |
 | `execution_provider` | string | `"cpu"` | ONNX Runtime execution provider. Values: `"cpu"`, `"cuda"`, `"rocm"`, `"openvino"`. GPU providers require a GPU-enabled ONNX Runtime package installed on the system. |
 | `threads` | u32 | `4` | Number of CPU threads for ONNX inference. |
 
@@ -50,6 +55,7 @@ Run `facelock test` to see your similarity scores, then set the threshold below 
 | High accuracy | `det_10g.onnx` (17MB) | `glintr100.onnx` (249MB) | ~266MB | ~40-50ms slower, best accuracy |
 
 Run `facelock setup` to select a model tier interactively and download the required models.
+If you point `detector_model` or `embedder_model` at a custom file, you must also set the matching SHA256 so the daemon can verify it at load time.
 
 ## [daemon]
 
@@ -57,7 +63,7 @@ Controls how the PAM module reaches the face engine.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `mode` | string | `"daemon"` | `"daemon"` connects to a persistent daemon via D-Bus system bus (~150-600ms depending on camera state). `"oneshot"` spawns `facelock auth` per PAM call (slower, ~700ms+, no background process). |
+| `mode` | string | `"daemon"` | `"daemon"` connects to a persistent daemon via D-Bus system bus (~200ms warm, ~600ms cold). `"oneshot"` spawns `facelock auth` per PAM call (slower, ~600ms+, no background process). |
 | `model_dir` | string | `"/var/lib/facelock/models"` | Directory containing ONNX model files. |
 | `idle_timeout_secs` | u64 | `0` | Shut down the daemon after this many idle seconds. `0` means never. Useful with D-Bus activation. |
 
@@ -77,6 +83,8 @@ Controls how the PAM module reaches the face engine.
 | `require_ir` | bool | `true` | Require an IR camera for authentication. RGB cameras are trivially spoofed with a printed photo. Only set to `false` for development/testing. |
 | `require_frame_variance` | bool | `true` | Require multiple frames with different embeddings before accepting. Defends against static photo attacks. |
 | `require_landmark_liveness` | bool | `false` | Require landmark movement between frames to pass liveness check. Detects static images by tracking facial landmark positions across frames. Experimental; off by default. |
+| `landmark_displacement_px` | f32 | `1.5` | Minimum pixel displacement for a landmark to count as "moving" between frames. Only used when `require_landmark_liveness` is true. |
+| `landmark_min_moving` | u32 | `3` | Number of facial landmarks (out of 5) that must show movement to pass the liveness check. Only used when `require_landmark_liveness` is true. |
 | `suppress_unknown` | bool | `false` | Suppress warnings for unknown users (users with no enrolled face). |
 | `min_auth_frames` | u32 | `3` | Minimum number of matching frames required before accepting. Only applies when `require_frame_variance` is true. |
 
@@ -86,6 +94,13 @@ Controls how the PAM module reaches the face engine.
 |-----|------|---------|-------------|
 | `max_attempts` | u32 | `5` | Maximum auth attempts per user per window. |
 | `window_secs` | u64 | `60` | Rate limit window in seconds. |
+
+### [security.pam_policy]
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `allowed_services` | list of strings | `[]` | If non-empty, only these PAM services may use facelock. |
+| `denied_services` | list of strings | `[]` | PAM services that must always skip facelock, even if otherwise allowed. |
 
 ## [notification]
 
@@ -117,6 +132,8 @@ Controls how face embeddings are encrypted at rest.
 | `key_path` | string | `"/etc/facelock/encryption.key"` | Path to AES-256-GCM key file for `keyfile` method. |
 | `sealed_key_path` | string | `"/etc/facelock/encryption.key.sealed"` | Path to TPM-sealed AES key for `tpm` method. |
 
+With `method = "tpm"`, the 32-byte AES key is sealed by the TPM at rest. At daemon startup, the key is unsealed and held in memory. Embeddings use the same AES-256-GCM format as `keyfile` — no re-encryption needed when migrating between methods. Migration commands: `facelock tpm seal-key` (keyfile → tpm) and `facelock tpm unseal-key` (tpm → keyfile).
+
 ## [audit]
 
 Structured audit logging of authentication events.
@@ -133,6 +150,7 @@ TPM 2.0 settings for sealing the AES encryption key. These settings apply when `
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| `seal_database` | bool | `false` | Seal the SQLite database file with the TPM key in addition to the encryption key. |
 | `pcr_binding` | bool | `false` | Bind sealed key to boot state (PCR values). |
 | `pcr_indices` | list of u32 | `[0, 1, 2, 3, 7]` | PCR registers to verify on unseal. |
 | `tcti` | string | `"device:/dev/tpmrm0"` | TPM Communication Interface. |

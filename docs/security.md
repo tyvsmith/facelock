@@ -268,12 +268,12 @@ denied_services = ["login", "sshd", "su"]
 After initialization, drop unnecessary capabilities:
 
 ```rust
-// After opening camera, loading models, creating socket:
+// After opening camera, loading models, connecting to D-Bus:
 // Drop all capabilities except what's needed for ongoing operation
 use caps::{CapSet, Capability};
 caps::clear(None, CapSet::Effective)?;
 caps::clear(None, CapSet::Permitted)?;
-// Only keep what's needed: nothing (camera fd already open, socket already bound)
+// Only keep what's needed: nothing (camera fd already open, D-Bus session attached)
 ```
 
 #### B. systemd Hardening (Implemented)
@@ -302,6 +302,7 @@ require_ir = true            # CRITICAL: refuse RGB-only cameras (anti-spoof)
 require_frame_variance = true # Reject static images (photo defense)
 require_landmark_liveness = false # Require landmark movement between frames (off by default)
 min_auth_frames = 3          # Minimum frames before accepting (variance check)
+suppress_unknown = false     # Log unknown faces (true = suppress unknown-face log entries)
 
 [notification]
 mode = "terminal"            # Show "Identifying face..." on login screen

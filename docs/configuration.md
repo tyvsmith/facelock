@@ -15,7 +15,7 @@ Camera settings.
 | `path` | string (optional) | Auto-detect | Camera device path (e.g., `/dev/video2`). When omitted, Facelock auto-detects the best available camera, preferring IR over RGB. |
 | `max_height` | u32 | `480` | Maximum frame height in pixels. Frames taller than this are downscaled to improve processing speed. |
 | `rotation` | u16 | `0` | Rotate captured frames. Values: `0`, `90`, `180`, `270`. Useful for cameras mounted sideways. |
-| `warmup_frames` | u32 | `3` | Frames to discard immediately after opening the camera to let exposure and gain stabilize. Device quirks may override this. |
+| `warmup_frames` | u32 | `2` | Frames to discard immediately after opening the camera to let exposure and gain stabilize. Device quirks may override this. |
 | `dark_threshold` | f32 | `0.6` | Fraction of pixels that must be darker than `dark_pixel_value` before the frame is treated as unusably dark. |
 | `dark_pixel_value` | u8 | `10` | Pixel brightness cutoff used by the dark-frame check. |
 | `ir_emitter` | bool | `false` | Attempt to enable a controllable IR emitter when the camera opens. Only needed for hardware that does not auto-enable its IR LED. |
@@ -67,7 +67,7 @@ Controls how the PAM module reaches the face engine.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `mode` | string | `"daemon"` | `"daemon"` connects to a persistent daemon via D-Bus system bus (~150-600ms depending on camera state). `"oneshot"` spawns `facelock auth` per PAM call (slower, ~700ms+, no background process). |
+| `mode` | string | `"daemon"` | `"daemon"` connects to a persistent daemon via D-Bus system bus (~200ms warm, ~600ms cold). `"oneshot"` spawns `facelock auth` per PAM call (slower, ~600ms+, no background process). |
 | `model_dir` | string | `"/var/lib/facelock/models"` | Directory containing ONNX model files. |
 | `idle_timeout_secs` | u64 | `0` | Shut down the daemon after this many idle seconds. `0` means never. Useful with D-Bus activation. |
 
@@ -87,6 +87,8 @@ Controls how the PAM module reaches the face engine.
 | `require_ir` | bool | `true` | Require an IR camera for authentication. RGB cameras are trivially spoofed with a printed photo. Only set to `false` for development/testing. |
 | `require_frame_variance` | bool | `true` | Require multiple frames with different embeddings before accepting. Defends against static photo attacks. |
 | `require_landmark_liveness` | bool | `false` | Require landmark movement between frames to pass liveness check. Detects static images by tracking facial landmark positions across frames. Experimental; off by default. |
+| `landmark_displacement_px` | f32 | `1.5` | Minimum pixel displacement for a landmark to count as "moving" between frames. Only used when `require_landmark_liveness` is true. |
+| `landmark_min_moving` | u32 | `3` | Number of facial landmarks (out of 5) that must show movement to pass the liveness check. Only used when `require_landmark_liveness` is true. |
 | `suppress_unknown` | bool | `false` | Suppress warnings for unknown users (users with no enrolled face). |
 | `min_auth_frames` | u32 | `3` | Minimum number of matching frames required before accepting. Only applies when `require_frame_variance` is true. |
 
@@ -152,6 +154,7 @@ TPM 2.0 settings for sealing the AES encryption key. These settings apply when `
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| `seal_database` | bool | `false` | Seal the SQLite database file with the TPM key in addition to the encryption key. |
 | `pcr_binding` | bool | `false` | Bind sealed key to boot state (PCR values). |
 | `pcr_indices` | list of u32 | `[0, 1, 2, 3, 7]` | PCR registers to verify on unseal. |
 | `tcti` | string | `"device:/dev/tpmrm0"` | TPM Communication Interface. |

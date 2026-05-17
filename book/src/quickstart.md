@@ -2,6 +2,8 @@
 
 ## Package Install
 
+**Note:** Packages are published via tag-driven CI on release. If your distro doesn't see the latest version yet, fall back to building from source ([Development Setup](#development-setup)).
+
 ### Arch Linux (AUR)
 
 ```bash

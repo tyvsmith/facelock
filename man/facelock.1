@@ -127,8 +127,9 @@ availability, and model integrity.
 List available camera devices.
 .TP
 .B daemon
-Run the persistent authentication daemon. Listens on a Unix domain socket
-for authentication and enrollment requests from the PAM module and CLI.
+Run the persistent authentication daemon. Registers on the D-Bus system bus
+as \fBorg.facelock.Daemon\fR to service authentication and enrollment requests
+from the PAM module and CLI.
 .RS
 .TP
 .B \-c\fR, \fB\-\-config \fIpath\fR
@@ -180,14 +181,39 @@ TPM integration status and management.
 .B status
 Report TPM availability and configuration.
 .TP
-.B seal\-db
-Seal all unsealed embeddings in the database using TPM.
+.B seal\-key
+Seal the AES encryption key with TPM (migrate keyfile to TPM).
 .TP
-.B unseal\-db
-Unseal all sealed embeddings (migrate away from TPM).
+.B unseal\-key
+Unseal the AES key from TPM back to a plaintext keyfile (migrate TPM to keyfile).
 .TP
 .B pcr\-baseline
 Display current PCR values for configured indices.
+.RE
+.TP
+.B encrypt
+Encrypt all unencrypted embeddings in the database with AES-256-GCM.
+.RS
+.TP
+.B \-\-generate\-key
+Generate a new encryption key without encrypting embeddings.
+.RE
+.TP
+.B decrypt
+Decrypt all software-encrypted embeddings in the database.
+.TP
+.B restart
+Restart the facelock daemon via systemd.
+.TP
+.B audit
+View the structured audit log.
+.RS
+.TP
+.B \-f\fR, \fB\-\-follow
+Follow mode: watch for new log entries.
+.TP
+.B \-n\fR, \fB\-\-lines \fIcount\fR
+Number of recent entries to show (default: 20).
 .RE
 .SH ENVIRONMENT
 .TP
@@ -211,8 +237,12 @@ by root:facelock.
 Directory containing ONNX model files (SCRFD and ArcFace). SHA256-verified
 at load time. Permissions should be 644, owned by root:facelock.
 .TP
-.I /run/facelock/facelock.sock
-Unix domain socket used for IPC between the PAM module and the daemon.
+.I /usr/share/dbus-1/system.d/org.facelock.Daemon.conf
+D-Bus system bus policy file. Enforces deny-all default, allowing access only
+to root and members of the \fBfacelock\fR group.
+.TP
+.I /usr/share/dbus-1/system-services/org.facelock.Daemon.service
+D-Bus activation file for the facelock daemon service.
 .TP
 .I /usr/lib/security/pam_facelock.so
 PAM module shared library.
@@ -228,9 +258,14 @@ The default configuration requires an IR camera
 .RB ( security.require_ir=true ).
 Frame variance checks are performed during authentication to prevent
 photo-based spoofing. Rate limiting is enforced by the daemon (5 attempts
-per user per 60 seconds by default). IPC messages are limited to 10MB and
-socket peers are verified via
-.BR SO_PEERCRED .
+per user per 60 seconds by default). IPC uses the D-Bus system bus; the
+daemon verifies caller UID via
+.B GetConnectionUnixUser
+before executing any method, and the system bus policy in
+.I org.facelock.Daemon.conf
+applies a deny-all default, restricting access to root and the
+.B facelock
+group. Message size limits are enforced by the D-Bus daemon.
 .SH SEE ALSO
 .BR pam_facelock (8),
 .BR pam (8),

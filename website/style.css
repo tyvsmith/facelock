@@ -689,6 +689,7 @@ section + section {
     font-size: 1.625rem;
   }
 
+  /* Nav hidden on mobile; hero CTAs and footer links provide navigation */
   .nav-links {
     display: none;
   }

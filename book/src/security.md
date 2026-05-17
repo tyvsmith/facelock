@@ -110,7 +110,9 @@ For high-security deployments, embeddings can be encrypted with AES-256-GCM usin
 
 #### A. D-Bus System Bus Policy (Required)
 
-The D-Bus system bus policy (`/etc/dbus-1/system.d/org.facelock.Daemon.conf`) restricts which users and groups can own the bus name and invoke methods. Only root and members of the `facelock` group are granted access.
+The D-Bus system bus policy (`/usr/share/dbus-1/system.d/org.facelock.Daemon.conf`) restricts which users and groups can own the bus name and invoke methods. Only root and members of the `facelock` group are granted access. (`/etc/dbus-1/system.d/` is the admin-override location for local customization.)
+
+Beyond bus-level access, the daemon enforces per-method UID authorization. Before executing any method, the daemon calls `GetConnectionUnixUser` to verify the caller's UID. `Authenticate` allows the caller's own UID. `Enroll` and `Shutdown` are restricted to root (UID 0) only. This prevents a `facelock` group member from enrolling faces or shutting down the daemon without root privileges.
 
 #### B. D-Bus Message Size Limits (Required)
 
@@ -166,7 +168,7 @@ require_landmark_liveness = false # Require landmark movement between frames (of
 min_auth_frames = 3          # Minimum frames before accepting (variance check)
 
 [notification]
-enabled = true               # Show "Identifying face..." on login screen
+mode = "terminal"            # Show "Identifying face..." on login screen
 
 [security.pam_policy]
 allowed_services = ["sudo", "polkit-1"]
