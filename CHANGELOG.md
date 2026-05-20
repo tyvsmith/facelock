@@ -11,7 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **COPR publishing**: migrated from the GitHub webhook to [Packit](https://packit.dev). The `publish-copr` job and the `COPR_WEBHOOK_URL` secret are removed; COPR builds are now driven by `.packit.yaml` on GitHub Release publish. The COPR RPM is built from source and depends on Fedora's system `onnxruntime` package.
+
 ### Fixed
+
+- **ONNX Runtime API floor**: lowered the `ort` crate API feature from `api-24` to `api-20`. `api-24` required ONNX Runtime 1.24+ at runtime, which no shipped or bundled runtime provided (the bundled CPU ORT and Fedora's `onnxruntime` are 1.20.x–1.22.x), so face inference would fail to initialize. facelock uses only baseline ONNX Runtime APIs, so `api-20` loses no functionality.
 
 ### Security
 
