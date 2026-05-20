@@ -166,9 +166,9 @@ production-ready in the justfile install recipe.
 
 ## 4. Deployment Roadmap
 
-### Current state: v0.1.0 released
-- **v0.1.0 released on 2026-05-17** (tag-driven CI)
-- Published packages: `.deb` (APT with signing key), `.rpm` (Fedora COPR), PKGBUILD (awaiting AUR submission)
+### Current state: v0.1.3 released
+- **v0.1.3 released on 2026-05-20** (tag-driven CI)
+- Published packages: `.deb` (APT with signing key), `.rpm` (Fedora COPR via Packit), PKGBUILD (AUR)
 - `just install` / `just uninstall` for local development still available
 
 ### Packaging status
@@ -177,8 +177,8 @@ production-ready in the justfile install recipe.
 |--------|----------|--------|
 | Raw binaries | `release.yml` | Released. Triggered on `v*` tags. Uploads `facelock-x86_64-linux-gnu`, `pam_facelock.so`, SHA256SUMS to GitHub Releases. |
 | `.deb` | `release.yml` (build-deb job) | Released. Built in CI, uploaded to GitHub Release. Signed APT repository at `tysmith.me/facelock/apt` (main/legacy variants). |
-| `.rpm` | `release.yml` (build-rpm job) | Released. Built in CI. Fedora COPR webhook (`tyvsmith/facelock`) active per `releasing.md`. |
-| PKGBUILD (Arch) | `dist/PKGBUILD` | Exists. Automated via tag CI; awaiting first published push to AUR. References `facelock.install` file. |
+| `.rpm` | `release.yml` (build-rpm job) | Released. Built in CI for the GitHub Release asset. COPR builds from source via Packit (`tyvsmith/facelock`) per `releasing.md`. |
+| PKGBUILD (Arch) | `dist/PKGBUILD` | Released. Automated via tag CI; published to AUR (`facelock`, `facelock-git`). References `facelock.install` file. |
 | Nix flake | `dist/nix/flake.nix` | Exists with NixOS module (`module.nix`), derivation (`default.nix`), and dev shell. Not in nixpkgs. `doCheck = false` (needs camera). |
 | openrc | `dist/openrc/facelock-daemon` | Init script exists. |
 | runit | `dist/runit/run`, `dist/runit/log/run` | Service scripts exist. |

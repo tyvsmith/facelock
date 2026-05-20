@@ -11,13 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+### Fixed
+
+### Security
+
+## [0.1.3] - 2026-05-20
+
+### Changed
+
 - **COPR publishing**: migrated from the GitHub webhook to [Packit](https://packit.dev). The `publish-copr` job and the `COPR_WEBHOOK_URL` secret are removed; COPR builds are now driven by `.packit.yaml` on GitHub Release publish. The COPR RPM is built from source and depends on Fedora's system `onnxruntime` package.
 
 ### Fixed
 
 - **ONNX Runtime API floor**: lowered the `ort` crate API feature from `api-24` to `api-20`. `api-24` required ONNX Runtime 1.24+ at runtime, which no shipped or bundled runtime provided (the bundled CPU ORT and Fedora's `onnxruntime` are 1.20.x–1.22.x), so face inference would fail to initialize. facelock uses only baseline ONNX Runtime APIs, so `api-20` loses no functionality.
-
-### Security
 
 ## [0.1.2] - 2026-05-17
 
@@ -73,4 +79,5 @@ Initial open-source release.
 - **PAM install output**: Conditional install messages — suppressed when PAM entry already present (`c12a970`)
 - **PAM uninstall**: Uninstall now removes entries from all relevant PAM services, not just the primary one (`c12a970`)
 
+[0.1.3]: https://github.com/tyvsmith/facelock/releases/tag/v0.1.3
 [0.1.0]: https://github.com/tyvsmith/facelock/releases/tag/v0.1.0
