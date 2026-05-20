@@ -8,9 +8,13 @@ Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  cargo
 BuildRequires:  rust
+BuildRequires:  gcc
+BuildRequires:  gcc-c++
 BuildRequires:  clang-devel
 BuildRequires:  pam-devel
 BuildRequires:  libv4l-devel
+BuildRequires:  wayland-devel
+BuildRequires:  libxkbcommon-devel
 BuildRequires:  systemd-rpm-macros
 BuildRequires:  tpm2-tss-devel
 
