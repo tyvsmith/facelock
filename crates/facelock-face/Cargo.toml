@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 facelock-core = { path = "../facelock-core" }
-ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "load-dynamic", "copy-dylibs", "api-24", "cuda", "rocm", "openvino"] }
+ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "load-dynamic", "copy-dylibs", "api-20", "cuda", "rocm", "openvino"] }
 ndarray = "0.16"
 image = "0.25"
 sha2 = "0.10"
