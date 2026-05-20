@@ -50,11 +50,13 @@ The `.github/workflows/release.yml` workflow:
 4. Builds `.rpm` package in Fedora container (with TPM feature) and validates contents
 5. Validates Nix flake evaluation
 6. Publishes to AUR (if `AUR_SSH_KEY` secret is configured)
-7. Triggers COPR rebuild (if `COPR_WEBHOOK_URL` secret is configured)
-8. Publishes signed APT repository (if `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE` are configured)
-9. Triggers GitHub Pages rebuild to include updated APT repo
+7. Publishes signed APT repository (if `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE` are configured)
+8. Triggers GitHub Pages rebuild to include updated APT repo
 
-Pre-release tags (containing `alpha`, `beta`, or `rc`) skip AUR, COPR, and APT publishing.
+Pre-release tags (containing `alpha`, `beta`, or `rc`) skip AUR and APT publishing.
+
+COPR (Fedora) is **not** built by `release.yml`. It is handled by [Packit](https://packit.dev),
+which reacts to the GitHub Release published in step 1. See the COPR section below.
 
 #### Debian package channels
 
@@ -111,8 +113,10 @@ just test-deb-tpm-pkg
 just test-rpm-pkg
 ```
 
-`just release-preflight` checks local tools, required packaging files, and whether
-`AUR_SSH_KEY`, `COPR_WEBHOOK_URL`, `APT_GPG_PRIVATE_KEY`, and `APT_GPG_PASSPHRASE` are configured in GitHub secrets (via `gh`).
+`just release-preflight` checks local tools, required packaging files (including
+`.packit.yaml`), and whether `AUR_SSH_KEY`, `APT_GPG_PRIVATE_KEY`, and
+`APT_GPG_PASSPHRASE` are configured in GitHub secrets (via `gh`). COPR needs no
+secret — it is driven by Packit.
 
 ### Package repository setup (one-time)
 
@@ -162,26 +166,42 @@ After this, every non-prerelease tag push automatically updates the AUR package.
 
 #### COPR (Fedora/RHEL)
 
-Automated after setup. The release workflow triggers a COPR rebuild when `COPR_WEBHOOK_URL` is configured.
+Automated after setup, via [Packit](https://packit.dev) — the Fedora-ecosystem
+standard for upstream→COPR builds. There is **no webhook and no GitHub secret**.
+
+The configuration lives in `.packit.yaml` at the repository root. It declares a
+single `copr_build` job with `trigger: release`: when `release.yml` publishes a
+GitHub Release, Packit generates an SRPM from `dist/facelock.spec` and builds it
+into the existing COPR project `tyvsmith/facelock` for `fedora-rawhide`,
+`fedora-42`, and `fedora-43` (x86_64).
+
+The COPR RPM is built **from source** and does **not** bundle ONNX Runtime — the
+spec's `Requires: onnxruntime` pulls Fedora's system `onnxruntime` package
+instead. (The `ort` crate feature `api-20` keeps the binary compatible with
+Fedora's ONNX Runtime.)
 
 **One-time setup (~10 minutes):**
 
 1. Create a Fedora Account at https://accounts.fedoraproject.org
-2. Log in to COPR at https://copr.fedorainfracloud.org
-3. Create a new project:
-   - Name: `facelock`
-   - Chroots: `fedora-rawhide-x86_64`, `fedora-41-x86_64`, `fedora-40-x86_64`
-   - SCM source type: select "custom"
-4. Under project settings → Webhooks, copy the webhook URL
-   - Use the **Custom webhook** URL with package suffix, e.g. `.../webhooks/custom/<ID>/<UUID>/facelock/`
-5. Add it as a GitHub repository secret named `COPR_WEBHOOK_URL`:
-   ```bash
-   gh secret set COPR_WEBHOOK_URL --body "$COPR_WEBHOOK_URL"
-   ```
+2. Log in to COPR at https://copr.fedorainfracloud.org and ensure the
+   `tyvsmith/facelock` project exists with the `fedora-rawhide-x86_64`,
+   `fedora-42-x86_64`, and `fedora-43-x86_64` chroots enabled
+   (Settings → Chroots).
+3. Install the **Packit-as-a-Service** GitHub App on the repository:
+   https://github.com/marketplace/packit-as-a-service
+4. In the COPR project → Settings → Permissions, grant the `packit` user
+   **builder** permission so Packit can build into the existing project. If an
+   "allowed forge projects" field is present, add `github.com/tyvsmith/facelock`.
 
-   Or use the web UI: https://github.com/tyvsmith/facelock/settings/secrets/actions
+After setup, every non-prerelease GitHub Release triggers a COPR build
+automatically. To populate COPR without cutting a release (e.g. after first-time
+setup), run `packit build in-copr --owner tyvsmith --project facelock` locally.
 
-Alternatively, configure COPR to build from the GitHub source directly using the SCM integration (points at `dist/facelock.spec`).
+Note: a previously published release will **not** retroactively build — Packit
+reacts only to *new* Release events.
+
+The old `COPR_WEBHOOK_URL` GitHub secret is no longer used and can be deleted
+(`gh secret delete COPR_WEBHOOK_URL`).
 
 #### APT (Debian/Ubuntu)
 
@@ -257,11 +277,28 @@ All other files are synced by `just release`:
 
 ## ONNX Runtime Bundling
 
-The `.deb` and `.rpm` packages bundle a CPU-only `libonnxruntime.so` at `/usr/lib/facelock/libonnxruntime.so`. This is necessary because ONNX Runtime is not available in Fedora or Ubuntu repositories.
+The `ort` crate is built with feature `api-20`, so facelock requires ONNX Runtime
+**1.20 or newer** at runtime. ONNX Runtime is forward-compatible, so a single
+build works against any runtime ≥ 1.20.
 
-On Arch Linux, the PKGBUILD depends on the system `onnxruntime` package instead (available in official repos). The bundled ORT is a CPU-only fallback — users who install a system-wide GPU-enabled ONNX Runtime (CUDA, ROCm, OpenVINO) will have it take precedence automatically (the search order prefers system paths over the bundled copy).
+ONNX Runtime is sourced differently per channel:
 
-The bundled ORT version is pinned in `.github/workflows/release.yml` as `ORT_VERSION`. Update it when upgrading the `ort` crate dependency.
+- **GitHub-Release `.deb` and `.rpm`**: bundle a CPU-only `libonnxruntime.so`
+  (ORT 1.20.1) at `/usr/lib/facelock/libonnxruntime.so`, because ONNX Runtime is
+  not available in Ubuntu repositories.
+- **COPR RPM** (built from source by Packit): does **not** bundle ORT. The spec's
+  `Requires: onnxruntime` pulls Fedora's system `onnxruntime` package.
+- **Arch Linux** (PKGBUILD): depends on the system `onnxruntime` package
+  (available in official repos).
+
+The bundled ORT is a CPU-only fallback — users who install a system-wide
+GPU-enabled ONNX Runtime (CUDA, ROCm, OpenVINO) will have it take precedence
+automatically (the search order prefers system paths over the bundled copy).
+
+The bundled ORT version is pinned in `.github/workflows/release.yml` as
+`ORT_VERSION`. When upgrading the `ort` crate dependency, update `ORT_VERSION`
+and, if the new crate requires a higher floor, the `api-NN` feature in
+`crates/facelock-face/Cargo.toml`.
 
 ## Upgrade Safety
 

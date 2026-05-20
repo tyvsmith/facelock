@@ -621,6 +621,7 @@ release-preflight tag='':
         dist/debian/control \
         dist/debian/rules \
         dist/apt/conf/distributions \
+        .packit.yaml \
         .github/workflows/release.yml; do
         if [ -f "$f" ]; then
             echo "OK: $f"
@@ -633,25 +634,17 @@ release-preflight tag='':
     echo ""
     echo "== GitHub release secret checks =="
     if [ "$prerelease" -eq 1 ]; then
-        echo "Mode: prerelease ($TAG) — AUR/COPR secrets are optional"
+        echo "Mode: prerelease ($TAG) — AUR secrets are optional"
     else
-        echo "Mode: stable release — AUR/COPR secrets are required"
+        echo "Mode: stable release — AUR secrets are required"
     fi
+    echo "Note: COPR builds are handled by Packit (.packit.yaml) — no secret required."
 
     if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
         if gh secret list | grep -q '^AUR_SSH_KEY\b'; then
             echo "OK: AUR_SSH_KEY configured"
         else
             echo "MISSING: AUR_SSH_KEY"
-            if [ "$prerelease" -eq 0 ]; then
-                failed=1
-            fi
-        fi
-
-        if gh secret list | grep -q '^COPR_WEBHOOK_URL\b'; then
-            echo "OK: COPR_WEBHOOK_URL configured"
-        else
-            echo "MISSING: COPR_WEBHOOK_URL"
             if [ "$prerelease" -eq 0 ]; then
                 failed=1
             fi

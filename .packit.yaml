@@ -1,0 +1,17 @@
+# Packit configuration — https://packit.dev/docs/configuration
+# Release-only COPR builds: stable git tags (vX.Y.Z) are built into the
+# existing COPR project tyvsmith/facelock. Packit generates the SRPM itself.
+specfile_path: dist/facelock.spec
+upstream_package_name: facelock
+downstream_package_name: facelock
+upstream_tag_template: "v{version}"
+
+jobs:
+  - job: copr_build
+    trigger: release
+    owner: tyvsmith
+    project: facelock
+    targets:
+      - fedora-rawhide-x86_64
+      - fedora-42-x86_64
+      - fedora-43-x86_64

@@ -9,8 +9,10 @@ permissions:
   actions: write
 
 env:
-  # ONNX Runtime version to bundle in .deb and .rpm packages.
-  # ort 2.0.0-rc.12 with api-24 targets ORT 1.20.x.
+  # ONNX Runtime version to bundle in the GitHub-Release .deb and .rpm packages.
+  # The ort crate uses feature api-20, so the minimum supported ONNX Runtime is
+  # 1.20; this bundled copy satisfies that floor. (The COPR RPM does not bundle
+  # ORT — it depends on Fedora's system onnxruntime package via Packit.)
   ORT_VERSION: "1.20.1"
 
 jobs:
@@ -300,19 +302,6 @@ jobs:
         env:
           AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
         run: .github/workflows/scripts/publish-aur.sh "${{ steps.version.outputs.VERSION }}" "${{ steps.checksum.outputs.SHA256 }}"
-
-  publish-copr:
-    name: Trigger COPR Build
-    runs-on: ubuntu-latest
-    needs: [build, build-rpm]
-    if: ${{ !contains(github.ref_name, 'alpha') && !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'rc') }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Trigger COPR rebuild
-        env:
-          COPR_WEBHOOK_URL: ${{ secrets.COPR_WEBHOOK_URL }}
-        run: .github/workflows/scripts/publish-copr.sh
 
   publish-apt:
     name: Publish APT Repository

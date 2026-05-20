@@ -16,6 +16,7 @@ BuildRequires:  tpm2-tss-devel
 
 Requires:       pam
 Requires:       tpm2-tss
+Requires:       onnxruntime
 Recommends:     authselect
 
 %description
@@ -76,7 +77,11 @@ install -Dm644 dist/authselect/facelock/password-auth %{buildroot}%{_datadir}/au
 install -Dm644 dist/authselect/facelock/postlogin %{buildroot}%{_datadir}/authselect/vendor/facelock/postlogin
 install -Dm644 dist/authselect/facelock/README %{buildroot}%{_datadir}/authselect/vendor/facelock/README
 
-# Bundled CPU ONNX Runtime (if present — added by release CI)
+# Bundled CPU ONNX Runtime (if present — added by release CI).
+# Always create %{_libdir}/facelock/ so the %files entry resolves even when ORT
+# is not bundled (the Packit/COPR from-source build, which depends on system
+# onnxruntime instead). The CI RPM additionally installs the bundled .so here.
+install -dm755 %{buildroot}%{_libdir}/facelock
 if [ -f onnxruntime/lib/libonnxruntime.so ]; then
     install -Dm755 onnxruntime/lib/libonnxruntime.so %{buildroot}%{_libdir}/facelock/libonnxruntime.so
 fi
