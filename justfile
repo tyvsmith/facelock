@@ -448,6 +448,13 @@ test-rpm-pkg: build-release
     podman build --build-arg ORT_VERSION={{_ort-version}} -t facelock-rpm-pkg -f test/Containerfile.rpm-e2e .
     podman run --rm facelock-rpm-pkg
 
+# COPR-equivalent build — Packit SRPM + mock from-source rebuild on a Fedora chroot (slow, opt-in)
+test-copr:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    podman build -t facelock-copr-test -f test/Containerfile.copr .
+    podman run --privileged --rm -v "$PWD:/repo:ro" facelock-copr-test
+
 # Dev shell — interactive .deb container with host models for fast iteration (requires camera)
 test-deb-dev-shell: build-release
     #!/usr/bin/env bash

@@ -79,6 +79,7 @@ just test-deb            # Ubuntu — validate file layout from manual install
 just test-deb-pkg        # Ubuntu 24.04 — build real .deb, install via dpkg, validate
 just test-deb-tpm-pkg    # Debian trixie — build real TPM .deb, install via dpkg, validate
 just test-rpm-pkg        # Fedora — build real .rpm, install via dnf, validate
+just test-copr           # COPR-equivalent — Packit SRPM + mock from-source rebuild (slow)
 
 # Interactive (requires camera)
 just test-deb-dev-shell      # Ubuntu .deb with host models — fast iteration
@@ -192,6 +193,13 @@ Fedora's ONNX Runtime.)
 4. In the COPR project → Settings → Permissions, grant the `packit` user
    **builder** permission so Packit can build into the existing project. If an
    "allowed forge projects" field is present, add `github.com/tyvsmith/facelock`.
+5. In the COPR project → Settings, enable **"Enable internet access during
+   builds"**. The RPM is built from source and `cargo` fetches crates from
+   crates.io during `%build`; COPR's build chroot is network-isolated by
+   default, so this toggle is required or the build fails resolving crates.
+
+Verify the COPR build locally before relying on it with `just test-copr`, which
+reproduces the Packit SRPM + `mock` from-source rebuild on a Fedora chroot.
 
 After setup, every non-prerelease GitHub Release triggers a COPR build
 automatically. To populate COPR without cutting a release (e.g. after first-time

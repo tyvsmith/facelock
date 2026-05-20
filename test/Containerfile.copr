@@ -1,0 +1,10 @@
+# Container for `just test-copr` — a local COPR-equivalent build.
+# Bakes the Packit + mock toolchain; the build logic lives in test/copr-build.sh.
+# Must be run with --privileged (mock needs it) and the repo mounted at /repo:ro.
+FROM fedora:42
+RUN dnf install -y --setopt=install_weak_deps=False \
+        packit mock rpm-build git tar \
+    && dnf clean all
+COPY test/copr-build.sh /copr-build.sh
+RUN chmod +x /copr-build.sh
+CMD ["/copr-build.sh"]
