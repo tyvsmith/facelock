@@ -53,6 +53,12 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          # Publish the release with a PAT, not the default GITHUB_TOKEN.
+          # Releases created by GITHUB_TOKEN do not trigger downstream
+          # automation, so Packit's release trigger never fires and COPR
+          # is never built. An empty/missing RELEASE_PAT falls back to
+          # GITHUB_TOKEN, so this is safe before the secret is set.
+          token: ${{ secrets.RELEASE_PAT }}
           files: |
             release/facelock-x86_64-linux-gnu
             release/pam_facelock.so
