@@ -24,9 +24,11 @@ chmod 600 ~/.ssh/aur
 ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
 
 # Per-binary checksums for facelock-bin come from the Release SHA256SUMS file.
+# GITHUB_REPOSITORY is set by GitHub Actions; fall back to the canonical repo for local runs.
+REPO="${GITHUB_REPOSITORY:-tyvsmith/facelock}"
 SHA_FILE="$(mktemp)"
 trap 'rm -f "$SHA_FILE"' EXIT
-curl -fsSL "https://github.com/tyvsmith/facelock/releases/download/v${VERSION}/SHA256SUMS" -o "$SHA_FILE"
+curl -fsSL "https://github.com/${REPO}/releases/download/v${VERSION}/SHA256SUMS" -o "$SHA_FILE"
 SHA_FACELOCK=$(awk '/[[:space:]]facelock-x86_64-linux-gnu$/{print $1}' "$SHA_FILE")
 SHA_PAM=$(awk '/[[:space:]]pam_facelock\.so$/{print $1}' "$SHA_FILE")
 SHA_POLKIT=$(awk '/[[:space:]]facelock-polkit-agent-x86_64-linux-gnu$/{print $1}' "$SHA_FILE")
@@ -50,21 +52,31 @@ generate_srcinfo() {
 
 # AUR creates a package on first push to a non-existent repo. If clone fails
 # because the repo doesn't exist yet, init a fresh one pointing at the same URL.
+# Auth / network failures must surface — don't paper over them with a fresh init.
 get_or_init_repo() {
   local dir="$1"
   local repo="$2"
+  local url="ssh://aur@aur.archlinux.org/${repo}.git"
+  local clone_err
   rm -rf "$dir"
-  if git clone "ssh://aur@aur.archlinux.org/${repo}.git" "$dir" 2>/dev/null; then
+  if clone_err="$(git clone "$url" "$dir" 2>&1)"; then
     echo "Cloned existing AUR repo: ${repo}"
-  else
+    return 0
+  fi
+  # AUR returns one of these messages when the package doesn't exist yet.
+  if echo "$clone_err" | grep -qE "does not appear to be a git repository|Repository not found|fatal: repository '[^']*' not found"; then
     echo "AUR repo ${repo} not found — initializing for first push"
     rm -rf "$dir"
     mkdir -p "$dir"
     ( cd "$dir"
       git init -b master
-      git remote add origin "ssh://aur@aur.archlinux.org/${repo}.git"
+      git remote add origin "$url"
     )
+    return 0
   fi
+  echo "ERROR: git clone of ${url} failed for a reason other than 'not found':" >&2
+  echo "$clone_err" >&2
+  return 1
 }
 
 commit_and_push() {
