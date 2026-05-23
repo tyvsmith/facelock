@@ -28,7 +28,7 @@ jobs:
             pam \
             tpm2-tss
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@v2
@@ -84,7 +84,7 @@ jobs:
             tpm2-tss \
             swtpm
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@v2
@@ -110,7 +110,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download release binaries
         uses: actions/download-artifact@v4
