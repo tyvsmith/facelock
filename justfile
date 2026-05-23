@@ -359,6 +359,12 @@ release version:
         echo "  ✓ dist/PKGBUILD"
     fi
 
+    # 2b. dist/PKGBUILD-bin (per-binary sha256sums are filled in by CI)
+    if [ -f dist/PKGBUILD-bin ]; then
+        sed -i "s/^pkgver=.*/pkgver=$VERSION/" dist/PKGBUILD-bin
+        echo "  ✓ dist/PKGBUILD-bin"
+    fi
+
     # 3. dist/facelock.spec
     if [ -f dist/facelock.spec ]; then
         sed -i "s/^Version:.*/Version:        $VERSION/" dist/facelock.spec
