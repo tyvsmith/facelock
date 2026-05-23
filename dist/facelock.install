@@ -1,5 +1,3 @@
-PAM_LINE="auth  sufficient  pam_facelock.so"
-
 post_install() {
     systemd-sysusers
     systemd-tmpfiles --create
@@ -41,13 +39,16 @@ post_upgrade() {
 
 pre_remove() {
     # Stop and disable daemon
-    systemctl stop facelock-daemon 2>/dev/null || true
-    systemctl disable facelock-daemon 2>/dev/null || true
+    systemctl stop facelock-daemon.service 2>/dev/null || true
+    systemctl disable facelock-daemon.service 2>/dev/null || true
 
-    # Remove PAM lines
+    # Kill facelock polkit agent if running (lets the DE's agent take over)
+    pkill -f facelock-polkit-agent 2>/dev/null || true
+
+    # Remove PAM lines (regex match — tolerates whitespace/option variations)
     for PAM_FILE in /etc/pam.d/sudo /etc/pam.d/polkit-1 /etc/pam.d/hyprlock; do
-        if [ -f "$PAM_FILE" ] && grep -qF "$PAM_LINE" "$PAM_FILE"; then
-            sed -i "\|^${PAM_LINE}$|d" "$PAM_FILE"
+        if [ -f "$PAM_FILE" ] && grep -q 'pam_facelock\.so' "$PAM_FILE"; then
+            sed -i '/pam_facelock\.so/d' "$PAM_FILE"
             echo "==> Removed face authentication from $PAM_FILE"
         fi
     done

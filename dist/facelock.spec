@@ -112,6 +112,19 @@ echo "  2. sudo facelock enroll      (register your face)"
 %preun
 %systemd_preun facelock-daemon.service
 
+# Only on full uninstall ($1 == 0), not upgrade.
+# Remove PAM lines that `facelock setup` may have added — otherwise stale
+# references to pam_facelock.so survive removal and can break sudo auth.
+if [ $1 -eq 0 ]; then
+    for PAM_FILE in /etc/pam.d/sudo /etc/pam.d/polkit-1 /etc/pam.d/hyprlock; do
+        if [ -f "$PAM_FILE" ] && grep -q 'pam_facelock\.so' "$PAM_FILE"; then
+            sed -i '/pam_facelock\.so/d' "$PAM_FILE"
+        fi
+    done
+    # Kill facelock polkit agent if running (lets the DE's agent take over)
+    pkill -f facelock-polkit-agent 2>/dev/null || true
+fi
+
 %postun
 %systemd_postun_with_restart facelock-daemon.service
 

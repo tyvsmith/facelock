@@ -259,6 +259,12 @@ uninstall-files:
     rm -f /usr/share/dbus-1/system-services/org.facelock.Daemon.service
     rm -f /usr/bin/facelock-polkit-agent
     rm -f /etc/xdg/autostart/org.facelock.AuthAgent.desktop
+
+    # Remove quirks database and source-install config artifacts
+    # (these would otherwise collide with a subsequent package install)
+    rm -rf /usr/share/facelock
+    rm -f /etc/facelock/config.toml.default
+
     systemctl daemon-reload 2>/dev/null || true
 
     echo "Uninstalled. Config and data preserved in /etc/facelock and /var/lib/facelock."

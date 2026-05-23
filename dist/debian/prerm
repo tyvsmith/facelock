@@ -13,6 +13,9 @@ case "$1" in
         if [ -x /usr/sbin/pam-auth-update ]; then
             pam-auth-update --remove facelock 2>/dev/null || true
         fi
+
+        # Kill facelock polkit agent if running (lets the DE's agent take over)
+        pkill -f facelock-polkit-agent 2>/dev/null || true
         ;;
 
     upgrade|deconfigure)
