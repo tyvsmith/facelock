@@ -29,7 +29,7 @@ just release 0.2.0
 ```
 
 This will:
-1. Bump version in `Cargo.toml`, `dist/PKGBUILD`, `dist/facelock.spec`, `dist/debian/changelog`
+1. Bump version in `Cargo.toml`, `dist/PKGBUILD`, `dist/PKGBUILD-bin`, `dist/facelock.spec`, `dist/debian/changelog`
 2. Run `cargo check --workspace` to verify the version bump compiles
 3. Prompt you to update `CHANGELOG.md` (add entries under the new version heading)
 4. Print the `git commit` / `git tag` / `git push` commands for you to run
@@ -49,7 +49,7 @@ The `.github/workflows/release.yml` workflow:
 3. Builds `.deb` package — **TPM** (Debian trixie container) and **legacy** (Ubuntu 24.04)
 4. Builds `.rpm` package in Fedora container (with TPM feature) and validates contents
 5. Validates Nix flake evaluation
-6. Publishes to AUR (if `AUR_SSH_KEY` secret is configured)
+6. Publishes to AUR — `facelock` (source build), `facelock-bin` (prebuilt), and `facelock-git` (VCS) — if `AUR_SSH_KEY` secret is configured
 7. Publishes signed APT repository (if `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE` are configured)
 8. Triggers GitHub Pages rebuild to include updated APT repo
 
@@ -129,10 +129,13 @@ Automated after setup. The release workflow publishes to AUR when `AUR_SSH_KEY` 
 
 1. Create an AUR account at https://aur.archlinux.org/register
 2. Add your SSH public key to your AUR account at https://aur.archlinux.org/account
-3. Register the package names:
+3. Register the package names. CI's `publish-aur.sh` will create any of
+   these on first push if they don't already exist, but you can also pre-register
+   them manually:
    ```bash
    REPO_ROOT="$(pwd)"
 
+   # facelock (source build — default for `yay -S facelock`)
    git clone ssh://aur@aur.archlinux.org/facelock.git aur-facelock
    cd aur-facelock
    cp "$REPO_ROOT/dist/PKGBUILD" .
@@ -143,6 +146,18 @@ Automated after setup. The release workflow publishes to AUR when `AUR_SSH_KEY` 
    git push
    cd ..
 
+   # facelock-bin (prebuilt binaries from the GitHub Release — no cargo build)
+   git clone ssh://aur@aur.archlinux.org/facelock-bin.git aur-facelock-bin
+   cd aur-facelock-bin
+   cp "$REPO_ROOT/dist/PKGBUILD-bin" PKGBUILD
+   cp "$REPO_ROOT/dist/facelock.install" .
+   makepkg --printsrcinfo > .SRCINFO
+   git add PKGBUILD facelock.install .SRCINFO
+   git commit -m "Initial commit"
+   git push
+   cd ..
+
+   # facelock-git (VCS package tracking main)
    git clone ssh://aur@aur.archlinux.org/facelock-git.git aur-facelock-git
    cd aur-facelock-git
    cp "$REPO_ROOT/dist/PKGBUILD-git" PKGBUILD
