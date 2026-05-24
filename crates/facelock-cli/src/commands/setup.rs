@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, bail};
-use dialoguer::{Confirm, MultiSelect, Select, theme::ColorfulTheme};
+use dialoguer::{Confirm, Select, theme::ColorfulTheme};
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 
@@ -926,56 +926,44 @@ fn wizard_systemd_setup(theme: &ColorfulTheme) -> anyhow::Result<bool> {
     Ok(true)
 }
 
-fn wizard_pam_setup(theme: &ColorfulTheme) -> anyhow::Result<Vec<String>> {
+fn wizard_pam_setup(_theme: &ColorfulTheme) -> anyhow::Result<Vec<String>> {
     if !Path::new(PAM_MODULE_PATH).exists() {
         println!("  PAM module not found at {PAM_MODULE_PATH}.");
         println!("  Install it first, then run: sudo facelock setup --pam");
         return Ok(Vec::new());
     }
 
-    let available_services = ["sudo", "polkit-1", "hyprlock"];
-    let service_descriptions = [
-        "sudo     - authenticate sudo commands with face recognition",
-        "polkit-1 - authenticate graphical privilege prompts with face recognition",
-        "hyprlock - authenticate lock screen with face recognition",
-    ];
+    let candidates = detect_available_pam_candidates();
 
-    // Filter to services that actually exist on the system
-    let mut valid_services: Vec<&str> = Vec::new();
-    let mut valid_descriptions: Vec<&str> = Vec::new();
-    for (svc, desc) in available_services.iter().zip(service_descriptions.iter()) {
-        let pam_path = format!("/etc/pam.d/{svc}");
-        if Path::new(&pam_path).exists() {
-            valid_services.push(svc);
-            valid_descriptions.push(desc);
-        }
-    }
-
-    if valid_services.is_empty() {
+    if candidates.is_empty() {
         println!("  No supported PAM service files found in /etc/pam.d/.");
         return Ok(Vec::new());
     }
 
-    let selections = MultiSelect::with_theme(theme)
-        .with_prompt("Select PAM services to configure (space to toggle, enter to confirm)")
-        .items(&valid_descriptions)
-        .interact()?;
-
-    if selections.is_empty() {
-        println!("  No PAM services selected.");
-        return Ok(Vec::new());
-    }
-
     let mut configured = Vec::new();
-    for idx in selections {
-        let service = valid_services[idx];
-        println!("  Configuring PAM for {service}...");
-        match pam_install(service, true) {
-            Ok(()) => configured.push(service.to_string()),
-            Err(e) => {
-                println!("  Failed to configure {service}: {e}");
+    for candidate in candidates {
+        let prompt = format!("Enable face auth for {}?", candidate.description);
+        let should_enable = if !is_interactive() {
+            candidate.default_enabled
+        } else {
+            Confirm::new()
+                .with_prompt(&prompt)
+                .default(candidate.default_enabled)
+                .interact()?
+        };
+        if should_enable {
+            println!("  Configuring PAM for {}...", candidate.service);
+            match pam_install(candidate.service, true) {
+                Ok(()) => configured.push(candidate.service.to_string()),
+                Err(e) => {
+                    println!("  Failed to configure {}: {e}", candidate.service);
+                }
             }
         }
+    }
+
+    if configured.is_empty() {
+        println!("  No PAM services selected.");
     }
 
     Ok(configured)
@@ -1384,6 +1372,97 @@ fn download_model(entry: &ModelEntry, dest: &Path) -> anyhow::Result<()> {
     ensure_mode(dest, 0o644).with_context(|| format!("failed to secure {}", dest.display()))?;
 
     Ok(())
+}
+
+// --- PAM candidate detection ---
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PamCategory {
+    PrivilegeEscalation, // sudo, polkit-1
+    LockScreen,          // hyprlock, swaylock, kscreenlocker_greet
+    DisplayManager,      // gdm-password, sddm, lightdm
+}
+
+#[derive(Clone, Debug)]
+struct PamCandidate {
+    service: &'static str,
+    #[allow(dead_code)] // retained for documentation and future category-based filtering
+    category: PamCategory,
+    description: &'static str,
+    default_enabled: bool,
+}
+
+// Intentionally excluded from PAM_CANDIDATES:
+//   - system-auth (Arch) and common-auth (Debian): shared stacks included by many
+//     services. Editing them gives face auth to passwd, su, chsh, etc. — risky.
+//   - login: TTY login. Cameras often aren't initialized at boot.
+//   - su, passwd, chsh, chfn: privilege/credential-change tools that should
+//     require a real password.
+//   - any unknown service: detection is by /etc/pam.d/<name> existence, but only
+//     services in PAM_CANDIDATES are offered.
+const PAM_CANDIDATES: &[PamCandidate] = &[
+    PamCandidate {
+        service: "sudo",
+        category: PamCategory::PrivilegeEscalation,
+        description: "sudo (privilege escalation)",
+        default_enabled: true,
+    },
+    PamCandidate {
+        service: "polkit-1",
+        category: PamCategory::PrivilegeEscalation,
+        description: "polkit-1 (GUI privilege escalation prompts)",
+        default_enabled: true,
+    },
+    PamCandidate {
+        service: "hyprlock",
+        category: PamCategory::LockScreen,
+        description: "hyprlock (Hyprland screen lock)",
+        default_enabled: true,
+    },
+    PamCandidate {
+        service: "swaylock",
+        category: PamCategory::LockScreen,
+        description: "swaylock (Sway screen lock)",
+        default_enabled: true,
+    },
+    PamCandidate {
+        service: "kscreenlocker_greet",
+        category: PamCategory::LockScreen,
+        description: "KDE Plasma screen lock",
+        default_enabled: true,
+    },
+    PamCandidate {
+        service: "gdm-password",
+        category: PamCategory::DisplayManager,
+        description: "GDM login screen (GNOME) \u{2014} declining recommended unless you have recovery access",
+        default_enabled: false,
+    },
+    PamCandidate {
+        service: "sddm",
+        category: PamCategory::DisplayManager,
+        description: "SDDM login screen (KDE) \u{2014} declining recommended unless you have recovery access",
+        default_enabled: false,
+    },
+    PamCandidate {
+        service: "lightdm",
+        category: PamCategory::DisplayManager,
+        description: "LightDM login screen (Ubuntu/Xfce/Mint) \u{2014} declining recommended unless you have recovery access",
+        default_enabled: false,
+    },
+];
+
+/// Returns the subset of PAM_CANDIDATES whose `/etc/pam.d/<service>` file exists,
+/// delegating path construction to `candidates_in` for testability.
+fn detect_available_pam_candidates() -> Vec<&'static PamCandidate> {
+    candidates_in(Path::new("/etc/pam.d"))
+}
+
+/// Returns candidates from `PAM_CANDIDATES` whose service file exists under `base`.
+fn candidates_in(base: &Path) -> Vec<&'static PamCandidate> {
+    PAM_CANDIDATES
+        .iter()
+        .filter(|c| base.join(c.service).exists())
+        .collect()
 }
 
 // --- PAM installation ---
@@ -1813,6 +1892,41 @@ account include   system-login
         assert!(SENSITIVE_SERVICES.contains(&"login"));
         assert!(SENSITIVE_SERVICES.contains(&"sshd"));
         assert!(!SENSITIVE_SERVICES.contains(&"sudo"));
+    }
+
+    #[test]
+    fn detect_candidates_filters_by_presence() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("sudo"), "").unwrap();
+        std::fs::write(tmp.path().join("hyprlock"), "").unwrap();
+        let found: Vec<_> = candidates_in(tmp.path())
+            .iter()
+            .map(|c| c.service)
+            .collect();
+        assert!(found.contains(&"sudo"));
+        assert!(found.contains(&"hyprlock"));
+        assert!(!found.contains(&"sddm"));
+        assert!(!found.contains(&"gdm-password"));
+        assert!(!found.contains(&"swaylock"));
+    }
+
+    #[test]
+    fn no_excluded_services_in_candidates() {
+        let excluded = [
+            "system-auth",
+            "common-auth",
+            "login",
+            "su",
+            "passwd",
+            "chsh",
+            "chfn",
+        ];
+        for ex in excluded {
+            assert!(
+                !PAM_CANDIDATES.iter().any(|c| c.service == ex),
+                "{ex} must not appear in PAM_CANDIDATES"
+            );
+        }
     }
 
     #[test]
