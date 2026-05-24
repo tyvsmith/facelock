@@ -1066,6 +1066,7 @@ dependencies = [
  "sha2",
  "signal-hook",
  "smithay-client-toolkit",
+ "tempfile",
  "tokio",
  "toml",
  "tracing",
