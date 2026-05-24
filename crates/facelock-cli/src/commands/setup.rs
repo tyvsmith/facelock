@@ -211,6 +211,8 @@ fn run_wizard() -> anyhow::Result<()> {
         }
     };
 
+    print_pam_extension_hint();
+
     // -- Summary --
     println!("\n--- Setup Complete ---\n");
     let encryption_label = match config.encryption.method {
@@ -1387,6 +1389,15 @@ fn download_model(entry: &ModelEntry, dest: &Path) -> anyhow::Result<()> {
 // --- PAM installation ---
 
 const PAM_LINE: &str = "auth      sufficient pam_facelock.so";
+
+/// Print a copy-pasteable hint so users can extend PAM integration to any service.
+fn print_pam_extension_hint() {
+    println!();
+    println!("==> facelock PAM line for manual extension to other services:");
+    println!("==>   {PAM_LINE}");
+    println!("==> Add the above line above the first 'auth' line in any /etc/pam.d/<service> file.");
+}
+
 const PAM_MODULE_PATH: &str = "/lib/security/pam_facelock.so";
 const SENSITIVE_SERVICES: &[&str] = &["system-auth", "login", "sshd"];
 
@@ -1405,7 +1416,9 @@ pub fn run_pam(service: &str, remove: bool, yes: bool) -> anyhow::Result<()> {
     if remove {
         pam_remove(service)
     } else {
-        pam_install(service, yes)
+        pam_install(service, yes)?;
+        print_pam_extension_hint();
+        Ok(())
     }
 }
 
@@ -1444,8 +1457,32 @@ fn pam_install(service: &str, yes: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // 4. Create backup (always, before any modification)
+    // 4. Preview change and confirm before any modification
     let backup_path = format!("{pam_path}.facelock-backup");
+
+    println!();
+    println!("About to modify {pam_path}:");
+    println!("  + {PAM_LINE}    (inserted before first 'auth' line)");
+    println!("  Backup will be saved to: {backup_path}");
+    println!();
+    println!("(To configure manually instead, add the line above to each service yourself.)");
+
+    let proceed = if yes || !std::io::stdin().is_terminal() {
+        true
+    } else {
+        Confirm::new()
+            .with_prompt("Proceed?")
+            .default(true)
+            .interact()
+            .context("failed to read confirmation")?
+    };
+
+    if !proceed {
+        println!("Skipped {pam_path}.");
+        return Ok(());
+    }
+
+    // 4b. Create backup (always, before any modification)
     fs::copy(pam_file, &backup_path)
         .with_context(|| format!("failed to back up {pam_path} to {backup_path}"))?;
     println!("Backed up {pam_path} -> {backup_path}");
