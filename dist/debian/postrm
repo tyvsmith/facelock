@@ -10,7 +10,7 @@ facelock uninstalled. User data preserved at:
   /var/lib/facelock/  (face database, ONNX models)
   /var/log/facelock/  (audit logs and snapshots)
 
-To remove all face data and config:
+To remove all face data, config, models, and logs:
   sudo rm -rf /etc/facelock /var/lib/facelock /var/log/facelock
 
 EOF

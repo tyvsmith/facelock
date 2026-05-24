@@ -259,16 +259,21 @@ uninstall-files:
 
     # Remove binaries and units
     rm -f /usr/bin/facelock /lib/security/pam_facelock.so
-    rm -f /usr/lib/systemd/system/facelock-daemon.service
-    # Remove /etc/systemd/system/ override only if it matches the source unit
-    # (avoid clobbering admin customizations)
-    if [ -f /etc/systemd/system/facelock-daemon.service ]; then
-        if [ -f systemd/facelock-daemon.service ] && cmp -s systemd/facelock-daemon.service /etc/systemd/system/facelock-daemon.service; then
-            rm -f /etc/systemd/system/facelock-daemon.service
-            echo "Removed /etc/systemd/system/facelock-daemon.service (matched source unit)"
-        else
-            echo "Kept /etc/systemd/system/facelock-daemon.service (admin-modified or source not available for comparison)"
-        fi
+    # Decide whether the /etc/systemd/system/ override matches the installed unit
+    # (we want to clean up our own override, but never clobber an admin customization).
+    # We must compare BEFORE removing /usr/lib/systemd/system/facelock-daemon.service.
+    SYSTEM_OVERRIDE="/etc/systemd/system/facelock-daemon.service"
+    INSTALLED_UNIT="/usr/lib/systemd/system/facelock-daemon.service"
+    REMOVE_OVERRIDE=false
+    if [ -f "$SYSTEM_OVERRIDE" ] && [ -f "$INSTALLED_UNIT" ] && cmp -s "$INSTALLED_UNIT" "$SYSTEM_OVERRIDE"; then
+        REMOVE_OVERRIDE=true
+    fi
+    rm -f "$INSTALLED_UNIT"
+    if [ "$REMOVE_OVERRIDE" = true ]; then
+        rm -f "$SYSTEM_OVERRIDE"
+        echo "Removed $SYSTEM_OVERRIDE (matched installed unit)"
+    elif [ -f "$SYSTEM_OVERRIDE" ]; then
+        echo "Kept $SYSTEM_OVERRIDE (admin-modified or installed unit not present for comparison)"
     fi
     rm -f /usr/share/dbus-1/system.d/org.facelock.Daemon.conf
     rm -f /usr/share/dbus-1/system-services/org.facelock.Daemon.service
@@ -288,7 +293,7 @@ uninstall-files:
     echo "==>   /var/lib/facelock/  (face database, ONNX models ~100MB)"
     echo "==>   /var/log/facelock/  (audit logs and snapshots)"
     echo "==>"
-    echo "==> To remove all face data, models, and logs:"
+    echo "==> To remove all face data, config, models, and logs:"
     echo "==>   sudo rm -rf /etc/facelock /var/lib/facelock /var/log/facelock"
     echo "==>"
     echo "==> To remove the facelock group (after removing all members):"

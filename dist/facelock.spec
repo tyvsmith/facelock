@@ -138,7 +138,7 @@ if [ $1 -eq 0 ]; then
     echo "  /var/lib/facelock/  (face database, ONNX models)"
     echo "  /var/log/facelock/  (audit logs and snapshots)"
     echo ""
-    echo "To remove all face data and config:"
+    echo "To remove all face data, config, models, and logs:"
     echo "  rm -rf /etc/facelock /var/lib/facelock /var/log/facelock"
 fi
 
