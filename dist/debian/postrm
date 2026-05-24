@@ -1,0 +1,30 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove)
+        cat <<EOF
+
+facelock uninstalled. User data preserved at:
+  /etc/facelock/      (config.toml, encryption.key.sealed, setup markers)
+  /var/lib/facelock/  (face database, ONNX models)
+  /var/log/facelock/  (audit logs and snapshots)
+
+To remove all face data, config, models, and logs:
+  sudo rm -rf /etc/facelock /var/lib/facelock /var/log/facelock
+
+EOF
+        ;;
+
+    purge|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+
+    *)
+        echo "postrm called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

@@ -249,12 +249,32 @@ uninstall-files:
         fi
     done
 
+    # Remove PAM safety backups created by `facelock setup`
+    for backup in /etc/pam.d/sudo.facelock-backup /etc/pam.d/polkit-1.facelock-backup /etc/pam.d/hyprlock.facelock-backup; do
+        [ -f "$backup" ] && rm -f "$backup" && echo "Removed $backup"
+    done
+
     # Kill facelock polkit agent if running (so the DE's agent can take over)
     pkill -f facelock-polkit-agent 2>/dev/null || true
 
     # Remove binaries and units
     rm -f /usr/bin/facelock /lib/security/pam_facelock.so
-    rm -f /usr/lib/systemd/system/facelock-daemon.service
+    # Decide whether the /etc/systemd/system/ override matches the installed unit
+    # (we want to clean up our own override, but never clobber an admin customization).
+    # We must compare BEFORE removing /usr/lib/systemd/system/facelock-daemon.service.
+    SYSTEM_OVERRIDE="/etc/systemd/system/facelock-daemon.service"
+    INSTALLED_UNIT="/usr/lib/systemd/system/facelock-daemon.service"
+    REMOVE_OVERRIDE=false
+    if [ -f "$SYSTEM_OVERRIDE" ] && [ -f "$INSTALLED_UNIT" ] && cmp -s "$INSTALLED_UNIT" "$SYSTEM_OVERRIDE"; then
+        REMOVE_OVERRIDE=true
+    fi
+    rm -f "$INSTALLED_UNIT"
+    if [ "$REMOVE_OVERRIDE" = true ]; then
+        rm -f "$SYSTEM_OVERRIDE"
+        echo "Removed $SYSTEM_OVERRIDE (matched installed unit)"
+    elif [ -f "$SYSTEM_OVERRIDE" ]; then
+        echo "Kept $SYSTEM_OVERRIDE (admin-modified or installed unit not present for comparison)"
+    fi
     rm -f /usr/share/dbus-1/system.d/org.facelock.Daemon.conf
     rm -f /usr/share/dbus-1/system-services/org.facelock.Daemon.service
     rm -f /usr/bin/facelock-polkit-agent
@@ -267,8 +287,18 @@ uninstall-files:
 
     systemctl daemon-reload 2>/dev/null || true
 
-    echo "Uninstalled. Config and data preserved in /etc/facelock and /var/lib/facelock."
-    echo "To remove all data: rm -rf /etc/facelock /var/lib/facelock /var/log/facelock"
+    echo ""
+    echo "==> facelock uninstalled. User data preserved at:"
+    echo "==>   /etc/facelock/      (config.toml, encryption.key.sealed, setup markers)"
+    echo "==>   /var/lib/facelock/  (face database, ONNX models ~100MB)"
+    echo "==>   /var/log/facelock/  (audit logs and snapshots)"
+    echo "==>"
+    echo "==> To remove all face data, config, models, and logs:"
+    echo "==>   sudo rm -rf /etc/facelock /var/lib/facelock /var/log/facelock"
+    echo "==>"
+    echo "==> To remove the facelock group (after removing all members):"
+    echo "==>   sudo gpasswd -d <username> facelock"
+    echo "==>   sudo groupdel facelock"
 
 # Add face auth icon to omarchy hyprlock placeholder text (no root required)
 omarchy-enable:
