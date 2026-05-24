@@ -926,7 +926,7 @@ fn wizard_systemd_setup(theme: &ColorfulTheme) -> anyhow::Result<bool> {
     Ok(true)
 }
 
-fn wizard_pam_setup(_theme: &ColorfulTheme) -> anyhow::Result<Vec<String>> {
+fn wizard_pam_setup(theme: &ColorfulTheme) -> anyhow::Result<Vec<String>> {
     if !Path::new(PAM_MODULE_PATH).exists() {
         println!("  PAM module not found at {PAM_MODULE_PATH}.");
         println!("  Install it first, then run: sudo facelock setup --pam");
@@ -946,7 +946,7 @@ fn wizard_pam_setup(_theme: &ColorfulTheme) -> anyhow::Result<Vec<String>> {
         let should_enable = if !is_interactive() {
             candidate.default_enabled
         } else {
-            Confirm::new()
+            Confirm::with_theme(theme)
                 .with_prompt(&prompt)
                 .default(candidate.default_enabled)
                 .interact()?
@@ -1434,19 +1434,19 @@ const PAM_CANDIDATES: &[PamCandidate] = &[
     PamCandidate {
         service: "gdm-password",
         category: PamCategory::DisplayManager,
-        description: "GDM login screen (GNOME) \u{2014} declining recommended unless you have recovery access",
+        description: "GDM login screen (GNOME) \u{2014} declining is recommended unless you have recovery access",
         default_enabled: false,
     },
     PamCandidate {
         service: "sddm",
         category: PamCategory::DisplayManager,
-        description: "SDDM login screen (KDE) \u{2014} declining recommended unless you have recovery access",
+        description: "SDDM login screen (KDE) \u{2014} declining is recommended unless you have recovery access",
         default_enabled: false,
     },
     PamCandidate {
         service: "lightdm",
         category: PamCategory::DisplayManager,
-        description: "LightDM login screen (Ubuntu/Xfce/Mint) \u{2014} declining recommended unless you have recovery access",
+        description: "LightDM login screen (Ubuntu/Xfce/Mint) \u{2014} declining is recommended unless you have recovery access",
         default_enabled: false,
     },
 ];
