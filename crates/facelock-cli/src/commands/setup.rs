@@ -1395,7 +1395,9 @@ fn print_pam_extension_hint() {
     println!();
     println!("==> facelock PAM line for manual extension to other services:");
     println!("==>   {PAM_LINE}");
-    println!("==> Add the above line above the first 'auth' line in any /etc/pam.d/<service> file.");
+    println!(
+        "==> Add the above line above the first 'auth' line in any /etc/pam.d/<service> file."
+    );
 }
 
 const PAM_MODULE_PATH: &str = "/lib/security/pam_facelock.so";
@@ -1460,9 +1462,16 @@ fn pam_install(service: &str, yes: bool) -> anyhow::Result<()> {
     // 4. Preview change and confirm before any modification
     let backup_path = format!("{pam_path}.facelock-backup");
 
+    // Decide where the line will go BEFORE prompting, so the preview is accurate.
+    let insertion_hint = if content.lines().any(|l| l.trim_start().starts_with("auth")) {
+        "inserted before the first 'auth' line"
+    } else {
+        "no 'auth' line found — inserted at the top of the file"
+    };
+
     println!();
     println!("About to modify {pam_path}:");
-    println!("  + {PAM_LINE}    (inserted before first 'auth' line)");
+    println!("  + {PAM_LINE}    ({insertion_hint})");
     println!("  Backup will be saved to: {backup_path}");
     println!();
     println!("(To configure manually instead, add the line above to each service yourself.)");
