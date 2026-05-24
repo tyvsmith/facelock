@@ -40,8 +40,8 @@ enum Commands {
         /// Remove the PAM line instead of adding it
         #[arg(long)]
         remove: bool,
-        /// Skip confirmation for sensitive services
-        #[arg(short, long)]
+        /// Skip the confirmation prompt before modifying PAM files (also: --no-confirm)
+        #[arg(short, long, alias = "no-confirm")]
         yes: bool,
         /// Run in non-interactive mode (skip wizard)
         #[arg(long)]
