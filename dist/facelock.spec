@@ -121,12 +121,26 @@ if [ $1 -eq 0 ]; then
             sed -i '/pam_facelock\.so/d' "$PAM_FILE"
         fi
     done
+    # Remove PAM safety backups created by `facelock setup`
+    for backup in /etc/pam.d/sudo.facelock-backup /etc/pam.d/polkit-1.facelock-backup /etc/pam.d/hyprlock.facelock-backup; do
+        [ -f "$backup" ] && rm -f "$backup" && echo "Removed $backup"
+    done
     # Kill facelock polkit agent if running (lets the DE's agent take over)
     pkill -f facelock-polkit-agent 2>/dev/null || true
 fi
 
 %postun
 %systemd_postun_with_restart facelock-daemon.service
+if [ $1 -eq 0 ]; then
+    echo ""
+    echo "facelock uninstalled. User data preserved at:"
+    echo "  /etc/facelock/      (config.toml, encryption.key.sealed, setup markers)"
+    echo "  /var/lib/facelock/  (face database, ONNX models)"
+    echo "  /var/log/facelock/  (audit logs and snapshots)"
+    echo ""
+    echo "To remove all face data and config:"
+    echo "  rm -rf /etc/facelock /var/lib/facelock /var/log/facelock"
+fi
 
 %files
 %license LICENSE-MIT LICENSE-APACHE
