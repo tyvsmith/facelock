@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, bail};
-use dialoguer::{Confirm, Select, theme::ColorfulTheme};
+use dialoguer::{Confirm, MultiSelect, Select, theme::ColorfulTheme};
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 
@@ -940,24 +940,36 @@ fn wizard_pam_setup(theme: &ColorfulTheme) -> anyhow::Result<Vec<String>> {
         return Ok(Vec::new());
     }
 
+    let labels: Vec<&str> = candidates.iter().map(|c| c.description).collect();
+    let defaults: Vec<bool> = candidates.iter().map(|c| c.default_enabled).collect();
+
+    let selected_services: Vec<String> = if !is_interactive() {
+        // Non-TTY / non-interactive: auto-select per defaults.
+        candidates
+            .iter()
+            .zip(defaults.iter())
+            .filter(|(_, d)| **d)
+            .map(|(c, _)| c.service.to_string())
+            .collect()
+    } else {
+        let selections = MultiSelect::with_theme(theme)
+            .with_prompt("Select services to enable face authentication for")
+            .items(&labels)
+            .defaults(&defaults)
+            .interact()?;
+        selections
+            .into_iter()
+            .map(|i| candidates[i].service.to_string())
+            .collect()
+    };
+
     let mut configured = Vec::new();
-    for candidate in candidates {
-        let prompt = format!("Enable face auth for {}?", candidate.description);
-        let should_enable = if !is_interactive() {
-            candidate.default_enabled
-        } else {
-            Confirm::with_theme(theme)
-                .with_prompt(&prompt)
-                .default(candidate.default_enabled)
-                .interact()?
-        };
-        if should_enable {
-            println!("  Configuring PAM for {}...", candidate.service);
-            match pam_install(candidate.service, true) {
-                Ok(()) => configured.push(candidate.service.to_string()),
-                Err(e) => {
-                    println!("  Failed to configure {}: {e}", candidate.service);
-                }
+    for service in &selected_services {
+        println!("  Configuring PAM for {service}...");
+        match pam_install(service, true) {
+            Ok(()) => configured.push(service.clone()),
+            Err(e) => {
+                println!("  Failed to configure {service}: {e}");
             }
         }
     }
@@ -1434,20 +1446,20 @@ const PAM_CANDIDATES: &[PamCandidate] = &[
     PamCandidate {
         service: "gdm-password",
         category: PamCategory::DisplayManager,
-        description: "GDM login screen (GNOME) \u{2014} declining is recommended unless you have recovery access",
-        default_enabled: false,
+        description: "GDM login screen (GNOME) \u{2014} integration not yet verified with GDM's auth flow",
+        default_enabled: true,
     },
     PamCandidate {
         service: "sddm",
         category: PamCategory::DisplayManager,
-        description: "SDDM login screen (KDE) \u{2014} declining is recommended unless you have recovery access",
-        default_enabled: false,
+        description: "SDDM login screen (KDE)",
+        default_enabled: true,
     },
     PamCandidate {
         service: "lightdm",
         category: PamCategory::DisplayManager,
-        description: "LightDM login screen (Ubuntu/Xfce/Mint) \u{2014} declining is recommended unless you have recovery access",
-        default_enabled: false,
+        description: "LightDM login screen (Ubuntu/Xfce/Mint)",
+        default_enabled: true,
     },
 ];
 
