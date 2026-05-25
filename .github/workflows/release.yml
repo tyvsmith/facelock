@@ -45,7 +45,7 @@ jobs:
           cd release && sha256sum * > SHA256SUMS
 
       - name: Upload binary artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-binaries
           path: release/
@@ -81,7 +81,7 @@ jobs:
           echo "Bundled ORT size: $(du -h onnxruntime/lib/libonnxruntime.so | cut -f1)"
 
       - name: Upload ORT artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: onnxruntime-bundle
           path: onnxruntime/
@@ -106,7 +106,7 @@ jobs:
         run: cargo build --release --workspace
 
       - name: Download ORT bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: onnxruntime-bundle
           path: onnxruntime
@@ -125,7 +125,7 @@ jobs:
         run: .github/workflows/scripts/validate-deb.sh facelock_*.deb
 
       - name: Upload .deb artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-deb-legacy
           path: facelock_*.deb
@@ -184,7 +184,7 @@ jobs:
           cargo build --release --workspace --features tpm
 
       - name: Download ORT bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: onnxruntime-bundle
           path: onnxruntime
@@ -205,7 +205,7 @@ jobs:
         run: .github/workflows/scripts/validate-deb.sh facelock_*.deb
 
       - name: Upload .deb artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-deb-tpm
           path: facelock_*.deb
@@ -235,7 +235,7 @@ jobs:
             tpm2-tss-devel
 
       - name: Download ORT bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: onnxruntime-bundle
           path: onnxruntime
@@ -321,13 +321,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y reprepro gnupg
 
       - name: Download TPM .deb artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-deb-tpm
           path: debs/tpm
 
       - name: Download legacy .deb artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-deb-legacy
           path: debs/legacy
