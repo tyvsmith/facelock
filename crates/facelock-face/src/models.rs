@@ -46,7 +46,10 @@ pub fn verify_model(path: &Path, expected_sha256: &str) -> Result<bool> {
     let mut hasher = Sha256::new();
     hasher.update(&data);
     let result = hasher.finalize();
-    let hex = format!("{result:x}");
+    // Encode the digest by iterating bytes so this works with both sha2 0.10
+    // (`GenericArray`) and sha2 0.11 (`hybrid_array::Array`), since only the
+    // older type implements `LowerHex` directly.
+    let hex: String = result.iter().map(|b| format!("{b:02x}")).collect();
 
     Ok(hex == expected_sha256)
 }
