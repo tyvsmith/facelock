@@ -452,6 +452,24 @@ impl FaceStore {
             .map_err(map_err)?;
         Ok(count > 0)
     }
+
+    /// Check if any user has any stored models.
+    pub fn has_any_models(&self) -> Result<bool> {
+        let count: u32 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM face_models", [], |row| row.get(0))
+            .map_err(map_err)?;
+        Ok(count > 0)
+    }
+
+    /// Remove all models for all users. Returns the number of models removed.
+    pub fn clear_all(&self) -> Result<u32> {
+        let affected = self
+            .conn
+            .execute("DELETE FROM face_models", [])
+            .map_err(map_err)?;
+        Ok(affected as u32)
+    }
 }
 
 fn secure_database_files(db_path: &Path) -> Result<()> {
