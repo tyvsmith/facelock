@@ -648,10 +648,10 @@ impl SoftwareSealer {
     /// Generate a new random 256-bit key and write it to a file.
     /// Sets file permissions to 0600 (owner read/write only).
     pub fn generate_key_file(path: &std::path::Path) -> Result<()> {
-        use rand::RngCore;
+        use rand::Rng;
 
         let mut key = [0u8; AES_KEY_SIZE];
-        rand::thread_rng().fill_bytes(&mut key);
+        rand::rng().fill_bytes(&mut key);
 
         // Write atomically: write to temp file, then rename
         let dir = path.parent().ok_or_else(|| {
@@ -700,13 +700,13 @@ impl SoftwareSealer {
     pub fn seal_bytes(&self, data: &[u8]) -> Result<Vec<u8>> {
         use aes_gcm::aead::Aead;
         use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
-        use rand::RngCore;
+        use rand::Rng;
 
         let cipher = Aes256Gcm::new_from_slice(&self.key)
             .map_err(|e| FacelockError::Encryption(format!("failed to create AES cipher: {e}")))?;
 
         let mut nonce_bytes = [0u8; AES_NONCE_SIZE];
-        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        rand::rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let ciphertext = cipher
@@ -769,7 +769,7 @@ pub fn generate_and_seal_key(
     path: &Path,
     pcr_indices: Option<&[u32]>,
 ) -> Result<()> {
-    use rand::RngCore;
+    use rand::Rng;
     use zeroize::Zeroize;
 
     let mut key = [0u8; 32];
