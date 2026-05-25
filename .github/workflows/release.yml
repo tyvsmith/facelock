@@ -51,7 +51,7 @@ jobs:
           path: release/
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # Publish the release with a PAT, not the default GITHUB_TOKEN.
           # Releases created by GITHUB_TOKEN do not trigger downstream
@@ -131,7 +131,7 @@ jobs:
           path: facelock_*.deb
 
       - name: Upload .deb to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: facelock_*.deb
 
@@ -211,7 +211,7 @@ jobs:
           path: facelock_*.deb
 
       - name: Upload .deb to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: facelock_*.deb
 
@@ -260,7 +260,7 @@ jobs:
         run: .github/workflows/scripts/validate-rpm.sh "$(ls *.rpm | head -1)"
 
       - name: Upload .rpm to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: "*.rpm"
 
@@ -351,7 +351,7 @@ jobs:
           echo "APT repo tarball: $(du -h apt-repo.tar.gz | cut -f1)"
 
       - name: Upload APT repo to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: apt-repo.tar.gz
 
