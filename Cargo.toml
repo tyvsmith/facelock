@@ -22,7 +22,7 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+toml = "1.0"
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
