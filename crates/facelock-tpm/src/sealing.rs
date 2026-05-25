@@ -773,7 +773,7 @@ pub fn generate_and_seal_key(
     use zeroize::Zeroize;
 
     let mut key = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut key);
+    rand::rng().fill_bytes(&mut key);
 
     let result = tpm.seal_key_to_file(&key, path, pcr_indices);
     key.zeroize();
