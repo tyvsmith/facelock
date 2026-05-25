@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, bail};
-use dialoguer::{Confirm, Select, theme::ColorfulTheme};
+use dialoguer::{Confirm, MultiSelect, Select, theme::ColorfulTheme};
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 
@@ -569,6 +569,53 @@ fn wizard_model_download(theme: &ColorfulTheme, config: &Config) -> anyhow::Resu
     Ok(())
 }
 
+/// Detect the "orphaned models" situation: encrypted models exist in the DB,
+/// but the relevant key file is missing and we're about to mint a new one.
+/// Generating a fresh key would silently invalidate every existing model.
+/// Offer to clear them; abort if the user declines.
+fn handle_orphan_models_before_keygen(
+    config: &Config,
+    theme: &ColorfulTheme,
+) -> anyhow::Result<()> {
+    let store = match crate::direct::open_store(config) {
+        Ok(s) => s,
+        Err(_) => return Ok(()),
+    };
+    if !store.has_any_models().unwrap_or(false) {
+        return Ok(());
+    }
+
+    println!();
+    println!(
+        "  WARNING: encrypted face models already exist in {} but the",
+        config.storage.db_path
+    );
+    println!("  encryption key is missing. Generating a new key would make them unreadable.");
+    println!();
+
+    if !is_interactive() {
+        bail!(
+            "orphaned encrypted models found and no encryption key present; \
+             re-run setup interactively, or clear models first with: sudo facelock clear --yes"
+        );
+    }
+
+    let clear = Confirm::with_theme(theme)
+        .with_prompt("Delete orphaned models and continue?")
+        .default(false)
+        .interact()?;
+
+    if !clear {
+        bail!("encryption setup aborted; restore the previous key file or clear models manually");
+    }
+
+    let removed = store
+        .clear_all()
+        .map_err(|e| anyhow::anyhow!("failed to clear orphaned models: {e}"))?;
+    println!("  Removed {removed} orphaned model(s).");
+    Ok(())
+}
+
 fn wizard_encryption_setup(theme: &ColorfulTheme, config: &mut Config) -> anyhow::Result<()> {
     use facelock_core::config::EncryptionMethod;
 
@@ -597,6 +644,7 @@ fn wizard_encryption_setup(theme: &ColorfulTheme, config: &mut Config) -> anyhow
                     sealed_path.display()
                 );
             } else {
+                handle_orphan_models_before_keygen(config, theme)?;
                 println!("  Generating and sealing AES key with TPM...");
                 let pcr = if config.tpm.pcr_binding {
                     Some(config.tpm.pcr_indices.as_slice())
@@ -632,6 +680,7 @@ fn wizard_encryption_setup(theme: &ColorfulTheme, config: &mut Config) -> anyhow
     if key_path.exists() {
         println!("  Encryption key already exists at {}.", key_path.display());
     } else {
+        handle_orphan_models_before_keygen(config, theme)?;
         println!("  Generating encryption key...");
         facelock_tpm::SoftwareSealer::generate_key_file(key_path)
             .context("failed to generate encryption key")?;
@@ -940,24 +989,47 @@ fn wizard_pam_setup(theme: &ColorfulTheme) -> anyhow::Result<Vec<String>> {
         return Ok(Vec::new());
     }
 
+    println!("  The following line will be added to each selected /etc/pam.d/<service>:");
+    println!();
+    println!("      {PAM_LINE}");
+    println!();
+    println!(
+        "  It is inserted above the first existing 'auth' line. A backup\n  \
+         (.facelock-backup) is saved before any change, and you'll be asked\n  \
+         to confirm each file individually."
+    );
+    println!();
+
+    let labels: Vec<&str> = candidates.iter().map(|c| c.description).collect();
+    let defaults: Vec<bool> = candidates.iter().map(|c| c.default_enabled).collect();
+
+    let selected_services: Vec<String> = if !is_interactive() {
+        // Non-TTY / non-interactive: auto-select per defaults.
+        candidates
+            .iter()
+            .zip(defaults.iter())
+            .filter(|(_, d)| **d)
+            .map(|(c, _)| c.service.to_string())
+            .collect()
+    } else {
+        let selections = MultiSelect::with_theme(theme)
+            .with_prompt("Select services to enable face authentication for")
+            .items(&labels)
+            .defaults(&defaults)
+            .interact()?;
+        selections
+            .into_iter()
+            .map(|i| candidates[i].service.to_string())
+            .collect()
+    };
+
     let mut configured = Vec::new();
-    for candidate in candidates {
-        let prompt = format!("Enable face auth for {}?", candidate.description);
-        let should_enable = if !is_interactive() {
-            candidate.default_enabled
-        } else {
-            Confirm::with_theme(theme)
-                .with_prompt(&prompt)
-                .default(candidate.default_enabled)
-                .interact()?
-        };
-        if should_enable {
-            println!("  Configuring PAM for {}...", candidate.service);
-            match pam_install(candidate.service, true) {
-                Ok(()) => configured.push(candidate.service.to_string()),
-                Err(e) => {
-                    println!("  Failed to configure {}: {e}", candidate.service);
-                }
+    for service in selected_services {
+        println!("  Configuring PAM for {service}...");
+        match pam_install(&service, true) {
+            Ok(()) => configured.push(service),
+            Err(e) => {
+                println!("  Failed to configure {service}: {e}");
             }
         }
     }
@@ -1434,20 +1506,20 @@ const PAM_CANDIDATES: &[PamCandidate] = &[
     PamCandidate {
         service: "gdm-password",
         category: PamCategory::DisplayManager,
-        description: "GDM login screen (GNOME) \u{2014} declining is recommended unless you have recovery access",
+        description: "GDM login screen (GNOME) (experimental)",
         default_enabled: false,
     },
     PamCandidate {
         service: "sddm",
         category: PamCategory::DisplayManager,
-        description: "SDDM login screen (KDE) \u{2014} declining is recommended unless you have recovery access",
+        description: "SDDM login screen (KDE) (experimental)",
         default_enabled: false,
     },
     PamCandidate {
         service: "lightdm",
         category: PamCategory::DisplayManager,
-        description: "LightDM login screen (Ubuntu/Xfce/Mint) \u{2014} declining is recommended unless you have recovery access",
-        default_enabled: false,
+        description: "LightDM login screen (Ubuntu/Xfce/Mint)",
+        default_enabled: true,
     },
 ];
 
