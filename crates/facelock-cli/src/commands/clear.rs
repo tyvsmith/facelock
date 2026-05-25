@@ -6,6 +6,10 @@ use facelock_core::ipc::{DaemonRequest, DaemonResponse};
 use crate::ipc_client;
 
 pub fn run(user: Option<String>, yes: bool) -> anyhow::Result<()> {
+    // ClearModels is root-only on the daemon side too, so demand root up front.
+    // Otherwise the user gets prompted Y/N first and only then hits AccessDenied.
+    ipc_client::require_root("sudo facelock clear")?;
+
     let config = Config::load().context("failed to load config")?;
     let user = ipc_client::resolve_user(user.as_deref());
 
@@ -36,7 +40,6 @@ pub fn run(user: Option<String>, yes: bool) -> anyhow::Result<()> {
     }
 
     if ipc_client::should_use_direct(&config) {
-        ipc_client::require_root("sudo facelock clear")?;
         let store = crate::direct::open_store(&config)?;
         let count = store
             .clear_user(&user)
