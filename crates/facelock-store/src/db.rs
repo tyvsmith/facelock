@@ -61,9 +61,12 @@ impl FaceStore {
     ) -> Result<u32> {
         let tx = self.conn.unchecked_transaction().map_err(map_err)?;
 
-        let created_at = SystemTime::now()
+        // Stored as INTEGER (i64) in SQLite. Cast keeps the code portable
+        // across rusqlite versions (0.39+ no longer impls ToSql/FromSql for u64
+        // because SQLite INTEGER is signed 64-bit).
+        let created_at: i64 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
+            .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
         tx.execute(
@@ -175,7 +178,8 @@ impl FaceStore {
                     id: row.get(0)?,
                     user: row.get(1)?,
                     label: row.get(2)?,
-                    created_at: row.get(3)?,
+                    // Read as i64 and widen; rusqlite 0.39 dropped FromSql for u64.
+                    created_at: row.get::<_, i64>(3)? as u64,
                     embedder_model: row.get(4)?,
                 })
             })
@@ -253,9 +257,12 @@ impl FaceStore {
     ) -> Result<u32> {
         let tx = self.conn.unchecked_transaction().map_err(map_err)?;
 
-        let created_at = SystemTime::now()
+        // Stored as INTEGER (i64) in SQLite. Cast keeps the code portable
+        // across rusqlite versions (0.39+ no longer impls ToSql/FromSql for u64
+        // because SQLite INTEGER is signed 64-bit).
+        let created_at: i64 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
+            .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
         tx.execute(
