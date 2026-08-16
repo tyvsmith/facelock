@@ -102,7 +102,7 @@ pub enum SystemdPref {
 pub enum PamPref {
     Ask,
     Install { service: Option<String> },
-    Remove { service: String },
+    Remove { service: String, if_present: bool },
     Skip,
 }
 
@@ -123,6 +123,7 @@ pub struct SetupArgs {
     pub disable: bool,
     pub service: Option<String>,
     pub remove: bool,
+    pub if_present: bool,
     pub camera: Option<String>,
     pub models: Option<ModelPreset>,
     pub execution_provider: Option<ExecutionProviderChoice>,
@@ -209,6 +210,7 @@ pub fn resolve_setup_plan(args: SetupArgs) -> SetupPlan {
                 .service
                 .clone()
                 .unwrap_or_else(|| DEFAULT_PAM_SERVICE.to_string()),
+            if_present: args.if_present,
         }
     } else if args.pam {
         PamPref::Install {
@@ -335,7 +337,10 @@ pub fn run_with_plan(plan: SetupPlan) -> anyhow::Result<()> {
     }
 
     match &plan.pam {
-        PamPref::Remove { service } => run_pam(service, true, plan.yes)?,
+        PamPref::Remove {
+            service,
+            if_present,
+        } => run_pam(service, true, *if_present, plan.yes)?,
         PamPref::Install { service } => {
             // The wizard's step 9 already applied `--pam`; installing again here
             // would be a second, unasked-for edit of the same file.
@@ -2776,14 +2781,14 @@ fn is_facelock_pam_line(line: &str) -> bool {
     !trimmed.starts_with('#') && trimmed.contains("pam_facelock.so")
 }
 
-pub fn run_pam(service: &str, remove: bool, yes: bool) -> anyhow::Result<()> {
+pub fn run_pam(service: &str, remove: bool, if_present: bool, yes: bool) -> anyhow::Result<()> {
     // 1. Check root
     if !nix::unistd::Uid::current().is_root() {
         bail!("PAM configuration requires root. Run with sudo.");
     }
 
     if remove {
-        pam_remove(service)
+        pam_remove(service, if_present)
     } else {
         pam_install(service, yes, false)?;
         print_pam_extension_hint();
@@ -2928,16 +2933,27 @@ fn pam_install_in(base: &Path, service: &str, yes: bool, no_prompt: bool) -> any
     Ok(())
 }
 
-fn pam_remove(service: &str) -> anyhow::Result<()> {
-    let pam_path = format!("/etc/pam.d/{service}");
-    let pam_file = Path::new(&pam_path);
+fn pam_remove(service: &str, if_present: bool) -> anyhow::Result<()> {
+    pam_remove_in(Path::new(PAM_DIR), service, if_present)
+}
 
-    if !pam_file.exists() {
-        bail!("PAM service file not found: {pam_path}");
-    }
+fn pam_remove_in(base: &Path, service: &str, if_present: bool) -> anyhow::Result<()> {
+    let pam_file = base.join(service);
+    let pam_path = pam_file.display().to_string();
 
-    let content =
-        fs::read_to_string(pam_file).with_context(|| format!("failed to read {pam_path}"))?;
+    let content = match fs::read_to_string(&pam_file) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if if_present {
+                Terminal.info(&PamMessage::PamServiceAbsent {
+                    path: pam_path.clone(),
+                });
+                return Ok(());
+            }
+            bail!("PAM service file not found: {pam_path}");
+        }
+        Err(error) => return Err(error).with_context(|| format!("failed to read {pam_path}")),
+    };
 
     let original_count = content.lines().count();
     let new_lines: Vec<&str> = content
@@ -2955,7 +2971,7 @@ fn pam_remove(service: &str) -> anyhow::Result<()> {
             output.push('\n');
         }
 
-        fs::write(pam_file, &output).with_context(|| format!("failed to write {pam_path}"))?;
+        fs::write(&pam_file, &output).with_context(|| format!("failed to write {pam_path}"))?;
         Terminal.info(&PamMessage::PamRemoved {
             path: pam_path.clone(),
         });
@@ -3933,6 +3949,7 @@ mod action_tests {
 
         let plan = pam_plan(PamPref::Remove {
             service: "sudo".to_string(),
+            if_present: true,
         });
         assert_eq!(pam_step_for(&plan), PamStep::Deferred);
         assert!(
@@ -3940,6 +3957,70 @@ mod action_tests {
                 .unwrap()
                 .is_empty()
         );
+        assert_eq!(before, hash_dir(dir.path()));
+    }
+
+    #[test]
+    fn pam_remove_if_present_missing_service_is_a_noop() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let before = hash_dir(dir.path());
+
+        pam_remove_in(dir.path(), "omarchy-lock-face", true).unwrap();
+
+        assert_eq!(before, hash_dir(dir.path()));
+        assert!(fs::read_dir(dir.path()).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn pam_remove_missing_service_without_if_present_still_errors() {
+        let dir = tempfile::TempDir::new().unwrap();
+
+        let error = pam_remove_in(dir.path(), "omarchy-lock-face", false).unwrap_err();
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("PAM service file not found:"));
+        assert!(rendered.contains("omarchy-lock-face"));
+        assert!(fs::read_dir(dir.path()).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn pam_remove_if_present_removes_an_existing_facelock_line() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pam_file = dir.path().join("omarchy-lock-face");
+        fs::write(
+            &pam_file,
+            format!("#%PAM-1.0\n{PAM_LINE}\nauth include system-auth\n"),
+        )
+        .unwrap();
+
+        pam_remove_in(dir.path(), "omarchy-lock-face", true).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(pam_file).unwrap(),
+            "#%PAM-1.0\nauth include system-auth\n"
+        );
+    }
+
+    #[test]
+    fn pam_remove_if_present_preserves_a_file_without_a_facelock_line() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pam_file = dir.path().join("omarchy-lock-face");
+        let original = b"#%PAM-1.0\nauth include system-auth\n";
+        fs::write(&pam_file, original).unwrap();
+
+        pam_remove_in(dir.path(), "omarchy-lock-face", true).unwrap();
+
+        assert_eq!(fs::read(pam_file).unwrap(), original);
+    }
+
+    #[test]
+    fn pam_remove_if_present_does_not_suppress_other_read_errors() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let before = hash_dir(dir.path());
+
+        let error = pam_remove_in(dir.path(), ".", true).unwrap_err();
+
+        assert!(error.to_string().contains("failed to read"));
         assert_eq!(before, hash_dir(dir.path()));
     }
 

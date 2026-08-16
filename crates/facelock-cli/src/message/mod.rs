@@ -392,6 +392,13 @@ mod tests {
             .localized(),
             "Removed 2 face model(s) for user 'alice'."
         );
+        assert_eq!(
+            PamMessage::PamServiceAbsent {
+                path: "/etc/pam.d/omarchy-lock-face".into()
+            }
+            .localized(),
+            "PAM service file absent: /etc/pam.d/omarchy-lock-face. Nothing to remove."
+        );
     }
 
     /// The answer hint is appended by the sink and the question alone is the

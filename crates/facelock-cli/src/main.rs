@@ -67,6 +67,9 @@ enum Commands {
         /// Used with --pam: remove the PAM line instead of adding it
         #[arg(long, requires = "pam")]
         remove: bool,
+        /// Used with --pam --remove: succeed quietly if the service file is absent
+        #[arg(long = "if-present", requires = "remove")]
+        if_present: bool,
 
         // -- Choice flags. Supplying a value answers the question, and so skips
         //    the matching wizard step.
@@ -286,6 +289,7 @@ fn main() -> anyhow::Result<()> {
                     disable,
                     service,
                     remove,
+                    if_present,
                     camera,
                     models,
                     execution_provider,
@@ -302,6 +306,7 @@ fn main() -> anyhow::Result<()> {
                     disable,
                     service,
                     remove,
+                    if_present,
                     camera,
                     models,
                     execution_provider,
@@ -394,6 +399,7 @@ mod tests {
             disable,
             service,
             remove,
+            if_present,
             camera,
             models,
             execution_provider,
@@ -414,6 +420,7 @@ mod tests {
             disable,
             service,
             remove,
+            if_present,
             camera,
             models,
             execution_provider,
@@ -560,7 +567,8 @@ mod tests {
         assert_eq!(
             p.pam,
             PamPref::Remove {
-                service: "sudo".to_string()
+                service: "sudo".to_string(),
+                if_present: false,
             }
         );
     }
@@ -571,7 +579,26 @@ mod tests {
         assert_eq!(
             plan(&["--pam", "--remove"]).pam,
             PamPref::Remove {
-                service: "sudo".to_string()
+                service: "sudo".to_string(),
+                if_present: false,
+            }
+        );
+    }
+
+    #[test]
+    fn pam_remove_if_present_reaches_the_resolved_plan() {
+        assert_eq!(
+            plan(&[
+                "--pam",
+                "--service",
+                "omarchy-lock-face",
+                "--remove",
+                "--if-present",
+            ])
+            .pam,
+            PamPref::Remove {
+                service: "omarchy-lock-face".to_string(),
+                if_present: true,
             }
         );
     }
@@ -676,6 +703,34 @@ mod tests {
             parse_error(&["--remove"]).kind(),
             clap::error::ErrorKind::MissingRequiredArgument
         );
+    }
+
+    #[test]
+    fn if_present_requires_remove_and_pam() {
+        for args in [
+            &["--if-present"][..],
+            &["--pam", "--if-present"],
+            &["--remove", "--if-present"],
+        ] {
+            assert_eq!(
+                parse_error(args).kind(),
+                clap::error::ErrorKind::MissingRequiredArgument,
+                "unexpected error kind for {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn setup_help_documents_if_present() {
+        let mut command = Cli::command();
+        let help = command
+            .find_subcommand_mut("setup")
+            .expect("setup subcommand")
+            .render_long_help()
+            .to_string();
+
+        assert!(help.contains("--if-present"));
+        assert!(help.contains("succeed quietly if the service file is absent"));
     }
 
     #[test]

@@ -68,6 +68,9 @@ pub enum PamMessage {
     PamNoLineFound {
         path: String,
     },
+    PamServiceAbsent {
+        path: String,
+    },
     PamBackupExists {
         path: String,
         backup: String,
@@ -170,6 +173,10 @@ impl Message for PamMessage {
                 translate("No facelock PAM line found in {path}. Nothing to remove."),
                 &[("path", path.clone())],
             ),
+            PamServiceAbsent { path } => fill(
+                translate("PAM service file absent: {path}. Nothing to remove."),
+                &[("path", path.clone())],
+            ),
             PamBackupExists { path, backup } => fill(
                 translate("Backup exists at {backup}\nTo restore: sudo cp {backup} {path}"),
                 &[("path", path.clone()), ("backup", backup.clone())],
@@ -228,7 +235,8 @@ impl super::Samples for PamMessage {
             },
             PamInstalled { .. } => PamRemoved { path: s("/p") },
             PamRemoved { .. } => PamNoLineFound { path: s("/p") },
-            PamNoLineFound { .. } => PamBackupExists {
+            PamNoLineFound { .. } => PamServiceAbsent { path: s("/p") },
+            PamServiceAbsent { .. } => PamBackupExists {
                 path: s("/p"),
                 backup: s("/b"),
             },
