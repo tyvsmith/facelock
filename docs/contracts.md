@@ -59,6 +59,11 @@ Consequently `setup --systemd --pam` now runs both (it previously dropped
 `--remove` and `--service` require `--pam`, and `--disable` requires `--systemd`,
 so a dropped flag is now a parse error rather than silence.
 
+`--if-present` requires `--remove` (and therefore `--pam`). It changes only a
+missing target service file from an error into a successful no-op; read, parse
+and write failures remain fatal, and `--remove` without the flag retains its
+historical missing-file error.
+
 Supplying a choice flag suppresses the corresponding wizard step. `auto` means
 "re-derive from hardware", **not** "use the default" — omitting the flag already
 gives the default. Under `--non-interactive`, an unresolvable choice is an error,

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Optional idempotent PAM-line removal** (#148): `facelock setup --pam
+  --remove --if-present` now succeeds when the requested PAM service file is
+  absent, so teardown scripts can iterate optional integrations without their
+  own existence guards. The behavior is opt-in: omitting `--if-present` keeps
+  the historical missing-file error, and all non-NotFound I/O failures remain
+  fatal. Existing service files are never deleted.
 - **Complete flag surface for `facelock setup`**: every wizard step can now be
   answered or declined from the command line. Choice flags `--camera
   <PATH|auto>`, `--models <standard|balanced|high>`, `--execution-provider
