@@ -67,7 +67,7 @@ enum Commands {
         /// Used with --pam: remove the PAM line instead of adding it
         #[arg(long, requires = "pam")]
         remove: bool,
-        /// Used with --pam --remove: succeed quietly if the service file is absent
+        /// Used with --pam --remove: treat an absent service file as success
         #[arg(long = "if-present", requires = "remove")]
         if_present: bool,
 
@@ -730,7 +730,7 @@ mod tests {
             .to_string();
 
         assert!(help.contains("--if-present"));
-        assert!(help.contains("succeed quietly if the service file is absent"));
+        assert!(help.contains("treat an absent service file as success"));
     }
 
     #[test]

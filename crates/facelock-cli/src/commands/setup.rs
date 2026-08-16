@@ -2938,7 +2938,7 @@ fn pam_remove(service: &str, if_present: bool) -> anyhow::Result<()> {
 }
 
 fn pam_remove_in(base: &Path, service: &str, if_present: bool) -> anyhow::Result<()> {
-    let pam_file = base.join(service);
+    let pam_file = base.join(service.trim_start_matches('/'));
     let pam_path = pam_file.display().to_string();
 
     let content = match fs::read_to_string(&pam_file) {
@@ -4022,6 +4022,21 @@ mod action_tests {
 
         assert!(error.to_string().contains("failed to read"));
         assert_eq!(before, hash_dir(dir.path()));
+    }
+
+    #[test]
+    fn pam_remove_absolute_service_stays_anchored_under_base() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = dir.path().join("pam.d");
+        fs::create_dir(&base).unwrap();
+        let absolute_target = dir.path().join("outside-service");
+        let original = format!("#%PAM-1.0\n{PAM_LINE}\nauth include system-auth\n");
+        fs::write(&absolute_target, &original).unwrap();
+
+        pam_remove_in(&base, absolute_target.to_str().unwrap(), true).unwrap();
+
+        assert_eq!(fs::read_to_string(absolute_target).unwrap(), original);
+        assert!(fs::read_dir(base).unwrap().next().is_none());
     }
 
     // -- `--pam` in a wizard base -------------------------------------------
