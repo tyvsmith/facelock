@@ -318,8 +318,17 @@ fn count_models(backend: &crate::backend::Backend, user: &str) -> Option<u32> {
 /// Rebuild every marker from the authoritative database.
 ///
 /// This is what backfills users who enrolled before markers existed, which is
-/// why the feature is safe to ship into an existing install. It needs DB access,
-/// so it only ever runs from privileged `setup` — never from `is-enrolled`.
+/// why the feature is safe to ship into an existing install. It runs from
+/// privileged `setup` and from daemon startup
+/// (`commands::daemon::reconcile_enrollment_markers`) — **never from
+/// `is-enrolled`**, which needs DB access it does not have and privileges it
+/// must not require.
+///
+/// Convergence, not migration: every call re-derives the markers from the
+/// database rather than replaying recorded steps, so it is idempotent, needs no
+/// ordering and keeps no "has this run?" state that a restored backup or a
+/// copied database could contradict. `markers_converge_idempotently` is the
+/// test that pins it.
 ///
 /// Users present in the DB but absent from `/etc/passwd` (stale rows) are
 /// skipped rather than failing the whole reconcile.
@@ -362,8 +371,12 @@ pub fn reconcile_all(config: &Config) -> anyhow::Result<()> {
         };
         if let Err(e) = write_marker_in(&base, &user, models, Some(owner)) {
             tracing::warn!(user, error = %e, "failed to write enrollment marker");
-            continue;
         }
+        // Kept whatever the write did. `wanted` answers "the database says this
+        // user is enrolled", not "the write succeeded" — pruning on a failed
+        // write turns *could not refresh* into *deleted a correct marker*, and
+        // a caller that reconciles on every start (daemon startup, #137) would
+        // then destroy state on the first transient failure.
         wanted.push(user);
     }
 
@@ -722,6 +735,143 @@ mod tests {
             read_marker_in(&base, "facelock-stale-user"),
             MarkerState::Absent,
             "a marker with no models behind it must be pruned"
+        );
+    }
+
+    /// The observable state of a marker directory: which markers exist, what
+    /// each one claims, and the mode of every entry. Deliberately excludes
+    /// `updated` — it is a timestamp, nothing reads it as state, and a rewrite
+    /// is expected to move it.
+    fn marker_snapshot(base: &Path) -> Vec<(String, MarkerState, u32)> {
+        let mut entries: Vec<(String, MarkerState, u32)> = fs::read_dir(base)
+            .unwrap()
+            .flatten()
+            .map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let state = match read_marker_in(base, &name) {
+                    MarkerState::Enrolled(m) => MarkerState::Enrolled(Marker {
+                        models: m.models,
+                        updated: String::new(),
+                    }),
+                    other => other,
+                };
+                (name, state, mode_of(&e.path()))
+            })
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries
+    }
+
+    /// **The load-bearing test.** This change ships convergence instead of a
+    /// migration, and this assertion is what makes that safe: a second run
+    /// re-derives the same answer from the same database, so there is nothing
+    /// to record as "already applied" — and therefore no recorded state that a
+    /// restored backup, a database copied between machines, or a wiped state
+    /// directory could contradict.
+    ///
+    /// If this ever fails, convergence has become order-dependent and the
+    /// callers added for #137 (daemon startup, the oneshot auth path) are no
+    /// longer safe to run unconditionally.
+    #[test]
+    fn markers_converge_idempotently() {
+        let me = nix::unistd::User::from_uid(nix::unistd::Uid::current())
+            .ok()
+            .flatten()
+            .map(|u| u.name);
+        let Some(me) = me else {
+            // No passwd entry for the test runner: reconcile can resolve no
+            // owner, so there is no convergence to assert idempotent.
+            return;
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("facelock.db");
+        let mut config = test_config();
+        config.storage.db_path = db_path.to_string_lossy().into_owned();
+
+        {
+            let store = facelock_store::FaceStore::create(&db_path).unwrap();
+            let emb = [0.0f32; 512];
+            store.add_model(&me, "front", &emb, "").unwrap();
+            store.add_model(&me, "side", &emb, "").unwrap();
+        }
+
+        let base = marker_dir(&config);
+        // Start from the upgrade's actual state: enrolled users, no markers,
+        // plus one stale marker for a user who is not in the database.
+        write_marker_in(&base, "facelock-stale-user", 1, None).unwrap();
+
+        reconcile_all(&config).unwrap();
+        let first = marker_snapshot(&base);
+
+        reconcile_all(&config).unwrap();
+        let second = marker_snapshot(&base);
+
+        assert_eq!(
+            first, second,
+            "a second reconcile must change nothing — that property is what \
+             replaces a migration ledger"
+        );
+        assert_eq!(
+            first.len(),
+            1,
+            "expected exactly {me}'s marker to survive, got {first:?}"
+        );
+        assert_eq!(first[0].0, me);
+        assert!(
+            matches!(&first[0].1, MarkerState::Enrolled(m) if m.models == 2),
+            "got {:?}",
+            first[0].1
+        );
+        assert_eq!(first[0].2, MARKER_FILE_MODE);
+        assert_eq!(mode_of(&base), MARKER_DIR_MODE, "directory mode is stable");
+    }
+
+    /// A marker the reconcile could not *write* must survive it.
+    ///
+    /// The failure is the real one: writing a marker `chown`s it to its user,
+    /// which needs `CAP_CHOWN`. A daemon under the shipped systemd unit has a
+    /// capability bounding set, so a missing `CAP_CHOWN` makes every marker
+    /// write fail with `EPERM` — and if a failed write dropped the user from
+    /// the keep-list, the very next daemon start would delete every correct
+    /// marker `setup` had written. Reproduced here by `chown`ing to another
+    /// account from an unprivileged test, which fails for the same reason.
+    #[test]
+    fn a_marker_that_cannot_be_written_is_not_pruned() {
+        if nix::unistd::Uid::effective().is_root() {
+            // Root has CAP_CHOWN, so the write below succeeds and there is no
+            // failure to isolate.
+            return;
+        }
+        // Any account that is not the test runner: `chown`ing to it is the
+        // privileged operation being denied.
+        let other = ["nobody", "daemon", "bin", "root"]
+            .into_iter()
+            .find(|u| resolve_owner(u).is_some());
+        let Some(other) = other else {
+            return;
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("facelock.db");
+        let mut config = test_config();
+        config.storage.db_path = db_path.to_string_lossy().into_owned();
+
+        {
+            let store = facelock_store::FaceStore::create(&db_path).unwrap();
+            store.add_model(other, "front", &[0.0f32; 512], "").unwrap();
+        }
+
+        // A correct marker already on disk — what `setup` would have left.
+        let base = marker_dir(&config);
+        write_marker_in(&base, other, 1, None).unwrap();
+
+        reconcile_all(&config).unwrap();
+
+        assert!(
+            matches!(read_marker_in(&base, other), MarkerState::Enrolled(m) if m.models == 1),
+            "an enrolled user's marker must survive a write this reconcile \
+             could not perform"
         );
     }
 

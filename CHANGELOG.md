@@ -52,8 +52,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   since the group is required to reach the daemon at all. The
   marker is a hint for the UI, not authority: it can drift, and PAM at
   authentication time remains authoritative. Markers are maintained by `enroll`,
-  `remove` and `clear`, and every `setup` run reconciles them from the database,
-  which backfills users enrolled before this feature existed.
+  `remove` and `clear`, and converged from the database — the authoritative
+  source — by every `setup` run, by daemon startup, and by the one-shot
+  `facelock auth` path for the user it is authenticating (#137). An install
+  upgraded from a release without markers therefore backfills itself on the
+  first daemon start or the first authentication, without a migration step:
+  each convergence re-derives the markers rather than replaying recorded
+  changes, so it is idempotent and keeps no state that a restored backup could
+  contradict. On the one-shot path the convergence runs after the pre-flight
+  gates (so a rate-limited attempt writes nothing) and before the camera opens
+  (so a signal, a busy camera, a failed model load or a plain non-match cannot
+  suppress it).
 - **Enrollment failure breakdown** (#89): when enrollment captures too few
   frames, the error now reports why frames were rejected (too dark, no face,
   multiple faces, low quality, capture errors with the last error message) and
@@ -293,6 +302,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loop as the other packagers in addition to the `pam-auth-update` call.
 
 ### Security
+
+- **`CAP_CHOWN` added to the daemon's capability bounding set, for startup
+  only** (#137). Root without `CAP_CHOWN` cannot `chown(2)` at all, and two
+  startup steps need it on an *upgraded* install: `ensure_state_layout` (which
+  chowns `/var/lib/facelock` to `root:facelock`, and whose failure is fatal —
+  the daemon exits 1) and the enrollment-marker reconcile (which chowns each
+  marker to its user). The capability is deliberately **not** ambient and is
+  cleared by the in-process capability drop as soon as those two steps are done
+  and before the daemon creates its first thread, so no thread of the process
+  holds it while anyone is being authenticated and no exec'd child inherits it.
+  `systemd-analyze security` moves 2.6 → 2.8 (still OK); it scores the bounding
+  set and cannot see the in-process drop.
+- **The daemon's capability drop is now verified, and refuses to serve if it did
+  not happen.** It used to log `failed to drop capabilities (continuing)` and
+  carry on, which made "narrowed after initialization" a best-effort claim. That
+  was defensible while the dropped set held nothing the security model had
+  promised to remove; with `CAP_CHOWN` in the bounding set (above) it is not — a
+  failed drop would leave the daemon serving every authentication with
+  `chown(2)` in reach. The daemon now reads its capabilities back with `capget`
+  and exits before answering a single call if anything beyond
+  `CAP_SETUID`+`CAP_SETGID` survived. Refusing is not a lockout: PAM degrades to
+  the password exactly as it does when the daemon is not running. A daemon
+  started under a *narrower* set than the shipped unit grants still runs (it
+  holds nothing extra) with a warning that notifications may not work — the drop
+  requests only capabilities the process already has, so a narrower start can no
+  longer fail the drop wholesale and trip the refusal.
+- **The capability drop happens while the daemon is still single-threaded.**
+  Capabilities and `PR_SET_NO_NEW_PRIVS` are per-*thread* and inherited only
+  forwards, so a drop performed once the ONNX Runtime pools and the tokio
+  runtime existed narrowed only the calling thread — leaving every thread that
+  actually serves `Authenticate` holding `CAP_CHOWN`, with a per-thread `capget`
+  read-back that could not see it. `test/pkg-validate.sh` now walks
+  `/proc/<pid>/task/*/status` on the running daemon and asserts `CAP_CHOWN` is
+  clear on every thread.
 
 ## [0.1.4] - 2026-05-31
 

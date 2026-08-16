@@ -129,6 +129,41 @@ pub fn run(user: String, config_path: Option<String>) -> i32 {
         };
     }
 
+    // The user's model list, read before anything opens the camera. The
+    // attempt needs it (labels, and the device-coupling allow-set), the
+    // convergence below is derived from its length, and reading it here rather
+    // than after the camera opens is the ordering the daemon handler already
+    // uses for ADR 008 §1 — every millisecond between the camera open and the
+    // first analyzed frame is LED-on time the user reads as a strobe.
+    //
+    // Metadata only (ids, labels, device ids): no embeddings cross the camera
+    // bring-up because of this line. `load_user_embeddings`, which does carry
+    // plaintext biometric material, deliberately stays below.
+    let listed = store.list_models(&user);
+
+    // Converge this user's enrollment marker from the list we just read (#137).
+    // Free: the count is already in hand. This is the daemonless install's only
+    // convergence point — the daemon's startup reconcile never runs there.
+    //
+    // Below `pre_check_audited` and not above it: hoisting it would put a
+    // marker rewrite (temp file, chown, rename) behind every rate-limited
+    // attempt — filesystem work an attacker can drive from the wrong side of
+    // the rate limiter. The cost is that a pre-flight rejection does not
+    // converge; the next attempt that passes the gates does.
+    //
+    // Above the camera bring-up and not below it. Everything past this point
+    // can end the attempt early for reasons that say nothing about whether the
+    // user is enrolled: a cancel token set by SIGTERM/SIGINT/SIGHUP, a failed
+    // model load, a camera another process is holding, an embedding that will
+    // not decrypt, `recognition.no_face_timeout_secs` on an empty chair. None
+    // of those are pre-flight rejections and none of them are evidence about
+    // enrollment, so none of them may decide whether `is-enrolled` tells the
+    // truth. Placing the call at the `list_models` line — where it sat before
+    // the camera-lifecycle work moved that line below the camera open — would
+    // have handed every one of them a veto.
+    converge_enrollment_marker(&config, &user, listed.as_ref().ok().map(|m| m.len() as u32));
+    let models = listed.unwrap_or_default();
+
     // Signals, before anything that turns the camera on. `facelock auth` is a
     // one-shot: exit *is* the release, so the job of a signal is to end the
     // scan loop and let `Camera::drop` run (STREAMOFF, IR emitter off).
@@ -197,7 +232,6 @@ pub fn run(user: String, config_path: Option<String>) -> i32 {
             return 1;
         }
     };
-    let models = store.list_models(&user).unwrap_or_default();
 
     let start = std::time::Instant::now();
     // Wipes `stored` (D11): nothing below may read the plaintext set again.
@@ -301,6 +335,27 @@ pub fn run(user: String, config_path: Option<String>) -> i32 {
             error!("unexpected response");
             2
         }
+    }
+}
+
+/// Write `user`'s enrollment marker from a model count just read from the
+/// authoritative store (#137).
+///
+/// `models` is `None` when the store could not be listed — leave the existing
+/// marker alone rather than guessing it away, the same rule
+/// [`crate::commands::enrollment_marker::refresh`] follows. A count of zero is
+/// a real answer ("no models") and does delete the marker.
+///
+/// Called unconditionally, before the camera is opened and before the
+/// authentication attempt, so nothing the attempt goes on to do or fail to do
+/// can decide whether it runs: an upgraded user whose face is not recognised
+/// today — or whose camera is busy today — still needs `is-enrolled` to tell
+/// the truth. Best-effort throughout — `set` logs its own failures and never
+/// propagates, so nothing here can fail an authentication.
+fn converge_enrollment_marker(config: &Config, user: &str, models: Option<u32>) {
+    match models {
+        Some(models) => super::enrollment_marker::set(config, user, models),
+        None => debug!(user = %user, "model list unavailable; enrollment marker left unchanged"),
     }
 }
 
@@ -752,5 +807,149 @@ path = "{audit_path}"
         );
         assert!(resp.is_none(), "gates must pass, got {resp:?}");
         assert!(audit_lines(&audit_path).is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Enrollment marker convergence (#137)
+    // -----------------------------------------------------------------------
+
+    use super::converge_enrollment_marker;
+    use crate::commands::enrollment_marker::{MarkerState, marker_dir, read_marker_in};
+
+    /// A config pointing an entire installation at `dir`: the marker directory
+    /// is derived from `storage.db_path`. "alice" has no passwd entry, so the
+    /// write skips its `chown` and the test needs no privileges.
+    fn marker_config(dir: &std::path::Path) -> Config {
+        let mut config = Config::parse("").expect("empty config parses to defaults");
+        config.storage.db_path = dir.join("facelock.db").to_string_lossy().into_owned();
+        config
+    }
+
+    /// #137 on a daemonless install: the marker the upgrade never wrote gets
+    /// written the first time the user authenticates — whatever the
+    /// authentication then decides, since this runs before it.
+    #[test]
+    fn oneshot_converges_an_absent_marker_from_the_model_count() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = marker_config(tmp.path());
+        let base = marker_dir(&config);
+
+        converge_enrollment_marker(&config, "alice", Some(2));
+
+        match read_marker_in(&base, "alice") {
+            MarkerState::Enrolled(m) => assert_eq!(m.models, 2),
+            other => panic!("expected alice enrolled, got {other:?}"),
+        }
+
+        // Same idempotence the daemon path relies on.
+        converge_enrollment_marker(&config, "alice", Some(2));
+        assert!(matches!(
+            read_marker_in(&base, "alice"),
+            MarkerState::Enrolled(m) if m.models == 2
+        ));
+    }
+
+    /// A count of zero is a real answer from the store: the user has no models,
+    /// so the marker must go.
+    #[test]
+    fn oneshot_convergence_clears_the_marker_at_zero_models() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = marker_config(tmp.path());
+        let base = marker_dir(&config);
+
+        converge_enrollment_marker(&config, "alice", Some(1));
+        converge_enrollment_marker(&config, "alice", Some(0));
+
+        assert_eq!(read_marker_in(&base, "alice"), MarkerState::Absent);
+    }
+
+    /// An unreadable store is not evidence of anything. Guessing "zero" from a
+    /// failed `list_models` would delete a correct marker on a transient
+    /// database error — the opposite of the bug being fixed.
+    #[test]
+    fn oneshot_convergence_leaves_the_marker_alone_when_the_count_is_unknown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = marker_config(tmp.path());
+        let base = marker_dir(&config);
+
+        converge_enrollment_marker(&config, "alice", Some(3));
+        converge_enrollment_marker(&config, "alice", None);
+
+        assert!(
+            matches!(read_marker_in(&base, "alice"), MarkerState::Enrolled(m) if m.models == 3),
+            "an unknown count must not overwrite a known one"
+        );
+    }
+
+    /// Structural pin, in the style of `resolved.rs`: where the convergence
+    /// call sits in `run`'s straight-line code *is* its contract, and the
+    /// window it has to sit in is bounded on both sides.
+    ///
+    /// **Below `pre_check_audited`.** Above it, a marker rewrite — temp file,
+    /// `chown`, `rename` — would be reachable by an attempt the pre-flight
+    /// gates reject, including a rate-limited one. That is attacker-drivable
+    /// filesystem work from the wrong side of the rate limiter, and the whole
+    /// reason the call is not simply hoisted to the top of `run`.
+    ///
+    /// **Above `start_engine_then_camera`.** Below it, convergence inherits
+    /// every way the camera bring-up and the scan can end an attempt early —
+    /// a cancel token set by a signal, a failed model load, a camera another
+    /// process is holding, an embedding that will not decrypt, the no-face
+    /// timeout on an empty chair. None of those are evidence about enrollment,
+    /// so none of them may decide whether `is-enrolled` tells the truth. This
+    /// is the half the camera-lifecycle work (ADR 008) silently broke: it moved
+    /// the `list_models` line this call used to sit on to *below* the camera
+    /// open, so a textual merge left convergence there.
+    ///
+    /// The authentication attempt itself is the outer bound, restated because
+    /// it is the property #137 is about: convergence must not become
+    /// conditional on a face being recognised.
+    #[test]
+    fn marker_convergence_sits_between_the_gates_and_the_camera() {
+        let src = include_str!("auth.rs");
+        // First occurrence of each is the one in `run`; the definitions and the
+        // tests all live further down the file.
+        let pre_check = src
+            .find("pre_check_audited(")
+            .expect("run() must run the pre-flight gates");
+        let converge = src
+            .find("converge_enrollment_marker(")
+            .expect("run() must converge the marker");
+        let camera = src
+            .find("start_engine_then_camera(")
+            .expect("run() must bring up the engine and camera");
+        let authenticate = src
+            .find("::authenticate_with_embeddings(")
+            .expect("run() must attempt an authentication");
+
+        assert!(
+            pre_check < converge,
+            "marker convergence must run *after* the pre-flight gates — no \
+             filesystem work from the wrong side of the rate limiter"
+        );
+        assert!(
+            converge < camera,
+            "marker convergence must run *before* the camera bring-up — every \
+             early exit below it is unrelated to whether the user is enrolled"
+        );
+        assert!(
+            converge < authenticate,
+            "marker convergence must run before the authentication attempt"
+        );
+
+        // Exactly one call site, so no path converges twice (a second write
+        // would be harmless but would mean the placement above is no longer
+        // the whole story). Everything before the definition is `run` and its
+        // doc comment.
+        let definition = src
+            .find("fn converge_enrollment_marker(")
+            .expect("the helper must be defined in this file");
+        assert_eq!(
+            src[..definition]
+                .matches("converge_enrollment_marker(")
+                .count(),
+            1,
+            "run() must converge exactly once"
+        );
     }
 }

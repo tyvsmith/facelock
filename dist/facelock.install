@@ -43,6 +43,15 @@ post_upgrade() {
     systemd-tmpfiles --create
     _facelock_secure_paths
 
+    # Pick up unit changes before the restart below, not after. Without this,
+    # `systemctl restart` re-runs the *cached* unit and every change the new
+    # package made to facelock-daemon.service — the CapabilityBoundingSet
+    # among them — waits for the next daemon-reload or reboot. post_install
+    # already reloads; the Debian postinst and the RPM
+    # %systemd_postun_with_restart macro both do too, so this is the one
+    # upgrade path that was missing it.
+    systemctl daemon-reload 2>/dev/null || true
+
     # Restart daemon if running
     if systemctl is-active --quiet facelock-daemon; then
         echo "==> Restarting facelock-daemon..."

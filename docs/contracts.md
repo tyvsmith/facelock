@@ -216,6 +216,25 @@ database — so it is safe to call repeatedly from a lock screen as an
 unprivileged user. The marker is a hint that can drift from the database; **PAM
 at auth time remains authoritative** and nothing in the auth path consults it.
 
+Markers are written by `enroll`, `remove` and `clear`, and converged from the
+database by `setup`, by daemon startup, and by the one-shot `facelock auth` path
+for the user being authenticated. Convergence re-derives every marker from the
+database, so it is idempotent and there is no migration state to keep. An
+install upgraded from a release that predates markers backfills itself on the
+first daemon start or the first authentication; until one of those happens,
+`is-enrolled` reports `not-enrolled` for a user who is in fact enrolled.
+
+On the one-shot path the convergence point is bounded on both sides, and both
+bounds are contract rather than convenience. It runs **after** the pre-flight
+gates, so an attempt rejected as disabled / SSH / lid / rate-limited /
+non-IR performs no marker write at all — no attacker-drivable filesystem work
+from the wrong side of the rate limiter. It runs **before** the camera is
+opened, so every later way an attempt can end — a signal, a failed model load,
+a camera another process is holding, an undecryptable template, the no-face
+timeout, a plain non-match — leaves the marker already converged. In short: an
+attempt that reaches the camera has converged the marker, whatever it goes on
+to decide.
+
 ### facelock auth Exit Codes
 
 | Code | Meaning | PAM Code |

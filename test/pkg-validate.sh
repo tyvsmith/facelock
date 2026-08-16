@@ -139,9 +139,69 @@ af_inet_unrestricted() {
 }
 export -f af_inet_unrestricted
 
+# Is CAP_CHOWN (bit 0) clear in CapPrm/CapEff on EVERY thread of the running
+# daemon?
+#
+# Every other capability assertion in this file reads `systemctl show`, i.e.
+# how systemd was *configured*. None of them read what the daemon actually
+# ended up holding, and the difference is where a real bug lived: capabilities
+# are per-thread, so a drop performed after the process went multi-threaded
+# narrowed one thread and left ONNX Runtime's inference pools and every tokio
+# worker holding CAP_CHOWN for the daemon's whole life. `/proc/<pid>/status`
+# would not have shown it either — that is the main thread, the one thread that
+# did drop. Walking /proc/<pid>/task/* is the only read that can tell.
+#
+# Prints the offending thread ids so a failure is actionable.
+daemon_threads_without_cap_chown() {
+    pid=$(systemctl show facelock-daemon -p MainPID --value 2>/dev/null)
+    [ -n "$pid" ] && [ "$pid" != "0" ] && [ -d "/proc/$pid/task" ] || {
+        echo "no running daemon to inspect" >&2
+        return 1
+    }
+
+    checked=0
+    bad=""
+    for t in /proc/"$pid"/task/*; do
+        [ -r "$t/status" ] || continue
+        checked=$((checked + 1))
+        # CapPrm/CapEff are 16 hex digits; CAP_CHOWN is bit 0, so it is set iff
+        # the last nibble is odd.
+        for field in CapPrm CapEff; do
+            v=$(awk -v f="$field:" '$1 == f { print $2 }' "$t/status")
+            case "$v" in
+                *[13579bdfBDF]) bad="$bad ${t##*/}($field=$v)" ;;
+            esac
+        done
+    done
+
+    # A single thread means the walk found nothing worth walking (unreadable
+    # /proc, ProtectProc hiding the tree) — treat that as a failure rather than
+    # a pass, or the assertion becomes decorative.
+    [ "$checked" -gt 1 ] || {
+        echo "only $checked thread(s) readable under /proc/$pid/task — cannot verify" >&2
+        return 1
+    }
+
+    [ -z "$bad" ] || {
+        echo "CAP_CHOWN still held by:$bad" >&2
+        return 1
+    }
+    echo "verified $checked threads, none holding CAP_CHOWN"
+}
+export -f daemon_threads_without_cap_chown
+
 if [ -d /run/systemd/system ] && systemctl show facelock-daemon >/dev/null 2>&1; then
-    run_test "unit: CapabilityBoundingSet is empty" '[ -z "$(unit_prop CapabilityBoundingSet)" ]'
-    run_test "unit: AmbientCapabilities is empty" '[ -z "$(unit_prop AmbientCapabilities)" ]'
+    # Not empty: the notification privilege-drop needs CAP_SETUID+CAP_SETGID
+    # (ambient, to survive the exec into runuser), and startup needs CAP_CHOWN
+    # to chown the state tree and the enrollment markers on an upgraded install.
+    # CAP_CHOWN is bounding-only and dropped in-process before the daemon
+    # spawns its first thread — asserting it is *absent* from the ambient set
+    # is the half of that these `systemctl show` reads can see. The other half,
+    # that the drop actually happened on every thread, is asserted against the
+    # running daemon further down (daemon_threads_without_cap_chown); these
+    # directive checks cannot substitute for it. See docs/security.md, Phase 3.
+    run_test "unit: CapabilityBoundingSet is SETUID+SETGID+CHOWN only" 'v=$(unit_prop CapabilityBoundingSet); echo "$v" | grep -q cap_setuid && echo "$v" | grep -q cap_setgid && echo "$v" | grep -q cap_chown && [ "$(echo "$v" | tr " " "\n" | grep -c .)" = 3 ]'
+    run_test "unit: AmbientCapabilities is SETUID+SETGID only" 'v=$(unit_prop AmbientCapabilities); echo "$v" | grep -q cap_setuid && echo "$v" | grep -q cap_setgid && ! echo "$v" | grep -q cap_chown'
     run_test "unit: RestrictAddressFamilies is AF_UNIX+AF_NETLINK only" 'v=$(unit_prop RestrictAddressFamilies); echo "$v" | grep -q AF_UNIX && echo "$v" | grep -q AF_NETLINK && ! echo "$v" | grep -q AF_INET'
     # systemctl show expands @system-service into individual syscalls: assert
     # allowlist mode (no "~" prefix), a marker syscall the daemon needs
@@ -176,6 +236,12 @@ if [ -d /run/systemd/system ] && systemctl show facelock-daemon >/dev/null 2>&1;
         fi
         run_test "facelock-daemon starts under hardened unit" "systemctl start facelock-daemon && systemctl is-active --quiet facelock-daemon"
         run_test "facelock-daemon answers on D-Bus" "busctl --system call org.facelock.Daemon /org/facelock/Daemon org.freedesktop.DBus.Peer Ping"
+        # The runtime counterpart to the unit-property assertions above: what
+        # the daemon *holds* while it is serving, on every thread, not what the
+        # unit was configured to allow. docs/security.md §6.A promises
+        # CAP_CHOWN is "never held while authenticating anyone" — this is the
+        # assertion that makes the promise checkable.
+        run_test "runtime: no daemon thread holds CAP_CHOWN while serving" "daemon_threads_without_cap_chown"
         systemctl stop facelock-daemon 2>/dev/null || true
     else
         echo "SKIP: daemon start test (no ONNX models at /var/lib/facelock/models — run via just test-deb-pkg/test-rpm-pkg with repo models present)"
