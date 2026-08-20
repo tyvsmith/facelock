@@ -41,9 +41,6 @@ package() {
     install -Dm644 dbus/org.facelock.Daemon.service "$pkgdir/usr/share/dbus-1/system-services/org.facelock.Daemon.service"
     install -Dm644 dist/facelock.tmpfiles "$pkgdir/usr/lib/tmpfiles.d/facelock.conf"
 
-    install -Dm755 dist/omarchy/omarchy-setup-security-face "$pkgdir/usr/bin/omarchy-setup-security-face"
-    install -Dm755 dist/omarchy/omarchy-remove-security-face "$pkgdir/usr/bin/omarchy-remove-security-face"
-
     install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
     install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
 }

@@ -97,8 +97,7 @@ commands and never earn a group. Inside a group the second word is spelled the
 way its domain spells it, verb or noun: `tpm seal-key` and `tpm pcr-baseline`
 follow tpm2-tools, `bench cold-auth` names a measurement. A new command must
 fit an existing domain before it may claim a top-level name. Commands named by
-`pam_facelock.so`, the service units, or the Omarchy scripts never move. See
-ADR 009.
+`pam_facelock.so` or the service units never move. See ADR 009.
 
 The top-level set is pinned by the `TOP_LEVEL_COMMANDS` registry in
 `crates/facelock-cli/src/conformance/flags.rs`, checked in both directions against
@@ -1530,7 +1529,7 @@ The ownership classes are deliberately separate:
 
 | Class | Examples | Ordinary removal |
 |-------|----------|------------------|
-| Package-owned static integration | binaries and shared libraries, systemd/OpenRC/runit/s6 units, D-Bus policy and activation, tmpfiles configuration, shipped quirks, PAM/authselect profiles, Omarchy helpers, translations, bundled runtime libraries | Remove through the package manager. These files can be recreated byte-for-byte by reinstalling the package |
+| Package-owned static integration | binaries and shared libraries, systemd/OpenRC/runit/s6 units, D-Bus policy and activation, tmpfiles configuration, shipped quirks, PAM/authselect profiles, translations, bundled runtime libraries | Remove through the package manager. These files can be recreated byte-for-byte by reinstalling the package |
 | Administrator configuration | `/etc/facelock/config.toml` and the package manager's saved replacement for an administrator-modified copy | Apply the native package-family rules below. Do not treat administrator configuration as biometric state or as disposable static integration |
 | Biometric and operational state | the database and its WAL/SHM sidecars, encryption keys and sealed keys, downloaded models, enrollment markers, setup state, audit logs, and snapshots under the compiled roots | Preserve all of it. A reinstall reuses it; ordinary removal never interprets absence of the package as consent to discard it |
 | PAM integration and provenance | a `pam_facelock.so` rule, a Facelock-created local override and its provenance header, and `<service>.facelock-backup` rollback files | Attempt safe cleanup inside the fixed PAM root. Delete provenance only after the corresponding PAM cleanup is proven complete |

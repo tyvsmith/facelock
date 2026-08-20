@@ -365,6 +365,89 @@ for pkgbuild_name in ("PKGBUILD", "PKGBUILD-bin"):
     require(re.search(r"^_tag=", pkgbuild, re.MULTILINE) is not None, f"dist/{pkgbuild_name} has no upstream _tag")
     require("v$_tag" in pkgbuild, f"dist/{pkgbuild_name} does not fetch the upstream _tag")
 
+package_assemblers = (
+    "dist/PKGBUILD",
+    "dist/PKGBUILD-bin",
+    "dist/PKGBUILD-git",
+    "dist/facelock.spec",
+    "dist/debian/rules",
+    ".github/workflows/scripts/build-deb.sh",
+    "dist/nix/default.nix",
+)
+retired_downstream_components = (
+    ("omarchy", "omarchy"),
+    ("setup-security-face", "setupsecurityface"),
+    ("remove-security-face", "removesecurityface"),
+    ("security-face", "securityface"),
+)
+for package_assembler in package_assemblers:
+    assembler = (ROOT / package_assembler).read_text().casefold()
+    if package_assembler == "dist/facelock.spec":
+        # RPM scriptlets own lifecycle cleanup, not payload assembly. Scan the
+        # source declarations, %install commands, and %files manifest; this
+        # keeps the active downstream PAM service in %preun outside #173 while
+        # making every way the spec can ship a helper part of this guard.
+        spec_header, separator, _ = assembler.partition("\n%prep\n")
+        require(bool(separator), "dist/facelock.spec has no %prep boundary")
+        install_section = re.search(r"(?ms)^%install\n(.*?)(?=^%check\n)", assembler)
+        files_section = re.search(r"(?ms)^%files\n(.*?)(?=^%changelog\n)", assembler)
+        require(install_section is not None, "dist/facelock.spec has no bounded %install section")
+        require(files_section is not None, "dist/facelock.spec has no bounded %files section")
+        assembler = spec_header + install_section.group(1) + files_section.group(1)
+    normalized_assembler = re.sub(r"[^a-z0-9]+", "", assembler)
+    for component_name, normalized_component in retired_downstream_components:
+        require(
+            normalized_component not in normalized_assembler,
+            f"{package_assembler} still contains retired downstream-integration component {component_name}",
+        )
+
+current_integration_docs = (
+    "README.md",
+    "docs/contracts.md",
+    "docs/integrating.md",
+    "docs/adr/009-cli-verb-noun-shape.md",
+)
+retired_helper_references = (
+    "dist/omarchy/",
+    "omarchy-setup-security-face",
+    "omarchy-remove-security-face",
+)
+for integration_doc in current_integration_docs:
+    doc_content = (ROOT / integration_doc).read_text()
+    for retired_reference in retired_helper_references:
+        require(
+            retired_reference not in doc_content,
+            f"{integration_doc} still presents retired downstream-integration helper {retired_reference}",
+        )
+
+integration_doc = (ROOT / "docs/integrating.md").read_text()
+normalized_integration_doc = re.sub(r"\\\s*\n\s*", " ", integration_doc)
+capability_gate_match = re.search(r"^for required in ([^;]+); do$", integration_doc, re.MULTILINE)
+require(capability_gate_match is not None, "docs/integrating.md has no capability gate")
+capability_gate = set(capability_gate_match.group(1).split())
+command_capabilities = (
+    (r"facelock is-enrolled\b", "is-enrolled"),
+    (r"facelock pam status\b", "pam-status"),
+    (r"facelock pam status[^\n]*--json\b", "pam-json"),
+    (r"facelock pam (?:add|remove)[^\n]*(?:--service[^\n]*){2}", "pam-multi-service"),
+    (r"facelock pam (?:add|remove|status)[^\n]*--if-present\b", "pam-if-present"),
+    (r"facelock setup[^\n]*--no-pam\b", "setup-no-pam"),
+    (r"facelock setup[^\n]*--systemd\b", "setup-systemd"),
+)
+invoked_capabilities = {
+    capability
+    for command_pattern, capability in command_capabilities
+    if re.search(command_pattern, normalized_integration_doc) is not None
+}
+missing_capabilities = sorted(invoked_capabilities - capability_gate)
+extra_capabilities = sorted(capability_gate - invoked_capabilities)
+require(
+    not missing_capabilities and not extra_capabilities,
+    "docs/integrating.md capability gate does not match invoked commands: "
+    f"missing {','.join(missing_capabilities) if missing_capabilities else 'none'}; "
+    f"extra {','.join(extra_capabilities) if extra_capabilities else 'none'}",
+)
+
 docs = (ROOT / "docs/releasing.md").read_text()
 normalized_docs = re.sub(r"\s+", " ", docs)
 for phrase in (

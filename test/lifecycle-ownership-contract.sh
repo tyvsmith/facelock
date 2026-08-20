@@ -287,7 +287,6 @@ lifecycle_messages=(
     dist/debian/postrm
     dist/facelock.spec
     dist/facelock.install
-    dist/omarchy/omarchy-remove-security-face
 )
 
 lifecycle_guidance=(
@@ -306,10 +305,6 @@ for message in "${lifecycle_messages[@]}"; do
     require_text "$message" "Cleanup must stay within the fixed roots above, leave configured external paths untouched, and refuse links or mount crossings."
     require_text "$message" "Filesystem deletion does not securely erase SSDs, snapshots, or backups."
 done
-
-reject_nosave_facelock_removal dist/omarchy/omarchy-remove-security-face
-require_text dist/omarchy/omarchy-remove-security-face \
-    "sudo pacman -Rs facelock"
 
 if [ "$failures" -ne 0 ]; then
     echo "lifecycle ownership contract: $failures failure(s)" >&2

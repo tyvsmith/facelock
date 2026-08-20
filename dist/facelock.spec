@@ -94,10 +94,6 @@ install -Dm644 dist/authselect/facelock/password-auth %{buildroot}%{_datadir}/au
 install -Dm644 dist/authselect/facelock/postlogin %{buildroot}%{_datadir}/authselect/vendor/facelock/postlogin
 install -Dm644 dist/authselect/facelock/README %{buildroot}%{_datadir}/authselect/vendor/facelock/README
 
-# Omarchy helper scripts (inert if walker/omarchy isn't installed)
-install -Dm755 dist/omarchy/omarchy-setup-security-face %{buildroot}%{_bindir}/omarchy-setup-security-face
-install -Dm755 dist/omarchy/omarchy-remove-security-face %{buildroot}%{_bindir}/omarchy-remove-security-face
-
 # The direct release RPM is built with --with bundled_ort from a separately
 # fetched, checksum-verified artifact. The default Packit/COPR build must not
 # contain this directory and uses Fedora's onnxruntime package instead.
@@ -217,8 +213,6 @@ fi
 %doc config/facelock.toml
 %{_bindir}/facelock
 %{_bindir}/facelock-polkit-agent
-%{_bindir}/omarchy-setup-security-face
-%{_bindir}/omarchy-remove-security-face
 %{_libdir}/security/pam_facelock.so
 %if %{with bundled_ort}
 %{_libdir}/facelock/

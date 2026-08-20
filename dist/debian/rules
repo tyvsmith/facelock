@@ -40,10 +40,6 @@ override_dh_auto_install:
 	# pam-auth-update profile
 	install -Dm644 dist/debian/pam-auth-update debian/facelock/usr/share/pam-configs/facelock
 
-	# Omarchy helper scripts (inert if walker/omarchy isn't installed)
-	install -Dm755 dist/omarchy/omarchy-setup-security-face debian/facelock/usr/bin/omarchy-setup-security-face
-	install -Dm755 dist/omarchy/omarchy-remove-security-face debian/facelock/usr/bin/omarchy-remove-security-face
-
 	# Bundled CPU ONNX Runtime (if present — added by release CI)
 	if [ -f onnxruntime/lib/libonnxruntime.so ]; then \
 		install -Dm755 onnxruntime/lib/libonnxruntime.so debian/facelock/usr/lib/facelock/libonnxruntime.so; \

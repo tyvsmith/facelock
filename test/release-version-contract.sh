@@ -200,12 +200,16 @@ assert_eq "0.1.4-1 0.2.0~alpha.1-1 0.2.0~alpha.1-2 0.2.0~alpha.2-1 0.2.0~beta.1-
 assert_eq "0.1.4-1 0.2.0-0.1.alpha.1 0.2.0-0.2.alpha.1 0.2.0-0.3.alpha.2 0.2.0-0.4.beta.1 0.2.0-0.5.rc.1 0.2.0-1" "${rpm_versions[*]}" "exact RPM order identities"
 assert_eq "0.1.4-1 0.2.0alpha1-1 0.2.0alpha1-2 0.2.0alpha2-1 0.2.0beta1-1 0.2.0rc1-1 0.2.0-1" "${arch_versions[*]}" "exact Arch order identities"
 
+assert_file_line \
+    "$repo_root/docs/integrating.md" \
+    "for required in is-enrolled pam-if-present pam-json pam-multi-service pam-status setup-no-pam setup-systemd; do"
+
 tmp_root="$(mktemp -d)"
 export XDG_RUNTIME_DIR="$tmp_root/runtime"
 release_repo="$tmp_root/release-repo"
 matrix_root="$tmp_root/matrix-root"
 mkdir -p "$release_repo/dist/debian" "$release_repo/scripts" "$tmp_root/bin" "$XDG_RUNTIME_DIR"
-mkdir -p "$matrix_root/.claude/skills/release" "$matrix_root/.github/workflows/scripts" "$matrix_root/book/src" "$matrix_root/dist/apt/conf" "$matrix_root/docs" "$matrix_root/test" "$matrix_root/website"
+mkdir -p "$matrix_root/.claude/skills/release" "$matrix_root/.github/workflows/scripts" "$matrix_root/book/src" "$matrix_root/dist/apt/conf" "$matrix_root/dist/debian" "$matrix_root/dist/nix" "$matrix_root/docs/adr" "$matrix_root/test" "$matrix_root/website"
 cp "$repo_root/.claude/skills/release/SKILL.md" "$matrix_root/.claude/skills/release/"
 cp "$repo_root/.packit.yaml" "$matrix_root/"
 cp "$repo_root/justfile" "$matrix_root/"
@@ -214,9 +218,12 @@ cp "$repo_root/.github/workflows/release.yml" "$matrix_root/.github/workflows/"
 cp "$repo_root/.github/workflows/scripts/build-deb.sh" "$matrix_root/.github/workflows/scripts/"
 cp "$repo_root/.github/workflows/scripts/publish-apt.sh" "$matrix_root/.github/workflows/scripts/"
 cp "$repo_root/.github/workflows/scripts/publish-aur.sh" "$matrix_root/.github/workflows/scripts/"
-cp "$repo_root/dist/PKGBUILD" "$repo_root/dist/PKGBUILD-bin" "$repo_root/dist/release-matrix.json" "$matrix_root/dist/"
+cp "$repo_root/dist/PKGBUILD" "$repo_root/dist/PKGBUILD-bin" "$repo_root/dist/PKGBUILD-git" "$repo_root/dist/facelock.spec" "$repo_root/dist/release-matrix.json" "$matrix_root/dist/"
 cp "$repo_root/dist/apt/conf/distributions" "$matrix_root/dist/apt/conf/"
-cp "$repo_root/docs/releasing.md" "$repo_root/docs/contracts.md" "$matrix_root/docs/"
+cp "$repo_root/dist/debian/rules" "$matrix_root/dist/debian/"
+cp "$repo_root/dist/nix/default.nix" "$matrix_root/dist/nix/"
+cp "$repo_root/docs/releasing.md" "$repo_root/docs/contracts.md" "$repo_root/docs/integrating.md" "$matrix_root/docs/"
+cp "$repo_root/docs/adr/009-cli-verb-noun-shape.md" "$matrix_root/docs/adr/"
 cp "$repo_root/docs/testing-roadmap.md" "$matrix_root/docs/"
 cp "$repo_root/README.md" "$matrix_root/"
 cp "$repo_root/book/src/quickstart.md" "$matrix_root/book/src/"
@@ -283,6 +290,141 @@ assert_matrix_mutation_rejected() {
         fail "release matrix checker accepted drift: $context"
     fi
 }
+
+assert_matrix_payload_mutation_rejected_with_diagnostic() {
+    local context="$1"
+    local relative_file="$2"
+    local payload="$3"
+    local expected_diagnostic="$4"
+    local mutation_root="$tmp_root/matrix-mutation-$matrix_mutation_index"
+    local checker_output
+    local marker
+    local prefix
+    matrix_mutation_index=$((matrix_mutation_index + 1))
+    cp -R "$matrix_root" "$mutation_root"
+    case "$relative_file" in
+        dist/PKGBUILD|dist/PKGBUILD-git)
+            marker="    # Licenses"
+            prefix="    "
+            ;;
+        dist/PKGBUILD-bin)
+            marker="    install -Dm644 LICENSE-MIT"
+            prefix="    "
+            ;;
+        dist/facelock.spec)
+            marker="# The direct release RPM"
+            prefix=""
+            ;;
+        dist/debian/rules)
+            marker=$'\t# Bundled CPU ONNX Runtime'
+            prefix=$'\t'
+            ;;
+        .github/workflows/scripts/build-deb.sh)
+            marker="# Bundled CPU ONNX Runtime"
+            prefix=""
+            ;;
+        dist/nix/default.nix)
+            marker="    # Bundled ONNX Runtime for non-NixOS use"
+            prefix="    "
+            ;;
+        *) fail "no package payload mutation marker for $relative_file" ;;
+    esac
+    python3 - "$mutation_root/$relative_file" "$marker" "$prefix" "$payload" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+marker, prefix, payload = sys.argv[2:]
+content = path.read_text()
+if content.count(marker) != 1:
+    raise SystemExit(f"payload mutation marker is not unique in {path}: {marker!r}")
+path.write_text(content.replace(marker, f"{prefix}{payload}\n{marker}", 1))
+PY
+    if checker_output=$(RELEASE_MATRIX_VERSION=0.2.0 python3 "$mutation_root/test/check-release-matrix.py" 2>&1); then
+        fail "release matrix checker accepted drift: $context"
+    fi
+    assert_eq "$expected_diagnostic" "$checker_output" "$context diagnostic"
+}
+
+for required_capability in \
+    is-enrolled \
+    pam-if-present \
+    pam-json \
+    pam-multi-service \
+    pam-status \
+    setup-no-pam \
+    setup-systemd; do
+    mutation_root="$tmp_root/matrix-mutation-$matrix_mutation_index"
+    matrix_mutation_index=$((matrix_mutation_index + 1))
+    cp -R "$matrix_root" "$mutation_root"
+    sed -i "/^for required in /s/$required_capability//" "$mutation_root/docs/integrating.md"
+    if checker_output=$(RELEASE_MATRIX_VERSION=0.2.0 python3 "$mutation_root/test/check-release-matrix.py" 2>&1); then
+        fail "release matrix checker accepted a capability gate without $required_capability"
+    fi
+    assert_eq \
+        "FAIL: docs/integrating.md capability gate does not match invoked commands: missing $required_capability; extra none" \
+        "$checker_output" \
+        "missing $required_capability capability diagnostic"
+done
+
+package_assemblers=(
+    dist/PKGBUILD
+    dist/PKGBUILD-bin
+    dist/PKGBUILD-git
+    dist/facelock.spec
+    dist/debian/rules
+    .github/workflows/scripts/build-deb.sh
+    dist/nix/default.nix
+)
+for package_assembler in "${package_assemblers[@]}"; do
+    assert_matrix_payload_mutation_rejected_with_diagnostic \
+        "split Omarchy assignment in $package_assembler" \
+        "$package_assembler" \
+        'retired_dir=o"mar"chy' \
+        "FAIL: $package_assembler still contains retired downstream-integration component omarchy"
+    assert_matrix_payload_mutation_rejected_with_diagnostic \
+        "split setup helper assignment in $package_assembler" \
+        "$package_assembler" \
+        'retired_helper=setup-"security"-face' \
+        "FAIL: $package_assembler still contains retired downstream-integration component setup-security-face"
+    assert_matrix_payload_mutation_rejected_with_diagnostic \
+        "split removal helper assignment in $package_assembler" \
+        "$package_assembler" \
+        "retired_helper=remove-'security'-face" \
+        "FAIL: $package_assembler still contains retired downstream-integration component remove-security-face"
+    assert_matrix_payload_mutation_rejected_with_diagnostic \
+        "split generic helper install in $package_assembler" \
+        "$package_assembler" \
+        'install -Dm755 "$source_root/security"-face "$dest_root"' \
+        "FAIL: $package_assembler still contains retired downstream-integration component security-face"
+done
+
+current_integration_docs=(
+    README.md
+    docs/contracts.md
+    docs/integrating.md
+    docs/adr/009-cli-verb-noun-shape.md
+)
+retired_helper_references=(
+    dist/omarchy/
+    omarchy-setup-security-face
+    omarchy-remove-security-face
+)
+for integration_doc in "${current_integration_docs[@]}"; do
+    for retired_reference in "${retired_helper_references[@]}"; do
+        mutation_root="$tmp_root/matrix-mutation-$matrix_mutation_index"
+        matrix_mutation_index=$((matrix_mutation_index + 1))
+        cp -R "$matrix_root" "$mutation_root"
+        printf '\n%s\n' "$retired_reference" >> "$mutation_root/$integration_doc"
+        if checker_output=$(RELEASE_MATRIX_VERSION=0.2.0 python3 "$mutation_root/test/check-release-matrix.py" 2>&1); then
+            fail "release matrix checker accepted retired helper reference $retired_reference in $integration_doc"
+        fi
+        assert_eq \
+            "FAIL: $integration_doc still presents retired downstream-integration helper $retired_reference" \
+            "$checker_output" \
+            "retired helper reference $retired_reference in $integration_doc diagnostic"
+    done
+done
 
 append_packit_job() {
     local config_path="$1"

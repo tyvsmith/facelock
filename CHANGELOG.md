@@ -214,6 +214,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Desktop integrations now own their setup and removal wrappers** (#173):
+  added `docs/integrating.md` with the stable capability, enrollment, PAM
+  placement, arbitrary-service and Hyprlock policies plus a worked Omarchy
+  example. Facelock packages no longer install the stale
+  `omarchy-setup-security-face` and `omarchy-remove-security-face` prototypes;
+  Omarchy owns those downstream commands.
 - **Face unlock needs no group membership and no re-login** (ADR 010): the
   system-bus policy now admits any local user's `Authenticate` for their own
   account — the daemon already checks that the caller's UID owns the username
