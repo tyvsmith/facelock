@@ -221,13 +221,17 @@ pub fn run(user: String, config_path: Option<String>, verbose: u8) -> i32 {
         }
     };
 
-    // Discard warmup frames for AGC/AE stabilization.
-    for _ in 0..warmup {
-        if cancel.is_cancelled() {
-            info!(user = %user, "cancelled");
-            return 2;
+    // Negotiation may drift from the preflight FourCC. Do not let warmup
+    // capture precede the auth loop's stable unverified-Y16 rejection.
+    if camera.capabilities().ir_texture_scale != facelock_core::types::IrTextureScale::UnverifiedY16
+    {
+        for _ in 0..warmup {
+            if cancel.is_cancelled() {
+                info!(user = %user, "cancelled");
+                return 2;
+            }
+            let _ = camera.capture();
         }
-        let _ = camera.capture();
     }
 
     // Load embeddings through the decryption-aware path so the oneshot binary
@@ -309,19 +313,20 @@ pub fn run(user: String, config_path: Option<String>, verbose: u8) -> i32 {
             info!(user = %user, duration_ms, "cancelled");
             2
         }
-        AuthOutcome::Error {
-            kind: ErrorKind::AllFramesDark,
-            ..
-        } => {
-            // `authenticate_with_embeddings` already audited this one, so
+        AuthOutcome::Error { kind, .. }
+            if matches!(
+                kind,
+                ErrorKind::AllFramesDark | ErrorKind::Y16BitDepthRequired
+            ) =>
+        {
+            // `authenticate_with_embeddings` already audited both classes, so
             // unlike the arm below there is nothing to write here.
-            info!(user = %user, "all frames dark");
-            oneshot_exit_code(ErrorKind::AllFramesDark)
+            info!(user = %user, error_kind = ?kind, "camera authentication rejected");
+            oneshot_exit_code(kind)
         }
         AuthOutcome::Error { kind, message } => {
-            // Errors from authenticate() other than all-frames-dark are
-            // storage errors which happen before the auth loop — audit those
-            // here, under the class's own label.
+            // Errors not audited by the camera auth loop are written here,
+            // under the class's own label.
             audit::write_audit_entry(
                 &config.audit,
                 &AuditEntry {
@@ -537,6 +542,7 @@ fn oneshot_exit_code(kind: ErrorKind) -> i32 {
         | ErrorKind::RateLimited
         | ErrorKind::RateLimitCheckFailed
         | ErrorKind::IrRequired
+        | ErrorKind::Y16BitDepthRequired
         | ErrorKind::Internal => 2,
     }
 }
@@ -684,6 +690,12 @@ mod tests {
             (
                 ErrorKind::IrRequired,
                 "IR camera required for authentication. Set security.require_ir = false to override (NOT RECOMMENDED).",
+                "error",
+                2,
+            ),
+            (
+                ErrorKind::Y16BitDepthRequired,
+                "Y16 IR texture scale is unverified; authentication requires a verified y16_bit_depth (8..=16) quirk",
                 "error",
                 2,
             ),

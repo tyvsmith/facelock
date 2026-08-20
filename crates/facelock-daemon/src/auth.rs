@@ -58,6 +58,9 @@ pub enum ErrorKind {
     /// `security.require_ir` and the resolved device is not IR.
     /// **Frozen wire string.**
     IrRequired,
+    /// The selected/negotiated camera format is Y16, but no valid
+    /// `y16_bit_depth` quirk verifies the absolute texture scale.
+    Y16BitDepthRequired,
     /// Every captured frame was below the darkness threshold — the camera
     /// produced no usable image, which is not a non-match.
     AllFramesDark,
@@ -77,6 +80,7 @@ impl ErrorKind {
         ErrorKind::RateLimited,
         ErrorKind::RateLimitCheckFailed,
         ErrorKind::IrRequired,
+        ErrorKind::Y16BitDepthRequired,
         ErrorKind::AllFramesDark,
         ErrorKind::Internal,
     ];
@@ -97,6 +101,7 @@ impl ErrorKind {
             ErrorKind::RateLimited => "rate limited".to_string(),
             ErrorKind::RateLimitCheckFailed => format!("rate limit check failed: {detail}"),
             ErrorKind::IrRequired => "IR camera required for authentication. Set security.require_ir = false to override (NOT RECOMMENDED).".to_string(),
+            ErrorKind::Y16BitDepthRequired => "Y16 IR texture scale is unverified; authentication requires a verified y16_bit_depth (8..=16) quirk".to_string(),
             ErrorKind::AllFramesDark => "all frames dark".to_string(),
             ErrorKind::Internal => detail.to_string(),
         }
@@ -116,6 +121,7 @@ impl ErrorKind {
             | ErrorKind::Storage
             | ErrorKind::RateLimitCheckFailed
             | ErrorKind::IrRequired
+            | ErrorKind::Y16BitDepthRequired
             | ErrorKind::AllFramesDark
             | ErrorKind::Internal => "error",
         }
@@ -331,6 +337,11 @@ pub fn pre_check_with_context(
         }
     }
 
+    if caps.ir_texture_scale == facelock_core::types::IrTextureScale::UnverifiedY16 {
+        warn!(user, "Y16 IR texture scale is unverified");
+        return Some(AuthOutcome::error(ErrorKind::Y16BitDepthRequired));
+    }
+
     if config.security.require_ir && !caps.is_ir {
         warn!(user, "IR camera required but device is not IR");
         return Some(AuthOutcome::error(ErrorKind::IrRequired));
@@ -515,8 +526,43 @@ pub fn authenticate_with_embeddings<C: CameraSource, E: FaceProcessor>(
 ) -> AuthOutcome {
     let stored = Wiped(stored);
     let device_is_ir = camera.capabilities().is_ir;
+    let ir_texture_scale = camera.capabilities().ir_texture_scale;
     let live_fingerprint = camera.capabilities().fingerprint.clone();
     let start = Instant::now();
+
+    // Opening a camera may block long enough for its caller to leave. An
+    // abandoned attempt takes precedence over every property learned from
+    // that open, including an unverified negotiated Y16 format, and neither
+    // outcome may consume a frame.
+    if cancel.is_cancelled() {
+        return cancelled(config, user, source, start, 0);
+    }
+
+    // Defense in depth behind the pre-open gate: V4L2 may negotiate a
+    // different FourCC than interrogation predicted, and direct callers must
+    // not be able to enter the compare loop with scene-calibrated Y16 data.
+    // This applies independently of `require_ir`; disabling IR enforcement is
+    // not a way to make an unverified absolute texture scale trustworthy.
+    if ir_texture_scale == facelock_core::types::IrTextureScale::UnverifiedY16 {
+        let kind = ErrorKind::Y16BitDepthRequired;
+        let message = kind.render("");
+        audit::write_audit_entry(
+            &config.audit,
+            &AuditEntry {
+                timestamp: audit::now_iso8601(),
+                user: user.to_string(),
+                result: kind.audit_result().to_string(),
+                source: Some(source),
+                similarity: None,
+                frame_count: Some(0),
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                device: config.device.path.clone(),
+                model_label: None,
+                error: Some(message.clone()),
+            },
+        );
+        return AuthOutcome::Error { kind, message };
+    }
     let save_snapshots = config.snapshots.mode != facelock_core::config::SnapshotMode::Off;
     let label_for =
         |id: u32| -> Option<String> { models.iter().find(|m| m.id == id).map(|m| m.label.clone()) };
@@ -978,6 +1024,8 @@ fn is_lid_closed() -> bool {
 mod tests {
     use super::*;
 
+    const Y16_SCALE_REJECTION: &str = "Y16 IR texture scale is unverified; authentication requires a verified y16_bit_depth (8..=16) quirk";
+
     /// The two strings PAM substring-matches to choose `PAM_AUTH_ERR` over
     /// `PAM_IGNORE` are frozen protocol (docs/contracts.md). They now come out
     /// of [`ErrorKind::render`]; this pins that they come out byte-identical.
@@ -988,6 +1036,10 @@ mod tests {
         assert_eq!(
             ErrorKind::IrRequired.render(""),
             "IR camera required for authentication. Set security.require_ir = false to override (NOT RECOMMENDED)."
+        );
+        assert_eq!(
+            ErrorKind::Y16BitDepthRequired.render(""),
+            Y16_SCALE_REJECTION
         );
     }
 
@@ -1201,6 +1253,56 @@ enabled = false
         );
         assert!(matches!(outcome, AuthOutcome::Cancelled));
         assert_eq!(camera.captures, 0);
+    }
+
+    #[test]
+    fn unverified_y16_cannot_capture_or_reach_auth_success() {
+        let token = CancelToken::new();
+        let mut camera = CancellingCamera {
+            captures: 0,
+            cancel_at: u32::MAX,
+            token: token.clone(),
+            caps: CameraCaps {
+                is_ir: false,
+                ir_texture_scale: facelock_core::types::IrTextureScale::UnverifiedY16,
+                ..Default::default()
+            },
+        };
+        let embedding = facelock_test_support::fixtures::known_embedding(0);
+        let mut stored = [(1, embedding)];
+        let models = [facelock_core::types::FaceModelInfo {
+            id: 1,
+            user: "alice".into(),
+            label: "front".into(),
+            created_at: 0,
+            embedder_model: "test".into(),
+            device_id: None,
+        }];
+        let outcome = authenticate_with_embeddings(
+            &mut camera,
+            &mut SeeingEngine,
+            &mut stored,
+            &models,
+            &cancellable_config(),
+            "alice",
+            AuditSource::Daemon,
+            &token,
+        );
+
+        assert!(
+            matches!(
+                outcome,
+                AuthOutcome::Error {
+                    kind: ErrorKind::Y16BitDepthRequired,
+                    ref message,
+                } if message == Y16_SCALE_REJECTION
+            ),
+            "unverified Y16 must be a stable recoverable rejection, got {outcome:?}"
+        );
+        assert_eq!(
+            camera.captures, 0,
+            "the auth loop must reject before capture"
+        );
     }
 
     /// An engine that finds a face on every frame and matches nothing (the
@@ -1428,6 +1530,69 @@ enabled = false
             )
             .unwrap();
         store
+    }
+
+    #[test]
+    fn pre_check_rejects_unverified_y16_regardless_of_require_ir() {
+        let mut config = test_pre_check_config();
+        config.security.abort_if_ssh = false;
+        config.security.abort_if_lid_closed = false;
+        let store = store_with_enrolled_user("alice");
+        let rate_limiter = RateLimiter::new(
+            config.security.rate_limit.max_attempts,
+            config.security.rate_limit.window_secs,
+        );
+        let caps = CameraCaps {
+            is_ir: false,
+            ir_texture_scale: facelock_core::types::IrTextureScale::UnverifiedY16,
+            ..Default::default()
+        };
+
+        for require_ir in [false, true] {
+            config.security.require_ir = require_ir;
+            let response = pre_check(&config, &store, "alice", &rate_limiter, &caps);
+            assert!(
+                matches!(
+                    response,
+                    Some(AuthOutcome::Error {
+                        kind: ErrorKind::Y16BitDepthRequired,
+                        ref message,
+                    }) if message == Y16_SCALE_REJECTION
+                ),
+                "require_ir={require_ir} must return the stable Y16 scale rejection: {response:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn pre_check_allows_grey_and_verified_y16_texture_scales() {
+        let mut config = test_pre_check_config();
+        config.security.abort_if_ssh = false;
+        config.security.abort_if_lid_closed = false;
+        config.security.require_ir = false;
+        let store = store_with_enrolled_user("alice");
+        let rate_limiter = RateLimiter::new(
+            config.security.rate_limit.max_attempts,
+            config.security.rate_limit.window_secs,
+        );
+
+        let allowed = [
+            facelock_core::types::IrTextureScale::NotY16,
+            facelock_core::types::IrTextureScale::VerifiedY16 { bit_depth: 10 },
+            facelock_core::types::IrTextureScale::VerifiedY16 { bit_depth: 12 },
+            facelock_core::types::IrTextureScale::VerifiedY16 { bit_depth: 16 },
+        ];
+        for ir_texture_scale in allowed {
+            let caps = CameraCaps {
+                is_ir: true,
+                ir_texture_scale,
+                ..Default::default()
+            };
+            assert!(
+                pre_check(&config, &store, "alice", &rate_limiter, &caps).is_none(),
+                "{ir_texture_scale:?} must remain usable"
+            );
+        }
     }
 
     #[test]

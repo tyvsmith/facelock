@@ -35,10 +35,10 @@ pub struct Quirk {
     /// Preferred pixel format
     #[serde(default)]
     pub format_preference: Option<String>,
-    /// Effective bit depth of this sensor's Y16 samples (8..=16). Authoritative
-    /// when present: the session Y16 -> 8-bit shift becomes `bit_depth - 8` and
-    /// no calibration frames are captured, so the scale cannot depend on what
-    /// the lens happened to see at open.
+    /// Verified effective bit depth of this sensor's Y16 samples (8..=16).
+    /// When present and valid, the session Y16 -> 8-bit shift becomes
+    /// `bit_depth - 8`; absent or invalid values cannot authorize Y16 texture
+    /// enforcement, even if non-auth conversion calibrates from frames.
     #[serde(default)]
     pub y16_bit_depth: Option<u8>,
     /// Image rotation in degrees
@@ -478,8 +478,8 @@ notes = "Test camera"
         assert_eq!(file.quirk[0].vendor_id.as_deref(), Some("8086"));
         assert_eq!(file.quirk[0].force_ir, Some(true));
         assert_eq!(file.quirk[0].warmup_frames, Some(10));
-        // Omitted keys stay None: an entry written before y16_bit_depth existed
-        // keeps calibrating the Y16 scale from frames.
+        // Omitted keys stay None: non-auth conversion may calibrate from
+        // frames, but Y16 authentication remains unverified.
         assert_eq!(file.quirk[0].y16_bit_depth, None);
     }
 
@@ -883,6 +883,29 @@ notes = "Full test quirk"
             if let Some(pref) = q.format_preference.as_deref() {
                 assert_eq!(pref, pref.trim(), "loader left padding on {pref:?}");
             }
+        }
+    }
+
+    /// The repository has no Y16 hardware validation record yet. Keep the
+    /// shipped RealSense entries explicitly unverified instead of inventing a
+    /// sensor depth from their 16-bit V4L2 container.
+    #[test]
+    fn shipped_y16_quirks_do_not_claim_an_unverified_bit_depth() {
+        let Some(quirks) = shipped_default_quirks() else {
+            return;
+        };
+        let y16: Vec<_> = quirks
+            .iter()
+            .filter(|q| q.format_preference.as_deref() == Some("Y16"))
+            .collect();
+
+        assert_eq!(y16.len(), 3, "expected the three shipped RealSense entries");
+        for q in y16 {
+            assert_eq!(
+                q.y16_bit_depth, None,
+                "shipped quirk {:?} claims Y16 depth without validation evidence",
+                q.notes
+            );
         }
     }
 

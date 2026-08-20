@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use facelock_core::config::Config;
-use facelock_core::types::MatchResult;
+use facelock_core::types::{CameraCaps, IrTextureScale, MatchResult};
 use facelock_daemon::audit::AuditSource;
 use facelock_daemon::auth::AuthOutcome;
 use facelock_daemon::cancel::CancelToken;
@@ -1104,6 +1104,93 @@ fn a_cancellation_before_the_camera_opens_is_still_audited() {
     );
 
     // And it is an abstention, not a failed attempt: nothing is charged.
+    let inspect = FaceStore::create(&db_path).unwrap();
+    assert!(
+        inspect.check_rate_limit("testuser", 1, 60).unwrap(),
+        "a cancellation must leave the rate-limit budget untouched"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+    cleanup_db(&db_path);
+}
+
+/// A cancellation may land while a slow camera factory is opening the stream.
+/// Once open returns, cancellation still precedes every post-open rejection:
+/// negotiated unverified Y16 cannot replace an abandoned attempt with a Y16
+/// policy error, and neither path may capture a frame.
+#[test]
+fn cancellation_during_open_precedes_unverified_y16_and_is_audited() {
+    use facelock_daemon::handler::Handler;
+    use facelock_daemon::rate_limit::RateLimiter;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let db_path = temp_db_path("cancel-during-open-audit");
+    cleanup_db(&db_path);
+    let dir = std::env::temp_dir().join(format!(
+        "facelock-cancel-during-open-audit-{}-{unique}",
+        std::process::id()
+    ));
+    let log_path = dir.join("audit.jsonl");
+
+    let db_path_str = db_path.to_string_lossy().into_owned();
+    let mut config = Config::parse(&fixtures::test_config_toml(&db_path_str)).unwrap();
+    config.recognition.timeout_secs = 1;
+    config.audit.enabled = true;
+    config.audit.path = log_path.display().to_string();
+
+    {
+        let store = FaceStore::create(&db_path).unwrap();
+        store
+            .add_model("testuser", "front", &fixtures::known_embedding(0), "")
+            .unwrap();
+    }
+
+    let cancel = CancelToken::new();
+    let factory_cancel = cancel.clone();
+    let factory: MockCameraFactory = Box::new(move |_cfg| {
+        factory_cancel.cancel();
+        Ok(MockCamera::bright(64, 64, 60).with_caps(CameraCaps {
+            ir_texture_scale: IrTextureScale::UnverifiedY16,
+            ..Default::default()
+        }))
+    });
+
+    let mut handler = Handler::new(
+        config.clone(),
+        MockFaceEngine::one_face(unit_at_angle(0.0)),
+        FaceStore::create(&db_path).unwrap(),
+        RateLimiter::new(
+            config.security.rate_limit.max_attempts,
+            config.security.rate_limit.window_secs,
+        ),
+        CameraCaps::default(),
+        Some(factory),
+        None,
+    )
+    .unwrap();
+
+    let resp = handler.handle_authenticate("testuser".into(), AuthIntent::Authenticate, &cancel);
+    match resp {
+        DaemonResponse::Error { ref message } => assert_eq!(
+            message, "cancelled",
+            "cancellation after open must precede the post-open Y16 rejection"
+        ),
+        other => panic!("expected a cancellation, got {other:?}"),
+    }
+
+    let written = std::fs::read_to_string(&log_path).expect("audit log must exist");
+    let entries: Vec<serde_json::Value> = written
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("audit entry must be valid JSON"))
+        .collect();
+    assert_eq!(entries.len(), 1, "one attempt, one entry: {entries:?}");
+    assert_eq!(entries[0]["result"], "cancelled");
+    assert_eq!(entries[0]["frame_count"], 0);
+    assert!(entries[0]["error"].is_null());
+
     let inspect = FaceStore::create(&db_path).unwrap();
     assert!(
         inspect.check_rate_limit("testuser", 1, 60).unwrap(),

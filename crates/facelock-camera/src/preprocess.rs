@@ -103,19 +103,19 @@ pub fn y16_shift_from_peak(peak: u16) -> u8 {
     (16 - peak.leading_zeros()).saturating_sub(8) as u8
 }
 
-/// Right-shift that maps a Y16 sensor's effective bit depth onto 8 bits,
-/// derived from the brightest sample in `data`.
+/// Right-shift that maps a Y16 container onto 8 bits, derived from the
+/// brightest sample in `data` for non-auth conversion.
 ///
 /// The shift MUST be derived once per camera session and reused for every
 /// frame. Recomputing it per frame is contrast normalization upstream of
-/// [`check_ir_texture`], whose `min_stddev` cutoff is calibrated against a
-/// fixed scale (see `docs/security.md` §1.C).
+/// [`check_ir_texture`], whose `min_stddev` cutoff requires verified hardware
+/// scale provenance instead (see `docs/security.md` §1.C).
 ///
 /// Test-only, deliberately: a one-shot whole-buffer helper is the shape a
 /// per-frame call takes, and shipping it as API invites exactly the recompute
-/// the paragraph above forbids. The capture path pins the scale from a burst
-/// instead (`calibrate_y16_shift`); this remains so the tests can pin the
-/// peak-to-shift mapping in one call.
+/// the paragraph above forbids. Non-auth capture pins its conversion scale
+/// from a burst instead (`calibrate_y16_shift`); this remains so the tests can
+/// pin the peak-to-shift mapping in one call.
 #[cfg(test)]
 fn y16_shift(data: &[u8]) -> u8 {
     y16_shift_from_peak(y16_peak(data))
@@ -124,8 +124,8 @@ fn y16_shift(data: &[u8]) -> u8 {
 /// Right-shift for a sensor bit depth supplied by the hardware quirks DB.
 ///
 /// `None` for a depth that cannot describe a Y16 sample (below 8 bits, or above
-/// the 16-bit container); the caller warns and falls back to frame calibration
-/// rather than trusting a typo in a quirks file.
+/// the 16-bit container); the caller never trusts a typo as authentication
+/// provenance. Non-auth conversion may still fall back to frame calibration.
 pub fn y16_shift_from_bit_depth(bit_depth: u8) -> Option<u8> {
     (8..=16).contains(&bit_depth).then(|| bit_depth - 8)
 }

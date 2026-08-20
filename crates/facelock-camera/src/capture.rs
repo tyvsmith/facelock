@@ -1,7 +1,7 @@
 use facelock_core::config::DeviceConfig;
 use facelock_core::error::{FacelockError, Result};
 use facelock_core::traits::CameraSource;
-use facelock_core::types::Frame;
+use facelock_core::types::{Frame, IrTextureScale};
 use image::ImageReader;
 use std::io::Cursor;
 use std::time::{Duration, Instant};
@@ -25,23 +25,21 @@ const CAPTURE_TIMEOUT: Duration = Duration::from_secs(2);
 /// keeps that discard correct if the buffer depth ever changes.
 pub const MMAP_BUFFERS: u32 = 4;
 
-/// Minimum frames sampled at open to calibrate the Y16 -> 8-bit scale when no
-/// quirk supplies a sensor bit depth. Calibrating from a single frame races the
-/// camera's own AGC/AE warmup: a dark first frame pins an 8-bit scale that
-/// clips every warmed-up 10/12-bit frame to flat white, which the IR texture
-/// check then rejects. A short burst gives exposure time to move.
+/// Minimum frames sampled on the first non-auth capture to calibrate Y16 ->
+/// 8-bit conversion when no quirk supplies a sensor bit depth. Calibrating
+/// from a single frame races the camera's own AGC/AE warmup: a dark first
+/// frame pins an 8-bit scale that clips every warmed-up 10/12-bit frame to
+/// flat white. A short burst gives exposure time to move.
 ///
-/// This burst is paid on a COLD open only, and only on a Y16 device: the
-/// daemon's warm hold (ADR 008 §4) reuses the `Camera` and therefore its
-/// already-pinned scale. It is nonetheless emitter-LED-on time on IR
-/// hardware, which is exactly what ADR 008 set out to shorten — a device that
-/// declares `y16_bit_depth` in its quirk skips the burst entirely and is the
-/// preferred configuration on any camera where the reopen cost matters.
+/// Authentication rejects unverified Y16 before reaching this burst. Other
+/// callers pay it only once per open camera: the daemon's warm hold (ADR 008
+/// §4) reuses the `Camera` and therefore its already-pinned conversion scale.
 const Y16_CALIBRATION_FRAMES: usize = 8;
 
 /// Wall-clock ceiling on that burst. Frames are already flowing when it runs,
 /// so it normally costs a fraction of a second; the budget keeps a stalling
-/// camera from stretching `Camera::open` by `CAPTURE_TIMEOUT` eight times over.
+/// camera from stretching the first non-auth capture by `CAPTURE_TIMEOUT`
+/// eight times over.
 ///
 /// This bounds when the burst STOPS starting new captures, not when it
 /// returns: the check sits at the top of the loop, so a dequeue begun just
@@ -96,17 +94,49 @@ fn quirk_format_preference(quirk: Option<&Quirk>) -> Option<&str> {
 
 /// The Y16 shift implied by a quirk's declared sensor bit depth, if any.
 /// A depth the 16-bit container cannot hold is a quirks-file typo rather than
-/// hardware truth: warn and let frame calibration decide instead.
+/// hardware truth. Non-auth capture can still calibrate its conversion from
+/// frames, but authentication treats that scale as unverified.
 fn quirk_y16_shift(quirk: Option<&Quirk>) -> Option<u8> {
     let bit_depth = quirk.and_then(|q| q.y16_bit_depth)?;
     let shift = preprocess::y16_shift_from_bit_depth(bit_depth);
     if shift.is_none() {
         tracing::warn!(
             bit_depth,
-            "quirk y16_bit_depth is outside 8..=16 — ignoring, calibrating from frames"
+            "quirk y16_bit_depth is outside 8..=16 — ignoring for authentication; \
+             non-auth capture will calibrate conversion from frames"
         );
     }
     shift
+}
+
+/// Scale provenance for the format a camera will actually feed into the IR
+/// texture check. The raw quirk value is trusted only when it describes the
+/// Y16 container (8..=16); scene calibration never upgrades this state.
+pub(crate) fn ir_texture_scale_for_format(format: &str, quirk: Option<&Quirk>) -> IrTextureScale {
+    if format != "Y16" {
+        return IrTextureScale::NotY16;
+    }
+
+    match quirk.and_then(|q| q.y16_bit_depth) {
+        Some(bit_depth) if preprocess::y16_shift_from_bit_depth(bit_depth).is_some() => {
+            IrTextureScale::VerifiedY16 { bit_depth }
+        }
+        _ => IrTextureScale::UnverifiedY16,
+    }
+}
+
+/// Select the format a camera is expected to negotiate, using the same quirk
+/// and global priority as [`Camera::open_resolved`].
+pub(crate) fn select_format_for_quirk(
+    quirk: Option<&Quirk>,
+    available: &[String],
+) -> Option<usize> {
+    let mut preferred: Vec<&str> = Vec::with_capacity(DECODABLE_FORMATS.len() + 1);
+    if let Some(fmt_pref) = quirk_format_preference(quirk) {
+        preferred.push(fmt_pref);
+    }
+    preferred.extend_from_slice(DECODABLE_FORMATS);
+    select_format(&preferred, available)
 }
 
 /// How many frames the calibration burst aims for on this device. A quirk's
@@ -120,22 +150,23 @@ fn y16_calibration_frames(quirk: Option<&Quirk>) -> usize {
         .max(Y16_CALIBRATION_FRAMES as u32) as usize
 }
 
-/// Pin the session Y16 scale by sampling a burst of frames and taking the
-/// brightest sample any of them produced.
+/// Pin a non-auth session's Y16 conversion scale by sampling a burst of frames
+/// and taking the brightest sample any of them produced.
 ///
 /// More frames raise the peak toward the sensor's full scale, which is the
 /// point of the burst. They do NOT bound it from above: `y16_peak` is an
 /// unbounded max over every pixel, so one stuck pixel or one specular IR
 /// glint sets it alone. On a 10-bit sensor a pixel latched at 4095 pins
 /// shift 4 where 2 was right, and every later frame is scaled down 4x —
-/// enough to drop a real face under `ir_texture_min_stddev` for the whole
-/// session. `Y16Calibration::Saturated` only catches the `u16::MAX`
+/// enough to darken a non-auth preview/enrollment for the whole session.
+/// `Y16Calibration::Saturated` only catches the `u16::MAX`
 /// endpoint, so that case warns nothing. A quirk's `y16_bit_depth` is the
-/// only way to take the scale out of the scene's hands entirely.
+/// only way to take the scale out of the scene's hands entirely, and the only
+/// scale authentication accepts.
 ///
-/// A capture error ends the open. It is tempting to tolerate a few and keep
-/// sampling, but no `next()` error is transient here: `v4l`'s capture stream
-/// advances `arena_index` only on a successful dequeue and re-queues that
+/// A capture error ends the first capture. It is tempting to tolerate a few
+/// and keep sampling, but no `next()` error is transient here: `v4l`'s
+/// capture stream advances `arena_index` only on a successful dequeue and re-queues that
 /// same index on the following call, so one failed dequeue leaves the buffer
 /// queued in the kernel and every later call re-queues it and gets EINVAL.
 /// Tolerating errors would therefore trade a hard failure carrying the real
@@ -241,7 +272,10 @@ pub struct Camera<'a> {
     emitter_xu_info: Option<EmitterXuInfo>,
     /// Capabilities computed at construction — see `crate::caps` (gap D8).
     caps: CameraCaps,
-    /// Y16 -> 8-bit shift, derived once at open. Never recomputed per frame:
+    /// Y16 -> 8-bit shift. A verified quirk pins it at open; an unverified Y16
+    /// leaves it absent until the first non-auth capture calibrates it. Auth
+    /// rejects the unverified capability before capture. Once present it is
+    /// never recomputed per frame:
     /// a per-frame scale is contrast normalization upstream of the IR texture
     /// check (see `docs/security.md` §1.C).
     ///
@@ -249,7 +283,10 @@ pub struct Camera<'a> {
     /// daemon's warm camera hold (ADR 008 §4): a hold reuses this same struct,
     /// so the scale it pinned stays pinned; a reopen constructs a new `Camera`
     /// and recalibrates. Nothing carries a scale across a reopen.
-    y16_shift: u8,
+    y16_shift: Option<u8>,
+    /// Number of frames used if a non-auth caller first captures from an
+    /// unverified Y16 stream.
+    y16_calibration_frames: usize,
 }
 
 impl<'a> Camera<'a> {
@@ -271,7 +308,8 @@ impl<'a> Camera<'a> {
     /// - `format_preference` is prepended to the format priority list.
     /// - `warmup_frames` replaces `config.warmup_frames`.
     /// - `rotation` replaces `config.rotation`.
-    /// - `y16_bit_depth` pins the Y16 scale, skipping frame calibration.
+    /// - `y16_bit_depth` pins verified Y16 scale, skipping non-auth frame
+    ///   calibration.
     pub(crate) fn open_resolved(
         config: &DeviceConfig,
         quirk: Option<&Quirk>,
@@ -309,15 +347,8 @@ impl<'a> Camera<'a> {
             .enum_formats()
             .map_err(|e| FacelockError::Camera(format!("failed to enum formats: {e}")))?;
 
-        let mut preferred: Vec<&str> = Vec::with_capacity(DECODABLE_FORMATS.len() + 1);
-        if let Some(fmt_pref) = quirk_format_preference(quirk) {
-            tracing::debug!(format = fmt_pref, "quirk: prepending format preference");
-            preferred.push(fmt_pref);
-        }
-        preferred.extend_from_slice(DECODABLE_FORMATS);
-
         let available: Vec<String> = formats.iter().map(|f| normalize_fourcc(f.fourcc)).collect();
-        let selected_fourcc = select_format(&preferred, &available)
+        let selected_fourcc = select_format_for_quirk(quirk, &available)
             .map(|idx| formats[idx].fourcc)
             .ok_or_else(|| {
                 FacelockError::Camera(format!(
@@ -347,6 +378,11 @@ impl<'a> Camera<'a> {
         let width = fmt.width;
         let height = fmt.height;
         let format_str = normalize_fourcc(fmt.fourcc);
+        let mut caps = caps;
+        // A V4L2 driver may negotiate a different FourCC than requested. The
+        // open camera's auth boundary must describe what frames actually use,
+        // not what interrogation predicted before `VIDIOC_S_FMT`.
+        caps.ir_texture_scale = ir_texture_scale_for_format(&format_str, quirk);
         tracing::info!(
             device = %device_path,
             format = %format_str,
@@ -396,49 +432,21 @@ impl<'a> Camera<'a> {
             false
         };
 
-        // Pin the Y16 -> 8-bit scale for the whole session. A quirk-declared
-        // sensor bit depth is authoritative; otherwise calibrate from a burst
-        // of frames. Must run after the IR emitter is enabled, otherwise the
-        // scale is derived from unlit frames and every lit frame clips to white.
+        // Pin verified Y16 scale at open. An unverified stream stays
+        // uncalibrated until a non-auth caller asks for a frame: auth can then
+        // reject negotiated-format drift without capturing calibration data.
         let y16_shift = if format_str == "Y16" {
             match quirk_y16_shift(quirk) {
                 Some(shift) => {
                     tracing::info!(device = %device_path, shift, "Y16 session scale from quirk bit depth");
-                    shift
+                    Some(shift)
                 }
-                None => {
-                    // Not `?`: the emitter is already lit and `Camera` does not
-                    // exist yet, so an early return here would skip the `Drop`
-                    // that is the only thing which turns it back off. Every
-                    // other failure path above runs before the emitter is
-                    // enabled; this one is the exception, so it cleans up.
-                    match calibrate_y16_shift(
-                        &mut stream,
-                        &device_path,
-                        y16_calibration_frames(quirk),
-                    ) {
-                        Ok(shift) => shift,
-                        Err(e) => {
-                            if ir_emitter_active {
-                                if let Some(ref xu_info) = emitter_xu_info {
-                                    if let Err(off) =
-                                        ir_emitter::disable_emitter_with_info(&device_path, xu_info)
-                                    {
-                                        tracing::warn!(
-                                            "failed to disable IR emitter on {device_path} after \
-                                             Y16 calibration failed: {off}"
-                                        );
-                                    }
-                                }
-                            }
-                            return Err(e);
-                        }
-                    }
-                }
+                None => None,
             }
         } else {
-            0
+            Some(0)
         };
+        let y16_calibration_frames = y16_calibration_frames(quirk);
 
         // Apply quirk overrides for rotation (warmup_frames is handled by the caller
         // since Camera::open doesn't consume warmup frames itself).
@@ -465,6 +473,7 @@ impl<'a> Camera<'a> {
             emitter_xu_info,
             caps,
             y16_shift,
+            y16_calibration_frames,
         })
     }
 
@@ -510,6 +519,17 @@ impl<'a> Camera<'a> {
 
     /// Internal: capture and convert to RGB, applying downscale and rotation.
     fn capture_rgb(&mut self) -> Result<(Vec<u8>, u32, u32)> {
+        if self.format == "Y16" && self.y16_shift.is_none() {
+            // Authentication checks `caps.ir_texture_scale` before any
+            // capture. This lazy path exists for enrollment/preview/bench
+            // conversion only and never upgrades the capability to verified.
+            self.y16_shift = Some(calibrate_y16_shift(
+                &mut self.stream,
+                &self.device_path,
+                self.y16_calibration_frames,
+            )?);
+        }
+
         // stream.next() uses the v4l built-in poll with CAPTURE_TIMEOUT.
         // If the camera stops producing frames, this returns TimedOut error
         // instead of blocking forever.
@@ -531,7 +551,10 @@ impl<'a> Camera<'a> {
             }
             "Y16" => {
                 // 16-bit grayscale -> 8-bit at the session-fixed scale, replicated 3x
-                let gray = preprocess::y16_to_gray(buf, self.y16_shift);
+                let shift = self.y16_shift.ok_or_else(|| {
+                    FacelockError::Camera("Y16 conversion scale was not initialized".into())
+                })?;
+                let gray = preprocess::y16_to_gray(buf, shift);
                 let mut rgb = Vec::with_capacity(gray.len() * 3);
                 for &p in &gray {
                     rgb.push(p);
@@ -771,8 +794,8 @@ mod tests {
 
     #[test]
     fn quirk_y16_shift_absent_falls_back_to_calibration() {
-        // No quirk, and a quirk without the field, both leave the burst
-        // calibration in charge.
+        // No quirk, and a quirk without the field, both leave non-auth burst
+        // calibration in charge without verifying authentication scale.
         assert_eq!(quirk_y16_shift(None), None);
         assert_eq!(quirk_y16_shift(Some(&quirk_with_format("Y16"))), None);
     }
@@ -798,6 +821,30 @@ mod tests {
         assert_eq!(quirk_y16_shift(Some(&quirk)), None);
         quirk.y16_bit_depth = Some(4);
         assert_eq!(quirk_y16_shift(Some(&quirk)), None);
+    }
+
+    #[test]
+    fn actual_negotiated_format_controls_y16_texture_scale_provenance() {
+        use facelock_core::types::IrTextureScale;
+
+        let mut quirk = quirk_with_format("Y16");
+        quirk.y16_bit_depth = Some(12);
+        assert_eq!(
+            ir_texture_scale_for_format("GREY", Some(&quirk)),
+            IrTextureScale::NotY16,
+            "a driver that negotiates GREY must not inherit Y16 requirements"
+        );
+        assert_eq!(
+            ir_texture_scale_for_format("Y16", Some(&quirk)),
+            IrTextureScale::VerifiedY16 { bit_depth: 12 }
+        );
+
+        quirk.y16_bit_depth = Some(17);
+        assert_eq!(
+            ir_texture_scale_for_format("Y16", Some(&quirk)),
+            IrTextureScale::UnverifiedY16,
+            "an invalid raw quirk value is provenance, not verification"
+        );
     }
 
     #[test]

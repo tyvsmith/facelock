@@ -184,60 +184,45 @@ The auth loop previously fed a **CLAHE**-equalized frame into `check_ir_texture`
 i.e. CLAHE was masking exactly the spoof this check exists to catch. CLAHE now belongs
 only to the recognition/embedding path; texture measurement uses `frame.gray` directly.
 
-**Fixed Y16 scale**: 16-bit IR sensors are converted to 8-bit with a right-shift derived
-from the effective sensor bit depth. That shift is pinned once at camera open and reused
-for every frame of the session. Deriving it per frame is per-frame contrast normalization
-— the same class of mistake as feeding CLAHE output to this check — and it would move the
-scale `ir_texture_min_stddev` is calibrated against on every frame, including in response
-to attacker-controlled illumination. A quirk's `y16_bit_depth`
-(`/etc/facelock/quirks.d/`) is **authoritative** when present — the shift becomes
-`bit_depth - 8` and no frame is inspected; the fallback samples a burst of frames at open
-(at least the device's declared `warmup_frames`) and takes their peak, so the scale does
-not hinge on whatever a single pre-AGC frame happened to see.
+**Verified Y16 scale (conservative alpha rule)**: the absolute
+`ir_texture_min_stddev` threshold is meaningful only after Y16 samples are mapped onto a
+known 8-bit scale. Authentication therefore accepts an actual selected/negotiated Y16
+format only when its matched quirk declares a valid, hardware-verified `y16_bit_depth` in
+8..=16. The session shift is then `bit_depth - 8`, fixed before any auth frame is captured
+and never recomputed per frame. Missing or invalid depth has typed provenance
+`UnverifiedY16`; it never reaches the texture comparison.
 
-**A scene-derived scale is not purely a reliability risk. One of its two error directions
-is fail-open.** Both are worth stating plainly:
+Facelock derives this state twice. Interrogation applies the real format preference and
+normal negotiation priority to the enumerated normalized FourCCs, so a known unverified
+Y16 choice is rejected before opening the camera. After `VIDIOC_S_FMT`, the opened camera
+recomputes it from the actual normalized FourCC. If a driver negotiated Y16 after a
+different format was predicted, authentication skips warmup/calibration capture and
+returns the same rejection before the auth loop can succeed. An actual GREY stream is
+`NotY16` and keeps the existing 8-bit behavior, even when the same device also advertises
+Y16.
 
-- *Shift too high* (a stuck pixel or specular glint inflates the burst peak): frames go
-  dark, std_dev collapses, this check **rejects**. Fails closed.
-- *Shift too low* (the burst never saw anything bright): nothing clips while raw samples
-  stay under the truncated full scale, so it acts as a clean 2^k contrast stretch on
-  exactly the buffer this check measures — the Y16→8-bit output reaches `check_ir_texture`
-  unmodified, because the RGB replication is 3x and `rgb_to_gray`'s coefficients sum to
-  256. std_dev scales linearly with the stretch. On a 12-bit sensor whose burst peaks near
-  1000, the shift lands at 2 instead of 4 and every score is multiplied by 4: a flat
-  spoof at a true std_dev of 4, inside the "flat surfaces score < 5" band below, measures
-  16 and clears the 10.0 cutoff. **`ir_texture_min_stddev` is an absolute threshold on a
-  scale-dependent statistic, so at the wrong scale it stops discriminating at all.**
+The stable recoverable message is `Y16 IR texture scale is unverified; authentication
+requires a verified y16_bit_depth (8..=16) quirk`. The daemon returns its ordinary `-2`
+error sentinel; oneshot returns exit 2; PAM maps either path to `PAM_IGNORE`, preserving
+password fallback. The gate applies even when `security.require_ir = false`: disabling IR
+classification enforcement does not make an unknown pixel scale trustworthy. It neither
+reclassifies/downgrades the device to RGB nor silently skips the texture check.
 
-Exploiting it needs a Y16 device with no `y16_bit_depth`, influence over the scene across
-a cold open, and a spoof dim enough to stay unclipped; the peak is a max over every pixel
-with the emitter lit, so holding it under a quarter of full scale needs a uniformly dim
-field of view. This is analysis, not a demonstration: facelock has no Y16 hardware, and
-the <5 / >15 bands below were measured on an **8-bit GREY** node and have never been
-validated through the Y16 path.
+Scene calibration remains available for non-auth Y16 conversion such as preview,
+enrollment, and benchmarking. It runs lazily on their first capture and pins one shift for
+that camera session, but it never upgrades `UnverifiedY16` or authorizes authentication.
+This separation closes the previous fail-open direction: a dim calibration scene could
+pick a shift that inflated a flat spoof's measured standard deviation above the absolute
+threshold. A scale-invariant texture metric is intentionally not introduced in this
+alpha.
 
-Pin `y16_bit_depth` on any Y16 device you control — it removes the scene from the decision
-entirely. V4L2 cannot report a sensor's effective bit depth, so on an unlisted camera the
-shift is necessarily a guess; making this check scale-invariant is the generic fix and is
-tracked separately.
-
-"The session" is the lifetime of one open camera, and under the daemon's warm camera hold
-(ADR 008 §4) that can span several authentication attempts, not just one: a held stream
-keeps the scale it pinned. A **reopen** always recalibrates — the daemon's camera factory
-resolves and opens afresh on every cold open, so no scale is ever carried across a reopen
-onto a device that did not produce it. That is the same invariant `ResolvedCamera` holds
-for `is_ir` and the fingerprint.
-
-Cost note: on a Y16 device with no `y16_bit_depth` quirk, the calibration burst runs inside
-`Camera::open`, *before* the warmup discard and with the IR emitter already enabled — so it
-is emitter-LED-on time on every cold open. The burst stops starting captures after one
-second, but the check sits at the top of its loop, so a dequeue already in flight can carry
-it to about one second plus one `CAPTURE_TIMEOUT`. It is also paid *in addition to* the
-caller's own warmup discard, so a device declaring `warmup_frames = 10` spends 10 burst
-frames and then discards 10 more. Declaring `y16_bit_depth` skips the burst entirely and is
-the preferred configuration on IR hardware. The shipped RealSense entries in
-`config/quirks.d/00-defaults.toml` do **not** declare one yet.
+Hardware evidence is deliberately asymmetric. The Logitech BRIO 046d:085e IR node was
+manually exercised in native GREY for #162 (33/33 integration and 27/27 oneshot
+scenarios), so this rule preserves an observed path. Facelock has no Y16 hardware or
+fixture validation record; the texture bands below have never been validated through
+Y16. The shipped Intel RealSense Y16 quirks therefore do not declare a depth and reject
+authentication recoverably until an evidence-backed local or shipped quirk does. Do not
+infer effective sensor depth from the 16-bit V4L2 container.
 
 **Raw-frame calibration**: on the raw frame, flat surfaces (photos/screens in IR) score
 std_dev **< 5**, real IR skin scores **> 15**. The cutoff `security.ir_texture_min_stddev`
