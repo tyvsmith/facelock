@@ -115,10 +115,10 @@ pub(crate) fn is_ir_typical_fourcc(fourcc: &str) -> bool {
 /// overlap on GREY and Y16 but neither contains the other: Y8/Y10/Y12 are
 /// IR-typical yet undecodable, and YUYV/NV12/MJPG are decodable yet not IR
 /// evidence. A device classified IR purely on Y8/Y10/Y12 evidence is
-/// therefore excluded from auto-detection — see [`pick_auto_device`], which
-/// says so in syslog rather than leaving the operator with only the
-/// downstream "not an IR camera" error.
-fn has_decodable_format(device: &DeviceInfo) -> bool {
+/// therefore excluded from automatic selection. See [`pick_auto_device`],
+/// which says so in syslog; setup uses this same predicate and reports its own
+/// exclusion at camera-selection time.
+pub fn has_decodable_format(device: &DeviceInfo) -> bool {
     device
         .formats
         .iter()
@@ -1084,6 +1084,22 @@ mod tests {
         let y16_only = device_at("/dev/video0", "Depth Camera", &["Y16"]);
         assert!(has_decodable_format(&y16_only));
         assert_eq!(heuristic_ir_source(&y16_only), IrSource::Format);
+    }
+
+    #[test]
+    fn decodable_format_predicate_keeps_grey_and_y16_but_rejects_y8_y10_y12() {
+        for format in ["GREY", "Y16", "Y16 "] {
+            assert!(
+                has_decodable_format(&device_at("/dev/video0", "IR", &[format])),
+                "{format} must remain decodable"
+            );
+        }
+        for format in ["Y8", "Y10", "Y12"] {
+            assert!(
+                !has_decodable_format(&device_at("/dev/video0", "IR", &[format])),
+                "{format} is IR evidence but is not decodable"
+            );
+        }
     }
 
     #[test]

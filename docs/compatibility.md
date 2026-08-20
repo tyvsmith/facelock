@@ -55,13 +55,20 @@ RGB cameras work with `security.require_ir = false` but provide no anti-spoofing
 | NV12 | Full | Semi-planar 4:2:0; common on Intel IPU processed cameras |
 | GREY | Full | IR cameras, replicated to RGB |
 | Y16 | Full | 16-bit IR grayscale, bit-depth-aware conversion to 8-bit |
+| Y8, Y10, Y12 | Not supported | IR-typical classification evidence, but not decodable; excluded from the setup wizard and automatic selection with a path/format warning |
 | Raw Bayer (SGRBG10, ...) | Not supported | Raw sensor nodes are skipped by auto-detection |
 | Other | Not supported | Device is rejected at open with an error listing its formats |
 
 Negotiation priority: `GREY > Y16 > YUYV > NV12 > MJPG` (a hardware quirk's
 `format_preference` is tried first). Devices that advertise none of these are
-excluded from auto-detection, and opening one explicitly fails with an error
-naming the advertised formats.
+excluded from auto-detection and setup selection, and opening one explicitly
+fails with an error naming the advertised formats. This includes an IR node
+whose only formats are Y8, Y10, or Y12: it still classifies as IR, but Facelock
+does not persist it as an automatic setup choice. If `security.require_ir` is
+enabled and every detected IR node is excluded this way, the setup wizard
+stops with all excluded IR paths and formats instead of offering an RGB node.
+When `require_ir` is disabled, a decodable RGB node remains a valid explicit
+wizard choice.
 
 ### Intel IPU6/IPU7 MIPI cameras (v4l2-relayd)
 

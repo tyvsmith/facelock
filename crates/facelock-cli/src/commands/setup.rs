@@ -486,6 +486,7 @@ fn run_wizard(plan: &SetupPlan) -> anyhow::Result<()> {
         Some(choice) => apply_camera_choice(&mut config, choice)?,
         None => match wizard_camera_selection(&theme, &mut config) {
             Ok(()) => {}
+            Err(e) if camera_selection_error_is_fatal(&e) => return Err(e),
             Err(e) => {
                 Terminal.info(&SetupMessage::CameraStepFailed {
                     error: e.to_string(),
@@ -746,62 +747,60 @@ fn write_setup_marker() -> anyhow::Result<()> {
 }
 
 fn wizard_camera_selection(theme: &ColorfulTheme, config: &mut Config) -> anyhow::Result<()> {
-    let devices = facelock_camera::list_devices().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let candidates = enumerate_camera_candidates()?;
 
-    if devices.is_empty() {
+    if candidates.is_empty() {
         Terminal.info(&DeviceMessage::NoVideoDevices);
         return Ok(());
     }
 
-    // Consult the quirks DB so IR classification here matches the auth path.
-    // classify_ir_sources disambiguates multi-node USB cameras (e.g. the
-    // Logitech BRIO's RGB + IR nodes share one VID:PID quirk): only the actual
-    // IR sensor node is tagged [IR], so auto-select picks the right node.
-    let quirks = facelock_camera::QuirksDb::load();
-    let sources = facelock_camera::classify_ir_sources(&devices, Some(&quirks));
-    let is_ir_at = |idx: usize| {
-        sources
-            .get(idx)
-            .copied()
-            .unwrap_or(facelock_camera::IrSource::None)
-            != facelock_camera::IrSource::None
-    };
+    // A setup selection becomes an explicit device.path, so the auth path will
+    // never revisit auto-detection's decodability filter. Apply the same
+    // predicate here before either auto-selecting or presenting the menu.
+    let selectable = wizard_camera_candidates(&candidates, config.security.require_ir)?;
+    if selectable.is_empty() {
+        bail!(
+            "no camera with a decodable pixel format found; detected:\n{}",
+            camera_candidate_listing(&candidates)
+        );
+    }
 
-    let ir_devices: Vec<_> = devices
+    let ir_devices: Vec<_> = selectable
         .iter()
-        .enumerate()
-        .filter(|(i, _)| is_ir_at(*i))
-        .map(|(_, d)| d)
+        .copied()
+        .filter(|candidate| candidate.is_ir)
         .collect();
 
     // If exactly one IR camera, auto-select it
     if ir_devices.len() == 1 {
-        let dev = ir_devices[0];
+        let dev = &ir_devices[0].device;
         Terminal.info(&DeviceMessage::AutoSelectedIrCamera {
-            path: dev.path.clone(),
-            name: dev.name.clone(),
+            path: camera_display_field(&dev.path),
+            name: camera_display_field(&dev.name),
         });
         config.device.path = Some(dev.path.clone());
         return Ok(());
     }
 
     // Build display list
-    let display_items: Vec<String> = devices
+    let display_items: Vec<String> = selectable
         .iter()
-        .enumerate()
-        .map(|(i, d)| {
-            let ir_tag = if is_ir_at(i) { " [IR]" } else { "" };
-            format!("{}{} - {}", d.path, ir_tag, d.name)
-        })
+        .map(|candidate| candidate.menu_listing())
         .collect();
 
     // Find the currently configured device index for default selection
-    let default_idx = devices
+    let default_idx = selectable
         .iter()
-        .position(|d| config.device.path.as_ref().is_some_and(|p| d.path == *p))
+        .position(|candidate| {
+            config
+                .device
+                .path
+                .as_ref()
+                .is_some_and(|path| candidate.device.path == *path)
+        })
         .or_else(|| {
             // Default to first IR camera if available
-            (0..devices.len()).find(|&i| is_ir_at(i))
+            selectable.iter().position(|candidate| candidate.is_ir)
         })
         .unwrap_or(0);
 
@@ -811,11 +810,11 @@ fn wizard_camera_selection(theme: &ColorfulTheme, config: &mut Config) -> anyhow
         .default(default_idx)
         .interact()?;
 
-    let selected = &devices[selection];
+    let selected = &selectable[selection].device;
     config.device.path = Some(selected.path.clone());
     Terminal.info(&DeviceMessage::SelectedCamera {
-        path: selected.path.clone(),
-        name: selected.name.clone(),
+        path: camera_display_field(&selected.path),
+        name: camera_display_field(&selected.name),
     });
 
     Ok(())
@@ -825,39 +824,180 @@ fn wizard_camera_selection(theme: &ColorfulTheme, config: &mut Config) -> anyhow
 ///
 /// `--camera auto` selection is expressed over this rather than over V4L2 so it
 /// stays a pure function: testable on a machine with no camera at all.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct CameraCandidate {
-    path: String,
-    name: String,
+    device: facelock_camera::DeviceInfo,
     is_ir: bool,
 }
 
-/// Pick the single IR device for `--camera auto`.
+#[derive(Debug)]
+struct RequiredIrUnavailable {
+    listed: String,
+}
+
+impl std::fmt::Display for RequiredIrUnavailable {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "security.require_ir is enabled, but every detected IR camera advertises no decodable pixel format:\n{}\n  Connect an IR camera that advertises a supported format such as GREY or Y16; setup will not fall back to RGB.",
+            self.listed
+        )
+    }
+}
+
+impl std::error::Error for RequiredIrUnavailable {}
+
+// Other camera-step failures keep the wizard's long-standing recover-and-
+// report behavior. This typed refusal alone must abort before the menu because
+// recovering would let setup continue with no camera `require_ir` can admit.
+fn camera_selection_error_is_fatal(error: &anyhow::Error) -> bool {
+    error.is::<RequiredIrUnavailable>()
+}
+
+impl CameraCandidate {
+    fn display_path(&self) -> String {
+        camera_display_field(&self.device.path)
+    }
+
+    fn display_name(&self) -> String {
+        camera_display_field(&self.device.name)
+    }
+
+    fn menu_listing(&self) -> String {
+        let ir_tag = if self.is_ir { " [IR]" } else { "" };
+        format!(
+            "{}{} - \"{}\"",
+            self.display_path(),
+            ir_tag,
+            self.display_name()
+        )
+    }
+
+    fn format_listing(&self) -> String {
+        self.device
+            .formats
+            .iter()
+            .map(|format| camera_display_field(format.fourcc.trim()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// Render hardware-derived text without allowing control characters to create
+/// fake terminal lines, prompts, or escape sequences.
+fn camera_display_field(value: &str) -> String {
+    value.chars().flat_map(char::escape_default).collect()
+}
+
+/// Setup may persist only candidates the auth path can decode. This is a
+/// post-classification usability filter: it never changes whether a node is IR.
+fn decodable_camera_candidates(candidates: &[CameraCandidate]) -> Vec<&CameraCandidate> {
+    candidates
+        .iter()
+        .filter(|candidate| facelock_camera::has_decodable_format(&candidate.device))
+        .collect()
+}
+
+fn wizard_camera_candidates(
+    candidates: &[CameraCandidate],
+    require_ir: bool,
+) -> anyhow::Result<Vec<&CameraCandidate>> {
+    let selectable = decodable_camera_candidates(candidates);
+    let has_ir = candidates.iter().any(|candidate| candidate.is_ir);
+    let has_decodable_ir = selectable.iter().any(|candidate| candidate.is_ir);
+
+    if require_ir && has_ir && !has_decodable_ir {
+        let listed = candidates
+            .iter()
+            .filter(|candidate| candidate.is_ir)
+            .map(|candidate| {
+                format!(
+                    "    {} [{}]",
+                    candidate.display_path(),
+                    candidate.format_listing()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(RequiredIrUnavailable { listed }.into());
+    }
+
+    Ok(selectable)
+}
+
+fn camera_candidate_listing(candidates: &[CameraCandidate]) -> String {
+    candidates
+        .iter()
+        .map(|candidate| {
+            let usability = if facelock_camera::has_decodable_format(&candidate.device) {
+                ""
+            } else {
+                " (excluded: no decodable pixel format)"
+            };
+            format!(
+                "    {} [{}]{}",
+                candidate.display_path(),
+                candidate.format_listing(),
+                usability
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn warn_undecodable_ir_candidates(candidates: &[CameraCandidate]) {
+    for candidate in candidates.iter().filter(|candidate| {
+        candidate.is_ir && !facelock_camera::has_decodable_format(&candidate.device)
+    }) {
+        tracing::warn!(
+            device = %candidate.display_path(),
+            name = %candidate.display_name(),
+            formats = %candidate.format_listing(),
+            "IR-classified camera has no decodable pixel format — excluded from setup selection"
+        );
+    }
+}
+
+/// Pick the single decodable IR device for `--camera auto`.
 ///
 /// Zero and many are both errors: silently taking the first IR node would pin
 /// setup to whichever device happened to enumerate first, and getting that
 /// wrong means auth never works.
 fn select_ir_camera(candidates: &[CameraCandidate]) -> anyhow::Result<String> {
-    let ir: Vec<&CameraCandidate> = candidates.iter().filter(|c| c.is_ir).collect();
+    let decodable = decodable_camera_candidates(candidates);
+    let ir: Vec<&CameraCandidate> = decodable
+        .iter()
+        .copied()
+        .filter(|candidate| candidate.is_ir)
+        .collect();
 
     match ir.len() {
-        1 => Ok(ir[0].path.clone()),
+        1 => Ok(ir[0].device.path.clone()),
         0 if candidates.is_empty() => Err(fail(DeviceMessage::AutoCameraNoDevices)),
         0 => {
-            let listed = candidates
-                .iter()
-                .map(|c| format!("    {} - {}", c.path, c.name))
-                .collect::<Vec<_>>()
-                .join("\n");
+            let listed = camera_candidate_listing(candidates);
             Err(fail(DeviceMessage::AutoCameraNoIr {
                 listed,
-                example: candidates[0].path.clone(),
+                example: if candidates.iter().any(|candidate| candidate.is_ir) {
+                    "<path-to-decodable-ir-camera>".to_string()
+                } else {
+                    decodable
+                        .first()
+                        .map(|candidate| candidate.display_path())
+                        .unwrap_or_else(|| "<path-to-decodable-camera>".to_string())
+                },
             }))
         }
         _ => {
             let listed = ir
                 .iter()
-                .map(|c| format!("    {} - {}", c.path, c.name))
+                .map(|candidate| {
+                    format!(
+                        "    {} [{}]",
+                        candidate.display_path(),
+                        candidate.format_listing()
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
             Err(fail(DeviceMessage::AutoCameraManyIr {
@@ -875,19 +1015,20 @@ fn enumerate_camera_candidates() -> anyhow::Result<Vec<CameraCandidate>> {
     let quirks = facelock_camera::QuirksDb::load();
     let sources = facelock_camera::classify_ir_sources(&devices, Some(&quirks));
 
-    Ok(devices
-        .iter()
+    let candidates = devices
+        .into_iter()
         .enumerate()
-        .map(|(i, d)| CameraCandidate {
-            path: d.path.clone(),
-            name: d.name.clone(),
+        .map(|(i, device)| CameraCandidate {
+            device,
             is_ir: sources
                 .get(i)
                 .copied()
                 .unwrap_or(facelock_camera::IrSource::None)
                 != facelock_camera::IrSource::None,
         })
-        .collect())
+        .collect::<Vec<_>>();
+    warn_undecodable_ir_candidates(&candidates);
+    Ok(candidates)
 }
 
 /// Apply `--camera`, persisting the result. `Auto` re-derives from hardware and
@@ -896,7 +1037,9 @@ fn apply_camera_choice(config: &mut Config, choice: &CameraChoice) -> anyhow::Re
     let path = match choice {
         CameraChoice::Auto => {
             let path = select_ir_camera(&enumerate_camera_candidates()?)?;
-            Terminal.info(&DeviceMessage::AutoSelectedIrCameraPath { path: path.clone() });
+            Terminal.info(&DeviceMessage::AutoSelectedIrCameraPath {
+                path: camera_display_field(&path),
+            });
             path
         }
         CameraChoice::Path(path) => {
@@ -906,7 +1049,7 @@ fn apply_camera_choice(config: &mut Config, choice: &CameraChoice) -> anyhow::Re
                 }));
             }
             Terminal.info(&DeviceMessage::SelectedValue {
-                value: path.clone(),
+                value: camera_display_field(path),
             });
             path.clone()
         }
@@ -3289,10 +3432,22 @@ mod choice_tests {
         Config::parse("").expect("an empty config must resolve to defaults")
     }
 
-    fn cam(path: &str, name: &str, is_ir: bool) -> CameraCandidate {
+    fn cam(path: &str, name: &str, is_ir: bool, formats: &[&str]) -> CameraCandidate {
         CameraCandidate {
-            path: path.to_string(),
-            name: name.to_string(),
+            device: facelock_camera::DeviceInfo {
+                path: path.to_string(),
+                name: name.to_string(),
+                driver: "test".to_string(),
+                capabilities: vec!["VIDEO_CAPTURE".to_string()],
+                formats: formats
+                    .iter()
+                    .map(|fourcc| facelock_camera::FormatInfo {
+                        fourcc: (*fourcc).to_string(),
+                        description: "test".to_string(),
+                        sizes: vec![(640, 480)],
+                    })
+                    .collect(),
+            },
             is_ir,
         }
     }
@@ -3394,20 +3549,37 @@ mod choice_tests {
     #[test]
     fn camera_auto_selects_the_single_ir_device() {
         let candidates = [
-            cam("/dev/video0", "Integrated Camera", false),
-            cam("/dev/video2", "Integrated IR Camera", true),
+            cam("/dev/video0", "Integrated Camera", false, &["MJPG"]),
+            cam("/dev/video2", "Integrated IR Camera", true, &["GREY"]),
         ];
         assert_eq!(select_ir_camera(&candidates).unwrap(), "/dev/video2");
     }
 
     #[test]
     fn camera_auto_errors_when_no_ir_device() {
-        let candidates = [cam("/dev/video0", "Integrated Camera", false)];
+        let candidates = [cam("/dev/video0", "Integrated Camera", false, &["MJPG"])];
         let err = select_ir_camera(&candidates).unwrap_err().to_string();
         assert!(err.contains("no IR-capable camera"), "{err}");
         // The message has to be actionable: name what was found and the way out.
         assert!(err.contains("/dev/video0"), "{err}");
         assert!(err.contains("--camera="), "{err}");
+    }
+
+    #[test]
+    fn camera_auto_example_escapes_an_enumerated_device_path() {
+        let candidates = [cam(
+            "/dev/video0\n  Success\x1b[32m",
+            "Integrated Camera",
+            false,
+            &["MJPG"],
+        )];
+
+        let err = select_ir_camera(&candidates).unwrap_err().to_string();
+
+        assert_eq!(err.lines().count(), 3, "{err:?}");
+        assert!(!err.contains('\x1b'), "{err:?}");
+        assert!(!err.lines().any(|line| line.trim() == "Success"), "{err:?}");
+        assert!(err.contains("/dev/video0\\n"), "{err}");
     }
 
     #[test]
@@ -3421,8 +3593,8 @@ mod choice_tests {
     #[test]
     fn camera_auto_errors_when_several_ir_devices() {
         let candidates = [
-            cam("/dev/video2", "Integrated IR Camera", true),
-            cam("/dev/video4", "BRIO IR", true),
+            cam("/dev/video2", "Integrated IR Camera", true, &["GREY"]),
+            cam("/dev/video4", "BRIO IR", true, &["Y16"]),
         ];
         let err = select_ir_camera(&candidates).unwrap_err().to_string();
         assert!(err.contains("2 IR-capable cameras"), "{err}");
@@ -3430,6 +3602,170 @@ mod choice_tests {
             err.contains("/dev/video2") && err.contains("/dev/video4"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn camera_auto_excludes_undecodable_ir_without_falling_back_to_rgb() {
+        let candidates = [
+            cam("/dev/video0", "Integrated Camera", false, &["MJPG"]),
+            cam("/dev/video2", "Integrated IR Camera", true, &["Y10"]),
+        ];
+
+        let err = select_ir_camera(&candidates).unwrap_err().to_string();
+        assert!(err.contains("no IR-capable camera"), "{err}");
+        assert!(err.contains("/dev/video2"), "{err}");
+        assert!(err.contains("Y10"), "{err}");
+        assert!(err.contains("excluded: no decodable pixel format"), "{err}");
+        assert!(!err.contains("--camera=/dev/video0"), "{err}");
+    }
+
+    #[test]
+    fn setup_selection_keeps_grey_and_y16_but_excludes_y8_y10_y12() {
+        let candidates = [
+            cam("/dev/video0", "Y8 IR", true, &["Y8"]),
+            cam("/dev/video1", "GREY IR", true, &["GREY"]),
+            cam("/dev/video2", "Y10 IR", true, &["Y10"]),
+            cam("/dev/video3", "Y16 IR", true, &["Y16"]),
+            cam("/dev/video4", "Y12 IR", true, &["Y12"]),
+            cam("/dev/video5", "RGB", false, &["MJPG"]),
+        ];
+
+        let paths: Vec<&str> = decodable_camera_candidates(&candidates)
+            .into_iter()
+            .map(|candidate| candidate.device.path.as_str())
+            .collect();
+
+        assert_eq!(paths, vec!["/dev/video1", "/dev/video3", "/dev/video5"]);
+    }
+
+    #[test]
+    fn wizard_require_ir_refuses_excluded_ir_instead_of_offering_rgb() {
+        let candidates = [
+            cam("/dev/video0", "Integrated RGB", false, &["MJPG"]),
+            cam("/dev/video2", "Y8 IR", true, &["Y8"]),
+            cam("/dev/video4", "Y10 IR", true, &["Y10"]),
+            cam("/dev/video6", "Y12 IR", true, &["Y12"]),
+        ];
+
+        let err = wizard_camera_candidates(&candidates, true).unwrap_err();
+        assert!(camera_selection_error_is_fatal(&err));
+        let err = err.to_string();
+
+        for expected in [
+            "/dev/video2",
+            "Y8",
+            "/dev/video4",
+            "Y10",
+            "/dev/video6",
+            "Y12",
+        ] {
+            assert!(err.contains(expected), "missing {expected}: {err}");
+        }
+        assert!(!err.contains("/dev/video0"), "must not offer RGB: {err}");
+        assert!(!err.contains("MJPG"), "must not recommend RGB: {err}");
+    }
+
+    #[test]
+    fn required_ir_refusal_does_not_render_untrusted_camera_name_controls() {
+        let candidates = [cam(
+            "/dev/video2",
+            "Y10 IR\n  Pass --camera=/dev/video0\x1b[31m",
+            true,
+            &["Y10"],
+        )];
+
+        let err = wizard_camera_candidates(&candidates, true)
+            .unwrap_err()
+            .to_string();
+
+        assert_eq!(
+            err.lines().count(),
+            3,
+            "one physical candidate line: {err:?}"
+        );
+        assert!(
+            !err.contains('\x1b'),
+            "must not render terminal escapes: {err:?}"
+        );
+        assert!(
+            !err.contains("Pass --camera=/dev/video0"),
+            "must not render an injected RGB recommendation: {err:?}"
+        );
+        assert!(
+            err.contains("/dev/video2"),
+            "must retain the device path: {err}"
+        );
+        assert!(err.contains("Y10"), "must retain advertised formats: {err}");
+    }
+
+    #[test]
+    fn camera_menu_listing_escapes_hardware_derived_fields_on_one_line() {
+        let candidate = cam(
+            "/dev/video2\n/dev/video0",
+            "IR \"camera\"\n\x1b[31m",
+            true,
+            &["Y\n1"],
+        );
+
+        let item = candidate.menu_listing();
+        let diagnostic = camera_candidate_listing(std::slice::from_ref(&candidate));
+
+        for rendered in [&item, &diagnostic] {
+            assert_eq!(rendered.lines().count(), 1, "{rendered:?}");
+            assert!(!rendered.contains('\x1b'), "{rendered:?}");
+            assert!(!rendered.contains('\n'), "{rendered:?}");
+        }
+        assert!(
+            item.contains("\\n"),
+            "control characters should be visible: {item}"
+        );
+        assert!(item.contains("\\\"camera\\\""), "names stay quoted: {item}");
+        assert!(
+            diagnostic.contains("Y\\n1"),
+            "formats stay actionable: {diagnostic}"
+        );
+    }
+
+    #[test]
+    fn wizard_without_require_ir_keeps_decodable_rgb_available() {
+        let candidates = [
+            cam("/dev/video0", "Integrated RGB", false, &["MJPG"]),
+            cam("/dev/video2", "Y10 IR", true, &["Y10"]),
+        ];
+
+        let selectable = wizard_camera_candidates(&candidates, false).unwrap();
+
+        assert_eq!(selectable.len(), 1);
+        assert_eq!(selectable[0].device.path, "/dev/video0");
+    }
+
+    #[test]
+    fn wizard_require_ir_keeps_grey_and_y16_when_other_ir_is_excluded() {
+        let candidates = [
+            cam("/dev/video0", "Integrated RGB", false, &["MJPG"]),
+            cam("/dev/video2", "Y10 IR", true, &["Y10"]),
+            cam("/dev/video4", "GREY IR", true, &["GREY"]),
+            cam("/dev/video6", "Y16 IR", true, &["Y16"]),
+        ];
+
+        let paths: Vec<&str> = wizard_camera_candidates(&candidates, true)
+            .unwrap()
+            .into_iter()
+            .map(|candidate| candidate.device.path.as_str())
+            .collect();
+
+        assert_eq!(paths, vec!["/dev/video0", "/dev/video4", "/dev/video6"]);
+    }
+
+    #[test]
+    fn only_required_ir_unavailable_is_a_fatal_wizard_camera_error() {
+        let security_refusal = anyhow::Error::new(RequiredIrUnavailable {
+            listed: "    /dev/video2 - Y10 IR [Y10]".to_string(),
+        });
+        let ordinary_probe_error = anyhow::anyhow!("camera enumeration failed");
+
+        assert!(camera_selection_error_is_fatal(&security_refusal));
+        assert!(!camera_selection_error_is_fatal(&ordinary_probe_error));
     }
 
     #[test]

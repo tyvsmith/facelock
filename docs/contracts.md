@@ -290,6 +290,23 @@ Supplying a choice flag suppresses the corresponding wizard step. `auto` means
 gives the default. Under `--non-interactive`, an unresolvable choice is an error,
 never a prompt.
 
+Setup's automatic camera choices apply the same post-classification decodability
+predicate as device.path-unset auto-detection. The interactive wizard excludes
+nodes that advertise none of GREY/Y16/YUYV/NV12/MJPG before it auto-selects or
+presents candidates, and `--camera auto` considers only the remaining
+IR-classified nodes. Exclusion never reclassifies a node: an IR node whose only
+formats are Y8/Y10/Y12 remains IR, but setup reports its path and advertised
+formats and does not select it. GREY and Y16 remain eligible. If
+`security.require_ir = true` and IR-classified nodes were detected but none has
+a decodable format, the wizard aborts setup before constructing its menu,
+reports every excluded IR path and format, and never presents, recommends, or
+persists an RGB fallback; unrelated camera-enumeration and prompt failures
+retain the wizard's recoverable camera-step behavior. With `require_ir = false`,
+decodable RGB nodes remain explicit wizard choices. `--camera auto` likewise
+errors instead of falling back to RGB when no usable IR candidate remains. An
+explicit `--camera /dev/videoN` remains an operator override and is still
+subject to the auth/open fail-closed checks.
+
 ### facelock pam Semantics
 
 `facelock pam add | remove | status` owns every write to `/etc/pam.d`.
