@@ -4,7 +4,7 @@ FROM registry.fedoraproject.org/fedora:44@sha256:fc3ec3da3ce49de0da0bab5a33223e9
 
 # dbus-daemon (Fedora ships dbus-broker by default) is needed for the runtime
 # D-Bus tests in pkg-validate.sh, including the polkit agent boundary check.
-RUN dnf -y install pam dbus dbus-daemon rpm-build systemd binutils glibc libxkbcommon tpm2-tss ca-certificates openssl-libs python3 && dnf clean all
+RUN dnf -y install pam dbus dbus-daemon rpm-build systemd binutils glibc libxkbcommon tpm2-tss ca-certificates openssl-libs python3 util-linux && dnf clean all
 
 # Build pamtester from source (not in Fedora repos)
 COPY test/install-pamtester.sh /tmp/install-pamtester.sh
@@ -33,21 +33,47 @@ COPY LICENSE-APACHE /build/LICENSE-APACHE
 
 # Copy helper script, test validation, and PAM test config
 COPY test/build-rpm-prebuilt.sh /build/test/build-rpm-prebuilt.sh
+COPY .github/workflows/scripts/run-networkless.sh /run-networkless.sh
+COPY .github/workflows/scripts/validate-rpm.sh /validate-rpm.sh
 COPY test/pkg-validate.sh /pkg-validate.sh
 COPY test/polkit-agent-validate.sh /polkit-agent-validate.sh
 COPY test/pam.d/facelock-test /etc/pam.d/facelock-test
-RUN chmod +x /build/test/build-rpm-prebuilt.sh /pkg-validate.sh /polkit-agent-validate.sh
+RUN chmod +x /build/test/build-rpm-prebuilt.sh /run-networkless.sh /validate-rpm.sh /pkg-validate.sh /polkit-agent-validate.sh
 
-# Download portable CPU-only ONNX Runtime (same as CI bundles in release packages)
-ARG ORT_VERSION=1.20.1
-ADD https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz /tmp/ort.tgz
-RUN mkdir -p /build/onnxruntime/lib && \
-    tar xzf /tmp/ort.tgz -C /tmp && \
-    cp /tmp/onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION} /build/onnxruntime/lib/libonnxruntime.so && \
-    rm -rf /tmp/ort.tgz /tmp/onnxruntime-linux-x64-${ORT_VERSION}
+# Fetch and verify the same reviewed CPU-only archive as release.yml. This is a
+# distinct network stage; test/build-rpm-prebuilt.sh performs no downloads.
+ENV ORT_VERSION=1.20.1 \
+    ORT_SOURCE_URL=https://github.com/microsoft/onnxruntime/releases/download/v1.20.1/onnxruntime-linux-x64-1.20.1.tgz \
+    ORT_ARCHIVE_SHA256=67db4dc1561f1e3fd42e619575c82c601ef89849afc7ea85a003abbac1a1a105 \
+    ORT_LIBRARY_SHA256=a5faaf78a37590d3fe640f887620e74f6022d34550172b91ad2131bf0ad77d64 \
+    ORT_GIT_COMMIT=5c1b7ccbff7e5141c1da7a9d963d660e5741c319 \
+    ORT_LICENSE=MIT
+RUN curl --output /tmp/ort.tgz --proto '=https' --tlsv1.2 -fsSL "$ORT_SOURCE_URL" && \
+    echo "$ORT_ARCHIVE_SHA256  /tmp/ort.tgz" | sha256sum --check && \
+    tar -xzf /tmp/ort.tgz -C /tmp && \
+    ORT_ROOT="/tmp/onnxruntime-linux-x64-${ORT_VERSION}" && \
+    test "$(cat "$ORT_ROOT/VERSION_NUMBER")" = "$ORT_VERSION" && \
+    test "$(cat "$ORT_ROOT/GIT_COMMIT_ID")" = "$ORT_GIT_COMMIT" && \
+    echo "$ORT_LIBRARY_SHA256  $ORT_ROOT/lib/libonnxruntime.so.${ORT_VERSION}" | sha256sum --check && \
+    mkdir -p /build/onnxruntime/lib && \
+    cp "$ORT_ROOT/lib/libonnxruntime.so.${ORT_VERSION}" /build/onnxruntime/lib/libonnxruntime.so && \
+    cp "$ORT_ROOT/LICENSE" "$ORT_ROOT/ThirdPartyNotices.txt" "$ORT_ROOT/VERSION_NUMBER" "$ORT_ROOT/GIT_COMMIT_ID" /build/onnxruntime/ && \
+    printf '%s\n\n%s\n%s\n%s\n%s\n' \
+      "ONNX Runtime ${ORT_VERSION} (${ORT_LICENSE})" \
+      "Upstream archive: ${ORT_SOURCE_URL}" \
+      "Archive SHA-256: ${ORT_ARCHIVE_SHA256}" \
+      "Upstream commit: ${ORT_GIT_COMMIT}" \
+      "Library SHA-256: ${ORT_LIBRARY_SHA256}" > /build/onnxruntime/PROVENANCE.md && \
+    python3 -c 'import json, os, pathlib; pathlib.Path("/build/onnxruntime/manifest.json").write_text(json.dumps({"component":"onnxruntime","version":os.environ["ORT_VERSION"],"purl":"pkg:github/microsoft/onnxruntime@"+os.environ["ORT_VERSION"],"license":os.environ["ORT_LICENSE"],"source_url":os.environ["ORT_SOURCE_URL"],"source_sha256":os.environ["ORT_ARCHIVE_SHA256"],"upstream_commit":os.environ["ORT_GIT_COMMIT"],"library_sha256":os.environ["ORT_LIBRARY_SHA256"],"provenance":"GitHub release archive tied to the reviewed upstream commit"}, indent=2, sort_keys=True)+"\n")' && \
+    cd /build/onnxruntime && \
+    sha256sum GIT_COMMIT_ID LICENSE PROVENANCE.md ThirdPartyNotices.txt VERSION_NUMBER lib/libonnxruntime.so manifest.json > SHA256SUMS && \
+    sha256sum --check SHA256SUMS && \
+    rm -rf /tmp/ort.tgz "$ORT_ROOT"
 
 # Build the .rpm from pre-built binaries and install it
-RUN bash /build/test/build-rpm-prebuilt.sh "0.0.0" && \
+RUN /run-networkless.sh bash /build/test/build-rpm-prebuilt.sh "0.0.0" && \
+    RPM_FILE="$(find . -maxdepth 1 -name '*.rpm' -print -quit)" && \
+    /validate-rpm.sh "$RPM_FILE" direct && \
     dnf install -y ./*.rpm && \
     rm -rf ~/rpmbuild ./*.rpm
 

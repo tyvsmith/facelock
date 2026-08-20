@@ -79,7 +79,7 @@ run_test "tmpfiles file exists" "[ -f /usr/lib/tmpfiles.d/facelock.conf ] || [ -
 
 run_warn_check "facelock-polkit-agent binary" "[ -x /usr/bin/facelock-polkit-agent ]"
 run_warn_check "quirks database files" "ls /usr/share/facelock/quirks.d/*.toml >/dev/null 2>&1"
-run_warn_check "bundled ONNX Runtime" "[ -f /usr/lib/facelock/libonnxruntime.so ] || [ -f /usr/lib64/facelock/libonnxruntime.so ]"
+run_warn_check "bundled ONNX Runtime" "[ -f /usr/lib/facelock/libonnxruntime.so.1 ] || [ -f /usr/lib64/facelock/libonnxruntime.so.1 ]"
 
 run_test "PAM module exports pam_sm_authenticate" "nm -D \"$PAM_MODULE_PATH\" | grep -q pam_sm_authenticate"
 run_test "PAM module exports pam_sm_setcred" "nm -D \"$PAM_MODULE_PATH\" | grep -q pam_sm_setcred"
@@ -93,7 +93,7 @@ run_test "D-Bus policy XML is valid" "if command -v xmllint >/dev/null 2>&1; the
 
 run_test "no facelock group is created (ADR 010 retired it)" "! getent group facelock" 0
 
-run_test "facelock runtime directories exist (tmpfiles)" "if command -v systemd-tmpfiles >/dev/null 2>&1; then systemd-tmpfiles --create >/dev/null 2>&1 || true; fi; [ -d /var/lib/facelock ] && [ -d /var/log/facelock ]"
+run_test "facelock runtime directories exist after package transaction" "[ -d /var/lib/facelock ] && [ -d /var/log/facelock ]"
 
 # PAM tests (only if pamtester is available)
 if command -v pamtester >/dev/null 2>&1 && [ -f /etc/pam.d/facelock-test ]; then

@@ -6,6 +6,17 @@ License:        MIT OR Apache-2.0
 URL:            https://github.com/tyvsmith/facelock
 Source0:        %{name}-%{version}.tar.gz
 
+%bcond_with bundled_ort
+
+# The direct bundle contains reviewed, already-stripped upstream ORT bytes.
+# Fedora's generic strip hooks rewrite those bytes even when `file` reports
+# them stripped, invalidating the pinned library checksum. Rust release
+# artifacts are also already stripped. System/COPR builds retain Fedora's
+# normal post-processing.
+%if %{with bundled_ort}
+%global __strip /usr/bin/true
+%endif
+
 BuildRequires:  cargo
 BuildRequires:  rust
 BuildRequires:  gcc
@@ -17,10 +28,15 @@ BuildRequires:  wayland-devel
 BuildRequires:  libxkbcommon-devel
 BuildRequires:  systemd-rpm-macros
 BuildRequires:  tpm2-tss-devel
+%if %{without bundled_ort}
+BuildRequires:  onnxruntime
+%endif
 
 Requires:       pam
 Requires:       tpm2-tss
+%if %{without bundled_ort}
 Requires:       onnxruntime
+%endif
 Recommends:     authselect
 
 %description
@@ -82,24 +98,46 @@ install -Dm644 dist/authselect/facelock/README %{buildroot}%{_datadir}/authselec
 install -Dm755 dist/omarchy/omarchy-setup-security-face %{buildroot}%{_bindir}/omarchy-setup-security-face
 install -Dm755 dist/omarchy/omarchy-remove-security-face %{buildroot}%{_bindir}/omarchy-remove-security-face
 
-# Bundled CPU ONNX Runtime (if present — added by release CI).
-# Always create %{_libdir}/facelock/ so the %files entry resolves even when ORT
-# is not bundled (the Packit/COPR from-source build, which depends on system
-# onnxruntime instead). The CI RPM additionally installs the bundled .so here.
+# The direct release RPM is built with --with bundled_ort from a separately
+# fetched, checksum-verified artifact. The default Packit/COPR build must not
+# contain this directory and uses Fedora's onnxruntime package instead.
+%if %{with bundled_ort}
+test -s onnxruntime/lib/libonnxruntime.so
+test -s onnxruntime/manifest.json
+(cd onnxruntime && sha256sum --check SHA256SUMS)
 install -dm755 %{buildroot}%{_libdir}/facelock
-if [ -f onnxruntime/lib/libonnxruntime.so ]; then
-    install -Dm755 onnxruntime/lib/libonnxruntime.so %{buildroot}%{_libdir}/facelock/libonnxruntime.so
-fi
+install -Dm755 onnxruntime/lib/libonnxruntime.so %{buildroot}%{_libdir}/facelock/libonnxruntime.so.1.20.1
+ln -s libonnxruntime.so.1.20.1 %{buildroot}%{_libdir}/facelock/libonnxruntime.so.1
+
+install -dm755 %{buildroot}%{_docdir}/%{name}
+install -Dm644 onnxruntime/manifest.json %{buildroot}%{_docdir}/%{name}/onnxruntime-manifest.json
+install -Dm644 onnxruntime/SHA256SUMS %{buildroot}%{_docdir}/%{name}/onnxruntime-SHA256SUMS
+install -Dm644 onnxruntime/PROVENANCE.md %{buildroot}%{_docdir}/%{name}/onnxruntime-PROVENANCE.md
+install -Dm644 onnxruntime/ThirdPartyNotices.txt %{buildroot}%{_docdir}/%{name}/onnxruntime-ThirdPartyNotices.txt
+install -Dm644 onnxruntime/VERSION_NUMBER %{buildroot}%{_docdir}/%{name}/onnxruntime-VERSION_NUMBER
+install -Dm644 onnxruntime/GIT_COMMIT_ID %{buildroot}%{_docdir}/%{name}/onnxruntime-GIT_COMMIT_ID
+install -Dm644 onnxruntime/LICENSE %{buildroot}%{_licensedir}/%{name}/onnxruntime-LICENSE
+%endif
 
 # Licenses
 install -Dm644 LICENSE-MIT %{buildroot}%{_datadir}/licenses/%{name}/LICENSE-MIT
 install -Dm644 LICENSE-APACHE %{buildroot}%{_datadir}/licenses/%{name}/LICENSE-APACHE
 
 %check
-# Tests require hardware (camera); skip in package build
+%if %{without bundled_ort}
+# Prove Fedora's runtime-only package exposes the stable SONAME and can create
+# a real session. The model is a checksum-pinned 130-byte upstream ORT fixture.
+! rpm -q onnxruntime-devel
+base64 --decode test/fixtures/ort-smoke-model.onnx.b64 > %{_builddir}/ort-smoke-model.onnx
+echo "71f431c4e9321ec6fbeb158d02ed240459a7dcc98673fa79a4f439ce42efaf10  %{_builddir}/ort-smoke-model.onnx" | sha256sum --check
+FACELOCK_ORT_SMOKE_MODEL=%{_builddir}/ort-smoke-model.onnx \
+    cargo test -p facelock-face --lib \
+        provider::tests::live_runtime_creates_session_from_checksum_pinned_minimal_model \
+        -- --ignored --exact
+%endif
 
 %post
-%tmpfiles_create %{_tmpfilesdir}/facelock.conf
+%tmpfiles_create facelock.conf
 # ADR 010 retired the facelock group: nothing is group-owned any more, so
 # remove a group an older install created. Best-effort.
 if getent group facelock >/dev/null 2>&1; then
@@ -182,7 +220,16 @@ fi
 %{_bindir}/omarchy-setup-security-face
 %{_bindir}/omarchy-remove-security-face
 %{_libdir}/security/pam_facelock.so
+%if %{with bundled_ort}
 %{_libdir}/facelock/
+%doc %{_docdir}/%{name}/onnxruntime-manifest.json
+%doc %{_docdir}/%{name}/onnxruntime-SHA256SUMS
+%doc %{_docdir}/%{name}/onnxruntime-PROVENANCE.md
+%doc %{_docdir}/%{name}/onnxruntime-ThirdPartyNotices.txt
+%doc %{_docdir}/%{name}/onnxruntime-VERSION_NUMBER
+%doc %{_docdir}/%{name}/onnxruntime-GIT_COMMIT_ID
+%license %{_licensedir}/%{name}/onnxruntime-LICENSE
+%endif
 %config(noreplace) %{_sysconfdir}/facelock/config.toml
 %{_datadir}/facelock/quirks.d/
 %{_unitdir}/facelock-daemon.service

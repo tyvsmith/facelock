@@ -32,14 +32,14 @@ impl FaceDetector {
         threads: u32,
         execution_provider: &str,
     ) -> Result<Self> {
-        crate::provider::ensure_runtime_loaded()
+        crate::provider::ensure_runtime_loaded(execution_provider)
             .map_err(|e| FacelockError::Detection(format!("Failed to load ONNX Runtime: {e}")))?;
 
         let builder = Session::builder()
             .map_err(|e| {
                 FacelockError::Detection(format!("Failed to create session builder: {e}"))
             })?
-            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .with_optimization_level(GraphOptimizationLevel::All)
             .map_err(|e| {
                 FacelockError::Detection(format!("Failed to set optimization level: {e}"))
             })?

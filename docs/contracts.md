@@ -20,6 +20,7 @@ follow it.
   - [facelock is-enrolled Exit Codes](#facelock-is-enrolled-exit-codes)
   - [facelock auth Exit Codes](#facelock-auth-exit-codes)
 - [Release Channels and APT Paths](#release-channels-and-apt-paths)
+- [ONNX Runtime Trust and Fedora RPM Modes](#onnx-runtime-trust-and-fedora-rpm-modes)
 - [Package Lifecycle Ownership](#package-lifecycle-ownership)
 - [Filesystem Paths](#filesystem-paths)
   - [Audit Log Entries](#audit-log-entries)
@@ -1328,12 +1329,14 @@ allowlist: `fedora-43-x86_64`, `fedora-44-x86_64`, or
 is any other undeclared target. Rawhide is not a Packit staging or production
 release target; both `fedora-rawhide` and `fedora-rawhide-x86_64` fail
 validation. The prerelease rule is that no alpha may publish to Rawhide.
-Fedora 43 and Fedora 44 supply full lifecycle evidence; Fedora 45 supplies
-required build/runtime smoke. Rawhide cannot supply lifecycle, artifact,
-upgrade, rollback, served-version, or availability evidence; it is limited to
-best-effort pinned Track D smoke only. A Rawhide-only failure is not
-alpha-blocking. Promotion requires a separately reviewed amendment and full
-Fedora gates.
+Fedora 43 and Fedora 44 are the required full-lifecycle targets; Fedora 45 is a
+required build/runtime-smoke target. Issue #230 owns the actual lifecycle
+evidence. Rawhide cannot supply lifecycle, artifact, upgrade, rollback,
+served-version, or availability evidence; it is limited to best-effort pinned
+Track D smoke only. It is non-release and non-gating: its absence or a
+Rawhide-only failure is not alpha-blocking, and its smoke result is not alpha
+acceptance or release evidence. Promotion requires a separately reviewed
+amendment and full Fedora gates.
 
 Issue #236 owns pre-tag and post-publication proof that optional Rawhide serves
 no alpha or candidate build. This contract does not provision, publish to, or
@@ -1355,6 +1358,165 @@ host operating-system codename while keeping the `facelock` component. Each
 stable publication consumes exactly one matching package for all four suites,
 and a prerelease or cross-suite version is rejected before signing or repository
 writes.
+
+## ONNX Runtime Trust and Fedora RPM Modes
+
+ONNX Runtime (ORT) is executable code loaded into the daemon, the
+PAM-spawned oneshot helper, and other privileged Facelock processes. A runtime
+must therefore be selected deterministically and validated **before** it is
+mapped. Loading a bare `libonnxruntime.so.1` through the dynamic linker's
+ambient search path and inspecting it afterward is forbidden: ELF constructors
+may already have executed before any post-map rejection.
+
+### Deterministic candidate order
+
+The resolver considers candidates in this order and stops at the first one
+that passes the applicable trust checks and initializes ORT:
+
+1. A non-empty `ORT_DYLIB_PATH`, **only in an unprivileged process**.
+2. Trusted system locations for the configured GPU provider. ROCm first checks
+   `libonnxruntime.so.1` beneath `/usr/lib64/rocm/lib`, then
+   `/usr/lib/rocm/lib`; any non-CPU provider then checks the configured-GPU
+   compatibility name `libonnxruntime.so` beneath `/usr/lib64`, then
+   `/usr/lib`.
+3. Package-manager stable-SONAME candidates
+   `/usr/lib64/libonnxruntime.so.1`, then
+   `/usr/lib/libonnxruntime.so.1`.
+4. Facelock package-owned stable-SONAME candidates beneath
+   `/usr/lib64/facelock`, then `/usr/lib/facelock`, followed by the existing
+   package-owned unversioned Debian compatibility names in those same roots.
+
+The CPU provider skips step 2. A system runtime therefore precedes a bundled
+CPU fallback even in a direct package. A missing or rejected candidate advances
+to the next fixed candidate; no other directory is searched.
+
+A process is privileged when its real or effective UID or GID is 0, its
+real/effective UID or GID differs, the kernel marks it `AT_SECURE`, or the
+calling thread has any inheritable, permitted, effective, or ambient Linux
+capability. Capability inspection reads `/proc/thread-self/status`, never the
+thread-group leader's status; an unreadable file or a missing, duplicate,
+empty, or malformed capability field fails closed as privileged. Every such
+process ignores `ORT_DYLIB_PATH` entirely and has no `/usr/local` candidate.
+The explicit override is an unprivileged caller choice: it is still opened and
+checked as a bounded ELF with the required architecture and SONAME before
+mapping, but it does not claim package-manager root ownership.
+
+### Privileged pre-map validation
+
+Every privileged system or bundle candidate has a fixed approved trust root
+and a normal relative path beneath it. One descriptor-held component walker is
+used on every kernel, with no alternate or weaker kernel-version path. The
+loader:
+
+- requires the trust root, each ancestor, and every traversed directory to be
+  root-owned and not group- or world-writable; a linked trust root is rejected,
+  and the fixed root is opened and retained with
+  `O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK`
+- inspects every relative component and link through a held parent descriptor
+  using `O_PATH|O_NOFOLLOW|O_NONBLOCK`; directory links, absolute targets,
+  non-normal targets such as `.` or `..`, and paths that escape and later
+  return beneath the root are rejected
+- follows only a root-owned, single-link, relative package SONAME chain beneath
+  the held root; every link target is decomposed and walked again from held
+  descriptors rather than resolved by an ambient pathname lookup
+- opens the final object through its held parent with
+  `O_RDONLY|O_NOFOLLOW|O_NONBLOCK`, then requires a bounded regular file with
+  exactly one hard link, root ownership, no group/world write bits, no
+  setuid/setgid bits, and no `security.capability` xattr
+- requires device, inode, link count, size, UID/GID, mode, modification time,
+  and change time to remain stable across component inspection, the final
+  open, the bounded read, and the last pre-map check
+- requires a 64-bit ELF for the running architecture, SONAME exactly
+  `libonnxruntime.so.1`, and no RPATH/RUNPATH entry except exactly `$ORIGIN` or
+  `${ORIGIN}`
+
+Only after every check passes is the same held read descriptor mapped (for
+example through `/proc/self/fd/<fd>`). No pathname is reopened after validation.
+
+If every candidate is missing, rejected, or fails ORT initialization, model
+loading fails and authentication degrades through its existing password
+fallback. Authentication never downloads a runtime or model.
+
+### Fedora package modes
+
+`dist/facelock.spec` has two mutually exclusive ORT modes:
+
+| RPM channel | Spec mode | Runtime payload and dependency contract |
+|-------------|-----------|-----------------------------------------|
+| GitHub direct RPM (Fedora 44) | `--with bundled_ort` | Installs the pinned CPU runtime as `%{_libdir}/facelock/libonnxruntime.so.1.20.1` with a package-owned `libonnxruntime.so.1` symlink; carries no `BuildRequires` or `Requires` on Fedora `onnxruntime` |
+| Packit/COPR (Fedora 43/44/45) | default `%bcond_with bundled_ort` disabled | Contains no bundled ORT library or bundle metadata; `BuildRequires` and `Requires` Fedora's runtime-only `onnxruntime` package, with `onnxruntime-devel` absent |
+
+The COPR `%check` constructs a real ORT session from the checksum-pinned
+minimal model in `test/fixtures/`; finding a library or running
+`facelock --version` is not a substitute. The two RPM validators independently
+reject a direct RPM with a system-ORT dependency and a COPR RPM with bundled
+payload, and reject the inverse missing dependency/payload.
+
+Track D validates only direct/COPR build success, real ORT runtime
+initialization, and the intended payload and dependency policy. It supplies no
+clean-install, upgrade, erase, rollback, served-repository, availability,
+alpha-acceptance, or release evidence. Issue #230 owns exact-artifact package
+lifecycle proof; issue #236 owns staging and production repository publication
+and served-version proof.
+
+Optional experimental Rawhide may attempt only the separately digest-pinned,
+best-effort system-ORT build/session smoke. It is non-release and non-gating,
+must not publish or modify a COPR channel, and cannot substitute for any
+supported Fedora result or any lifecycle, artifact, served-version,
+availability, alpha-acceptance, or release evidence.
+
+### Reviewed direct-bundle identity
+
+The direct RPM bundle is exactly:
+
+| Field | Reviewed value |
+|-------|----------------|
+| Version | `1.20.1` |
+| Upstream archive | `https://github.com/microsoft/onnxruntime/releases/download/v1.20.1/onnxruntime-linux-x64-1.20.1.tgz` |
+| Archive SHA-256 | `67db4dc1561f1e3fd42e619575c82c601ef89849afc7ea85a003abbac1a1a105` |
+| Upstream commit | `5c1b7ccbff7e5141c1da7a9d963d660e5741c319` |
+| Library SHA-256 | `a5faaf78a37590d3fe640f887620e74f6022d34550172b91ad2131bf0ad77d64` |
+| License identity | MIT |
+
+The release network stage downloads the archive to a file and verifies the
+archive digest **before extraction**. It then verifies `VERSION_NUMBER`,
+`GIT_COMMIT_ID`, and the library digest against the reviewed values. Streaming
+an unverified response into `tar` is forbidden.
+
+The prepared bundle contains the exact library plus upstream `LICENSE`,
+`ThirdPartyNotices.txt`, `VERSION_NUMBER`, and `GIT_COMMIT_ID`, and generated
+`PROVENANCE.md`, `manifest.json`, and `SHA256SUMS`. The checksum file covers
+the library and every listed metadata/provenance file except itself. Direct RPM
+assembly requires and re-verifies the complete prepared bundle.
+
+Before creating the source archive or any rpmbuild tree, the whole assembly
+enters `.github/workflows/scripts/run-networkless.sh`. That wrapper uses
+util-linux `enosys` as a fail-closed seccomp boundary: it denies socket
+creation/connection and message syscalls plus `io_uring_setup`, closes every
+inherited non-stdio file descriptor, and requires a socket probe to fail with
+`ENOSYS` before it invokes the assembly command. Cargo offline mode remains
+defense in depth; it is not the network-isolation boundary.
+
+The installed `libonnxruntime.so.1.20.1` bytes must retain the exact reviewed
+library digest above. Fedora strip/debug/post-processing must not rewrite the
+pinned runtime; bundled mode disables the modifying strip hook, and validation
+extracts the final RPM member and checks its digest. The RPM also ships the
+license, notices, version, commit, checksums, provenance, and component manifest
+under its documentation/license directories.
+
+Those metadata files are inputs for later SBOM, release-manifest, attestation,
+and signing work. Their presence does **not** claim that Track D generated or
+signed a final SBOM/manifest, signed the RPM, or published a release. Issue
+#235 owns native signing and final immutable direct-artifact publication.
+
+### RPM tmpfiles transaction
+
+The RPM transaction creates Facelock's runtime directories through the
+package-scoped `%tmpfiles_create facelock.conf` invocation. It must not run a
+global `systemd-tmpfiles --create` or otherwise process unrelated packages'
+tmpfiles configuration. Package validation observes the directories created by
+the actual install transaction and does not manufacture them with a later
+global tmpfiles command.
 
 ## Package Lifecycle Ownership
 

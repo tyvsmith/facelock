@@ -16,9 +16,6 @@ cp dist/facelock.spec ~/rpmbuild/SPECS/facelock.spec
 sed -i "s|^Version:.*|Version:        ${VERSION}|" ~/rpmbuild/SPECS/facelock.spec
 sed -i "s|^Release:.*|Release:        1%{?dist}|" ~/rpmbuild/SPECS/facelock.spec
 sed -i 's|^cargo build.*|true|g' ~/rpmbuild/SPECS/facelock.spec
-# Ensure facelock lib dir exists even without bundled ORT
-sed -i '/^if \[ -f onnxruntime/i install -dm755 %{buildroot}%{_libdir}/facelock' ~/rpmbuild/SPECS/facelock.spec
-
 # Create source tarball INCLUDING target/release/ (pre-built binaries)
 tar --exclude=.git \
     --transform "s|^\.|facelock-${VERSION}|" \
@@ -29,6 +26,7 @@ tar --exclude=.git \
 # Disable debuginfo/debugsource — pre-built binaries have no debug source files.
 rpmbuild --define "_topdir $HOME/rpmbuild" \
          --define "debug_package %{nil}" \
+         --with bundled_ort \
          --nodeps \
          -bb ~/rpmbuild/SPECS/facelock.spec
 

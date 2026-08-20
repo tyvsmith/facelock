@@ -87,7 +87,8 @@ git push origin main --tags
 The `.github/workflows/release.yml` workflow:
 
 1. Builds release binaries and creates a GitHub Release
-2. Downloads ONNX Runtime for bundling in non-Arch packages
+2. Downloads the pinned ONNX Runtime archive to a file, verifies its reviewed
+   SHA-256 before extraction, and prepares license/provenance/manifest inputs
 3. Builds four suite-specific `.deb` packages for trixie, bookworm, resolute, and noble
 4. Builds the direct `.rpm` package in the pinned Fedora 44 container and validates contents
 5. Validates Nix flake evaluation
@@ -307,10 +308,12 @@ prerelease staging project is `tyvsmith/facelock-testing`, but provisioning or
 changing it belongs to issue #236 and is not performed by this release-identity
 change.
 
-The COPR RPM is built **from source** and does **not** bundle ONNX Runtime — the
-spec's `Requires: onnxruntime` pulls Fedora's system `onnxruntime` package
-instead. (The `ort` crate feature `api-20` keeps the binary compatible with
-Fedora's ONNX Runtime.)
+The COPR RPM is built **from source** with the spec's default
+`%bcond_with bundled_ort` mode and does **not** bundle ONNX Runtime. Its
+`BuildRequires`/`Requires: onnxruntime` use Fedora's runtime-only package; the
+package check asserts `onnxruntime-devel` is absent and creates a real ORT
+session from the checksum-pinned minimal model in `test/fixtures/`. (The `ort`
+crate feature `api-20` keeps the binary compatible with Fedora's runtime.)
 
 **One-time setup (~10 minutes):**
 
@@ -331,7 +334,8 @@ Fedora's ONNX Runtime.)
    default, so this toggle is required or the build fails resolving crates.
 
 Verify the COPR build locally before relying on it with `just test-copr`, which
-reproduces the Packit SRPM + `mock` from-source rebuild on a Fedora chroot.
+reproduces the Packit SRPM + `mock` from-source rebuild on a Fedora chroot and
+checks that the payload has no bundle while its dependencies select Fedora ORT.
 
 Only a stable-tagged config with the deliberately restored production release
 trigger can populate production COPR automatically. Prerelease staging project
@@ -440,11 +444,15 @@ build works against any runtime ≥ 1.20.
 
 ONNX Runtime is sourced differently per channel:
 
-- **GitHub-Release `.deb` and `.rpm`**: bundle a CPU-only `libonnxruntime.so`
-  (ORT 1.20.1) at `/usr/lib/facelock/libonnxruntime.so`, because ONNX Runtime is
-  not available in Ubuntu repositories.
-- **COPR RPM** (built from source by Packit): does **not** bundle ORT. The spec's
-  `Requires: onnxruntime` pulls Fedora's system `onnxruntime` package.
+- **GitHub-Release `.deb`**: bundles CPU-only ORT 1.20.1 under
+  `/usr/lib/facelock/`, because ONNX Runtime is not available in Ubuntu
+  repositories.
+- **GitHub-Release direct `.rpm`**: builds the spec with
+  `--with bundled_ort`, installs `libonnxruntime.so.1` under
+  `%{_libdir}/facelock/`, and has no system `onnxruntime` dependency.
+- **COPR RPM** (built from source by Packit): leaves the spec's
+  `%bcond_with bundled_ort` disabled, contains no bundled runtime, and requires
+  Fedora's system `onnxruntime` package.
 - **Arch Linux** (PKGBUILD): depends on the system `onnxruntime` package
   (available in official repos).
 
@@ -452,10 +460,29 @@ The bundled ORT is a CPU-only fallback — users who install a system-wide
 GPU-enabled ONNX Runtime (CUDA, ROCm, OpenVINO) will have it take precedence
 automatically (the search order prefers system paths over the bundled copy).
 
-The bundled ORT version is pinned in `.github/workflows/release.yml` as
-`ORT_VERSION`. When upgrading the `ort` crate dependency, update `ORT_VERSION`
-and, if the new crate requires a higher floor, the `api-NN` feature in
-`crates/facelock-face/Cargo.toml`.
+The reviewed pins in `.github/workflows/release.yml` include the version,
+upstream URL, archive and library SHA-256 values, upstream commit, and MIT
+license identity. The download job verifies the archive before extraction and
+the library after extraction, then emits `manifest.json`, `SHA256SUMS`, and
+`PROVENANCE.md` beside upstream `LICENSE`, `ThirdPartyNotices.txt`,
+`VERSION_NUMBER`, and `GIT_COMMIT_ID`. Direct RPM assembly re-verifies those
+inputs and enters `.github/workflows/scripts/run-networkless.sh` before creating
+the source archive or rpmbuild tree. That wrapper uses util-linux `enosys` to
+deny socket and `io_uring` network syscalls, closes inherited non-stdio file
+descriptors, and requires its network probe to fail with `ENOSYS` before
+invoking `rpmbuild`; `CARGO_NET_OFFLINE=true` remains defense in depth. The RPM
+ships the reviewed inputs under its package documentation/license directories
+for SBOM and provenance consumers.
+
+When upgrading the `ort` crate dependency, update every reviewed ORT pin and
+the RPM bundle filename together and, if the crate requires a higher floor,
+the `api-NN` feature in `crates/facelock-face/Cargo.toml`.
+
+Rawhide may be attempted only with the digest-pinned experimental environment
+recorded in `dist/release-matrix.json`. A Rawhide system-ORT build/session smoke
+is best effort: absence or failure is nonblocking and can never stand in for
+lifecycle, upgrade, rollback, artifact, served-version, availability, or alpha
+release evidence. It must not publish or modify a COPR channel.
 
 ## Upgrade Safety
 

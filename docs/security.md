@@ -343,6 +343,57 @@ permissive; see `docs/contracts.md` § *Traversal for everyone, listing for
 nobody*. What the modes here must guarantee is only that nobody but root can
 **write** them.
 
+#### C. ONNX Runtime Loader Trust (Required)
+
+ONNX Runtime is executable code loaded inside the daemon, PAM one-shot helper,
+and other privileged entry points. The loader therefore validates a candidate
+before mapping it. Privileged contexts include a zero real or effective UID or
+GID, set-id ID mismatches, the kernel's `AT_SECURE` mode, and any inheritable,
+permitted, effective, or ambient Linux capability on the calling thread. The
+capability check reads `/proc/thread-self/status`; unreadable, missing,
+duplicate, empty, or malformed capability state fails closed as privileged.
+Every privileged context ignores `ORT_DYLIB_PATH` completely and never searches
+`/usr/local`.
+
+The deterministic order is: an explicit override only for an unprivileged
+process; the trusted system locations for the configured GPU provider; the
+package manager's `/usr/lib64/libonnxruntime.so.1` and
+`/usr/lib/libonnxruntime.so.1`; then Facelock's package-owned bundle. The Fedora
+bundle uses the stable SONAME filename. Existing Debian bundles retain a
+package-owned unversioned compatibility name at the end of the same category.
+
+For every privileged system or bundle candidate, the loader opens the fixed
+approved root without following a link, then walks each relative component by
+held descriptor with `O_NOFOLLOW|O_NONBLOCK`. Directory links, absolute link
+targets, `..`, escape-and-return targets, untrusted link owners, and linked
+trust roots are rejected. A package SONAME symlink is allowed only as a
+root-owned, single-link, relative chain beneath the held root; every traversed
+directory must be root-owned and not group- or world-writable. One descriptor
+walker is used on kernels both with and without `openat2`, so an `ENOSYS` path
+cannot receive weaker checks.
+
+Before `dlopen`, the final descriptor must name a bounded regular file with
+exactly one hard link, root ownership, no group/world write bits, no
+set-user-ID/set-group-ID bits, and no `security.capability` xattr. Device,
+inode, link count, size, ownership, mode, and modification/change timestamps
+must remain stable before and after the bounded read. The bytes must be a
+64-bit ELF for the running architecture, with SONAME `libonnxruntime.so.1` and
+no RPATH/RUNPATH other than exactly `$ORIGIN` (or `${ORIGIN}`). Mapping uses
+that already validated descriptor, not a bare pathname followed by post-map
+checks. Corrupt, escaping, mutable-parent, wrong-architecture, wrong-SONAME,
+and unsafe search-path candidates are rejected and resolution continues
+fail-closed.
+
+Authentication never downloads a runtime or model. Release CI fetches a pinned
+ORT archive in a separate network stage, verifies its SHA-256 before extraction,
+and carries the license, third-party notices, version, commit, provenance,
+checksums, and manifest into package assembly. Direct RPM assembly itself only
+accepts that prepared artifact and runs entirely beneath a fail-closed seccomp
+sandbox that denies socket creation, connection/message syscalls, and
+`io_uring_setup`, closes inherited non-stdio descriptors, and proves the denial
+with an `ENOSYS` network probe before invoking `rpmbuild`. Cargo offline mode is
+additional defense; it is not the network boundary.
+
 ### 3. Embedding / Database Security
 
 **Attack**: Read or modify the SQLite database to extract biometric data or inject fake embeddings.
