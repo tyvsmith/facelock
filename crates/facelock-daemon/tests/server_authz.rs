@@ -24,7 +24,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use facelock_core::config::Config;
 use facelock_core::notify::{Notifier, NullNotifier};
-use facelock_core::types::CameraCaps;
+use facelock_core::types::{CameraCaps, IrTextureScale};
 use facelock_daemon::cancel::CancelToken;
 use facelock_daemon::handler::Handler;
 use facelock_daemon::rate_limit::RateLimiter;
@@ -488,6 +488,117 @@ async fn require_ir_flows_in_band_with_the_exact_protocol_string() {
         result.label.contains("IR camera required"),
         "PAM string-matches \"IR camera required\", got: {}",
         result.label
+    );
+}
+
+#[tokio::test]
+async fn unverified_y16_flows_in_band_without_opening_the_camera() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let emb = fixtures::known_embedding(1);
+    let store = FaceStore::open_memory().unwrap();
+    store
+        .add_model("alice", "front", &emb, "test-embedder")
+        .unwrap();
+    let config = test_config(5, 1);
+    assert!(
+        !config.security.require_ir,
+        "this test pins the no-bypass rule"
+    );
+    let rate_limiter = RateLimiter::new(5, 60);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_factory = Arc::clone(&opened);
+    let factory: MockCameraFactory = Box::new(move |_| {
+        opened_in_factory.store(true, Ordering::SeqCst);
+        Ok(MockCamera::bright(64, 64, 1))
+    });
+    let caps = CameraCaps {
+        is_ir: true,
+        ir_texture_scale: IrTextureScale::UnverifiedY16,
+        ..Default::default()
+    };
+    let svc = service(
+        Handler::new(
+            config,
+            MockFaceEngine::one_face(emb),
+            store,
+            rate_limiter,
+            caps,
+            Some(factory),
+            None,
+        )
+        .unwrap(),
+    );
+
+    let result = svc
+        .authenticate_as(alice(), "alice", CancelToken::new())
+        .await
+        .unwrap();
+    assert!(!result.matched);
+    assert_eq!(result.model_id, -2, "recoverable error sentinel");
+    assert_eq!(
+        result.label,
+        "Y16 IR texture scale is unverified; authentication requires a verified y16_bit_depth (8..=16) quirk"
+    );
+    assert!(
+        !opened.load(Ordering::SeqCst),
+        "preflight knew the scale was unverified, so it must not open the camera"
+    );
+}
+
+#[tokio::test]
+async fn negotiated_y16_drift_rejects_before_warmup_or_auth_capture() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let emb = fixtures::known_embedding(1);
+    let store = FaceStore::open_memory().unwrap();
+    store
+        .add_model("alice", "front", &emb, "test-embedder")
+        .unwrap();
+    let mut config = test_config(5, 1);
+    config.device.warmup_frames = 3;
+    let rate_limiter = RateLimiter::new(5, 60);
+    let opened = Arc::new(AtomicBool::new(false));
+    let opened_in_factory = Arc::clone(&opened);
+    let factory: MockCameraFactory = Box::new(move |_| {
+        opened_in_factory.store(true, Ordering::SeqCst);
+        Ok(MockCamera::with_frames(Vec::new()).with_caps(CameraCaps {
+            is_ir: true,
+            ir_texture_scale: IrTextureScale::UnverifiedY16,
+            ..Default::default()
+        }))
+    });
+    // Interrogation predicted GREY. Only opening reveals that the driver
+    // negotiated Y16, so this path must open but must never capture a frame.
+    let predicted_caps = CameraCaps {
+        is_ir: true,
+        ir_texture_scale: IrTextureScale::NotY16,
+        ..Default::default()
+    };
+    let svc = service(
+        Handler::new(
+            config,
+            MockFaceEngine::one_face(emb),
+            store,
+            rate_limiter,
+            predicted_caps,
+            Some(factory),
+            None,
+        )
+        .unwrap(),
+    );
+
+    let result = svc
+        .authenticate_as(alice(), "alice", CancelToken::new())
+        .await
+        .unwrap();
+
+    assert!(opened.load(Ordering::SeqCst));
+    assert!(!result.matched);
+    assert_eq!(result.model_id, -2, "recoverable error sentinel");
+    assert_eq!(
+        result.label,
+        "Y16 IR texture scale is unverified; authentication requires a verified y16_bit_depth (8..=16) quirk"
     );
 }
 

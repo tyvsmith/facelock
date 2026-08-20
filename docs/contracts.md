@@ -1601,16 +1601,29 @@ A quirk's `format_preference` is compared whitespace-trimmed and is **dropped
 with a warning** if it names a format facelock cannot decode, rather than
 winning negotiation and then failing every capture.
 
-On a Y16 device, open also pins the session's 16-bit-to-8-bit shift, which is
-never recomputed per frame (`docs/security.md` §1.C). A quirk's `y16_bit_depth`
-(8..=16) is authoritative and skips frame inspection; otherwise the shift comes
-from the brightest sample in a burst of frames captured at open (at least the
-device's `warmup_frames`; the burst stops starting captures after one second,
-so a dequeue already in flight can carry it to roughly one second plus one
-`CAPTURE_TIMEOUT`). The pinned shift belongs to
-the open camera: a warm hold (see "Camera hold" above) keeps it, and a reopen
-recalibrates. A Y16 device that produces no frame at all within the calibration
-budget fails `Camera::open` rather than opening with a guessed scale.
+On a selected or negotiated Y16 stream, authentication requires verified scale
+provenance. A valid matched quirk `y16_bit_depth` in 8..=16 produces
+`VerifiedY16 { bit_depth }` and pins the session shift to `bit_depth - 8`; a
+missing or invalid value produces `UnverifiedY16`. Scene-derived calibration may
+pin conversion for non-auth preview, enrollment, or benchmarking, but it never
+upgrades provenance and is never accepted by the absolute IR texture check.
+
+Interrogation derives the expected state from the normalized FourCC selected by
+the same quirk preference and negotiation priority used at open. Authentication
+rejects known `UnverifiedY16` before opening the camera. After `VIDIOC_S_FMT`, the
+opened camera recomputes state from the actual normalized negotiated FourCC;
+negotiation drift to unverified Y16 skips warmup/calibration capture and receives
+the same rejection before comparison. An actual GREY stream is `NotY16` and
+preserves the existing 8-bit behavior, even if that device also advertised Y16.
+
+The rejection class is `ErrorKind::Y16BitDepthRequired` with the stable rendered
+message `Y16 IR texture scale is unverified; authentication requires a verified
+y16_bit_depth (8..=16) quirk`. It uses the daemon’s in-band `-2` error sentinel
+and oneshot exit 2, both mapping to `PAM_IGNORE` so password fallback remains
+available without an auth success. This gate applies regardless of
+`security.require_ir`; disabling IR enforcement cannot bypass unknown Y16 scale.
+It never reclassifies or downgrades Y16 to RGB and never skips texture
+enforcement.
 
 Open also **rejects a padded stride**: for GREY/NV12 (`bytesperline == width`)
 and Y16/YUYV (`bytesperline == 2 * width`), a device reporting anything else
@@ -1796,6 +1809,11 @@ crate to share the type (its dependency ceiling is libc/toml/serde/zbus):
 | `IR camera required` | `IrRequired` | `PAM_IGNORE` |
 | `cancelled` (matched **exactly**) | `AuthOutcome::Cancelled` | `PAM_IGNORE` |
 
+`Y16BitDepthRequired` is a stable recoverable class even though PAM does not
+substring-match it: the daemon’s `-2` encoding maps it to `PAM_IGNORE`, and
+oneshot exit 2 maps it to the same code. Its full rendered message is pinned by
+`ErrorKind::classify` and tests.
+
 Changing any of these strings is a protocol break.
 
 `cancelled` is not an `ErrorKind`. A rejection class is a statement about this
@@ -1834,7 +1852,7 @@ the module falls through (oneshot fallback / password), never `PAM_SUCCESS`.
 | No match, face seen (model_id -4) | `PAM_AUTH_ERR` (7) |
 | No match, no face seen (model_id -1) | `PAM_IGNORE` (25) |
 | Rate limited (daemon, model_id -2) | `PAM_AUTH_ERR` (7) — no oneshot fallback |
-| IR required / internal daemon error (model_id -2) | `PAM_IGNORE` (25) — no oneshot fallback |
+| IR required / unverified Y16 texture scale / internal daemon error (model_id -2) | `PAM_IGNORE` (25) — no oneshot fallback |
 | Suppressed (model_id -3) | `PAM_AUTHINFO_UNAVAIL` (9) |
 | Daemon unavailable / untrusted (non-root) peer | oneshot fallback, else `PAM_IGNORE` (25) |
 | Config missing, unparseable, or untrusted (not root-owned / group- or world-writable, incl. parents) | `PAM_IGNORE` (25) |
@@ -1903,7 +1921,16 @@ an IR-typical format, only the format-bearing node(s) classify IR. A quirk's
 `format_preference` participates in that decision only when the preferred
 format is itself IR-typical and actually advertised; an RGB preference such as
 MJPG cannot exempt an RGB sibling from demotion (see
-`docs/security.md` §A). Frame variance is passive
+`docs/security.md` §A).
+
+Y16 texture enforcement is separately fail-closed on scale provenance: only a
+valid verified `y16_bit_depth` quirk permits authentication; absent/invalid
+depth rejects recoverably before auth capture, including when
+`security.require_ir = false`. GREY is already 8-bit and is unaffected. Facelock
+does not introduce a scene-derived or scale-invariant authentication metric in
+this alpha.
+
+Frame variance is passive
 anti-photo only (does not stop video replay); it is evaluated over a sliding window
 of the most recent `min_auth_frames` matched frames (see `docs/security.md` §B), with
 a 0.985 cutoff rejecting truly static input (≳0.999) with margin; the

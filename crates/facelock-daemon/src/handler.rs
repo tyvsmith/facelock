@@ -320,6 +320,22 @@ fn discard_frames<C: CameraSource>(
     Ok(())
 }
 
+fn has_unverified_y16_scale(camera: &impl CameraSource) -> bool {
+    camera.capabilities().ir_texture_scale == facelock_core::types::IrTextureScale::UnverifiedY16
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AcquisitionPurpose {
+    Capture,
+    Authentication,
+}
+
+impl AcquisitionPurpose {
+    fn may_discard_from(self, camera: &impl CameraSource) -> bool {
+        self != Self::Authentication || !has_unverified_y16_scale(camera)
+    }
+}
+
 /// The camera and everything that decides when it closes.
 ///
 /// One owner for the open stream and the warm-hold deadline, so the invariant
@@ -367,6 +383,26 @@ impl<C: CameraSource> CameraLease<C> {
         config: &Config,
         cancel: &CancelToken,
     ) -> Result<&'a mut C, String> {
+        self.acquire_for(config, cancel, AcquisitionPurpose::Capture)
+    }
+
+    /// Authentication's acquisition path. Unlike preview and enrollment, an
+    /// authentication must capture nothing when the opened stream reveals
+    /// unverified Y16 provenance: the auth loop will reject it immediately.
+    fn acquire_for_authentication<'a>(
+        &'a mut self,
+        config: &Config,
+        cancel: &CancelToken,
+    ) -> Result<&'a mut C, String> {
+        self.acquire_for(config, cancel, AcquisitionPurpose::Authentication)
+    }
+
+    fn acquire_for<'a>(
+        &'a mut self,
+        config: &Config,
+        cancel: &CancelToken,
+        purpose: AcquisitionPurpose,
+    ) -> Result<&'a mut C, String> {
         self.deadline = None;
         if cancel.is_cancelled() {
             self.close("cancelled before the camera was needed");
@@ -379,6 +415,7 @@ impl<C: CameraSource> CameraLease<C> {
             // those would let a fresh attempt match on the tail of the last
             // one. AE is already settled, so no warmup discard is needed.
             let stale = match self.camera.as_mut() {
+                Some(camera) if !purpose.may_discard_from(camera) => Ok(()),
                 Some(camera) => discard_frames(camera, MMAP_BUFFERS - 1, "stale", cancel),
                 None => Ok(()),
             };
@@ -412,12 +449,14 @@ impl<C: CameraSource> CameraLease<C> {
                 .unwrap_or(config.device.warmup_frames);
             // A cold warmup discard is advisory (AGC/AE settling); a failure
             // here is left for the scan loop to surface, as it always was.
-            if let Err(e) = discard_frames(&mut camera, warmup, "warmup", cancel) {
-                debug!("warmup discard failed: {e}");
-                // A cancellation during warmup aborts the acquire outright:
-                // the request is over before it started (ADR 008 §8).
-                if cancel.is_cancelled() {
-                    return Err(CANCELLED_MESSAGE.to_string());
+            if purpose.may_discard_from(&camera) {
+                if let Err(e) = discard_frames(&mut camera, warmup, "warmup", cancel) {
+                    debug!("warmup discard failed: {e}");
+                    // A cancellation during warmup aborts the acquire outright:
+                    // the request is over before it started (ADR 008 §8).
+                    if cancel.is_cancelled() {
+                        return Err(CANCELLED_MESSAGE.to_string());
+                    }
                 }
             }
             self.camera = Some(camera);
@@ -965,7 +1004,7 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         };
 
         let attempt_started = Instant::now();
-        let camera = match self.lease.acquire(&self.config, cancel) {
+        let camera = match self.lease.acquire_for_authentication(&self.config, cancel) {
             Ok(camera) => camera,
             Err(message) => {
                 // The callee below is what normally wipes `stored` (D11);
@@ -1401,6 +1440,58 @@ mod tests {
             after_warm,
             Some((warmup + MMAP_BUFFERS - 1) as usize),
             "warm reuse must discard exactly MMAP_BUFFERS - 1 frames and no warmup"
+        );
+    }
+
+    /// Scene-derived Y16 calibration is permitted for preview, but it never
+    /// upgrades the stream's authentication provenance. That must not make
+    /// preview inherit authentication's zero-frame post-open rejection path:
+    /// a warm preview still has to dequeue the previous request's V4L2 ring
+    /// before it returns a fresh frame.
+    #[test]
+    fn warm_unverified_y16_preview_reuse_discards_stale_buffers() {
+        let config = lease_config(3);
+        let caps = facelock_core::types::CameraCaps {
+            ir_texture_scale: facelock_core::types::IrTextureScale::UnverifiedY16,
+            ..Default::default()
+        };
+        let mut lease = CameraLease::new(
+            Some(Box::new(move |_| {
+                Ok(MockCamera::bright(64, 64, MOCK_FRAMES).with_caps(caps.clone()))
+            })),
+            None,
+        );
+
+        let first = lease
+            .acquire(&config, &live())
+            .expect("the first preview opens the camera");
+        first
+            .capture_rgb_only()
+            .expect("the first preview captures a frame");
+        assert_eq!(
+            first.capabilities().ir_texture_scale,
+            facelock_core::types::IrTextureScale::UnverifiedY16,
+            "non-auth capture must not upgrade Y16 authentication provenance"
+        );
+        lease.touch_preview(&config);
+        let before_reuse = lease
+            .camera
+            .as_ref()
+            .expect("preview holds camera")
+            .captures();
+
+        lease
+            .acquire(&config, &live())
+            .expect("the next preview reuses the warm camera");
+        let after_reuse = lease
+            .camera
+            .as_ref()
+            .expect("camera remains open")
+            .captures();
+        assert_eq!(
+            after_reuse - before_reuse,
+            (MMAP_BUFFERS - 1) as usize,
+            "unverified Y16 preview must discard every stale MMAP buffer"
         );
     }
 

@@ -11,7 +11,7 @@ use facelock_core::config::DeviceConfig;
 use facelock_core::error::Result;
 use facelock_core::types::CameraCaps;
 
-use crate::capture::Camera;
+use crate::capture::{Camera, ir_texture_scale_for_format, select_format_for_quirk};
 use crate::device::{self, DeviceInfo};
 use crate::quirks::{Quirk, QuirksDb, device_fingerprint};
 
@@ -56,10 +56,20 @@ impl ResolvedCamera {
     /// `ResolvedCamera` has.
     pub fn interrogate(info: DeviceInfo, quirks: &QuirksDb) -> Self {
         let quirk = quirks.find_match(&info).cloned();
+        let available: Vec<String> = info
+            .formats
+            .iter()
+            .map(|format| format.fourcc.trim().to_string())
+            .collect();
+        let selected_format = select_format_for_quirk(quirk.as_ref(), &available)
+            .and_then(|index| available.get(index))
+            .map(String::as_str)
+            .unwrap_or("");
         let caps = CameraCaps {
             is_ir: device::is_ir_camera_resolved(&info, Some(quirks)),
             fingerprint: device_fingerprint(&info.path),
             applied_quirks: quirk.as_ref().map(quirk_id).into_iter().collect(),
+            ir_texture_scale: ir_texture_scale_for_format(selected_format, quirk.as_ref()),
         };
         Self { info, quirk, caps }
     }
@@ -92,7 +102,7 @@ pub fn quirk_id(quirk: &Quirk) -> String {
 mod tests {
     use super::*;
     use crate::ir_emitter::EmitterXuInfo;
-    use facelock_core::types::{DeviceFingerprint, FormatInfo};
+    use facelock_core::types::{DeviceFingerprint, FormatInfo, IrTextureScale};
 
     fn device_with(name: &str, fourccs: &[&str]) -> DeviceInfo {
         DeviceInfo {
@@ -125,6 +135,69 @@ mod tests {
             rotation: None,
             notes: None,
         }
+    }
+
+    fn y16_quirks(bit_depth: Option<u8>) -> QuirksDb {
+        let mut db = QuirksDb::default();
+        let mut q = quirk("(?i)test y16 camera");
+        q.format_preference = Some("Y16".into());
+        q.y16_bit_depth = bit_depth;
+        db.push_quirk_for_test(q);
+        db
+    }
+
+    #[test]
+    fn y16_without_a_declared_bit_depth_has_unverified_texture_scale() {
+        let resolved = ResolvedCamera::interrogate(
+            device_with("Test Y16 Camera", &["Y16"]),
+            &y16_quirks(None),
+        );
+
+        assert_eq!(
+            resolved.caps.ir_texture_scale,
+            IrTextureScale::UnverifiedY16
+        );
+    }
+
+    #[test]
+    fn y16_with_an_invalid_declared_bit_depth_has_unverified_texture_scale() {
+        for bit_depth in [0, 7, 17, u8::MAX] {
+            let resolved = ResolvedCamera::interrogate(
+                device_with("Test Y16 Camera", &["Y16"]),
+                &y16_quirks(Some(bit_depth)),
+            );
+
+            assert_eq!(
+                resolved.caps.ir_texture_scale,
+                IrTextureScale::UnverifiedY16,
+                "invalid bit depth {bit_depth} must not become trusted scale provenance"
+            );
+        }
+    }
+
+    #[test]
+    fn y16_with_a_valid_declared_bit_depth_has_verified_texture_scale() {
+        for bit_depth in [10, 12, 16] {
+            let resolved = ResolvedCamera::interrogate(
+                device_with("Test Y16 Camera", &["Y16"]),
+                &y16_quirks(Some(bit_depth)),
+            );
+
+            assert_eq!(
+                resolved.caps.ir_texture_scale,
+                IrTextureScale::VerifiedY16 { bit_depth },
+            );
+        }
+    }
+
+    #[test]
+    fn grey_selection_never_requires_y16_scale_provenance() {
+        let resolved = ResolvedCamera::interrogate(
+            device_with("Test Y16 Camera", &["GREY", "Y16"]),
+            &QuirksDb::default(),
+        );
+
+        assert_eq!(resolved.caps.ir_texture_scale, IrTextureScale::NotY16);
     }
 
     #[test]

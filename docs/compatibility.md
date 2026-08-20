@@ -37,10 +37,15 @@
 
 IR cameras provide anti-spoofing protection. Facelock auto-detects IR cameras from the pixel formats they report — a node that enumerates *only* IR-typical mono formats (GREY, Y8, Y10, Y12, Y16) with no color format (YUYV/MJPG) mixed in — or from a hardware quirk that matches the device. The device name is never used to classify a camera as IR.
 
-Known working:
-- Logitech BRIO (IR mode)
-- Intel RealSense (IR stream)
-- Most laptops with Windows Hello IR cameras
+Hardware-validated in the current alpha test record:
+
+- Logitech BRIO 046d:085e IR node, native GREY (#162: 33/33 integration and
+  27/27 oneshot scenarios)
+
+Intel RealSense and other Windows Hello IR devices are recognized by the
+classification/quirks paths, but their Y16 authentication support is
+conditional on a verified sensor depth as described below. There is no Y16
+hardware validation record yet.
 
 ### RGB Cameras (development only)
 
@@ -54,7 +59,7 @@ RGB cameras work with `security.require_ir = false` but provide no anti-spoofing
 | YUYV | Full | Raw format, converted to RGB |
 | NV12 | Full | Semi-planar 4:2:0; common on Intel IPU processed cameras |
 | GREY | Full | IR cameras, replicated to RGB |
-| Y16 | Full | 16-bit IR grayscale, bit-depth-aware conversion to 8-bit |
+| Y16 | Conditional for authentication | 16-bit IR grayscale; auth requires a valid, hardware-verified `y16_bit_depth` quirk (8..=16) |
 | Y8, Y10, Y12 | Not supported | IR-typical classification evidence, but not decodable; excluded from the setup wizard and automatic selection with a path/format warning |
 | Raw Bayer (SGRBG10, ...) | Not supported | Raw sensor nodes are skipped by auto-detection |
 | Other | Not supported | Device is rejected at open with an error listing its formats |
@@ -69,6 +74,21 @@ enabled and every detected IR node is excluded this way, the setup wizard
 stops with all excluded IR paths and formats instead of offering an RGB node.
 When `require_ir` is disabled, a decodable RGB node remains a valid explicit
 wizard choice.
+
+Y16 has a separate scale-provenance gate because the absolute IR texture
+threshold is meaningful only at a known 8-bit conversion scale. Facelock
+derives expected provenance from the selected normalized FourCC before open
+and checks the actual negotiated FourCC again after open. Actual Y16 with a
+missing or invalid `y16_bit_depth` is rejected recoverably before auth capture,
+even when `security.require_ir = false`; this setting cannot bypass the scale
+gate. GREY remains an ordinary verified 8-bit path. Scene-based calibration is
+available only for non-auth Y16 conversion and never becomes authentication
+evidence.
+
+The shipped Intel RealSense Y16 quirks intentionally omit `y16_bit_depth`:
+their format selection and IR classification remain useful, but authentication
+rejects them until hardware evidence supports an 8..=16 value. Do not infer
+sensor depth from the 16-bit V4L2 container alone.
 
 ### Intel IPU6/IPU7 MIPI cameras (v4l2-relayd)
 

@@ -155,6 +155,22 @@ pub struct FormatInfo {
     pub sizes: Vec<(u32, u32)>,
 }
 
+/// Provenance for the pixel scale consumed by the IR texture check.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum IrTextureScale {
+    /// The selected/negotiated format is not Y16. GREY is already 8-bit and
+    /// needs no Y16 scale provenance.
+    #[default]
+    NotY16,
+    /// The selected/negotiated format is Y16 and a valid hardware quirk pins
+    /// its effective bit depth. The raw depth is retained as provenance.
+    VerifiedY16 { bit_depth: u8 },
+    /// The selected/negotiated format is Y16, but the matched quirk has no
+    /// valid `y16_bit_depth`. A scene-derived conversion shift must never be
+    /// treated as verification for the absolute IR texture threshold.
+    UnverifiedY16,
+}
+
 /// Capabilities of a camera device, computed once at construction from device
 /// interrogation (format enumeration, quirks match, sysfs identity) and
 /// carried by the camera itself — so nothing downstream has to thread
@@ -173,6 +189,10 @@ pub struct CameraCaps {
     /// Human-readable identifiers of the quirks applied to this device, for
     /// diagnostics ("why did this camera behave oddly").
     pub applied_quirks: Vec<String>,
+    /// Provenance for the pixel scale consumed by the IR texture check.
+    /// Derived from the selected format during interrogation and recomputed
+    /// from the actual negotiated FourCC when the stream opens.
+    pub ir_texture_scale: IrTextureScale,
 }
 
 impl CameraCaps {

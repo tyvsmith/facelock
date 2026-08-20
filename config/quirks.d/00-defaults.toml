@@ -22,14 +22,18 @@
 #   format_preference       - preferred pixel format (e.g. "GREY", "Y16 ", "YUYV");
 #                             counts as IR evidence only when IR-typical and
 #                             actually advertised by the capture node
-#   y16_bit_depth           - effective bit depth of this sensor's Y16 samples
-#                             (8..=16, e.g. 10 for a 10-bit sensor). Pins the
-#                             Y16 -> 8-bit scale from hardware truth instead of
-#                             calibrating it from frames at camera open.
+#   y16_bit_depth           - verified effective bit depth of this sensor's Y16
+#                             samples (8..=16, e.g. 10 for a 10-bit sensor).
+#                             Required for Y16 authentication. Add only from
+#                             hardware documentation or validation; scene
+#                             calibration is not authentication evidence.
 #   rotation                - image rotation in degrees (0, 90, 180, 270)
 #   notes                   - human-readable explanation
 
 # --- Intel RealSense ---
+# No y16_bit_depth is shipped for these entries because facelock has no Y16
+# hardware validation record. Their Y16 streams classify as IR but auth rejects
+# recoverably until an evidence-backed local or shipped quirk supplies depth.
 
 [[quirk]]
 vendor_id = "8086"

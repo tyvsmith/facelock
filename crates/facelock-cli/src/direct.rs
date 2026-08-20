@@ -71,10 +71,28 @@ pub(crate) fn resolve_camera_device(config: &Config) -> anyhow::Result<ResolvedC
     Ok(ResolvedCamera::interrogate(device_info, &quirks))
 }
 
-/// Open an already-resolved camera and discard warmup frames.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CameraPurpose {
+    Authentication,
+    Capture,
+}
+
+fn warmup_capture_count(
+    purpose: CameraPurpose,
+    ir_texture_scale: facelock_core::types::IrTextureScale,
+    requested: u32,
+) -> u32 {
+    match (purpose, ir_texture_scale) {
+        (CameraPurpose::Authentication, facelock_core::types::IrTextureScale::UnverifiedY16) => 0,
+        _ => requested,
+    }
+}
+
+/// Open an already-resolved camera and apply its purpose-specific warmup.
 fn open_resolved_camera(
     config: &Config,
     resolved: ResolvedCamera,
+    purpose: CameraPurpose,
 ) -> anyhow::Result<Camera<'static>> {
     // Discard warmup frames for AGC/AE stabilization.
     // Quirk override takes precedence over config value.
@@ -86,9 +104,10 @@ fn open_resolved_camera(
     let mut camera = resolved
         .open(&config.device)
         .context("failed to open camera")?;
-    if warmup > 0 {
-        debug!(warmup, "discarding warmup frames");
-        for _ in 0..warmup {
+    let captures = warmup_capture_count(purpose, camera.capabilities().ir_texture_scale, warmup);
+    if captures > 0 {
+        debug!(warmup = captures, "discarding warmup frames");
+        for _ in 0..captures {
             let _ = camera.capture();
         }
     }
@@ -98,7 +117,11 @@ fn open_resolved_camera(
 
 /// Open camera with quirks support and warmup frame discarding.
 pub fn open_camera(config: &Config) -> anyhow::Result<Camera<'static>> {
-    open_resolved_camera(config, resolve_camera_device(config)?)
+    open_resolved_camera(
+        config,
+        resolve_camera_device(config)?,
+        CameraPurpose::Capture,
+    )
 }
 
 pub fn load_engine(config: &Config) -> anyhow::Result<FaceEngine> {
@@ -157,7 +180,7 @@ pub fn authenticate(config: &Config, user: &str) -> anyhow::Result<MatchResult> 
         };
     }
 
-    let mut camera = open_resolved_camera(config, resolved)?;
+    let mut camera = open_resolved_camera(config, resolved, CameraPurpose::Authentication)?;
     let mut engine = load_engine(config)?;
 
     // Load embeddings with encryption support, matching the daemon handler path.
@@ -422,6 +445,36 @@ warmup_frames = 9
         // own warmup_frames.
         assert!(resolved.quirk.is_none());
         assert!(resolved.caps.applied_quirks.is_empty());
+    }
+
+    /// Post-open unverified Y16 is fatal only to authentication. Authentication
+    /// must reach its provenance rejection without capturing, while preview,
+    /// enrollment, and bench retain the requested AGC/AE warmup that also
+    /// drives lazy non-auth Y16 calibration.
+    #[test]
+    fn direct_open_warmup_policy_is_request_purpose_aware() {
+        let requested = 7;
+        let scale = facelock_core::types::IrTextureScale::UnverifiedY16;
+
+        assert_eq!(
+            warmup_capture_count(CameraPurpose::Authentication, scale, requested),
+            0,
+            "authentication must reject post-open Y16 provenance before capture"
+        );
+        assert_eq!(
+            warmup_capture_count(CameraPurpose::Capture, scale, requested),
+            requested,
+            "non-auth direct capture must preserve configured warmup"
+        );
+        assert_eq!(
+            warmup_capture_count(
+                CameraPurpose::Authentication,
+                facelock_core::types::IrTextureScale::NotY16,
+                requested,
+            ),
+            requested,
+            "GREY and color authentication must preserve configured warmup"
+        );
     }
 
     // --- N8: encrypted-store loading in the direct path ---

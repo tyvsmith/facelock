@@ -646,20 +646,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/proc/<pid>/task/*/status` on the running daemon and asserts `CAP_CHOWN` is
   clear on every thread.
 
-- **Y16 8-bit scaling is pinned at camera open**: the bit-depth shift is derived
-  once and reused for the whole session. Deriving it per frame was contrast
-  normalization upstream of the IR texture check — it moved the scale
-  `security.ir_texture_min_stddev` is calibrated against in response to scene
-  illumination, and a single saturated pixel blacked out whole frames. The shift
-  comes from the new quirk key `y16_bit_depth` when a device declares one
-  (hardware truth, no frame inspected); otherwise it is calibrated from the peak
-  of a short burst of frames rather than a single frame, so a dark pre-AGC frame
-  at open no longer pins an 8-bit scale that clips the rest of the session.
-  "The session" is the lifetime of one open camera: the daemon's warm camera
-  hold keeps the scale it pinned, and a reopen recalibrates — no scale is
-  carried across a reopen onto a device that did not produce it. On IR hardware
-  the burst is emitter-LED-on time inside `Camera::open` (bounded by one
-  second); declaring `y16_bit_depth` skips it.
+- **Y16 authentication now requires verified scale provenance** (#161): a
+  selected and negotiated Y16 stream is eligible for the absolute IR texture
+  check only when its matched quirk declares a valid `y16_bit_depth` in
+  `8..=16`. Missing or invalid depth rejects authentication recoverably before
+  any authentication capture, including when `security.require_ir = false`, so
+  password fallback remains available without skipping texture enforcement or
+  downgrading to RGB. The selected normalized FourCC establishes the expected
+  state before open, and the post-`S_FMT` FourCC is checked again so negotiation
+  drift to unverified Y16 rejects the same way. GREY remains native 8-bit.
+  Scene-derived Y16 calibration is lazy and limited to non-authentication
+  capture; it never establishes authentication evidence or verified provenance.
 
 ## [0.1.4] - 2026-05-31
 
