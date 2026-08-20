@@ -90,11 +90,20 @@ Set `execution_provider` in `/etc/facelock/config.toml` to `"cuda"`, `"rocm"`, o
 just uninstall
 ```
 
-Config and data are preserved in `/etc/facelock` and `/var/lib/facelock`. To remove everything:
+### Package lifecycle and retained data
 
-```bash
-sudo rm -rf /etc/facelock /var/lib/facelock /var/log/facelock
-```
+Ordinary package removal and `just uninstall` preserve the face database,
+encryption keys, downloaded models, enrollment markers, audit logs, snapshots,
+and setup state. Debian also retains its conffile until `purge`; RPM follows
+`%config(noreplace)` and may retain an administrator-modified config as
+`config.toml.rpmsave`.
+
+Facelock does not currently expose a safe "remove everything" command. Do not
+replace package lifecycle handling with a broad recursive deletion: configured
+state paths can live outside the default directories, and links, mounts, or
+wrong-owner remnants require inspection rather than traversal. See
+[Package Lifecycle Ownership](contracts.md#package-lifecycle-ownership) for the
+fixed roots, retained-data rules, and the limits of filesystem deletion.
 
 ## Configuration
 

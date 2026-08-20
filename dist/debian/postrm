@@ -10,8 +10,9 @@ facelock uninstalled. User data preserved at:
   /var/lib/facelock/  (face database, ONNX models)
   /var/log/facelock/  (audit logs and snapshots)
 
-To remove all face data, config, models, and logs:
-  sudo rm -rf /etc/facelock /var/lib/facelock /var/log/facelock
+Retained state cleanup is intentionally not automated.
+Cleanup must stay within the fixed roots above, leave configured external paths untouched, and refuse links or mount crossings.
+Filesystem deletion does not securely erase SSDs, snapshots, or backups.
 
 EOF
         ;;

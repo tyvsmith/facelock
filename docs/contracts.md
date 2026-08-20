@@ -20,6 +20,7 @@ follow it.
   - [facelock is-enrolled Exit Codes](#facelock-is-enrolled-exit-codes)
   - [facelock auth Exit Codes](#facelock-auth-exit-codes)
 - [Release Channels and APT Paths](#release-channels-and-apt-paths)
+- [Package Lifecycle Ownership](#package-lifecycle-ownership)
 - [Filesystem Paths](#filesystem-paths)
   - [Audit Log Entries](#audit-log-entries)
 - [Config Schema](#config-schema)
@@ -1354,6 +1355,104 @@ host operating-system codename while keeping the `facelock` component. Each
 stable publication consumes exactly one matching package for all four suites,
 and a prerelease or cross-suite version is rejected before signing or repository
 writes.
+
+## Package Lifecycle Ownership
+
+This is the Wave 0 ownership freeze for issue #232. It defines what later
+package lifecycle work is allowed to remove; it does not claim that the current
+Debian purge script already implements the bounded purge described below.
+**Ordinary removal is not data deletion.** Removing the package must leave a
+machine reinstallable without losing its biometric or operational state.
+
+The ownership classes are deliberately separate:
+
+| Class | Examples | Ordinary removal |
+|-------|----------|------------------|
+| Package-owned static integration | binaries and shared libraries, systemd/OpenRC/runit/s6 units, D-Bus policy and activation, tmpfiles configuration, shipped quirks, PAM/authselect profiles, Omarchy helpers, translations, bundled runtime libraries | Remove through the package manager. These files can be recreated byte-for-byte by reinstalling the package |
+| Administrator configuration | `/etc/facelock/config.toml` and the package manager's saved replacement for an administrator-modified copy | Apply the native package-family rules below. Do not treat administrator configuration as biometric state or as disposable static integration |
+| Biometric and operational state | the database and its WAL/SHM sidecars, encryption keys and sealed keys, downloaded models, enrollment markers, setup state, audit logs, and snapshots under the compiled roots | Preserve all of it. A reinstall reuses it; ordinary removal never interprets absence of the package as consent to discard it |
+| PAM integration and provenance | a `pam_facelock.so` rule, a Facelock-created local override and its provenance header, and `<service>.facelock-backup` rollback files | Attempt safe cleanup inside the fixed PAM root. Delete provenance only after the corresponding PAM cleanup is proven complete |
+| Externally configured state | any database, model directory, key, sealed key, audit log, or snapshot path configured outside the compiled Facelock roots | Never package-owned. Leave it untouched and report it as an external remnant |
+
+PAM provenance and rollback files are not biometric state. They exist to
+explain or reverse an authentication-stack edit, so retaining all of them
+forever makes an otherwise successful uninstall look incomplete. Conversely,
+deleting them before the PAM edit is known to be gone destroys the evidence and
+rollback path for a service that still references a removed module.
+
+**Preserve PAM provenance when cleanup is incomplete; remove it only after
+successful cleanup.** Successful cleanup means the service file was safely
+resolved inside `/etc/pam.d`, its Facelock rule was removed (or was already
+absent), and any candidate override or backup was proven to be Facelock-created
+and no longer needed. A Facelock-created override may be deleted to reveal its
+vendor file only when it has no administrator changes. Never restore a backup
+over a newer service file merely because the backup exists. An unreadable,
+unwritable, wrong-owner, non-regular, changed, linked, or mount-separated
+service file makes cleanup incomplete: preserve its override, provenance
+header, and `.facelock-backup`, and report the exact remnant. Cleanup of one
+service does not authorize deleting provenance for a different service.
+
+### Native configuration lifecycles
+
+The package families reach the same ownership result through different native
+mechanisms:
+
+| Family and operation | Administrator-configuration contract |
+|----------------------|--------------------------------------|
+| Debian `remove` | `/etc/facelock/config.toml` is a Debian conffile and remains at its installed path. Biometric and operational state also remains |
+| Debian `purge` | `dpkg` removes the conffile, and the post-removal purge may then remove only safe remnants inside the compiled roots. Unsafe and external remnants are retained and reported |
+| RPM erase | `/etc/facelock/config.toml` is RPM `%config(noreplace)`. RPM removes an unmodified copy and retains an administrator-modified copy according to RPM semantics, commonly as `config.toml.rpmsave`. A `.rpmsave` is retained state, not evidence of a failed erase and not something a Facelock script deletes |
+| Arch package removal | the `backup` entry follows pacman's native saved-configuration behavior (including `.pacsave` when applicable). Facelock lifecycle code does not bypass it |
+| `just uninstall` | no package manager owns the config, so the source-install uninstall preserves `/etc/facelock` with the biometric and operational state |
+
+Debian `postrm purge` is self-contained. It never invokes the already-removed
+`facelock` binary. By the time `postrm` runs, package payloads cannot be treated
+as available cleanup tools. The future bounded purge must make its decisions
+from fixed constants and the remaining filesystem state, using only utilities
+that the maintainer script can rely on after removal; it cannot delegate safety
+checks or deletion to the CLI it is purging.
+
+RPM and Arch have no Debian-style second `purge` phase. Their ordinary erase
+therefore removes static integration and safely cleaned PAM provenance, while
+preserving biometric state and whatever administrator-configuration artifact
+their package manager retained.
+
+### Fixed-root purge boundary
+
+The only purge roots are the compiled Facelock roots:
+`/etc/facelock`, `/var/lib/facelock`, and `/var/log/facelock`. `/etc/pam.d` is
+a separate, fixed root for the narrow PAM cleanup above; it is never a recursive
+purge root. A configured path that remains within a compiled Facelock root is
+eligible for a later Debian purge only under the same safety checks as every
+other descendant.
+
+Configured paths outside those roots are external remnants. This includes
+external values of `daemon.model_dir`, `storage.db_path`, `encryption.key_path`,
+`encryption.sealed_key_path`, `audit.path`, and `snapshots.dir`. Removal and
+purge must leave them untouched, report that they were refused as external, and
+must not claim that all Facelock data is gone. A path becoming external through
+configuration does not expand package ownership.
+
+Any later purge implementation operates from fixed path constants and examines
+each entry without trusting path traversal. It must never follow a symbolic link
+or act through a hard-linked object, never cross a mount point, and never recurse through a
+non-directory or an object whose ownership cannot be proven safe. A root or
+descendant that fails those checks remains in place and is reported. A safe
+root may still be cleaned around an unsafe child, but the final report must name
+every remnant rather than describe the root as removed.
+
+Safety refusals and external remnants must not strand package-manager state.
+In particular, Debian purge reports and preserves an unsafe object but lets the
+maintainer-script lifecycle finish, so a link, mount, or wrong-owner file cannot
+leave the package permanently half-purged. This is not a broad recursive-delete
+contract: later code must enumerate the bounded roots and reject anything it
+cannot prove is inside them.
+
+Finally, filesystem removal does not promise secure erasure. Unlinking files
+does not guarantee that data is absent from SSD flash translation layers,
+snapshots, backups, journal history, or remapped blocks. Lifecycle messages may
+say which names were removed and which remnants remain; they must not describe
+purge as forensic destruction of biometric data.
 
 ## Filesystem Paths
 

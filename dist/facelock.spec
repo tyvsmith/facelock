@@ -169,8 +169,9 @@ if [ $1 -eq 0 ]; then
     echo "  /var/lib/facelock/  (face database, ONNX models)"
     echo "  /var/log/facelock/  (audit logs and snapshots)"
     echo ""
-    echo "To remove all face data, config, models, and logs:"
-    echo "  rm -rf /etc/facelock /var/lib/facelock /var/log/facelock"
+    echo "Retained state cleanup is intentionally not automated."
+    echo "Cleanup must stay within the fixed roots above, leave configured external paths untouched, and refuse links or mount crossings."
+    echo "Filesystem deletion does not securely erase SSDs, snapshots, or backups."
 fi
 
 %files

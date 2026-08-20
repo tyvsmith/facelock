@@ -67,7 +67,7 @@ check-pam-standalone:
     fi
     echo "pam-facelock dependency guard passed"
 
-# Verify agent-facing docs still describe the tree they describe.
+# Verify agent-facing docs and executable documentation contracts.
 
 # Pass a git ref to also run the coupling check against it.
 check-agent-docs base='':
@@ -78,6 +78,7 @@ check-agent-docs base='':
     else
         python3 test/check-agent-docs.py
     fi
+    bash test/lifecycle-ownership-contract.sh
 
 # Run all checks (test + lint + format + audit + PAM standalone surface + agent docs)
 check: test lint fmt-check audit check-pam-standalone check-agent-docs
@@ -693,8 +694,9 @@ uninstall-files:
     echo "==>   /var/lib/facelock/  (face database, ONNX models ~100MB)"
     echo "==>   /var/log/facelock/  (audit logs and snapshots)"
     echo "==>"
-    echo "==> To remove all face data, config, models, and logs:"
-    echo "==>   sudo rm -rf /etc/facelock /var/lib/facelock /var/log/facelock"
+    echo "==> Retained state cleanup is intentionally not automated."
+    echo "==> Cleanup must stay within the fixed roots above, leave configured external paths untouched, and refuse links or mount crossings."
+    echo "==> Filesystem deletion does not securely erase SSDs, snapshots, or backups."
 
 # ---------------------------------------------------------------------------
 # Localization (optional tooling)

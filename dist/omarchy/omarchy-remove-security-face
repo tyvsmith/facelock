@@ -26,8 +26,14 @@ done
 
 echo
 echo "PAM lines removed. Face data, models, and the facelock package remain installed."
-echo "To purge everything:"
-echo "  sudo pacman -Rns facelock        # or your distro's package manager"
-echo "  sudo rm -rf /etc/facelock /var/lib/facelock /var/log/facelock"
+echo "To remove package-owned static files:"
+echo "  sudo pacman -Rs facelock         # or your distro's package manager"
+echo "Retained state remains under these fixed roots:"
+echo "  /etc/facelock/"
+echo "  /var/lib/facelock/"
+echo "  /var/log/facelock/"
+echo "Retained state cleanup is intentionally not automated."
+echo "Cleanup must stay within the fixed roots above, leave configured external paths untouched, and refuse links or mount crossings."
+echo "Filesystem deletion does not securely erase SSDs, snapshots, or backups."
 echo
 echo -e "\e[32mFacial authentication removed.\e[0m"
