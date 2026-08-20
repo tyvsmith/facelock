@@ -1685,6 +1685,38 @@ hill-climbing oracle by construction rather than by redacting fields):
   (`authorize_method` in `facelock_daemon::server`) so a new method is
   root-only by default until deliberately opened up.
 
+Daemon ingress ordering is part of the authorization contract. The server
+resolves and authorizes the caller/target pair before refreshing daemon
+activity or touching handler reload, SQLite, audit, or capture state. Every
+authorized non-root `Authenticate` then spends one token from a daemon-local,
+per-caller-UID availability bucket before any of that shared work: capacity
+10, one token restored per monotonic second. Saturation is an in-band
+recoverable `AuthResult` (`model_id = -2`, `label = "rate limited"`), so PAM
+continues to the password. The charge applies even when the request later
+finds no model, fails another preflight gate, or meets a busy capture. UID 0
+is trusted and exempt from this ingress bucket; `TestAuthenticate` remains
+root-only and ingress-budget-free. This availability budget is distinct from
+`security.rate_limit`: the latter remains the persistent, per-target-user
+biometric-guess limiter and still charges root `Authenticate` failures under
+the rules in "facelock test Semantics".
+
+Ingress buckets are process-local, are discarded after enough idle monotonic
+time to refill the full burst, and are capped at 1024 UID entries with
+least-recently-seen eviction. Daemon restart therefore resets this
+availability budget but not the SQLite-backed biometric-guess budget. The cap
+bounds memory, not aggregate admission across many distinct local UIDs. If the
+ingress-state mutex is poisoned, every later non-root admission fails closed as
+the same recoverable in-band rate-limit result until daemon restart. Poisoned
+state is neither read nor mutated.
+
+For an admitted request, a changed config mtime is claimed before rebuilding
+the handler. A failed rebuild keeps the existing handler and is not retried
+for that same mtime; a later mtime permits one new attempt. A completed rebuild
+is generation-checked before installation: if a newer mtime was claimed while
+it was building, the stale handler is discarded rather than reactivating older
+security configuration. The nested lock order is `config_mtime` then `handler`;
+no path acquires them in the opposite order.
+
 Raw camera frames require privilege. Both `PreviewFrame` and
 `PreviewDetectFrame` are root-only, so a non-root caller is denied with
 `AccessDenied` before either method touches the camera. On top of that
@@ -1709,9 +1741,20 @@ Capture concurrency: `Authenticate`, `TestAuthenticate`, `Enroll`,
 capture guard. While one capture is in progress, a concurrent call to any of
 these methods fails **immediately** with an
 `org.freedesktop.DBus.Error.Failed` error whose message contains `daemon
-busy` (no queuing on the internal handler lock).
-Clients (PAM included) must treat this like any other daemon error — degrade
-to the next auth mechanism (password), never a lockout.
+busy` (no queuing behind the internal handler lock). An authorized non-root
+`Authenticate` spends its ingress token before this busy rejection.
+
+`Authenticate` and `TestAuthenticate` run their camera-independent audited
+preflight on one locked handler generation before claiming the capture guard.
+A preflight rejection such as no enrolled models therefore never occupies the
+global capture slot. The handler stays locked across a successful preflight
+and capture admission so live reload cannot turn the split into a fail-open
+configuration race. A suspend, `ReleaseCamera`, or shutdown cancellation that
+lands during preflight is carried across admission and prevents the delayed
+request from opening the camera.
+
+Clients (PAM included) must treat a busy error like any other daemon error —
+degrade to the next auth mechanism (password), never a lockout.
 
 ### Signals
 - `AuthAttempted(user: s, matched: b)` — emitted after each camera-backed

@@ -928,18 +928,46 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         intent: AuthIntent,
         cancel: &CancelToken,
     ) -> DaemonResponse {
-        if let Some(resp) = auth::pre_check_audited_with_context(
+        if let Some(response) = self.preflight_authenticate(&user, intent) {
+            return response;
+        }
+
+        self.handle_authenticate_prechecked(user, intent, cancel)
+    }
+
+    /// Run the camera-independent authentication gates and their established
+    /// rejection audit before the D-Bus server admits the request to the
+    /// global capture slot.
+    ///
+    /// The caller must keep this handler locked until either returning the
+    /// rejection or calling [`Self::handle_authenticate_prechecked`]. That
+    /// keeps one config/store generation across the decision and capture;
+    /// a concurrent live reload cannot turn the split into a fail-open race.
+    pub(crate) fn preflight_authenticate(
+        &mut self,
+        user: &str,
+        intent: AuthIntent,
+    ) -> Option<DaemonResponse> {
+        auth::pre_check_audited_with_context(
             &self.config,
             &self.store,
-            &user,
+            user,
             &self.rate_limiter,
             &self.device_caps,
             intent.audit_source(),
             intent.pre_check_context(),
-        ) {
-            return resp.into();
-        }
+        )
+        .map(Into::into)
+    }
 
+    /// Continue an authentication whose camera-independent gates have
+    /// already passed on this same locked handler generation.
+    pub(crate) fn handle_authenticate_prechecked(
+        &mut self,
+        user: String,
+        intent: AuthIntent,
+        cancel: &CancelToken,
+    ) -> DaemonResponse {
         // A storage failure here must surface as an error, never fold into an
         // empty model list (C3, issue #105): empty `models` means an empty
         // device-allowed set, a guaranteed "no match", and a rate-limit charge

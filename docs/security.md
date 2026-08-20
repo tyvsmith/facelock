@@ -542,36 +542,52 @@ rather than a second layer:
 - Everything else is **root only**: `TestAuthenticate`, `Enroll`, `ListModels`, `RemoveModel`, `ClearModels`, `PreviewFrame`, `PreviewDetectFrame`, `ListDevices`, `ReleaseCamera`, `Ping`, `Shutdown`.
 
 What opening `Authenticate` exposes, and why it is acceptable: any local UID
-may ask the daemon to authenticate **itself**. An unenrolled UID is answered by
-`pre_check` from SQLite (`has_models`) before the camera is opened. An enrolled
-UID could already do this before ADR 010 — it was in the group. No UID can name
-another user (`require_user_authorized`), learn another user's enrollment, or
-see a similarity score (redacted for non-root). Every attempt is audited when
-auditing is enabled; an enrolled UID's failed attempts are rate-limited per
-user, while an unenrolled UID's calls are answered before the limiter and are
-not charged. This is the same shape as fprintd, whose bus policy admits every
-user and whose daemon authorizes per call.
+may ask the daemon to authenticate **itself**. The daemon authorizes that
+caller/target pair before refreshing its idle timer or touching handler reload,
+SQLite, audit, or capture state. It then charges every authorized non-root
+request to a server-local per-caller-UID token bucket before any of that shared
+work: a burst of 10 requests, followed by one token restored per monotonic
+second. The bucket is charged whether the request later finds no models, fails
+another preflight gate, meets a busy camera, or reaches capture. UID 0 is
+trusted and exempt; `TestAuthenticate` remains root-only and does not use this
+budget.
 
-What it costs, stated plainly: the bus policy also bounded *who could make the
-daemon do cheap work*. Any local UID can now (a) bus-activate the daemon (it
-already could — `StartServiceByName` is open to every context in
-`system.conf`), (b) reset its idle timer (`daemon.idle_timeout_secs` defaults
-to 0, so no default install idles out anyway), (c) hold the single capture
-slot for the brief time an unenrolled `Authenticate` takes, so a tight loop
-from any local account can make a concurrent lock-screen `Authenticate`
-return `daemon busy` and fall back to the password prompt, and (d) write one
-audit row per call without a rate-limit charge, so a local loop can roll
-`audit.jsonl` past `audit.rotate_size_mb` twice and evict genuine history —
-audit is off by default; operators who enable it should size
-`rotate_size_mb` accordingly or ship the log off-host. That is a local
-availability margin on a convenience feature — face unlock fails closed to
-the password — and it is accepted (ADR 010). Note also that `abort_if_ssh` is
-enforced by the PAM client from its own environment; a direct bus caller is
-not subject to it, which was already true for group members. A config-file
-mtime change also makes the *first* message after it pay a handler rebuild
-(`maybe_reload_handler` runs before `authorize_method` in `server.rs`), and
-that message may now come from any local UID; the trigger is a
-`644 root:root` file, so it is not attacker-controlled.
+The ingress bucket is an availability control, not the persistent biometric
+guess limiter in § C. It is intentionally independent of
+`security.rate_limit`: that SQLite-backed per-target-user limiter still charges
+only a camera-backed failure where a face was detected, and daemon restart
+still does not forgive those guesses. The ingress state is daemon-local and
+monotonic, drops fully refilled stale buckets, and is capped at 1024 UID entries
+with least-recently-seen eviction. The cap bounds memory; it is not a global
+many-UID quota, so distinct local accounts retain independent buckets. Root is
+exempt because one root bucket would couple concurrent PAM authentication for
+different target users. If the bucket state mutex is poisoned, every later
+non-root admission fails closed as the same recoverable in-band rate-limit
+response until daemon restart; the daemon never resumes from possibly
+half-mutated ingress state.
+
+An unenrolled UID is answered by the audited `pre_check` from SQLite
+(`has_models`) before the global capture slot is claimed. Saturated ingress and
+busy-camera rejections happen before that audit writer, which bounds audit-file
+pressure from one non-root UID to the bucket's refill rate after its initial
+burst. No UID can name another user (`require_user_authorized`), learn another
+user's enrollment, or see a similarity score (redacted for non-root). This is
+the same shape as fprintd, whose bus policy admits every user and whose daemon
+authorizes per call.
+
+The remaining cost, stated plainly: any local UID can still bus-activate the
+daemon (`StartServiceByName` is open to every context in `system.conf`) and can
+make bounded, cheap self-authentication requests. Distinct local accounts can
+combine their independent refill rates; the hard memory cap does not claim to
+be aggregate admission control. Face unlock continues to fail closed to the
+password. `abort_if_ssh` is enforced by the PAM client from its own environment;
+a direct bus caller is not subject to it, which was already true for group
+members. The first admitted request after a config-file mtime change may pay a
+handler rebuild, but that mtime is claimed before the attempt: a failed rebuild
+keeps the old handler and is not retried until the root-owned config file
+changes again. A completed rebuild is generation-checked before installation;
+if a newer mtime was claimed while it was building, the stale handler is
+discarded rather than reactivating older security configuration.
 
 The scope table's catch-all arm is root-only, so a method added later is closed until it is deliberately opened up. Two entries are spelled out explicitly rather than left to that catch-all, because their root-only scope is load-bearing rather than incidental:
 - `PreviewDetectFrame` runs per-frame with neither `pre_check` nor the rate limiter. For any weaker caller it would be a continuous similarity feed at camera framerate; together with score redaction, denying non-root callers closes the hill-climbing oracle by construction (see A5 below).
@@ -643,7 +659,17 @@ is not redacted.
 
 **Attack**: Local DoS — a caller loops `Authenticate`/`PreviewDetectFrame`, keeping the global handler mutex held so every other caller (including root) queues up to the 10-second handler-lock timeout per request. Under ADR 010 any local UID may call `Authenticate` for itself, so for that method the caller set the guard bounds is every local account, not root and the (pre-ADR 010) `facelock` group; `PreviewDetectFrame` remains root-only.
 
-**Mitigation**: A cheap in-flight capture guard is checked *before* the expensive handler lock. If a capture is already in flight, a concurrent `Authenticate`/`Enroll`/`PreviewFrame`/`PreviewDetectFrame` call is rejected **immediately** with a `daemon busy` error instead of queueing. PAM treats this like any daemon error (`PAM_IGNORE`) and falls through to password — degraded, never locked out. Per-user rate limiting is unchanged and orthogonal.
+**Mitigation**: A cheap in-flight capture guard rejects a concurrent
+`Authenticate`/`Enroll`/`PreviewFrame`/`PreviewDetectFrame` **immediately** with
+a `daemon busy` error instead of queueing. Authentication also rechecks that
+guard while waiting for the handler, closing the race between the initial
+check and mutex acquisition. Its camera-independent, audited preflight then
+runs while holding one handler generation, and only a request that passes may
+claim the global capture slot; an unenrolled caller therefore never occupies
+it. PAM treats a busy response like any daemon error (`PAM_IGNORE`) and falls
+through to password — degraded, never locked out. The server-local ingress
+bucket above charges every authorized non-root request before the busy check;
+the persistent biometric-guess limiter remains unchanged and orthogonal.
 
 #### B. D-Bus Message Size Limits (Enforced by Bus)
 
