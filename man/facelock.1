@@ -1,4 +1,4 @@
-.TH FACELOCK 1 "2026-08-12" "facelock" "User Commands"
+.TH FACELOCK 1 "2026-08-20" "facelock" "User Commands"
 .SH NAME
 facelock \- Linux face authentication
 .SH SYNOPSIS
@@ -493,7 +493,38 @@ Remove the facelock line. Root. Same flags as \fBadd\fR except
 take away a way to authenticate, so there is nothing to gate. It never prompts,
 and it removes validated Facelock backup state plus the exact legacy adjacent
 \fI.facelock\-backup\fR name by default. \fB\-\-keep\-backup\fR preserves
-both forms of rollback state.
+both forms of rollback state. \fB\-\-all\fR conflicts with \fB\-\-service\fR
+and scans the compiled system roots
+.I /etc/pam.d
+and
+.I /usr/lib/pam.d
+plus the detection-only generated root
+.I /etc/authselect
+instead of configured PAM directories. It recognizes exact pre-versioned
+Facelock rules under conventional service names and current files authenticated
+by strict provenance. Dot-prefixed and package or administrator artifact names
+require provenance for that exact name; unowned artifacts are preserved.
+Customized rules, corrupt provenance, linked files and read-only-root references
+block the whole operation without a write. A link is skipped only when its exact
+target is the same service in a later compiled root that is scanned independently;
+the link itself is never followed.
+.IP
+With \fB--dry-run\fR, an existing PAM backup directory is inspected
+read-only and must already have its trusted owner and mode. The preview does
+not repair or sync it, acquire its write lock, or run recovery.
+.IP
+The complete target set is backed up and journaled before the first PAM file
+changes. Every replacement is identity-rechecked; a later failure or a final
+scan that still finds an active reference restores every earlier original in
+reverse order. A durable commit marker makes crash recovery finish validated
+cleanup rather than roll the files back. Intent-only pre-publication recovery
+requires the complete original identity and absent temp/binding; it is
+restartable after rollback removes the checked temp, binding, then intent.
+Pair cleanup resumes exact quarantine/unlink state and rejects partial
+conflicts. This path
+reads no Facelock config,
+database, model, daemon, camera or inference state and is the cleanup command
+used by package uninstallers while the binary and PAM module are still present.
 .TP
 .B status
 Report whether services carry the line. Reads only and needs

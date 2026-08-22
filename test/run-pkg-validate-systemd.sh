@@ -24,7 +24,10 @@ shopt -s nullglob
 onnx=(models/*.onnx)
 shopt -u nullglob
 if [ "${#onnx[@]}" -gt 0 ]; then
-    mounts=(-v "$PWD/models:/var/lib/facelock/models")
+    # Stage read-only rather than mounting over the runtime model directory.
+    # pkg-validate removes its disposable runtime copy before the uninstall
+    # assertions to prove package cleanup has no model dependency.
+    mounts=(-v "$PWD/models:/facelock-test-models:ro")
 elif [ "${FACELOCK_ALLOW_MISSING_MODELS:-0}" = "1" ]; then
     echo "WARNING: no models/*.onnx in repo — the daemon-start assertions will be" >&2
     echo "         reported as skipped (FACELOCK_ALLOW_MISSING_MODELS=1)." >&2
@@ -64,6 +67,11 @@ if [ -z "$booted" ]; then
     echo "ERROR: systemd did not reach running/degraded state" >&2
     podman exec "$cid" systemctl --failed --no-pager 2>&1 || true
     exit 1
+fi
+
+if [ "${#onnx[@]}" -gt 0 ]; then
+    podman exec "$cid" /bin/sh -c \
+        'install -d /var/lib/facelock/models && cp /facelock-test-models/*.onnx /var/lib/facelock/models/'
 fi
 
 podman exec "${exec_env[@]}" "$cid" /pkg-validate.sh

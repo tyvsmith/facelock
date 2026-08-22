@@ -40,6 +40,7 @@ package() {
     install -Dm644 dbus/org.facelock.Daemon.conf "$pkgdir/usr/share/dbus-1/system.d/org.facelock.Daemon.conf"
     install -Dm644 dbus/org.facelock.Daemon.service "$pkgdir/usr/share/dbus-1/system-services/org.facelock.Daemon.service"
     install -Dm644 dist/facelock.tmpfiles "$pkgdir/usr/lib/tmpfiles.d/facelock.conf"
+    install -Dm644 dist/facelock-pam-remove.hook "$pkgdir/usr/share/libalpm/hooks/facelock-pam-remove.hook"
 
     install -Dm755 dist/omarchy/omarchy-setup-security-face "$pkgdir/usr/bin/omarchy-setup-security-face"
     install -Dm755 dist/omarchy/omarchy-remove-security-face "$pkgdir/usr/bin/omarchy-remove-security-face"

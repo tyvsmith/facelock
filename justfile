@@ -92,6 +92,7 @@ _build-test-container: build-release
 # Automated PAM smoke tests (Arch container)
 test-arch-pam: _build-test-container
     podman run --rm facelock-pam-test
+    test/run-arch-package-systemd.sh facelock-pam-test
 
 # Automated state-layout test (Arch container, camera-free).
 # Asserts the exact modes and ownership of everything under /var/lib/facelock
@@ -621,31 +622,9 @@ uninstall-files:
     systemctl stop facelock-daemon.service 2>/dev/null || true
     systemctl disable facelock-daemon.service 2>/dev/null || true
 
-    # Every PAM service `facelock setup` can write to: the services offered by
-    # the setup multi-select (PAM_CANDIDATES in
-    # crates/facelock-cli/src/commands/setup.rs) plus the ones it gates behind a
-    # confirmation (SENSITIVE_SERVICES). `--service` accepts an arbitrary name,
-    # so this list can never be exhaustive; it covers everything facelock itself
-    # offers or gates. Missing files are skipped, so naming a service this host
-    # does not have is inert. A drift test in setup.rs
-    # (`packaging_uninstall_covers_every_pam_candidate`) fails if a new candidate
-    # is added without being listed here.
-    FACELOCK_PAM_SERVICES="sudo polkit-1 hyprlock swaylock kscreenlocker_greet gdm-password sddm lightdm omarchy-lock-face system-auth login sshd common-auth password-auth system-login system-auth-ac password-auth-ac"
-
-    # Remove PAM lines (match on module name, not exact spacing)
-    for service in $FACELOCK_PAM_SERVICES; do
-        PAM_FILE="/etc/pam.d/$service"
-        if [ -f "$PAM_FILE" ] && grep -q 'pam_facelock\.so' "$PAM_FILE"; then
-            sed -i '/pam_facelock\.so/d' "$PAM_FILE"
-            echo "Removed face auth from $PAM_FILE"
-        fi
-    done
-
-    # Remove PAM safety backups created by `facelock setup`
-    for service in $FACELOCK_PAM_SERVICES; do
-        backup="/etc/pam.d/$service.facelock-backup"
-        [ -f "$backup" ] && rm -f "$backup" && echo "Removed $backup"
-    done
+    # The binary still exists here, so a failed final scan stops before either
+    # it or the PAM module is removed.
+    facelock pam remove --all
 
     # Kill facelock polkit agent if running (so the DE's agent can take over)
     pkill -f facelock-polkit-agent 2>/dev/null || true

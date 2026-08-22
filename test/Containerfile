@@ -50,12 +50,22 @@ COPY test/pam.d/facelock-test /etc/pam.d/facelock-test
 # Fake daemon harness for the PAM peer-UID container test (plan 05)
 COPY test/fake-facelock-daemon.py /fake-facelock-daemon.py
 
+# Install a minimal real libalpm package carrying the production hook and
+# scriptlet. The booted package test removes it only after the ordinary PAM
+# suite has used the installed binary and module.
+COPY test/arch-package/ /arch-package/
+COPY test/build-arch-test-package.sh /build/test/build-arch-test-package.sh
+RUN chmod +x /build/test/build-arch-test-package.sh && \
+    /build/test/build-arch-test-package.sh
+
 # Copy test scripts
 COPY test/run-container-tests.sh /run-tests.sh
 COPY test/run-integration-tests.sh /run-integration-tests.sh
 COPY test/run-oneshot-tests.sh /run-oneshot-tests.sh
 COPY test/run-layout-tests.sh /run-layout-tests.sh
-RUN chmod +x /run-tests.sh /run-integration-tests.sh /run-oneshot-tests.sh /run-layout-tests.sh
+COPY test/arch-package-validate.sh /arch-package-validate.sh
+RUN chmod +x /run-tests.sh /run-integration-tests.sh /run-oneshot-tests.sh \
+    /run-layout-tests.sh /arch-package-validate.sh
 
 # Clean up build dir to save image size
 RUN rm -rf /build

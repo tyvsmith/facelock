@@ -67,6 +67,7 @@ pub const CAPABILITIES: &[&str] = &[
     "pam-if-present",
     "pam-json",
     "pam-multi-service",
+    "pam-remove-all",
     "pam-status",
     "pam-status-all",
     "quiet",

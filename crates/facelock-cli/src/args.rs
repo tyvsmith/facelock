@@ -227,10 +227,16 @@ modified.")]
 Removal is never gated by the sensitive-service list and never prompts — it can \
 only take away a way to authenticate. Facelock-owned backups and legacy \
 .facelock-backup files are cleaned by default; --keep-backup preserves them. \
+--all ignores configured PAM directories, scans the compiled system roots, \
+preflights and journals the complete recognized set, and rolls every earlier \
+file back if a later replacement or final active-reference scan fails. \
 --yes/--no-confirm is accepted for symmetry with `add`.")]
     Remove {
         #[command(flatten)]
         service: PamServiceArg,
+        /// Remove every recognized Facelock-owned PAM edit under the system PAM roots
+        #[arg(long, conflicts_with = "service")]
+        all: bool,
         #[command(flatten)]
         confirm: ConfirmArg,
         /// Treat a missing service file as success instead of an error
@@ -296,6 +302,7 @@ impl From<PamCli> for PamRequest {
             },
             PamCli::Remove {
                 service,
+                all,
                 confirm,
                 if_present,
                 keep_backup,
@@ -304,7 +311,7 @@ impl From<PamCli> for PamRequest {
             } => PamRequest {
                 action: PamAction::Remove,
                 services: service.service,
-                all: false,
+                all,
                 // Symmetry with `add`; `remove` has nothing to suppress today.
                 no_confirm: confirm.yes || json.json,
                 allow_sensitive: false,

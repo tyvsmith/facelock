@@ -65,6 +65,7 @@ package() {
 
     # tmpfiles.d for runtime directories
     install -Dm644 dist/facelock.tmpfiles "$pkgdir/usr/lib/tmpfiles.d/facelock.conf"
+    install -Dm644 dist/facelock-pam-remove.hook "$pkgdir/usr/share/libalpm/hooks/facelock-pam-remove.hook"
 
     # Omarchy helper scripts (inert if walker/omarchy isn't installed)
     install -Dm755 dist/omarchy/omarchy-setup-security-face "$pkgdir/usr/bin/omarchy-setup-security-face"

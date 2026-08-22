@@ -134,28 +134,9 @@ echo "  2. sudo facelock enroll      (register your face)"
 # lockout. At `required` (a hand-edit facelock never makes) the same stale line
 # would lock the service out, which is why the cleanup still matters.
 if [ $1 -eq 0 ]; then
-    # Every PAM service `facelock setup` can write to: the services offered by
-    # the setup multi-select (PAM_CANDIDATES in
-    # crates/facelock-cli/src/commands/setup.rs) plus the ones it gates behind
-    # a confirmation (SENSITIVE_SERVICES). `--service` accepts an arbitrary
-    # name, so this list can never be exhaustive; it covers everything facelock
-    # itself offers or gates. Missing files are skipped, so naming a service
-    # this host does not have is inert. A drift test in setup.rs
-    # (`packaging_uninstall_covers_every_pam_candidate`) fails if a new
-    # candidate is added without being listed here.
-    FACELOCK_PAM_SERVICES="sudo polkit-1 hyprlock swaylock kscreenlocker_greet gdm-password sddm lightdm omarchy-lock-face system-auth login sshd common-auth password-auth system-login system-auth-ac password-auth-ac"
-
-    for service in $FACELOCK_PAM_SERVICES; do
-        PAM_FILE="/etc/pam.d/$service"
-        if [ -f "$PAM_FILE" ] && grep -q 'pam_facelock\.so' "$PAM_FILE"; then
-            sed -i '/pam_facelock\.so/d' "$PAM_FILE"
-        fi
-    done
-    # Remove PAM safety backups created by `facelock setup`
-    for service in $FACELOCK_PAM_SERVICES; do
-        backup="/etc/pam.d/$service.facelock-backup"
-        [ -f "$backup" ] && rm -f "$backup" && echo "Removed $backup"
-    done
+    # Abort rpm removal while the module and cleanup binary are still present
+    # if any active reference cannot be classified and removed safely.
+    facelock pam remove --all || exit $?
     # Kill facelock polkit agent if running (lets the DE's agent take over)
     pkill -f facelock-polkit-agent 2>/dev/null || true
 fi

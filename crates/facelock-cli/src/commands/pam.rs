@@ -120,11 +120,11 @@
 //! something this should be guessing at, so it is written down rather than
 //! attempted.
 
-use std::ffi::{CString, OsStr};
+use std::ffi::{CStr, CString, OsStr, OsString};
 use std::fs;
 use std::io::{IsTerminal, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
@@ -142,6 +142,21 @@ use crate::state_layout::{PAM_BACKUPS_DIR, PAM_BACKUPS_DIR_MODE};
 /// a parameter so tests drive the whole writer against a tempdir,
 /// unprivileged.
 pub const PAM_DIR: &str = "/etc/pam.d";
+
+/// Compiled PAM roots used for machine-wide discovery and package cleanup.
+///
+/// Unlike the explicit named writer's configurable search path, this list is
+/// deliberately independent of `config.toml`: uninstall must find Facelock
+/// references even when configuration cannot be loaded.
+pub const PAM_SYSTEM_DIRS: &[&str] = &[PAM_DIR, "/usr/lib/pam.d"];
+
+/// Fixed roots scanned by config-independent package cleanup.
+///
+/// Fedora's `/etc/pam.d/{system,password,...}-auth` entries are generated
+/// symlinks into `/etc/authselect`. Cleanup never follows those links; it
+/// scans the generated directory independently so an active reference there
+/// is still an unmanaged blocker while an unrelated stock link is harmless.
+const PAM_CLEANUP_DIRS: &[&str] = &[PAM_DIR, "/usr/lib/pam.d", "/etc/authselect"];
 
 /// The line this command adds and removes. Matching is by module name rather
 /// than by these bytes — see [`is_facelock_pam_line`].
@@ -224,6 +239,11 @@ const MAX_RECORD_BYTES: usize = 16 * 1024;
 
 /// PAM rollback bytes are deliberately generous but finite.
 const MAX_BACKUP_BYTES: usize = 1024 * 1024;
+
+/// Whole-machine cleanup journals are path-free and bounded before parsing.
+const REMOVE_ALL_VERSION: u32 = 1;
+const MAX_REMOVE_ALL_TARGETS: usize = 1024;
+const MAX_REMOVE_ALL_JOURNAL_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -331,6 +351,14 @@ enum CleanupCrashPoint {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoveAllRollbackPoint {
+    ReverseExchange,
+    TempUnlink,
+    BindingUnlink,
+    IntentUnlink,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PamReplaceCrashPoint {
     Intent,
     ReplacementTemp,
@@ -382,6 +410,51 @@ struct PreparedBackup {
     provenance: ProvenanceRecord,
     backup_identity: Option<FileIdentity>,
     record_identity: Option<FileIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RemoveAllJournalTarget {
+    service: String,
+    backup: String,
+    original: FileIdentity,
+    installed_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RemoveAllJournal {
+    version: u32,
+    operation: String,
+    keep_backup: bool,
+    targets: Vec<RemoveAllJournalTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RemoveAllCommittedTarget {
+    service: String,
+    backup: String,
+    installed: FileIdentity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RemoveAllCommit {
+    version: u32,
+    operation: String,
+    journal_sha256: String,
+    keep_backup: bool,
+    targets: Vec<RemoveAllCommittedTarget>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoveAllPoint {
+    Locked,
+    Journaled,
+    BeforeMutation(usize),
+    AfterMutation(usize),
+    CommitMarked,
 }
 
 #[derive(Debug, Clone)]
@@ -580,7 +653,6 @@ impl BackupTransaction<'_> {
             .replace_pam_with_intent_unlocked_hook(prepared, path, expected, content, |_| Ok(()))
     }
 
-    #[cfg(test)]
     fn replace_pam_with_intent_hook(
         &self,
         prepared: &PreparedBackup,
@@ -1512,6 +1584,37 @@ impl BackupStore {
         }
     }
 
+    fn open_existing_read_only(root: &Path) -> std::io::Result<Option<Self>> {
+        match fs::symlink_metadata(root) {
+            Ok(meta) if meta.file_type().is_dir() => {
+                let expected_owner = expected_state_owner(root);
+                let directory = open_directory_nofollow(root)?;
+                let metadata = directory.metadata()?;
+                if !state_directory_attributes_match(
+                    metadata.mode(),
+                    metadata.uid(),
+                    metadata.gid(),
+                    expected_owner,
+                ) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "PAM backup state directory owner or mode is not trusted",
+                    ));
+                }
+                Ok(Some(Self {
+                    root: root.to_path_buf(),
+                    expected_owner,
+                }))
+            }
+            Ok(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{} is not a directory", root.display()),
+            )),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     fn lock_exclusive(&self) -> std::io::Result<fs::File> {
         let directory = open_directory_nofollow(&self.root)?;
         // SAFETY: `directory` is a live descriptor. Closing the returned file
@@ -1525,6 +1628,7 @@ impl BackupStore {
 
     fn transaction<'a>(&'a self, dirs: &PamDirs) -> std::io::Result<BackupTransaction<'a>> {
         let lock = self.lock_exclusive()?;
+        recover_remove_all_locked(self, dirs)?;
         self.recover_unlocked(dirs)?;
         Ok(BackupTransaction {
             store: self,
@@ -2911,7 +3015,8 @@ fn sync_directory(path: &Path) -> std::io::Result<()> {
     fs::File::open(path)?.sync_all()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FileIdentity {
     device: u64,
     inode: u64,
@@ -2940,6 +3045,61 @@ fn open_directory_nofollow(path: &Path) -> std::io::Result<fs::File> {
     Ok(unsafe { fs::File::from_raw_fd(fd) })
 }
 
+/// Enumerate names through an already-open directory descriptor.
+///
+/// `std::fs::read_dir` resolves a pathname again. Cleanup instead needs the
+/// directory whose identity was accepted by `open_directory_nofollow`, even
+/// if that pathname is renamed while discovery is running.
+fn directory_entry_names(directory: &fs::File) -> std::io::Result<Vec<OsString>> {
+    struct DirectoryStream(*mut libc::DIR);
+    impl Drop for DirectoryStream {
+        fn drop(&mut self) {
+            // SAFETY: `fdopendir` returned this unique stream and `Drop` runs
+            // once. `closedir` also closes the duplicated descriptor.
+            unsafe { libc::closedir(self.0) };
+        }
+    }
+
+    // SAFETY: `directory` remains live. The duplicate is transferred to
+    // `fdopendir`, so enumeration cannot change or close the caller's fd.
+    let duplicated = unsafe { libc::fcntl(directory.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
+    if duplicated < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `duplicated` is a new directory descriptor owned by this call.
+    let stream = unsafe { libc::fdopendir(duplicated) };
+    if stream.is_null() {
+        let error = std::io::Error::last_os_error();
+        // SAFETY: ownership was not transferred when `fdopendir` failed.
+        unsafe { libc::close(duplicated) };
+        return Err(error);
+    }
+    let stream = DirectoryStream(stream);
+    let mut names = Vec::new();
+    loop {
+        // SAFETY: Linux exposes thread-local errno here. Clearing it lets a
+        // null `readdir` distinguish end-of-stream from an actual error.
+        unsafe { *libc::__errno_location() = 0 };
+        // SAFETY: `stream` remains open and is used by this thread only.
+        let entry = unsafe { libc::readdir(stream.0) };
+        if entry.is_null() {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(0) {
+                break;
+            }
+            return Err(error);
+        }
+        // SAFETY: `readdir` returns one live dirent whose d_name is
+        // NUL-terminated until the next call. Copy it before continuing.
+        let bytes = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+        if bytes == b"." || bytes == b".." {
+            continue;
+        }
+        names.push(OsString::from_vec(bytes.to_vec()));
+    }
+    Ok(names)
+}
+
 fn entry_exists_at(directory: &fs::File, name: &str) -> std::io::Result<bool> {
     let name = CString::new(name.as_bytes()).map_err(|_| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, "state name contains NUL")
@@ -2965,6 +3125,67 @@ fn entry_exists_at(directory: &fs::File, name: &str) -> std::io::Result<bool> {
     } else {
         Err(error)
     }
+}
+
+fn metadata_at_nofollow(directory: &fs::File, name: &OsStr) -> std::io::Result<libc::stat> {
+    let name = CString::new(name.as_bytes()).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "file name contains NUL")
+    })?;
+    let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: the live directory descriptor and C basename identify one
+    // directory entry; NOFOLLOW observes the entry itself and the output
+    // points to writable storage for one stat value.
+    if unsafe {
+        libc::fstatat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            metadata.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } != 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: successful fstatat initialized the complete stat value.
+    Ok(unsafe { metadata.assume_init() })
+}
+
+fn read_link_at(directory: &fs::File, name: &OsStr) -> std::io::Result<PathBuf> {
+    let name = CString::new(name.as_bytes()).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "file name contains NUL")
+    })?;
+    let mut target = vec![0_u8; libc::PATH_MAX as usize + 1];
+    // SAFETY: `name` and the output buffer remain live for the call. readlinkat
+    // reads the link bytes themselves and never traverses the final component.
+    let length = unsafe {
+        libc::readlinkat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            target.as_mut_ptr().cast(),
+            target.len(),
+        )
+    };
+    if length < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let length = length as usize;
+    if length == target.len() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "PAM symlink target is too long",
+        ));
+    }
+    target.truncate(length);
+    Ok(PathBuf::from(OsString::from_vec(target)))
+}
+
+fn symlink_is_covered_by_later_root(
+    directory: &fs::File,
+    service: &str,
+    later_roots: &[PathBuf],
+) -> std::io::Result<bool> {
+    let target = read_link_at(directory, OsStr::new(service))?;
+    Ok(target.is_absolute() && later_roots.iter().any(|root| target == root.join(service)))
 }
 
 fn open_regular_at(directory: &fs::File, name: &OsStr) -> std::io::Result<fs::File> {
@@ -3796,6 +4017,14 @@ impl PamDirs {
             .map_or_else(Self::default, Self::from_config)
     }
 
+    /// Fixed, compiled roots for config-independent machine-wide cleanup.
+    fn system_cleanup() -> Self {
+        PamDirs {
+            dirs: PAM_CLEANUP_DIRS.iter().map(PathBuf::from).collect(),
+            backup_dir: PathBuf::from(PAM_BACKUPS_DIR),
+        }
+    }
+
     /// The search path a config that has *already been parsed* names.
     ///
     /// `facelock status` holds a [`crate::resolved::ConfigLoad`] before it
@@ -3852,11 +4081,7 @@ pub(crate) fn only(dir: impl AsRef<Path>) -> PamDirs {
 impl Default for PamDirs {
     fn default() -> Self {
         PamDirs {
-            dirs: facelock_core::config::PamConfig::default()
-                .config_dirs
-                .into_iter()
-                .map(PathBuf::from)
-                .collect(),
+            dirs: PAM_SYSTEM_DIRS.iter().map(PathBuf::from).collect(),
             backup_dir: PathBuf::from(PAM_BACKUPS_DIR),
         }
     }
@@ -3929,8 +4154,9 @@ pub struct PamRequest {
     /// Requested services, in the order given. Empty means
     /// [`DEFAULT_PAM_SERVICE`].
     pub services: Vec<String>,
-    /// `status` only: report every service on the search path that carries the
-    /// facelock line instead of the named ones.
+    /// Enumerating forms: report (`status`) or clean (`remove`) every service
+    /// on the applicable search path that carries the facelock line instead
+    /// of acting on named services.
     ///
     /// A flag rather than a new meaning for a bare `pam status`, because that
     /// invocation's exit code is 0/1/2 *about `sudo`* today and an integrator
@@ -6294,6 +6520,10 @@ pub fn run(request: PamRequest) -> anyhow::Result<i32> {
         require_module_installed()?;
     }
 
+    if request.action == PamAction::Remove && request.all {
+        return remove_all_in(&PamDirs::system_cleanup(), &request);
+    }
+
     write_in(&PamDirs::system(), &request)
 }
 
@@ -6518,6 +6748,1191 @@ fn write_in(dirs: &PamDirs, request: &PamRequest) -> anyhow::Result<i32> {
     } else {
         WRITE_OK
     })
+}
+
+/// Whether every live reference in `content` has the exact physical spelling
+/// emitted by Facelock before versioned state existed.
+///
+/// The broad parser remains correct for named `pam remove`: an operator who
+/// names a service explicitly asked to remove its module rule. Machine-wide
+/// cleanup has no such authorization, so spacing, controls and options are
+/// ownership evidence rather than cosmetic differences.
+fn has_only_exact_legacy_facelock_rules(content: &[u8]) -> bool {
+    let mut found = false;
+    for rule in PamDocument::new(content).logical_rules() {
+        if !is_facelock_rule(rule.bytes) {
+            continue;
+        }
+        found = true;
+        let mut next = rule.start;
+        let mut saw_exact = false;
+        while next < rule.end {
+            let Some(line) = PhysicalLine::at(content, next) else {
+                return false;
+            };
+            if line
+                .semantic()
+                .windows(b"pam_facelock.so".len())
+                .any(|window| window == b"pam_facelock.so")
+            {
+                if line.content() != PAM_LINE.as_bytes() {
+                    return false;
+                }
+                saw_exact = true;
+            }
+            next = line.end;
+        }
+        if !saw_exact {
+            return false;
+        }
+    }
+    found
+}
+
+fn strict_record_names_for_service(root: &Path, service: &str) -> std::io::Result<Vec<String>> {
+    let mut names = Vec::new();
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(names),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Some(backup) = name.strip_suffix(".json") else {
+            continue;
+        };
+        if backup_service(backup) == Some(service) {
+            names.push(name);
+        }
+    }
+    Ok(names)
+}
+
+fn remove_all_reference_is_owned(
+    store: Option<&BackupStore>,
+    service: &str,
+    content: &[u8],
+) -> anyhow::Result<bool> {
+    let Some(store) = store else {
+        return Ok(has_only_exact_legacy_facelock_rules(content));
+    };
+    let strict_names = strict_record_names_for_service(&store.root, service)?;
+    let records = store.validated_records(service)?;
+    if strict_names.len() != records.len() {
+        anyhow::bail!("corrupt PAM provenance for service {service}");
+    }
+    if records.is_empty() {
+        return Ok(has_only_exact_legacy_facelock_rules(content));
+    }
+    let current = sha256_hex(content);
+    if records.iter().any(|record| {
+        record.provenance.state == ProvenanceState::Committed
+            && record.provenance.installed_sha256 == current
+    }) {
+        return Ok(true);
+    }
+    anyhow::bail!("PAM service {service} no longer matches its Facelock provenance")
+}
+
+fn remove_all_name_is_candidate(
+    store: Option<&BackupStore>,
+    service: &str,
+) -> std::io::Result<bool> {
+    if is_service_name(service) {
+        return Ok(true);
+    }
+    if confined(service).is_err() {
+        return Ok(false);
+    }
+    let Some(store) = store else {
+        return Ok(false);
+    };
+    Ok(!strict_record_names_for_service(&store.root, service)?.is_empty())
+}
+
+fn remove_all_services_with_store(
+    dirs: &PamDirs,
+    open_store: impl FnOnce(&Path) -> std::io::Result<Option<BackupStore>>,
+) -> anyhow::Result<Vec<String>> {
+    let store = open_store(dirs.backup_dir())?;
+    let mut services = Vec::new();
+    let mut blockers = Vec::new();
+
+    for (root_index, base) in dirs.iter().enumerate() {
+        let directory = match open_directory_nofollow(base) {
+            Ok(directory) => directory,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                blockers.push(format!("{} could not be scanned: {error}", base.display()));
+                continue;
+            }
+        };
+        let entries = match directory_entry_names(&directory) {
+            Ok(entries) => entries,
+            Err(error) => {
+                blockers.push(format!("{} could not be scanned: {error}", base.display()));
+                continue;
+            }
+        };
+        for entry_name in entries {
+            let Some(service) = entry_name.to_str().map(str::to_owned) else {
+                blockers.push(format!(
+                    "{} contains a PAM entry with a non-UTF-8 name",
+                    base.display()
+                ));
+                continue;
+            };
+            if !remove_all_name_is_candidate(store.as_ref(), &service)? {
+                continue;
+            }
+            let entry_metadata = match metadata_at_nofollow(&directory, OsStr::new(&service)) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    blockers.push(format!(
+                        "{} is unmanaged: {error}",
+                        base.join(&service).display()
+                    ));
+                    continue;
+                }
+            };
+            let file_type = entry_metadata.st_mode & libc::S_IFMT;
+            if file_type == libc::S_IFDIR {
+                continue;
+            }
+            if file_type == libc::S_IFLNK {
+                if symlink_is_covered_by_later_root(
+                    &directory,
+                    &service,
+                    &dirs.dirs[root_index + 1..],
+                )
+                .unwrap_or(false)
+                {
+                    continue;
+                }
+                blockers.push(format!(
+                    "{} is unmanaged: PAM service is a symlink",
+                    base.join(&service).display()
+                ));
+                continue;
+            }
+            if file_type != libc::S_IFREG {
+                blockers.push(format!(
+                    "{} is unmanaged: PAM service is not a regular file",
+                    base.join(&service).display()
+                ));
+                continue;
+            }
+            let file = match open_regular_at(&directory, OsStr::new(&service)) {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error)
+                    if error.raw_os_error() == Some(libc::ELOOP)
+                        && symlink_is_covered_by_later_root(
+                            &directory,
+                            &service,
+                            &dirs.dirs[root_index + 1..],
+                        )
+                        .unwrap_or(false) =>
+                {
+                    continue;
+                }
+                Err(error) => {
+                    blockers.push(format!(
+                        "{} is unmanaged: {error}",
+                        base.join(&service).display()
+                    ));
+                    continue;
+                }
+            };
+            let content = match read_open_bounded(&file, MAX_BACKUP_BYTES) {
+                Ok(content) => content,
+                Err(error) => {
+                    blockers.push(format!(
+                        "{} is unmanaged: {error}",
+                        base.join(&service).display()
+                    ));
+                    continue;
+                }
+            };
+            if !PamDocument::new(&content).has_facelock_rule() {
+                continue;
+            }
+            if root_index != 0 {
+                blockers.push(format!(
+                    "{} is an unmanaged reference outside the writable PAM root",
+                    base.join(&service).display()
+                ));
+                continue;
+            }
+            match remove_all_reference_is_owned(store.as_ref(), &service, &content) {
+                Ok(true) => services.push(service),
+                Ok(false) => blockers.push(format!(
+                    "{} is an administrator-managed PAM reference",
+                    base.join(&service).display()
+                )),
+                Err(error) => blockers.push(error.to_string()),
+            }
+        }
+    }
+
+    if !blockers.is_empty() {
+        anyhow::bail!(blockers.join("; "));
+    }
+    services.sort();
+    services.dedup();
+    Ok(services)
+}
+
+fn remove_all_services(dirs: &PamDirs) -> anyhow::Result<Vec<String>> {
+    remove_all_services_with_store(dirs, BackupStore::open_existing)
+}
+
+fn remove_all_services_read_only(dirs: &PamDirs) -> anyhow::Result<Vec<String>> {
+    remove_all_services_with_store(dirs, BackupStore::open_existing_read_only)
+}
+
+fn valid_remove_all_operation(operation: &str) -> bool {
+    let Some((seconds, nanoseconds)) = operation.split_once('-') else {
+        return false;
+    };
+    !seconds.is_empty()
+        && seconds.bytes().all(|byte| byte.is_ascii_digit())
+        && seconds.parse::<u64>().is_ok()
+        && nanoseconds.len() == 9
+        && nanoseconds.bytes().all(|byte| byte.is_ascii_digit())
+        && nanoseconds
+            .parse::<u32>()
+            .is_ok_and(|value| value < 1_000_000_000)
+}
+
+fn remove_all_journal_name(operation: &str) -> String {
+    format!(".facelock-remove-all-{operation}.json")
+}
+
+fn remove_all_commit_name(operation: &str) -> String {
+    format!(".facelock-remove-all-commit-{operation}.json")
+}
+
+fn valid_remove_all_target(target: &RemoveAllJournalTarget) -> bool {
+    confined(&target.service).is_ok()
+        && valid_backup_name(&target.service, &target.backup)
+        && target.original.links == 1
+        && target.original.mode & libc::S_IFMT == libc::S_IFREG
+        && valid_sha256(&target.original.sha256)
+        && valid_sha256(&target.installed_sha256)
+}
+
+fn valid_remove_all_journal(journal: &RemoveAllJournal) -> bool {
+    journal.version == REMOVE_ALL_VERSION
+        && valid_remove_all_operation(&journal.operation)
+        && !journal.targets.is_empty()
+        && journal.targets.len() <= MAX_REMOVE_ALL_TARGETS
+        && journal.targets.iter().all(valid_remove_all_target)
+        && {
+            let mut services = journal
+                .targets
+                .iter()
+                .map(|target| target.service.as_str())
+                .collect::<Vec<_>>();
+            let original_len = services.len();
+            services.sort_unstable();
+            services.dedup();
+            services.len() == original_len
+        }
+}
+
+fn valid_remove_all_commit(commit: &RemoveAllCommit) -> bool {
+    commit.version == REMOVE_ALL_VERSION
+        && valid_remove_all_operation(&commit.operation)
+        && valid_sha256(&commit.journal_sha256)
+        && !commit.targets.is_empty()
+        && commit.targets.len() <= MAX_REMOVE_ALL_TARGETS
+        && commit.targets.iter().all(|target| {
+            confined(&target.service).is_ok()
+                && valid_backup_name(&target.service, &target.backup)
+                && target.installed.links == 1
+                && target.installed.mode & libc::S_IFMT == libc::S_IFREG
+                && valid_sha256(&target.installed.sha256)
+        })
+        && {
+            let mut services = commit
+                .targets
+                .iter()
+                .map(|target| target.service.as_str())
+                .collect::<Vec<_>>();
+            let original_len = services.len();
+            services.sort_unstable();
+            services.dedup();
+            services.len() == original_len
+        }
+}
+
+fn remove_all_binding_identity(binding: &PublicationBinding) -> FileIdentity {
+    FileIdentity {
+        device: binding.device,
+        inode: binding.inode,
+        links: binding.links,
+        sha256: binding.sha256.clone(),
+        mode: binding.mode,
+        uid: binding.uid,
+        gid: binding.gid,
+    }
+}
+
+fn create_remove_all_journal(
+    store: &BackupStore,
+    keep_backup: bool,
+    targets: Vec<RemoveAllJournalTarget>,
+) -> std::io::Result<(RemoveAllJournal, String, Vec<u8>, FileIdentity)> {
+    use std::io::{Error, ErrorKind};
+
+    let mut since_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| Error::new(ErrorKind::InvalidData, error))?;
+    for _ in 0..MAX_TIMESTAMP_COLLISION_PROBES {
+        let operation = format!(
+            "{}-{:09}",
+            since_epoch.as_secs(),
+            since_epoch.subsec_nanos()
+        );
+        let name = remove_all_journal_name(&operation);
+        let commit_name = remove_all_commit_name(&operation);
+        if fs::symlink_metadata(store.root.join(&name)).is_ok()
+            || fs::symlink_metadata(store.root.join(&commit_name)).is_ok()
+        {
+            since_epoch = since_epoch
+                .checked_add(std::time::Duration::from_nanos(1))
+                .ok_or_else(|| Error::new(ErrorKind::InvalidData, "remove-all clock overflow"))?;
+            continue;
+        }
+        let journal = RemoveAllJournal {
+            version: REMOVE_ALL_VERSION,
+            operation,
+            keep_backup,
+            targets: targets.clone(),
+        };
+        let encoded = serde_json::to_vec_pretty(&journal)
+            .map_err(|error| Error::new(ErrorKind::InvalidData, error))?;
+        if encoded.len() > MAX_REMOVE_ALL_JOURNAL_BYTES {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "remove-all journal exceeds its size limit",
+            ));
+        }
+        match atomic_state_create(&store.root, &name, &encoded) {
+            Ok(identity) => return Ok((journal, name, encoded, identity)),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                since_epoch = since_epoch
+                    .checked_add(std::time::Duration::from_nanos(1))
+                    .ok_or_else(|| {
+                        Error::new(ErrorKind::InvalidData, "remove-all clock overflow")
+                    })?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(Error::new(
+        ErrorKind::AlreadyExists,
+        "remove-all journal collision probe limit exhausted",
+    ))
+}
+
+fn unlink_remove_all_state(
+    store: &BackupStore,
+    name: &str,
+    identity: &FileIdentity,
+) -> std::io::Result<()> {
+    let directory = open_directory_nofollow(&store.root)?;
+    unlink_at_if_identity_matches(&directory, name, identity, MAX_REMOVE_ALL_JOURNAL_BYTES)?;
+    directory.sync_all()
+}
+
+fn exact_batch_publication(
+    store: &BackupStore,
+    target: &RemoveAllJournalTarget,
+) -> std::io::Result<Option<(ValidIntent, ValidPublication)>> {
+    let intents = store.validated_intents()?;
+    let publications = store.validated_publications()?;
+    let intent_name = intent_name(IntentRole::PamReplace, &target.backup);
+    let publication_name = publication_name(PublicationRole::PamReplace, &target.backup);
+    let state_directory = open_directory_nofollow(&store.root)?;
+    let intent = intents.into_iter().find(|intent| {
+        intent.name == intent_name
+            && intent.intent.service == target.service
+            && intent.intent.original_sha256 == target.original.sha256
+            && intent.intent.installed_sha256 == target.installed_sha256
+    });
+    let publication = publications.into_iter().find(|publication| {
+        publication.name == publication_name
+            && publication.binding.service == target.service
+            && publication.binding.sha256 == target.installed_sha256
+    });
+    match (intent, publication) {
+        (Some(intent), Some(publication))
+            if BackupStore::publication_matches_intent(&publication.binding, &intent) =>
+        {
+            Ok(Some((intent, publication)))
+        }
+        (None, None)
+            if !entry_exists_at(&state_directory, &intent_name)?
+                && !entry_exists_at(&state_directory, &publication_name)? =>
+        {
+            Ok(None)
+        }
+        _ => Err(std::io::Error::other(
+            "remove-all publication evidence is incomplete or invalid",
+        )),
+    }
+}
+
+fn prepared_for_remove_all_target(
+    store: &BackupStore,
+    target: &RemoveAllJournalTarget,
+) -> std::io::Result<PreparedBackup> {
+    store
+        .validated_records(&target.service)?
+        .into_iter()
+        .find(|prepared| {
+            prepared.backup == target.backup
+                && prepared.provenance.state == ProvenanceState::Prepared
+                && prepared.provenance.original_sha256 == target.original.sha256
+                && prepared.provenance.installed_sha256 == target.installed_sha256
+        })
+        .ok_or_else(|| std::io::Error::other("remove-all rollback pair is missing or invalid"))
+}
+
+fn recover_unstarted_remove_all_publication(
+    store: &BackupStore,
+    dirs: &PamDirs,
+    target: &RemoveAllJournalTarget,
+    current: &FileIdentity,
+) -> std::io::Result<bool> {
+    let intent_name = intent_name(IntentRole::PamReplace, &target.backup);
+    let publication_name = publication_name(PublicationRole::PamReplace, &target.backup);
+    let state_directory = open_directory_nofollow(&store.root)?;
+    if entry_exists_at(&state_directory, &publication_name)? {
+        return Ok(false);
+    }
+    let Some(intent) = store.validated_intents()?.into_iter().find(|intent| {
+        intent.name == intent_name
+            && intent.intent.role == IntentRole::PamReplace
+            && intent.intent.service == target.service
+            && intent.intent.backup == target.backup
+            && intent.intent.original_sha256 == target.original.sha256
+            && intent.intent.installed_sha256 == target.installed_sha256
+            && exact_original_intent_identity(&intent.intent, &target.original)
+    }) else {
+        return Ok(false);
+    };
+    let prepared = prepared_for_remove_all_target(store, target)?;
+    let record_hash = prepared
+        .record_identity
+        .as_ref()
+        .map(|identity| identity.sha256.as_str())
+        .ok_or_else(|| std::io::Error::other("remove-all record identity is missing"))?;
+    if intent.intent.sequence != prepared.provenance.sequence
+        || intent.intent.record_sha256.as_deref() != Some(record_hash)
+    {
+        return Ok(false);
+    }
+    if !identity_matches(&target.original, current) {
+        return Ok(false);
+    }
+    let pam_directory = open_directory_nofollow(dirs.overrides())?;
+    if entry_exists_at(&pam_directory, &pam_replace_name(&target.backup))? {
+        return Ok(false);
+    }
+    unlink_state_if_identity_matches(&store.root, &intent.name, &intent.identity)?;
+    Ok(true)
+}
+
+fn remove_all_pair_state_is_absent(
+    directory: &fs::File,
+    target: &RemoveAllJournalTarget,
+) -> std::io::Result<bool> {
+    let names = [
+        target.backup.clone(),
+        format!("{}.json", target.backup),
+        quarantine_name("backup", &target.backup),
+        format!("{}.json", quarantine_name("record", &target.backup)),
+        intent_name(IntentRole::Cleanup, &target.backup),
+    ];
+    for name in names {
+        if entry_exists_at(directory, &name)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn cleanup_remove_all_pair(
+    store: &BackupStore,
+    directory: &fs::File,
+    target: &RemoveAllJournalTarget,
+) -> std::io::Result<()> {
+    let cleanup_name = intent_name(IntentRole::Cleanup, &target.backup);
+    let cleanup_intent = store.validated_intents()?.into_iter().find(|intent| {
+        intent.name == cleanup_name
+            && intent.intent.role == IntentRole::Cleanup
+            && intent.intent.service == target.service
+            && intent.intent.backup == target.backup
+            && intent.intent.original_sha256 == target.original.sha256
+            && intent.intent.installed_sha256 == target.installed_sha256
+    });
+    if let Some(intent) = cleanup_intent {
+        store.recover_cleanup_intent(directory, &intent)?;
+        if remove_all_pair_state_is_absent(directory, target)? {
+            return Ok(());
+        }
+        return Err(std::io::Error::other(
+            "remove-all rollback pair cleanup remains incomplete or ambiguous",
+        ));
+    }
+    if entry_exists_at(directory, &cleanup_name)? {
+        return Err(std::io::Error::other(
+            "remove-all rollback pair has invalid cleanup evidence",
+        ));
+    }
+    let backup_quarantine = quarantine_name("backup", &target.backup);
+    let record_quarantine = format!("{}.json", quarantine_name("record", &target.backup));
+    if entry_exists_at(directory, &backup_quarantine)?
+        || entry_exists_at(directory, &record_quarantine)?
+    {
+        return Err(std::io::Error::other(
+            "remove-all rollback pair has conflicting quarantine state",
+        ));
+    }
+    match prepared_for_remove_all_target(store, target) {
+        Ok(prepared) => store.cleanup_one_at(directory, &prepared, |_| Ok(())),
+        Err(_) if remove_all_pair_state_is_absent(directory, target)? => Ok(()),
+        Err(_) => Err(std::io::Error::other(
+            "remove-all rollback pair is partial, substituted, or conflicting",
+        )),
+    }
+}
+
+fn cleanup_remove_all_pairs(
+    store: &BackupStore,
+    journal: &RemoveAllJournal,
+) -> std::io::Result<()> {
+    let directory = open_directory_nofollow(&store.root)?;
+    for target in &journal.targets {
+        cleanup_remove_all_pair(store, &directory, target)?;
+    }
+    directory.sync_all()
+}
+
+fn finish_rolled_back_remove_all_publication(
+    store: &BackupStore,
+    dirs: &PamDirs,
+    target: &RemoveAllJournalTarget,
+    publication: &ValidPublication,
+    temp_name: &str,
+    after_boundary: &mut impl FnMut(RemoveAllRollbackPoint) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let directory = open_directory_nofollow(dirs.overrides())?;
+    let current = open_identity_at(&directory, &target.service, MAX_BACKUP_BYTES)?
+        .ok_or_else(|| std::io::Error::other("rolled-back PAM service is missing"))?;
+    if !identity_matches(&target.original, &current) {
+        return Err(std::io::Error::other(
+            "rolled-back PAM service no longer matches its original identity",
+        ));
+    }
+
+    if let Some(temp) = open_identity_at(&directory, temp_name, MAX_BACKUP_BYTES)? {
+        if !binding_identity_matches(&publication.binding, &temp) {
+            return Err(std::io::Error::other(
+                "rolled-back PAM replacement temp is ambiguous",
+            ));
+        }
+        unlink_at_if_identity_matches(&directory, temp_name, &temp, MAX_BACKUP_BYTES)?;
+        directory.sync_all()?;
+        after_boundary(RemoveAllRollbackPoint::TempUnlink)?;
+    }
+
+    unlink_state_if_identity_matches(&store.root, &publication.name, &publication.identity)?;
+    after_boundary(RemoveAllRollbackPoint::BindingUnlink)?;
+
+    let current = open_identity_at(&directory, &target.service, MAX_BACKUP_BYTES)?
+        .ok_or_else(|| std::io::Error::other("rolled-back PAM service is missing"))?;
+    if !recover_unstarted_remove_all_publication(store, dirs, target, &current)? {
+        return Err(std::io::Error::other(
+            "rolled-back PAM intent is not exact unstarted evidence",
+        ));
+    }
+    after_boundary(RemoveAllRollbackPoint::IntentUnlink)
+}
+
+fn rollback_remove_all(
+    store: &BackupStore,
+    dirs: &PamDirs,
+    journal: &RemoveAllJournal,
+    journal_name: &str,
+    journal_identity: &FileIdentity,
+) -> std::io::Result<()> {
+    rollback_remove_all_with_hook(store, dirs, journal, journal_name, journal_identity, |_| {
+        Ok(())
+    })
+}
+
+fn rollback_remove_all_with_hook(
+    store: &BackupStore,
+    dirs: &PamDirs,
+    journal: &RemoveAllJournal,
+    journal_name: &str,
+    journal_identity: &FileIdentity,
+    mut after_boundary: impl FnMut(RemoveAllRollbackPoint) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let mut ambiguous = Vec::new();
+    for target in journal.targets.iter().rev() {
+        let canonical = dirs.overrides().join(&target.service);
+        let current = match read_regular_nofollow(&canonical) {
+            Ok((_, identity)) => identity,
+            Err(error) => {
+                ambiguous.push(format!("{}: {error}", target.service));
+                continue;
+            }
+        };
+        match recover_unstarted_remove_all_publication(store, dirs, target, &current) {
+            Ok(true) => continue,
+            Ok(false) => {}
+            Err(error) => {
+                ambiguous.push(format!("{}: {error}", target.service));
+                continue;
+            }
+        }
+        match exact_batch_publication(store, target) {
+            Ok(Some((_intent, publication))) => {
+                let installed = remove_all_binding_identity(&publication.binding);
+                let directory = match open_directory_nofollow(dirs.overrides()) {
+                    Ok(directory) => directory,
+                    Err(error) => {
+                        ambiguous.push(format!("{}: {error}", target.service));
+                        continue;
+                    }
+                };
+                let temp_name = pam_replace_name(&target.backup);
+                let temp = match open_identity_at(&directory, &temp_name, MAX_BACKUP_BYTES) {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        ambiguous.push(format!("{}: {error}", target.service));
+                        continue;
+                    }
+                };
+                if identity_matches(&installed, &current)
+                    && temp
+                        .as_ref()
+                        .is_some_and(|temp| identity_matches(&target.original, temp))
+                {
+                    if let Err(error) = rename_exchange_at(&directory, &temp_name, &target.service)
+                    {
+                        ambiguous.push(format!("{} rollback failed: {error}", target.service));
+                        continue;
+                    }
+                    after_boundary(RemoveAllRollbackPoint::ReverseExchange)?;
+                } else if !identity_matches(&target.original, &current)
+                    || temp
+                        .as_ref()
+                        .is_some_and(|temp| !identity_matches(&installed, temp))
+                {
+                    ambiguous.push(format!("{} changed before rollback", target.service));
+                    continue;
+                }
+                finish_rolled_back_remove_all_publication(
+                    store,
+                    dirs,
+                    target,
+                    &publication,
+                    &temp_name,
+                    &mut after_boundary,
+                )?;
+            }
+            Ok(None) if identity_matches(&target.original, &current) => {}
+            Ok(None) => ambiguous.push(format!("{} changed after preflight", target.service)),
+            Err(error) => ambiguous.push(format!("{}: {error}", target.service)),
+        }
+    }
+
+    if !ambiguous.is_empty() {
+        return Err(std::io::Error::other(format!(
+            "remove-all rollback retained evidence: {}",
+            ambiguous.join("; ")
+        )));
+    }
+    cleanup_remove_all_pairs(store, journal)?;
+    unlink_remove_all_state(store, journal_name, journal_identity)
+}
+
+fn committed_remove_all_targets(
+    store: &BackupStore,
+    journal: &RemoveAllJournal,
+) -> std::io::Result<Vec<RemoveAllCommittedTarget>> {
+    journal
+        .targets
+        .iter()
+        .map(|target| {
+            let (_, publication) = exact_batch_publication(store, target)?.ok_or_else(|| {
+                std::io::Error::other("remove-all publication binding disappeared before commit")
+            })?;
+            let installed = remove_all_binding_identity(&publication.binding);
+            Ok(RemoveAllCommittedTarget {
+                service: target.service.clone(),
+                backup: target.backup.clone(),
+                installed,
+            })
+        })
+        .collect()
+}
+
+fn finish_committed_remove_all(
+    store: &BackupStore,
+    dirs: &PamDirs,
+    journal: Option<(&RemoveAllJournal, &str, &FileIdentity)>,
+    commit: &RemoveAllCommit,
+    commit_name: &str,
+    commit_identity: &FileIdentity,
+) -> std::io::Result<()> {
+    for target in &commit.targets {
+        let path = dirs.overrides().join(&target.service);
+        let (_, current) = read_regular_nofollow(&path)?;
+        if !identity_matches(&target.installed, &current) {
+            return Err(std::io::Error::other(format!(
+                "{} changed before remove-all cleanup",
+                target.service
+            )));
+        }
+    }
+    store.recover_publications(dirs)?;
+    store.recover_intents(dirs)?;
+
+    let state_directory = open_directory_nofollow(&store.root)?;
+    for target in &commit.targets {
+        let exact_intent = intent_name(IntentRole::PamReplace, &target.backup);
+        let exact_binding = publication_name(PublicationRole::PamReplace, &target.backup);
+        if entry_exists_at(&state_directory, &exact_intent)?
+            || entry_exists_at(&state_directory, &exact_binding)?
+        {
+            return Err(std::io::Error::other(
+                "remove-all publication evidence could not be finalized",
+            ));
+        }
+    }
+
+    for target in &commit.targets {
+        if commit.keep_backup {
+            let prepared = store
+                .validated_records(&target.service)?
+                .into_iter()
+                .find(|record| record.backup == target.backup)
+                .ok_or_else(|| {
+                    std::io::Error::other("remove-all rollback pair disappeared before commit")
+                })?;
+            if prepared.provenance.state == ProvenanceState::Prepared {
+                store.commit_unlocked(&prepared, |_| Ok(()))?;
+            }
+        } else {
+            for prepared in store.validated_records(&target.service)? {
+                store.cleanup_one_at(&state_directory, &prepared, |_| Ok(()))?;
+            }
+            remove_legacy_backup(dirs, &target.service)?;
+        }
+    }
+    state_directory.sync_all()?;
+
+    if let Some((_, name, identity)) = journal {
+        unlink_remove_all_state(store, name, identity)?;
+    }
+    unlink_remove_all_state(store, commit_name, commit_identity)
+}
+
+#[derive(Debug)]
+struct LoadedRemoveAll<T> {
+    name: String,
+    value: T,
+    encoded: Vec<u8>,
+    identity: FileIdentity,
+}
+
+type LoadedRemoveAllState = (
+    Option<LoadedRemoveAll<RemoveAllJournal>>,
+    Option<LoadedRemoveAll<RemoveAllCommit>>,
+);
+
+fn load_remove_all_state(store: &BackupStore) -> std::io::Result<LoadedRemoveAllState> {
+    let directory = open_directory_nofollow(&store.root)?;
+    let mut journal = None;
+    let mut commit = None;
+    for entry in fs::read_dir(&store.root)? {
+        let entry = entry?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let commit_operation = name
+            .strip_prefix(".facelock-remove-all-commit-")
+            .and_then(|rest| rest.strip_suffix(".json"))
+            .filter(|operation| valid_remove_all_operation(operation));
+        let journal_operation = name
+            .strip_prefix(".facelock-remove-all-")
+            .and_then(|rest| rest.strip_suffix(".json"))
+            .filter(|operation| valid_remove_all_operation(operation));
+        let (operation, is_commit) = if let Some(operation) = commit_operation {
+            (operation, true)
+        } else if let Some(operation) = journal_operation {
+            (operation, false)
+        } else {
+            continue;
+        };
+        let file = open_regular_at(&directory, OsStr::new(&name)).map_err(|error| {
+            std::io::Error::other(format!("reserved remove-all state is invalid: {error}"))
+        })?;
+        let metadata = file.metadata()?;
+        let encoded = read_open_bounded(&file, MAX_REMOVE_ALL_JOURNAL_BYTES)?;
+        let identity = identity_for_bytes(&metadata, &encoded);
+        if !state_identity_matches(store.expected_owner, &identity, &identity.sha256) {
+            return Err(std::io::Error::other(
+                "reserved remove-all state owner or mode is invalid",
+            ));
+        }
+        if is_commit {
+            let value: RemoveAllCommit = serde_json::from_slice(&encoded).map_err(|error| {
+                std::io::Error::other(format!("remove-all commit is corrupt: {error}"))
+            })?;
+            if operation != value.operation || !valid_remove_all_commit(&value) {
+                return Err(std::io::Error::other("remove-all commit is invalid"));
+            }
+            if commit
+                .replace(LoadedRemoveAll {
+                    name,
+                    value,
+                    encoded,
+                    identity,
+                })
+                .is_some()
+            {
+                return Err(std::io::Error::other(
+                    "multiple remove-all commits require manual review",
+                ));
+            }
+            continue;
+        }
+        let value: RemoveAllJournal = serde_json::from_slice(&encoded).map_err(|error| {
+            std::io::Error::other(format!("remove-all journal is corrupt: {error}"))
+        })?;
+        if operation != value.operation || !valid_remove_all_journal(&value) {
+            return Err(std::io::Error::other("remove-all journal is invalid"));
+        }
+        if journal
+            .replace(LoadedRemoveAll {
+                name,
+                value,
+                encoded,
+                identity,
+            })
+            .is_some()
+        {
+            return Err(std::io::Error::other(
+                "multiple remove-all journals require manual review",
+            ));
+        }
+    }
+    if let (Some(journal), Some(commit)) = (&journal, &commit) {
+        let corresponding = commit.value.operation == journal.value.operation
+            && commit.value.keep_backup == journal.value.keep_backup
+            && commit.value.journal_sha256 == sha256_hex(&journal.encoded)
+            && commit.value.targets.len() == journal.value.targets.len()
+            && commit.value.targets.iter().zip(&journal.value.targets).all(
+                |(committed, planned)| {
+                    committed.service == planned.service
+                        && committed.backup == planned.backup
+                        && committed.installed.sha256 == planned.installed_sha256
+                },
+            );
+        if !corresponding {
+            return Err(std::io::Error::other(
+                "remove-all journal and commit do not describe one transaction",
+            ));
+        }
+    }
+    Ok((journal, commit))
+}
+
+#[cfg(test)]
+fn recover_remove_all_in(dirs: &PamDirs) -> std::io::Result<()> {
+    let Some(store) = BackupStore::open_existing(dirs.backup_dir())? else {
+        return Ok(());
+    };
+    let _lock = store.lock_exclusive()?;
+    recover_remove_all_locked(&store, dirs)
+}
+
+fn recover_remove_all_locked(store: &BackupStore, dirs: &PamDirs) -> std::io::Result<()> {
+    let (journal, commit) = load_remove_all_state(store)?;
+    if let Some(commit) = commit {
+        return finish_committed_remove_all(
+            store,
+            dirs,
+            journal
+                .as_ref()
+                .map(|journal| (&journal.value, journal.name.as_str(), &journal.identity)),
+            &commit.value,
+            &commit.name,
+            &commit.identity,
+        );
+    }
+    if let Some(journal) = journal {
+        rollback_remove_all(
+            store,
+            dirs,
+            &journal.value,
+            &journal.name,
+            &journal.identity,
+        )?;
+    }
+    Ok(())
+}
+
+fn remove_all_in_with_report_hook(
+    dirs: &PamDirs,
+    request: &PamRequest,
+    hook: impl FnMut(RemoveAllPoint) -> std::io::Result<()>,
+    mut report_hook: impl FnMut(&[ServiceReport]),
+) -> anyhow::Result<i32> {
+    use std::cell::RefCell;
+    use std::io::{Error, ErrorKind};
+
+    debug_assert_eq!(request.action, PamAction::Remove);
+    debug_assert!(request.all);
+    if request.dry_run {
+        let services = remove_all_services_read_only(dirs)?;
+        if services.is_empty() {
+            report_hook(&[]);
+            return Ok(WRITE_OK);
+        }
+        if services.len() > MAX_REMOVE_ALL_TARGETS {
+            anyhow::bail!("remove-all target limit exceeded");
+        }
+        let mut named = request.clone();
+        named.all = false;
+        named.services = services;
+        return write_in(dirs, &named);
+    }
+
+    // Avoid creating state for a clear no-op or a rejected first preflight.
+    // Once state exists, the second scan below is authoritative and happens
+    // while the same transaction lock is held through final cleanup.
+    let store = match BackupStore::open_existing(dirs.backup_dir())? {
+        Some(store) => store,
+        None => {
+            let services = remove_all_services(dirs)?;
+            if services.is_empty() {
+                report_hook(&[]);
+                return Ok(WRITE_OK);
+            }
+            BackupStore::open(dirs.backup_dir())?
+        }
+    };
+    let transaction = store.transaction(dirs)?;
+    let hook = RefCell::new(hook);
+    hook.borrow_mut()(RemoveAllPoint::Locked)?;
+    let services = remove_all_services(dirs)?;
+    if services.is_empty() {
+        report_hook(&[]);
+        return Ok(WRITE_OK);
+    }
+    if services.len() > MAX_REMOVE_ALL_TARGETS {
+        anyhow::bail!("remove-all target limit exceeded");
+    }
+    let mut named = request.clone();
+    named.all = false;
+    named.services = services;
+    let write = WriteRequest {
+        action: WriteAction::Remove,
+        request: &named,
+        remedy: "--allow-sensitive",
+    };
+    let targets = plan_writes(dirs, &write)?;
+    let mut planned = Vec::with_capacity(targets.len());
+    for target in targets {
+        let Plan::Rewrite { content } = &target.plan else {
+            anyhow::bail!(
+                "remove-all target {} no longer needs a rewrite",
+                target.service
+            );
+        };
+        let expected = target.identity.clone().ok_or_else(|| {
+            anyhow::anyhow!(
+                "remove-all target {} has no captured identity",
+                target.service
+            )
+        })?;
+        let installed = with_line_removed(content);
+        let prepared = transaction.plan(&target.service, content, &installed)?;
+        transaction.persist(&prepared, content)?;
+        planned.push((target, installed, prepared, expected));
+    }
+    let journal_targets = planned
+        .iter()
+        .map(
+            |(target, installed, prepared, expected)| RemoveAllJournalTarget {
+                service: target.service.clone(),
+                backup: prepared.backup.clone(),
+                original: expected.clone(),
+                installed_sha256: sha256_hex(installed),
+            },
+        )
+        .collect();
+    let (journal, journal_name, journal_encoded, journal_identity) =
+        create_remove_all_journal(&store, request.keep_backup, journal_targets)?;
+    if let Err(error) = hook.borrow_mut()(RemoveAllPoint::Journaled) {
+        return Err(error.into());
+    }
+
+    const HELD: &str = "remove-all publication retained for batch commit";
+    for (index, (target, installed, prepared, expected)) in planned.iter().enumerate() {
+        if let Err(error) = hook.borrow_mut()(RemoveAllPoint::BeforeMutation(index)) {
+            if error.kind() == ErrorKind::Interrupted {
+                return Err(error.into());
+            }
+            let rollback =
+                rollback_remove_all(&store, dirs, &journal, &journal_name, &journal_identity);
+            return Err(anyhow::anyhow!(match rollback {
+                Ok(()) => error.to_string(),
+                Err(rollback) => format!("{error}; {rollback}"),
+            }));
+        }
+        let user_error = RefCell::new(None);
+        let result = transaction.replace_pam_with_intent_hook(
+            prepared,
+            &target.path,
+            expected,
+            installed,
+            |point| {
+                if point != PamReplaceCrashPoint::Exchange {
+                    return Ok(());
+                }
+                match hook.borrow_mut()(RemoveAllPoint::AfterMutation(index)) {
+                    Ok(()) => Err(Error::new(ErrorKind::Interrupted, HELD)),
+                    Err(error) => {
+                        let kind = error.kind();
+                        *user_error.borrow_mut() = Some(error);
+                        Err(Error::new(kind, "remove-all hook stopped publication"))
+                    }
+                }
+            },
+        );
+        if let Some(error) = user_error.into_inner() {
+            if error.kind() == ErrorKind::Interrupted {
+                return Err(error.into());
+            }
+            let rollback =
+                rollback_remove_all(&store, dirs, &journal, &journal_name, &journal_identity);
+            return Err(anyhow::anyhow!(match rollback {
+                Ok(()) => error.to_string(),
+                Err(rollback) => format!("{error}; {rollback}"),
+            }));
+        }
+        match result {
+            Err(error) if error.kind() == ErrorKind::Interrupted && error.to_string() == HELD => {}
+            Err(error) if is_ambiguous_publication(&error) => return Err(error.into()),
+            Err(error) => {
+                let rollback =
+                    rollback_remove_all(&store, dirs, &journal, &journal_name, &journal_identity);
+                return Err(anyhow::anyhow!(match rollback {
+                    Ok(()) => error.to_string(),
+                    Err(rollback) => format!("{error}; {rollback}"),
+                }));
+            }
+            Ok(()) => {
+                return Err(anyhow::anyhow!(
+                    "remove-all publication finalized without retained recovery evidence"
+                ));
+            }
+        }
+    }
+
+    if let Err(error) = remove_all_services(dirs).and_then(|remaining| {
+        if remaining.is_empty() {
+            Ok(())
+        } else {
+            anyhow::bail!("remove-all final scan still found active references")
+        }
+    }) {
+        let rollback =
+            rollback_remove_all(&store, dirs, &journal, &journal_name, &journal_identity);
+        return Err(anyhow::anyhow!(match rollback {
+            Ok(()) => error.to_string(),
+            Err(rollback) => format!("{error}; {rollback}"),
+        }));
+    }
+
+    let committed_targets = committed_remove_all_targets(&store, &journal)?;
+    let commit = RemoveAllCommit {
+        version: REMOVE_ALL_VERSION,
+        operation: journal.operation.clone(),
+        journal_sha256: sha256_hex(&journal_encoded),
+        keep_backup: journal.keep_backup,
+        targets: committed_targets,
+    };
+    let commit_encoded = serde_json::to_vec_pretty(&commit)
+        .map_err(|error| Error::new(ErrorKind::InvalidData, error))?;
+    if commit_encoded.len() > MAX_REMOVE_ALL_JOURNAL_BYTES {
+        anyhow::bail!("remove-all commit exceeds its size limit");
+    }
+    let commit_name = remove_all_commit_name(&journal.operation);
+    let commit_identity = match atomic_state_create(&store.root, &commit_name, &commit_encoded) {
+        Ok(identity) => identity,
+        Err(error) if is_ambiguous_publication(&error) => return Err(error.into()),
+        Err(error) => {
+            let rollback =
+                rollback_remove_all(&store, dirs, &journal, &journal_name, &journal_identity);
+            return Err(anyhow::anyhow!(match rollback {
+                Ok(()) => error.to_string(),
+                Err(rollback) => format!("{error}; {rollback}"),
+            }));
+        }
+    };
+    hook.borrow_mut()(RemoveAllPoint::CommitMarked)?;
+    finish_committed_remove_all(
+        &store,
+        dirs,
+        Some((&journal, &journal_name, &journal_identity)),
+        &commit,
+        &commit_name,
+        &commit_identity,
+    )?;
+    let reports = planned
+        .iter()
+        .map(|(target, _, _, _)| ServiceReport {
+            service: target.service.clone(),
+            path: Some(target.reported_path()),
+            backup: request
+                .keep_backup
+                .then(|| reported_backup(dirs, target))
+                .flatten(),
+            shadows: target.shadows_string(),
+            outcome: Outcome::Removed,
+        })
+        .collect::<Vec<_>>();
+    report_hook(&reports);
+    Ok(WRITE_OK)
+}
+
+fn remove_all_in_with_hook(
+    dirs: &PamDirs,
+    request: &PamRequest,
+    hook: impl FnMut(RemoveAllPoint) -> std::io::Result<()>,
+) -> anyhow::Result<i32> {
+    remove_all_in_with_report_hook(dirs, request, hook, |reports| {
+        emit_json(request, request.dry_run, reports, &[]);
+    })
+}
+
+fn remove_all_in(dirs: &PamDirs, request: &PamRequest) -> anyhow::Result<i32> {
+    remove_all_in_with_hook(dirs, request, |_| Ok(()))
 }
 
 /// `pam status` against `base`.
@@ -6874,6 +8289,7 @@ fn add_left_the_line(outcome: &Outcome) -> bool {
 mod tests {
     use super::*;
 
+    use std::cell::RefCell;
     use std::collections::BTreeMap;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -10106,6 +11522,36 @@ mod tests {
             .collect()
     }
 
+    #[derive(Debug, PartialEq, Eq)]
+    struct DirectorySnapshot {
+        device: u64,
+        inode: u64,
+        mode: u32,
+        uid: u32,
+        gid: u32,
+        modified_seconds: i64,
+        modified_nanoseconds: i64,
+        changed_seconds: i64,
+        changed_nanoseconds: i64,
+        entries: BTreeMap<String, Vec<u8>>,
+    }
+
+    fn directory_snapshot(dir: &Path) -> DirectorySnapshot {
+        let metadata = fs::symlink_metadata(dir).unwrap();
+        DirectorySnapshot {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            mode: metadata.mode(),
+            uid: metadata.uid(),
+            gid: metadata.gid(),
+            modified_seconds: metadata.mtime(),
+            modified_nanoseconds: metadata.mtime_nsec(),
+            changed_seconds: metadata.ctime(),
+            changed_nanoseconds: metadata.ctime_nsec(),
+            entries: snapshot(dir),
+        }
+    }
+
     fn add(services: &[&str]) -> PamRequest {
         PamRequest {
             action: PamAction::Add,
@@ -12155,6 +13601,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn remove_all_uses_compiled_system_roots_not_configured_search_dirs() {
+        let configured = PamDirs::new(vec![PathBuf::from("/srv/custom-pam")]);
+        let cleanup = PamDirs::system_cleanup();
+
+        assert_ne!(cleanup, configured);
+        assert_eq!(cleanup.overrides(), Path::new(PAM_DIR));
+        assert_eq!(
+            cleanup.iter().collect::<Vec<_>>(),
+            [
+                Path::new("/etc/pam.d"),
+                Path::new("/usr/lib/pam.d"),
+                Path::new("/etc/authselect")
+            ]
+        );
+        assert_eq!(cleanup.backup_dir(), Path::new(PAM_BACKUPS_DIR));
+    }
+
     // -----------------------------------------------------------------------
     // The module probe (P1b, #170)
     // -----------------------------------------------------------------------
@@ -12296,6 +13760,942 @@ mod tests {
                 ..PamRequest::default()
             },
         )
+    }
+
+    fn remove_all(dirs: &PamDirs) -> anyhow::Result<i32> {
+        remove_all_in(
+            dirs,
+            &PamRequest {
+                action: PamAction::Remove,
+                all: true,
+                no_confirm: true,
+                ..PamRequest::default()
+            },
+        )
+    }
+
+    #[test]
+    fn remove_all_cleans_provenance_owned_arbitrary_services() {
+        let dir = seeded(&[("custom-greeter", SUDO_BEFORE)]);
+        let dirs = only(dir.path());
+        assert_eq!(
+            write_in(&dirs, &add(&["custom-greeter"])).unwrap(),
+            WRITE_OK
+        );
+
+        assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);
+        assert_eq!(
+            fs::read(dir.path().join("custom-greeter")).unwrap(),
+            SUDO_BEFORE.as_bytes()
+        );
+        assert!(
+            BackupStore::open_existing(dirs.backup_dir())
+                .unwrap()
+                .unwrap()
+                .validated_records("custom-greeter")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn remove_all_finds_provenance_owned_writer_accepted_artifact_names() {
+        let dir = seeded(&[(".custom", SUDO_BEFORE), ("custom.pacsave", SUDO_BEFORE)]);
+        let dirs = only(dir.path());
+
+        assert_eq!(
+            write_in(&dirs, &add(&[".custom", "custom.pacsave"])).unwrap(),
+            WRITE_OK
+        );
+        assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);
+
+        assert_eq!(read(&dir, ".custom"), SUDO_BEFORE);
+        assert_eq!(read(&dir, "custom.pacsave"), SUDO_BEFORE);
+    }
+
+    #[test]
+    fn provenance_with_remove_all_prefix_survives_the_next_named_transaction() {
+        for service in [
+            ".facelock-remove-all-user",
+            ".facelock-remove-all-commit-user",
+        ] {
+            let dir = seeded(&[(service, SUDO_BEFORE)]);
+            let dirs = only(dir.path());
+
+            assert_eq!(write_in(&dirs, &add(&[service])).unwrap(), WRITE_OK);
+            assert_eq!(write_in(&dirs, &remove(&[service])).unwrap(), WRITE_OK);
+            assert_eq!(read(&dir, service), SUDO_BEFORE, "{service}");
+        }
+    }
+
+    #[test]
+    fn provenance_with_remove_all_prefix_round_trips_through_remove_all() {
+        for service in [
+            ".facelock-remove-all-user",
+            ".facelock-remove-all-commit-user",
+        ] {
+            let dir = seeded(&[(service, SUDO_BEFORE)]);
+            let dirs = only(dir.path());
+
+            assert_eq!(write_in(&dirs, &add(&[service])).unwrap(), WRITE_OK);
+            assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);
+            assert_eq!(read(&dir, service), SUDO_BEFORE, "{service}");
+        }
+    }
+
+    #[test]
+    fn remove_all_preserves_unowned_administrator_artifacts() {
+        let dir = seeded(&[
+            (".custom", SUDO_AFTER),
+            ("custom.pacsave", SUDO_AFTER),
+            ("custom.rpmsave", SUDO_AFTER),
+            ("custom~", SUDO_AFTER),
+        ]);
+        let dirs = only(dir.path());
+        let before = snapshot(dir.path());
+
+        assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);
+
+        assert_eq!(snapshot(dir.path()), before);
+    }
+
+    #[test]
+    fn remove_all_cleans_exact_legacy_emission_without_provenance() {
+        let dir = seeded(&[("pre-0.2-service", SUDO_AFTER)]);
+        let dirs = only(dir.path());
+
+        assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);
+        assert_eq!(
+            fs::read(dir.path().join("pre-0.2-service")).unwrap(),
+            SUDO_BEFORE.as_bytes()
+        );
+    }
+
+    #[test]
+    fn remove_all_json_reports_the_committed_transaction() {
+        let dir = seeded(&[("pre-0.2-service", SUDO_AFTER)]);
+        let dirs = only(dir.path());
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            json: true,
+            ..PamRequest::default()
+        };
+        let document = RefCell::new(None);
+
+        assert_eq!(
+            remove_all_in_with_report_hook(
+                &dirs,
+                &request,
+                |_| Ok(()),
+                |reports| {
+                    *document.borrow_mut() =
+                        Some(report_json(PamAction::Remove, false, reports, &[]));
+                },
+            )
+            .unwrap(),
+            WRITE_OK
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(document.borrow().as_deref().unwrap()).unwrap();
+        assert_eq!(value["command"], "remove");
+        assert_eq!(value["dry_run"], false);
+        assert_eq!(value["services"][0]["service"], "pre-0.2-service");
+        assert_eq!(value["services"][0]["action"], "removed");
+        assert_eq!(value["services"][0]["backup"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn remove_all_keep_backup_preserves_versioned_and_legacy_rollback_state() {
+        let dir = seeded(&[("custom-greeter", SUDO_BEFORE)]);
+        let dirs = only(dir.path());
+        assert_eq!(
+            write_in(&dirs, &add(&["custom-greeter"])).unwrap(),
+            WRITE_OK
+        );
+        fs::write(
+            dir.path().join("custom-greeter.facelock-backup"),
+            SUDO_BEFORE,
+        )
+        .unwrap();
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            keep_backup: true,
+            ..PamRequest::default()
+        };
+
+        assert_eq!(remove_all_in(&dirs, &request).unwrap(), WRITE_OK);
+        assert_eq!(
+            fs::read(dir.path().join("custom-greeter")).unwrap(),
+            SUDO_BEFORE.as_bytes()
+        );
+        assert!(dir.path().join("custom-greeter.facelock-backup").exists());
+        assert!(
+            !BackupStore::open_existing(dirs.backup_dir())
+                .unwrap()
+                .unwrap()
+                .validated_records("custom-greeter")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn remove_all_rejects_corrupt_provenance_before_mutation() {
+        let dir = seeded(&[("custom-greeter", SUDO_BEFORE)]);
+        let dirs = only(dir.path());
+        assert_eq!(
+            write_in(&dirs, &add(&["custom-greeter"])).unwrap(),
+            WRITE_OK
+        );
+        let record = fs::read_dir(dirs.backup_dir())
+            .unwrap()
+            .map(Result::unwrap)
+            .find(|entry| entry.file_name().to_string_lossy().ends_with(".json"))
+            .unwrap()
+            .path();
+        fs::write(&record, b"{not provenance}").unwrap();
+        let before = snapshot(dir.path());
+
+        assert!(remove_all(&dirs).is_err());
+        assert_eq!(snapshot(dir.path()), before);
+    }
+
+    #[test]
+    fn remove_all_preserves_linked_entries_and_outside_sentinels() {
+        let root = tempfile::tempdir().unwrap();
+        let pam = root.path().join("pam.d");
+        fs::create_dir(&pam).unwrap();
+        let symlink_sentinel = root.path().join("symlink-sentinel");
+        let hardlink_sentinel = root.path().join("hardlink-sentinel");
+        fs::write(&symlink_sentinel, SUDO_AFTER).unwrap();
+        fs::write(&hardlink_sentinel, SUDO_AFTER).unwrap();
+        std::os::unix::fs::symlink(&symlink_sentinel, pam.join("linked-service")).unwrap();
+        fs::hard_link(&hardlink_sentinel, pam.join("hardlinked-service")).unwrap();
+        fs::write(pam.join("owned-service"), SUDO_AFTER).unwrap();
+        let dirs = only(&pam);
+
+        assert!(remove_all(&dirs).is_err());
+        assert_eq!(fs::read(&symlink_sentinel).unwrap(), SUDO_AFTER.as_bytes());
+        assert_eq!(fs::read(&hardlink_sentinel).unwrap(), SUDO_AFTER.as_bytes());
+        assert_eq!(
+            fs::read(pam.join("owned-service")).unwrap(),
+            SUDO_AFTER.as_bytes(),
+            "a link blocker must be found in preflight before the owned target changes"
+        );
+    }
+
+    #[test]
+    fn remove_all_skips_only_links_covered_by_a_separately_scanned_root() {
+        let root = tempfile::tempdir().unwrap();
+        let pam = root.path().join("pam.d");
+        let vendor = root.path().join("vendor-pam.d");
+        let authselect = root.path().join("authselect");
+        fs::create_dir(&pam).unwrap();
+        fs::create_dir(&vendor).unwrap();
+        fs::create_dir(&authselect).unwrap();
+        fs::create_dir(authselect.join("custom")).unwrap();
+        fs::write(
+            authselect.join("system-auth"),
+            b"# generated\nauth required pam_unix.so\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(authselect.join("system-auth"), pam.join("system-auth"))
+            .unwrap();
+        fs::write(pam.join("owned-service"), SUDO_AFTER).unwrap();
+        let dirs = PamDirs {
+            dirs: vec![pam.clone(), vendor, authselect.clone()],
+            backup_dir: root.path().join("pam-backups"),
+        };
+
+        assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);
+        assert_eq!(
+            fs::read(pam.join("owned-service")).unwrap(),
+            SUDO_BEFORE.as_bytes()
+        );
+        assert!(
+            pam.join("system-auth")
+                .symlink_metadata()
+                .unwrap()
+                .is_symlink()
+        );
+
+        fs::write(pam.join("owned-service"), SUDO_AFTER).unwrap();
+        fs::write(authselect.join("system-auth"), SUDO_AFTER).unwrap();
+        let before = snapshot(&pam);
+        assert!(remove_all(&dirs).is_err());
+        assert_eq!(snapshot(&pam), before);
+    }
+
+    #[test]
+    fn remove_all_preserves_customized_and_vendor_root_references_as_blockers() {
+        let (_root, etc, vendor) = pair();
+        let customized =
+            b"#%PAM-1.0\nauth required pam_facelock.so debug\nauth include system-auth\n";
+        fs::write(etc.join("admin-service"), customized).unwrap();
+        fs::write(vendor.join("vendor-service"), SUDO_AFTER).unwrap();
+        let dirs = both(&etc, &vendor);
+        let before_etc = snapshot(&etc);
+        let before_vendor = snapshot(&vendor);
+
+        assert!(remove_all(&dirs).is_err());
+        assert_eq!(snapshot(&etc), before_etc);
+        assert_eq!(snapshot(&vendor), before_vendor);
+    }
+
+    #[test]
+    fn remove_all_journals_the_complete_set_before_first_pam_mutation() {
+        let dir = seeded(&[("alpha", SUDO_AFTER), ("beta", POLKIT_AFTER)]);
+        let dirs = only(dir.path());
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+
+        let error = remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::Journaled {
+                let journals = fs::read_dir(dirs.backup_dir())?
+                    .filter_map(Result::ok)
+                    .filter(|entry| {
+                        entry.file_name().to_str().is_some_and(|name| {
+                            name.starts_with(".facelock-remove-all-") && name.ends_with(".json")
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(journals.len(), 1);
+                let value: serde_json::Value =
+                    serde_json::from_slice(&fs::read(journals[0].path())?).unwrap();
+                let services = value["targets"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|target| target["service"].as_str().unwrap())
+                    .collect::<Vec<_>>();
+                assert_eq!(services, ["alpha", "beta"]);
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "stop after durable journal",
+                ));
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("stop after durable journal"));
+        assert_eq!(
+            fs::read(dir.path().join("alpha")).unwrap(),
+            SUDO_AFTER.as_bytes()
+        );
+        assert_eq!(
+            fs::read(dir.path().join("beta")).unwrap(),
+            POLKIT_AFTER.as_bytes()
+        );
+    }
+
+    #[test]
+    fn remove_all_holds_the_state_lock_across_preflight_and_commit() {
+        use std::cell::RefCell;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = seeded(&[("alpha", SUDO_AFTER)]);
+        let dirs = only(dir.path());
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+        let (attempted_tx, attempted_rx) = mpsc::channel();
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let worker = RefCell::new(None);
+
+        assert_eq!(
+            remove_all_in_with_hook(&dirs, &request, |point| {
+                if point == RemoveAllPoint::Locked {
+                    let competing_dirs = dirs.clone();
+                    let attempted_tx = attempted_tx.clone();
+                    let acquired_tx = acquired_tx.clone();
+                    *worker.borrow_mut() = Some(std::thread::spawn(move || {
+                        let store = BackupStore::open(competing_dirs.backup_dir()).unwrap();
+                        attempted_tx.send(()).unwrap();
+                        let transaction = store.transaction(&competing_dirs).unwrap();
+                        acquired_tx.send(()).unwrap();
+                        drop(transaction);
+                    }));
+                    attempted_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+                    assert!(
+                        acquired_rx
+                            .recv_timeout(Duration::from_millis(100))
+                            .is_err(),
+                        "a competing recovery acquired the lock during remove-all preflight"
+                    );
+                }
+                Ok(())
+            })
+            .unwrap(),
+            WRITE_OK
+        );
+        acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        worker.into_inner().unwrap().join().unwrap();
+    }
+
+    #[test]
+    fn remove_all_dry_run_does_not_recover_or_change_an_interrupted_batch() {
+        let dir = seeded(&[("alpha", SUDO_AFTER), ("beta", POLKIT_AFTER)]);
+        let dirs = only(dir.path());
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+        remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::AfterMutation(0) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "leave an interrupted batch",
+                ));
+            }
+            Ok(())
+        })
+        .unwrap_err();
+        let pam_before = snapshot(dir.path());
+        let state_before = snapshot(dirs.backup_dir());
+        let dry_run = PamRequest {
+            dry_run: true,
+            ..request
+        };
+
+        let _ = remove_all_in(&dirs, &dry_run);
+
+        assert_eq!(snapshot(dir.path()), pam_before);
+        assert_eq!(snapshot(dirs.backup_dir()), state_before);
+    }
+
+    #[test]
+    fn remove_all_dry_run_does_not_repair_an_untrusted_state_directory() {
+        let dir = seeded(&[("alpha", SUDO_AFTER)]);
+        let dirs = only(dir.path());
+        BackupStore::open(dirs.backup_dir()).unwrap();
+        fs::write(
+            dirs.backup_dir().join("administrator-evidence"),
+            b"retain exact state bytes\n",
+        )
+        .unwrap();
+        fs::set_permissions(
+            dirs.backup_dir(),
+            fs::Permissions::from_mode(PAM_BACKUPS_DIR_MODE | 0o055),
+        )
+        .unwrap();
+        let before = directory_snapshot(dirs.backup_dir());
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            dry_run: true,
+            ..PamRequest::default()
+        };
+
+        let error = remove_all_in(&dirs, &request).unwrap_err();
+
+        assert!(error.to_string().contains("owner or mode is not trusted"));
+        assert_eq!(directory_snapshot(dirs.backup_dir()), before);
+    }
+
+    #[test]
+    fn remove_all_rolls_back_earlier_files_when_a_later_recheck_fails() {
+        let dir = seeded(&[("alpha", SUDO_AFTER), ("beta", POLKIT_AFTER)]);
+        let dirs = only(dir.path());
+        let alpha_inode = fs::metadata(dir.path().join("alpha")).unwrap().ino();
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+        let changed = b"# administrator changed beta after preflight\n";
+
+        assert!(
+            remove_all_in_with_hook(&dirs, &request, |point| {
+                if point == RemoveAllPoint::BeforeMutation(1) {
+                    fs::write(dir.path().join("beta"), changed)?;
+                }
+                Ok(())
+            })
+            .is_err()
+        );
+
+        assert_eq!(
+            fs::read(dir.path().join("alpha")).unwrap(),
+            SUDO_AFTER.as_bytes(),
+            "the first successful removal must be restored"
+        );
+        assert_eq!(
+            fs::metadata(dir.path().join("alpha")).unwrap().ino(),
+            alpha_inode,
+            "rollback must exchange the exact displaced inode back"
+        );
+        assert_eq!(fs::read(dir.path().join("beta")).unwrap(), changed);
+    }
+
+    #[test]
+    fn remove_all_final_rescan_rolls_back_when_a_new_reference_appears() {
+        let dir = seeded(&[("alpha", SUDO_AFTER)]);
+        let dirs = only(dir.path());
+        let alpha_inode = fs::metadata(dir.path().join("alpha")).unwrap().ino();
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+
+        assert!(
+            remove_all_in_with_hook(&dirs, &request, |point| {
+                if point == RemoveAllPoint::AfterMutation(0) {
+                    fs::write(
+                        dir.path().join("late-admin-reference"),
+                        b"auth required pam_facelock.so debug\n",
+                    )?;
+                }
+                Ok(())
+            })
+            .is_err()
+        );
+
+        assert_eq!(
+            fs::read(dir.path().join("alpha")).unwrap(),
+            SUDO_AFTER.as_bytes()
+        );
+        assert_eq!(
+            fs::metadata(dir.path().join("alpha")).unwrap().ino(),
+            alpha_inode,
+            "the preflight inode must be restored when the final scan fails"
+        );
+        assert_eq!(
+            fs::read(dir.path().join("late-admin-reference")).unwrap(),
+            b"auth required pam_facelock.so debug\n"
+        );
+    }
+
+    #[test]
+    fn remove_all_recovery_rolls_back_a_crash_after_an_earlier_file() {
+        let dir = seeded(&[("alpha", SUDO_AFTER), ("beta", POLKIT_AFTER)]);
+        let dirs = only(dir.path());
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+
+        let error = remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::AfterMutation(0) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "crash after alpha",
+                ));
+            }
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("crash after alpha"));
+
+        recover_remove_all_in(&dirs).unwrap();
+        assert_eq!(
+            fs::read(dir.path().join("alpha")).unwrap(),
+            SUDO_AFTER.as_bytes()
+        );
+        assert_eq!(
+            fs::read(dir.path().join("beta")).unwrap(),
+            POLKIT_AFTER.as_bytes()
+        );
+    }
+
+    #[test]
+    fn remove_all_recovery_resumes_every_binding_first_rollback_publication_boundary() {
+        for crash_at in [
+            RemoveAllRollbackPoint::ReverseExchange,
+            RemoveAllRollbackPoint::TempUnlink,
+            RemoveAllRollbackPoint::BindingUnlink,
+            RemoveAllRollbackPoint::IntentUnlink,
+        ] {
+            let dir = seeded(&[("alpha", SUDO_AFTER)]);
+            let dirs = only(dir.path());
+            let request = PamRequest {
+                action: PamAction::Remove,
+                all: true,
+                no_confirm: true,
+                ..PamRequest::default()
+            };
+            let error = remove_all_in_with_hook(&dirs, &request, |point| {
+                if point == RemoveAllPoint::AfterMutation(0) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "leave a published remove-all replacement",
+                    ));
+                }
+                Ok(())
+            })
+            .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("leave a published remove-all replacement"),
+                "{crash_at:?}: {error}"
+            );
+
+            let store = BackupStore::open_existing(dirs.backup_dir())
+                .unwrap()
+                .unwrap();
+            let (journal, commit) = load_remove_all_state(&store).unwrap();
+            assert!(commit.is_none(), "{crash_at:?}");
+            let journal = journal.unwrap();
+            let rollback_error = rollback_remove_all_with_hook(
+                &store,
+                &dirs,
+                &journal.value,
+                &journal.name,
+                &journal.identity,
+                |point| {
+                    if point == crash_at {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::Interrupted,
+                            "crash at rollback publication cleanup boundary",
+                        ));
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+            assert_eq!(
+                rollback_error.kind(),
+                std::io::ErrorKind::Interrupted,
+                "{crash_at:?}: {rollback_error}"
+            );
+            drop(store);
+
+            recover_remove_all_in(&dirs).unwrap_or_else(|error| panic!("{crash_at:?}: {error}"));
+
+            assert_eq!(
+                fs::read(dir.path().join("alpha")).unwrap(),
+                SUDO_AFTER.as_bytes(),
+                "{crash_at:?}"
+            );
+            assert_eq!(
+                fs::read_dir(dirs.backup_dir()).unwrap().count(),
+                0,
+                "{crash_at:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn remove_all_recovery_cleans_an_exact_intent_only_pam_replacement() {
+        let dir = seeded(&[("alpha", SUDO_AFTER)]);
+        let dirs = only(dir.path());
+        let store = BackupStore::open(dirs.backup_dir()).unwrap();
+        let transaction = store.transaction(&dirs).unwrap();
+        let path = dir.path().join("alpha");
+        let (original, expected) = read_regular_nofollow(&path).unwrap();
+        let installed = with_line_removed(&original);
+        let prepared = transaction.plan("alpha", &original, &installed).unwrap();
+        transaction.persist(&prepared, &original).unwrap();
+        create_remove_all_journal(
+            &store,
+            false,
+            vec![RemoveAllJournalTarget {
+                service: "alpha".to_owned(),
+                backup: prepared.backup.clone(),
+                original: expected.clone(),
+                installed_sha256: sha256_hex(&installed),
+            }],
+        )
+        .unwrap();
+
+        let error = transaction
+            .replace_pam_with_intent_hook(&prepared, &path, &expected, &installed, |point| {
+                if point == PamReplaceCrashPoint::Intent {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "crash after remove-all PAM intent",
+                    ));
+                }
+                Ok(())
+            })
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::Interrupted);
+        drop(transaction);
+
+        recover_remove_all_in(&dirs).unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(fs::read_dir(dirs.backup_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn remove_all_recovery_resumes_every_rollback_pair_cleanup_boundary() {
+        for crash_at in [
+            CleanupCrashPoint::Intent,
+            CleanupCrashPoint::BackupQuarantine,
+            CleanupCrashPoint::RecordQuarantine,
+            CleanupCrashPoint::BackupUnlink,
+            CleanupCrashPoint::RecordUnlink,
+        ] {
+            let dir = seeded(&[("alpha", SUDO_AFTER), ("beta", POLKIT_AFTER)]);
+            let dirs = only(dir.path());
+            let store = BackupStore::open(dirs.backup_dir()).unwrap();
+            let transaction = store.transaction(&dirs).unwrap();
+            let path = dir.path().join("alpha");
+            let (original, expected) = read_regular_nofollow(&path).unwrap();
+            let installed = with_line_removed(&original);
+            let planned = transaction.plan("alpha", &original, &installed).unwrap();
+            transaction.persist(&planned, &original).unwrap();
+            let target = RemoveAllJournalTarget {
+                service: "alpha".to_owned(),
+                backup: planned.backup.clone(),
+                original: expected,
+                installed_sha256: sha256_hex(&installed),
+            };
+            let beta_path = dir.path().join("beta");
+            let (beta_original, beta_expected) = read_regular_nofollow(&beta_path).unwrap();
+            let beta_installed = with_line_removed(&beta_original);
+            let beta_planned = transaction
+                .plan("beta", &beta_original, &beta_installed)
+                .unwrap();
+            transaction.persist(&beta_planned, &beta_original).unwrap();
+            let beta_target = RemoveAllJournalTarget {
+                service: "beta".to_owned(),
+                backup: beta_planned.backup,
+                original: beta_expected,
+                installed_sha256: sha256_hex(&beta_installed),
+            };
+            create_remove_all_journal(&store, false, vec![target.clone(), beta_target]).unwrap();
+            let prepared = prepared_for_remove_all_target(&store, &target).unwrap();
+            let directory = open_directory_nofollow(dirs.backup_dir()).unwrap();
+
+            let error = store
+                .cleanup_one_at(&directory, &prepared, |point| {
+                    if point == crash_at {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::Interrupted,
+                            "crash during remove-all pair cleanup",
+                        ));
+                    }
+                    Ok(())
+                })
+                .unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::Interrupted);
+            drop(transaction);
+
+            recover_remove_all_in(&dirs).unwrap();
+
+            assert_eq!(fs::read(&path).unwrap(), original, "{crash_at:?}");
+            assert_eq!(fs::read(&beta_path).unwrap(), beta_original, "{crash_at:?}");
+            assert_eq!(
+                fs::read_dir(dirs.backup_dir()).unwrap().count(),
+                0,
+                "{crash_at:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn remove_all_recovery_preserves_partial_substituted_and_conflicting_pairs() {
+        for state in ["partial", "substituted", "conflicting"] {
+            let dir = seeded(&[("alpha", SUDO_AFTER)]);
+            let dirs = only(dir.path());
+            let store = BackupStore::open(dirs.backup_dir()).unwrap();
+            let transaction = store.transaction(&dirs).unwrap();
+            let path = dir.path().join("alpha");
+            let (original, expected) = read_regular_nofollow(&path).unwrap();
+            let installed = with_line_removed(&original);
+            let planned = transaction.plan("alpha", &original, &installed).unwrap();
+            transaction.persist(&planned, &original).unwrap();
+            create_remove_all_journal(
+                &store,
+                false,
+                vec![RemoveAllJournalTarget {
+                    service: "alpha".to_owned(),
+                    backup: planned.backup.clone(),
+                    original: expected,
+                    installed_sha256: sha256_hex(&installed),
+                }],
+            )
+            .unwrap();
+            let backup = dirs.backup_dir().join(&planned.backup);
+            let record = dirs.backup_dir().join(format!("{}.json", planned.backup));
+            match state {
+                "partial" => fs::remove_file(&backup).unwrap(),
+                "substituted" => fs::write(&record, b"administrator state\n").unwrap(),
+                "conflicting" => fs::write(
+                    dirs.backup_dir()
+                        .join(quarantine_name("backup", &planned.backup)),
+                    &original,
+                )
+                .unwrap(),
+                _ => unreachable!(),
+            }
+            drop(transaction);
+            let before = snapshot(dirs.backup_dir());
+
+            assert!(recover_remove_all_in(&dirs).is_err(), "{state}");
+
+            assert_eq!(snapshot(dirs.backup_dir()), before, "{state}");
+            assert_eq!(fs::read(&path).unwrap(), original, "{state}");
+        }
+    }
+
+    #[test]
+    fn every_pam_transaction_recovers_remove_all_before_generic_state() {
+        let dir = seeded(&[("alpha", SUDO_AFTER), ("beta", POLKIT_AFTER)]);
+        let dirs = only(dir.path());
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+        remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::AfterMutation(0) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "crash after alpha",
+                ));
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        let store = BackupStore::open_existing(dirs.backup_dir())
+            .unwrap()
+            .unwrap();
+        drop(store.transaction(&dirs).unwrap());
+
+        assert_eq!(
+            fs::read(dir.path().join("alpha")).unwrap(),
+            SUDO_AFTER.as_bytes()
+        );
+        assert_eq!(
+            fs::read(dir.path().join("beta")).unwrap(),
+            POLKIT_AFTER.as_bytes()
+        );
+    }
+
+    #[test]
+    fn remove_all_recovery_completes_a_durable_commit_without_rolling_back() {
+        let dir = seeded(&[("alpha", SUDO_AFTER), ("beta", POLKIT_AFTER)]);
+        let dirs = only(dir.path());
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+        remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::CommitMarked {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "crash after commit marker",
+                ));
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        recover_remove_all_in(&dirs).unwrap();
+        assert_eq!(
+            fs::read(dir.path().join("alpha")).unwrap(),
+            SUDO_BEFORE.as_bytes()
+        );
+        assert_eq!(
+            fs::read(dir.path().join("beta")).unwrap(),
+            POLKIT_BEFORE.as_bytes()
+        );
+        assert!(fs::read_dir(dirs.backup_dir()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".facelock-remove-all-")
+        }));
+    }
+
+    #[test]
+    fn remove_all_recovery_preserves_an_orphan_commit_with_duplicate_services() {
+        let dir = seeded(&[("alpha", SUDO_AFTER)]);
+        let dirs = only(dir.path());
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+        remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::CommitMarked {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "leave a self-contained commit",
+                ));
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        let store = BackupStore::open_existing(dirs.backup_dir())
+            .unwrap()
+            .unwrap();
+        let (journal, commit) = load_remove_all_state(&store).unwrap();
+        let journal = journal.unwrap();
+        let commit = commit.unwrap();
+        let mut duplicate = commit.value;
+        duplicate.targets.push(duplicate.targets[0].clone());
+        fs::write(
+            dirs.backup_dir().join(&commit.name),
+            serde_json::to_vec_pretty(&duplicate).unwrap(),
+        )
+        .unwrap();
+        fs::remove_file(dirs.backup_dir().join(&journal.name)).unwrap();
+        let pam_before = snapshot(dir.path());
+        let state_before = snapshot(dirs.backup_dir());
+
+        let error = recover_remove_all_in(&dirs).unwrap_err();
+
+        assert!(error.to_string().contains("remove-all commit is invalid"));
+        assert_eq!(snapshot(dir.path()), pam_before);
+        assert_eq!(snapshot(dirs.backup_dir()), state_before);
+    }
+
+    #[test]
+    fn remove_all_enumerates_the_open_root_descriptor_after_path_replacement() {
+        let root = tempfile::tempdir().unwrap();
+        let pam = root.path().join("pam.d");
+        let held = root.path().join("held-pam.d");
+        fs::create_dir(&pam).unwrap();
+        fs::write(pam.join("original-service"), SUDO_AFTER).unwrap();
+        let directory = open_directory_nofollow(&pam).unwrap();
+
+        fs::rename(&pam, &held).unwrap();
+        fs::create_dir(&pam).unwrap();
+        fs::write(pam.join("replacement-service"), SUDO_AFTER).unwrap();
+
+        let names = directory_entry_names(&directory).unwrap();
+        assert!(
+            names
+                .iter()
+                .any(|name| name == OsStr::new("original-service"))
+        );
+        assert!(
+            !names
+                .iter()
+                .any(|name| name == OsStr::new("replacement-service"))
+        );
     }
 
     /// The headline: every configured service is listed, from both

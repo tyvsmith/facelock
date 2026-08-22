@@ -4087,83 +4087,199 @@ mod tests {
         }
     }
 
-    /// The uninstall paths of all four packagers each hardcode the set of
-    /// `/etc/pam.d/<service>` files to strip `pam_facelock.so` out of, because
-    /// they are shell run by a package manager and cannot read
-    /// `PAM_CANDIDATES`. That duplication has already rotted once: the lists
-    /// covered three services while setup offered eight, so five services kept
-    /// a stale facelock line after the package was removed. Nothing failed
-    /// loudly — the drift is only visible on an uninstall nobody runs in CI.
-    ///
-    /// This pins the direction that matters: every service the writer can put a
-    /// line into must be *covered* by every packager. That is two lists, not
-    /// one — `PAM_CANDIDATES`, which the wizard offers, and
-    /// `SENSITIVE_SERVICES`, which `--allow-sensitive` (or `setup --yes`)
-    /// unlocks. The second was the gap: adding a distribution's spelling of
-    /// the shared auth stack to the gate made it reachable, and nothing said
-    /// the uninstall had to learn about it.
-    ///
-    /// It is deliberately a superset check and not set equality — the
-    /// packaging lists also carry services that are not candidates yet, and
-    /// naming a service that no host has is inert because every loop is
-    /// guarded by `[ -f "$PAM_FILE" ]`. Equality would turn "packaging cleans
-    /// up more than setup writes" — always safe — into a failure, and would
-    /// break whenever a candidate lands in one branch and the packaging list
-    /// in another.
+    /// Every uninstall surface delegates discovery and mutation to the same
+    /// config-independent command. A fixed service list cannot cover the
+    /// arbitrary names accepted by `pam add --service`, and a shell `sed`
+    /// cannot enforce the writer's provenance, confinement or rollback rules.
     #[test]
-    fn packaging_uninstall_covers_every_pam_candidate() {
-        // Assembled so this test's own prose is not what it matches on.
-        let decl = format!("FACELOCK_PAM_SERVICES={}", '"');
+    fn every_installer_calls_the_shared_pam_cleanup() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
 
         for rel in [
             "dist/facelock.install",
             "dist/facelock.spec",
             "dist/debian/prerm",
+            "dist/omarchy/omarchy-remove-security-face",
             "justfile",
         ] {
             let path = root.join(rel);
             let source = fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("{rel} must be readable from the workspace: {e}"));
 
-            let listed: Vec<&str> = source
-                .lines()
-                .find_map(|l| l.trim_start().strip_prefix(&decl)?.split_once('"'))
-                .map(|(value, _)| value.split_whitespace().collect())
-                .unwrap_or_else(|| {
-                    panic!(
-                        "{rel} must declare its PAM service list on one line as \
-                         FACELOCK_PAM_SERVICES=\"svc svc ...\". It is the single \
-                         literal both uninstall loops (pam_facelock.so lines and \
-                         .facelock-backup files) read, and this test's only handle \
-                         on it."
-                    )
-                });
+            assert!(
+                source.contains("facelock pam remove --all"),
+                "{rel} must call the shared config-independent PAM cleanup"
+            );
+            assert!(!source.contains("FACELOCK_PAM_SERVICES="), "{rel}");
+            assert!(!source.contains("sed -i '/pam_facelock"), "{rel}");
+        }
+    }
 
-            for gated in super::super::pam::SENSITIVE_SERVICES {
-                assert!(
-                    listed.contains(gated),
-                    "{rel} does not clean up /etc/pam.d/{gated}, but it is in \
-                     SENSITIVE_SERVICES, so `facelock pam add --service {gated} \
-                     --allow-sensitive` writes a pam_facelock.so line into it. \
-                     Add {gated} to FACELOCK_PAM_SERVICES in {rel} (naming a \
-                     service the host lacks is inert — the loops skip missing \
-                     files). Currently listed there: {listed:?}"
-                );
-            }
+    #[test]
+    fn man_pages_contain_no_prohibited_control_bytes() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut pages = fs::read_dir(root.join("man"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "1"))
+            .collect::<Vec<_>>();
+        pages.sort();
+        assert!(
+            !pages.is_empty(),
+            "the man-page control-byte guard must cover a page"
+        );
 
-            for candidate in PAM_CANDIDATES {
-                assert!(
-                    listed.contains(&candidate.service),
-                    "{rel} does not clean up /etc/pam.d/{svc}, but `facelock setup` \
-                     offers to write a pam_facelock.so line into it. Uninstalling \
-                     would leave that line behind, pointing at a module that is no \
-                     longer on disk. Add {svc} to FACELOCK_PAM_SERVICES in {rel} \
-                     (naming a service the host lacks is inert — the loops skip \
-                     missing files). Currently listed there: {listed:?}",
-                    svc = candidate.service,
-                );
-            }
+        for path in pages {
+            let bytes = fs::read(&path).unwrap();
+            let prohibited = bytes
+                .iter()
+                .enumerate()
+                .filter_map(|(offset, byte)| {
+                    matches!(*byte, 0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x7f)
+                        .then_some((offset, *byte))
+                })
+                .collect::<Vec<_>>();
+
+            assert!(
+                prohibited.is_empty(),
+                "{} contains prohibited control bytes at offset/byte pairs: {prohibited:?}",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn arch_packages_ship_an_aborting_pretransaction_cleanup_hook() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let hook = fs::read_to_string(root.join("dist/facelock-pam-remove.hook")).unwrap();
+        for required in [
+            "Operation = Remove",
+            "Type = Package",
+            "When = PreTransaction",
+            "Exec = /usr/bin/facelock pam remove --all",
+            "AbortOnFail",
+        ] {
+            assert!(hook.contains(required), "missing `{required}`");
+        }
+        assert!(
+            !hook.contains("Operation = Upgrade"),
+            "the cleanup hook must not remove configured PAM edits during upgrade"
+        );
+        let contracts = fs::read_to_string(root.join("docs/contracts.md")).unwrap();
+        assert!(contracts.contains("Remove-only"));
+        assert!(!contracts.contains("`Remove`/`Upgrade`"));
+        for pkgbuild in ["dist/PKGBUILD", "dist/PKGBUILD-git", "dist/PKGBUILD-bin"] {
+            let source = fs::read_to_string(root.join(pkgbuild)).unwrap();
+            assert!(source.contains("facelock-pam-remove.hook"), "{pkgbuild}");
+            assert!(source.contains("usr/share/libalpm/hooks"), "{pkgbuild}");
+        }
+    }
+
+    #[test]
+    fn package_validation_proves_removal_aborts_before_the_module_is_removed() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let validation = fs::read_to_string(root.join("test/pkg-validate.sh")).unwrap();
+
+        for required in [
+            "facelock-package-owned",
+            "facelock-package-blocker",
+            "dpkg removal aborts on an unmanaged PAM reference",
+            "#224-deferred profile mutation is visible after aborted dpkg removal",
+            "rpm removal aborts on an unmanaged PAM reference",
+            "PAM module remains after aborted package removal",
+            "recognized PAM edit remains after aborted package removal",
+        ] {
+            assert!(validation.contains(required), "missing `{required}`");
+        }
+    }
+
+    #[test]
+    fn package_validation_covers_frontend_abort_retention_and_success() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let validation = fs::read_to_string(root.join("test/pkg-validate.sh")).unwrap();
+
+        for required in [
+            "apt-get wrapper removal aborts on an unmanaged PAM reference",
+            "apt-get wrapper keeps the package installed after abort",
+            "apt-get wrapper keeps the PAM module after abort",
+            "apt-get wrapper preserves recognized PAM edit bytes after abort",
+            "apt wrapper removal aborts on an unmanaged PAM reference",
+            "apt wrapper keeps the package installed after abort",
+            "apt wrapper keeps the PAM module after abort",
+            "apt wrapper preserves recognized PAM edit bytes after abort",
+            "apt-get wrapper removal succeeds without a blocker",
+            "apt-get wrapper leaves the package not installed",
+            "apt-get wrapper removes the PAM module",
+            "apt wrapper removal succeeds without a blocker",
+            "apt wrapper leaves the package not installed",
+            "apt wrapper removes the PAM module",
+            "dnf wrapper removal aborts on an unmanaged PAM reference",
+            "dnf wrapper keeps the package installed after abort",
+            "dnf wrapper keeps the PAM module after abort",
+            "dnf wrapper preserves recognized PAM edit bytes after abort",
+            "dnf wrapper removal succeeds without a blocker",
+        ] {
+            assert!(validation.contains(required), "missing `{required}`");
+        }
+        assert!(validation.contains("db:Status-Status"));
+        let rpm = fs::read_to_string(root.join("test/Containerfile.rpm-e2e")).unwrap();
+        for rel in [
+            "test/Containerfile.deb-e2e",
+            "test/Containerfile.deb-tpm-e2e",
+        ] {
+            let deb = fs::read_to_string(root.join(rel)).unwrap();
+            assert!(deb.contains("/facelock-test-package.deb"), "{rel}");
+            assert!(
+                deb.contains("(dpkg -i /facelock-test-package.deb || true)"),
+                "{rel}"
+            );
+        }
+        assert!(rpm.contains("/facelock-test-package.rpm"));
+    }
+
+    #[test]
+    fn rpm_preun_propagates_shared_cleanup_failure() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let spec = fs::read_to_string(root.join("dist/facelock.spec")).unwrap();
+
+        assert!(
+            spec.contains("facelock pam remove --all || exit $?"),
+            "the RPM preun scriptlet must abort before a later best-effort command can mask cleanup failure"
+        );
+    }
+
+    #[test]
+    fn package_runner_never_mounts_checkout_models_at_the_mutable_runtime_path() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let runner = fs::read_to_string(root.join("test/run-pkg-validate-systemd.sh")).unwrap();
+
+        assert!(runner.contains("$PWD/models:/facelock-test-models:ro"));
+        assert!(runner.contains("cp /facelock-test-models/*.onnx /var/lib/facelock/models/"));
+        assert!(
+            !runner.contains("$PWD/models:/var/lib/facelock/models"),
+            "the removal test deletes its runtime model directory; the checkout must never be mounted there"
+        );
+    }
+
+    #[test]
+    fn arch_package_validation_runs_an_aborting_booted_transaction() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let justfile = fs::read_to_string(root.join("justfile")).unwrap();
+        let container = fs::read_to_string(root.join("test/Containerfile")).unwrap();
+        let runner = fs::read_to_string(root.join("test/run-arch-package-systemd.sh")).unwrap();
+        let validation = fs::read_to_string(root.join("test/arch-package-validate.sh")).unwrap();
+
+        assert!(justfile.contains("test/run-arch-package-systemd.sh facelock-pam-test"));
+        assert!(container.contains("test/build-arch-test-package.sh"));
+        assert!(runner.contains("--systemd=always"));
+        for required in [
+            "pacman removal aborts on an unmanaged PAM reference",
+            "facelock-package-owned",
+            "facelock-package-blocker",
+            "pacman -Q facelock",
+            "PAM module remains after aborted package removal",
+        ] {
+            assert!(validation.contains(required), "missing `{required}`");
         }
     }
 

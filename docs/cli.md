@@ -632,7 +632,10 @@ from; the package's own file is left byte for byte. That copy reports
 `overridden` rather than `installed`, and `pam status` reports a service with no
 local copy as `vendor-only` rather than as `missing`. Deleting the override
 restores the vendor file. Set `[pam] config_dirs` if your distribution's vendor
-directory is somewhere else.
+directory is somewhere else for explicit `add`, named `remove`, and test
+resolution. Machine-wide `pam remove --all` deliberately ignores that setting,
+scans the compiled system roots `/etc/pam.d` and `/usr/lib/pam.d`, and
+separately scans the fixed detection-only generated root `/etc/authselect`.
 
 ### facelock pam add
 
@@ -688,6 +691,7 @@ default `pam remove`, but they are not rewritten into versioned provenance.
 ```bash
 sudo facelock pam remove                                     # /etc/pam.d/sudo
 sudo facelock pam remove --service login                     # removal is never gated
+sudo facelock pam remove --all                               # every recognized owned edit
 sudo facelock pam remove --service hyprlock --if-present     # a missing file is success
 sudo facelock pam remove --service sudo --keep-backup        # retain rollback state
 sudo facelock pam remove --service sudo --dry-run --json
@@ -695,12 +699,69 @@ sudo facelock pam remove --service sudo --dry-run --json
 
 Takes the same flags as `add` except `--allow-sensitive`, which it does not
 offer: removal can only take away a way to authenticate, so there is nothing to
-gate. It never prompts either. By default it removes committed Facelock-owned
-provenance and backups for the requested service, including the legacy
-adjacent `<service>.facelock-backup` name. Unresolved prepared state is
-preserved for recovery. `--keep-backup` opts out of cleanup. A cleanup error
-remains non-zero, but the JSON action is `cleanup-failed` and the human
-diagnostic says that the PAM state change already completed.
+gate. It never prompts either. Named removal uses the configured lookup path.
+By default it removes committed Facelock-owned provenance and backups for the
+requested service, including the legacy adjacent `<service>.facelock-backup`
+name. Unresolved prepared state is preserved for recovery. `--keep-backup`
+opts out of cleanup. A cleanup error remains non-zero, but the JSON action is
+`cleanup-failed` and the human diagnostic says that the PAM state change
+already completed.
+
+`remove --all` is the package-safe, config-independent form. It opens the
+compiled `/etc/pam.d`, `/usr/lib/pam.d`, and detection-only `/etc/authselect`
+roots without following links, enumerates the opened directory descriptors,
+and uses directory-relative regular/single-link reads. A symlink is skipped
+only when its exact absolute target is the same service in a later compiled
+root that is scanned independently; every other linked entry is an unmanaged
+blocker. This lets Fedora's unrelated generated PAM links be checked at their
+fixed root without traversing the links. Directory contents are detection
+ground truth; provenance can authenticate an arbitrary service Facelock
+previously changed, but never supplies a target path. An exact pre-0.2
+`auth      sufficient pam_facelock.so` edit is recognized only under a
+conventional service basename. Dot-prefixed and package/administrator artifact
+names such as `.pacsave`, `.rpmsave` and `~` require strict provenance for that
+exact name; unowned artifacts are ignored and preserved. A customized control,
+options or spacing, corrupt provenance for a candidate, any other linked entry,
+or a reference in a read-only root is an unmanaged blocker. Nothing is changed
+when preflight finds one.
+
+With `--dry-run`, an existing PAM backup directory is inspected read-only and
+must already have its trusted owner and mode. The preview does not repair or
+sync that directory, acquire its write lock, or run recovery; it refuses the
+preview if the directory is not already trusted.
+
+Before the first PAM file changes, the command persists rollback state for the
+complete target set and one bounded, root-owned whole-set journal. Each
+replacement re-resolves and rechecks the planned identity. A later failure or
+the final compiled-root rescan finding any active reference exchanges every
+earlier original inode back in reverse order. Only after the rescan is clear is
+a self-contained commit marker published and cleanup finalized. Recovery rolls
+back a prepared journal and completes a durable commit marker. It recognizes
+an exact intent-only, pre-publication service as unstarted only while the
+canonical full identity still matches and both temp and binding are absent.
+After a reverse exchange, rollback removes the identity-checked replacement
+temp, then its publication binding, then delegates the remaining base intent
+to that exact intent-only recovery. Each boundary is restartable; ordinary
+forward publication keeps its existing cleanup order.
+Cleanup recovery resumes exact pair quarantine/unlink state; a fully absent
+pair is already clean, but partial or conflicting state blocks. `--keep-backup`
+preserves versioned and legacy rollback state for every target; the default
+cleans only validated Facelock-owned state.
+
+The command reads no Facelock config, database, model, camera, daemon, or ONNX
+Runtime state. Package uninstallers invoke it while the CLI and PAM module are
+still installed. Debian and RPM removal abort if cleanup cannot prove a clear
+final scan. Booted coverage runs direct `dpkg`/`rpm` and the `apt-get`, `apt`,
+and `dnf` frontends through abort retention and blocker-free success. Arch
+packages also ship a Remove-only libalpm `PreTransaction` hook with
+`AbortOnFail`, so pacman stops before removing either file.
+This all-or-nothing promise covers direct PAM edits owned by this command.
+Debian's separately managed `pam-auth-update` profile lifecycle and byte-exact
+profile rollback are tracked in #224; the current `prerm` removes that profile
+before calling the shared direct-edit cleanup.
+Fedora's authselect profile lifecycle is tracked separately in #226; this
+command only detects references in generated `/etc/authselect` state and never
+changes that state.
 
 ### facelock pam status
 

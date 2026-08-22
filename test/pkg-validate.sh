@@ -303,24 +303,166 @@ fi
 echo ""
 echo "=== Package Removal Test ==="
 
+PACKAGE_OWNED_PAM=/etc/pam.d/facelock-package-owned
+PACKAGE_BLOCKER_PAM=/etc/pam.d/facelock-package-blocker
+# The PAM loading rows above own this synthetic service. Package cleanup must
+# see only the fixtures created for this block, so retire it before preflight.
+rm -f /etc/pam.d/facelock-test "$PACKAGE_OWNED_PAM" "$PACKAGE_BLOCKER_PAM"
+cat > "$PACKAGE_OWNED_PAM" <<'EOF'
+#%PAM-1.0
+auth      sufficient pam_facelock.so
+auth      include system-auth
+EOF
+cat > "$PACKAGE_BLOCKER_PAM" <<'EOF'
+#%PAM-1.0
+auth required pam_facelock.so debug
+auth include system-auth
+EOF
+chmod 644 "$PACKAGE_OWNED_PAM" "$PACKAGE_BLOCKER_PAM"
+sha256sum "$PACKAGE_OWNED_PAM" > /tmp/facelock-package-owned.sha
+sha256sum "$PACKAGE_BLOCKER_PAM" > /tmp/facelock-package-blocker.sha
+
+# Cleanup is intentionally independent of every runtime input. These invalid
+# or absent values are installed only after all daemon/auth checks above.
+printf '[invalid\n' > /etc/facelock/config.toml
+install -Dm600 /dev/null /var/lib/facelock/facelock.db
+rm -rf /var/lib/facelock/models
+export ORT_DYLIB_PATH=/facelock-test-missing-onnxruntime.so
+
 if command -v dpkg >/dev/null 2>&1 && dpkg -s facelock >/dev/null 2>&1; then
+    # #224 owns Debian profile lifecycle and rollback. Keep this case visible:
+    # today's prerm asks pam-auth-update to remove the active package profile
+    # before the #227 direct-edit transaction runs. A later direct blocker
+    # aborts dpkg and retains the package/module, but does not promise to roll
+    # that separately managed common-auth change back.
+    run_test "dpkg abort coverage starts with the pam-auth-update profile active" \
+        "grep -q pam_facelock.so /etc/pam.d/common-auth"
+    sha256sum /etc/pam.d/common-auth > /tmp/facelock-common-auth.before
+    run_test "dpkg removal aborts on an unmanaged PAM reference" \
+        "! dpkg -r facelock"
+    run_test "#224-deferred profile mutation is visible after aborted dpkg removal" \
+        "! sha256sum -c --status /tmp/facelock-common-auth.before && ! grep -q pam_facelock.so /etc/pam.d/common-auth"
+    run_test "dpkg keeps the package installed after aborted removal" \
+        "dpkg-query -W -f='\${binary:Package}\n' facelock | grep -qx facelock"
+    run_test "PAM module remains after aborted package removal" \
+        "[ -f /lib/security/pam_facelock.so ] || [ -f /usr/lib/security/pam_facelock.so ] || [ -f /usr/lib64/security/pam_facelock.so ]"
+    run_test "recognized PAM edit remains after aborted package removal" \
+        "sha256sum -c --status /tmp/facelock-package-owned.sha"
+    run_test "unmanaged PAM reference remains after aborted package removal" \
+        "sha256sum -c --status /tmp/facelock-package-blocker.sha"
+    run_test "apt-get wrapper removal aborts on an unmanaged PAM reference" \
+        "! apt-get remove -y facelock"
+    run_test "apt-get wrapper keeps the package installed after abort" \
+        "dpkg-query -W -f='\${binary:Package}\n' facelock | grep -qx facelock"
+    run_test "apt-get wrapper keeps the PAM module after abort" \
+        "[ -f /lib/security/pam_facelock.so ] || [ -f /usr/lib/security/pam_facelock.so ] || [ -f /usr/lib64/security/pam_facelock.so ]"
+    run_test "apt-get wrapper preserves recognized PAM edit bytes after abort" \
+        "sha256sum -c --status /tmp/facelock-package-owned.sha"
+    run_test "apt-get wrapper preserves blocker bytes after abort" \
+        "sha256sum -c --status /tmp/facelock-package-blocker.sha"
+    run_test "apt wrapper removal aborts on an unmanaged PAM reference" \
+        "! apt remove -y facelock"
+    run_test "apt wrapper keeps the package installed after abort" \
+        "dpkg-query -W -f='\${binary:Package}\n' facelock | grep -qx facelock"
+    run_test "apt wrapper keeps the PAM module after abort" \
+        "[ -f /lib/security/pam_facelock.so ] || [ -f /usr/lib/security/pam_facelock.so ] || [ -f /usr/lib64/security/pam_facelock.so ]"
+    run_test "apt wrapper preserves recognized PAM edit bytes after abort" \
+        "sha256sum -c --status /tmp/facelock-package-owned.sha"
+    run_test "apt wrapper preserves blocker bytes after abort" \
+        "sha256sum -c --status /tmp/facelock-package-blocker.sha"
+    rm -f "$PACKAGE_BLOCKER_PAM"
     run_test "Package removal via dpkg" "dpkg -r facelock"
+    run_test "recognized arbitrary PAM edit cleaned before dpkg removes the module" \
+        "[ -f $PACKAGE_OWNED_PAM ] && ! grep -q pam_facelock.so $PACKAGE_OWNED_PAM"
     run_test "facelock binary removed after dpkg -r" "[ ! -f /usr/bin/facelock ]"
     run_test "PAM module removed after dpkg -r" \
         "[ ! -f /lib/security/pam_facelock.so ] && [ ! -f /usr/lib/security/pam_facelock.so ] && [ ! -f /usr/lib64/security/pam_facelock.so ]"
     run_test "Config preserved after dpkg -r (conffile)" "[ -f /etc/facelock/config.toml ]"
+    run_test "facelock reinstalls before apt-get wrapper success" \
+        "apt-get install -y /facelock-test-package.deb"
+    cat > "$PACKAGE_OWNED_PAM" <<'EOF'
+#%PAM-1.0
+auth      sufficient pam_facelock.so
+auth      include system-auth
+EOF
+    chmod 644 "$PACKAGE_OWNED_PAM"
+    run_test "apt-get wrapper removal succeeds without a blocker" \
+        "apt-get remove -y facelock"
+    run_test "apt-get wrapper cleans the recognized direct PAM edit" \
+        "[ -f $PACKAGE_OWNED_PAM ] && ! grep -q pam_facelock.so $PACKAGE_OWNED_PAM"
+    run_test "apt-get wrapper leaves the package not installed" \
+        "! dpkg-query -W -f='\${db:Status-Status}\n' facelock 2>/dev/null | grep -qx installed"
+    run_test "apt-get wrapper removes the PAM module" \
+        "[ ! -f /lib/security/pam_facelock.so ] && [ ! -f /usr/lib/security/pam_facelock.so ] && [ ! -f /usr/lib64/security/pam_facelock.so ]"
+    run_test "facelock reinstalls before apt wrapper success" \
+        "apt-get install -y /facelock-test-package.deb"
+    cat > "$PACKAGE_OWNED_PAM" <<'EOF'
+#%PAM-1.0
+auth      sufficient pam_facelock.so
+auth      include system-auth
+EOF
+    chmod 644 "$PACKAGE_OWNED_PAM"
+    run_test "apt wrapper removal succeeds without a blocker" \
+        "apt remove -y facelock"
+    run_test "apt wrapper cleans the recognized direct PAM edit" \
+        "[ -f $PACKAGE_OWNED_PAM ] && ! grep -q pam_facelock.so $PACKAGE_OWNED_PAM"
+    run_test "apt wrapper leaves the package not installed" \
+        "! dpkg-query -W -f='\${db:Status-Status}\n' facelock 2>/dev/null | grep -qx installed"
+    run_test "apt wrapper removes the PAM module" \
+        "[ ! -f /lib/security/pam_facelock.so ] && [ ! -f /usr/lib/security/pam_facelock.so ] && [ ! -f /usr/lib64/security/pam_facelock.so ]"
 elif command -v rpm >/dev/null 2>&1 && rpm -q facelock >/dev/null 2>&1; then
     # Modify config so RPM treats it as user-edited and preserves it as .rpmsave
     echo "# modified by test" >> /etc/facelock/config.toml
+    run_test "rpm removal aborts on an unmanaged PAM reference" \
+        "! rpm -e facelock"
+    run_test "rpm keeps the package installed after aborted removal" \
+        "rpm -q facelock"
+    run_test "PAM module remains after aborted package removal" \
+        "[ -f /lib/security/pam_facelock.so ] || [ -f /usr/lib/security/pam_facelock.so ] || [ -f /usr/lib64/security/pam_facelock.so ]"
+    run_test "recognized PAM edit remains after aborted package removal" \
+        "sha256sum -c --status /tmp/facelock-package-owned.sha"
+    run_test "unmanaged PAM reference remains after aborted package removal" \
+        "sha256sum -c --status /tmp/facelock-package-blocker.sha"
+    run_test "dnf wrapper removal aborts on an unmanaged PAM reference" \
+        "! dnf remove -y facelock"
+    run_test "dnf wrapper keeps the package installed after abort" \
+        "rpm -q facelock"
+    run_test "dnf wrapper keeps the PAM module after abort" \
+        "[ -f /lib/security/pam_facelock.so ] || [ -f /usr/lib/security/pam_facelock.so ] || [ -f /usr/lib64/security/pam_facelock.so ]"
+    run_test "dnf wrapper preserves recognized PAM edit bytes after abort" \
+        "sha256sum -c --status /tmp/facelock-package-owned.sha"
+    run_test "dnf wrapper preserves blocker bytes after abort" \
+        "sha256sum -c --status /tmp/facelock-package-blocker.sha"
+    rm -f "$PACKAGE_BLOCKER_PAM"
     run_test "Package removal via rpm" "rpm -e facelock"
+    run_test "recognized arbitrary PAM edit cleaned before rpm removes the module" \
+        "[ -f $PACKAGE_OWNED_PAM ] && ! grep -q pam_facelock.so $PACKAGE_OWNED_PAM"
     run_test "facelock binary removed after rpm -e" "[ ! -f /usr/bin/facelock ]"
     run_test "PAM module removed after rpm -e" \
         "[ ! -f /lib/security/pam_facelock.so ] && [ ! -f /usr/lib/security/pam_facelock.so ] && [ ! -f /usr/lib64/security/pam_facelock.so ]"
     run_test "Config preserved after rpm -e (config(noreplace))" "[ -f /etc/facelock/config.toml ] || [ -f /etc/facelock/config.toml.rpmsave ]"
+    run_test "facelock reinstalls before dnf wrapper success" \
+        "dnf install -y /facelock-test-package.rpm"
+    cat > "$PACKAGE_OWNED_PAM" <<'EOF'
+#%PAM-1.0
+auth      sufficient pam_facelock.so
+auth      include system-auth
+EOF
+    chmod 644 "$PACKAGE_OWNED_PAM"
+    run_test "dnf wrapper removal succeeds without a blocker" \
+        "dnf remove -y facelock"
+    run_test "dnf wrapper cleans the recognized direct PAM edit" \
+        "[ -f $PACKAGE_OWNED_PAM ] && ! grep -q pam_facelock.so $PACKAGE_OWNED_PAM"
+    run_test "dnf wrapper removes the package and PAM module" \
+        "! rpm -q facelock && [ ! -f /lib/security/pam_facelock.so ] && [ ! -f /usr/lib/security/pam_facelock.so ] && [ ! -f /usr/lib64/security/pam_facelock.so ]"
 else
     skip_test "package removal block (removal, binary/PAM module gone, config preserved)" \
         "facelock was not installed by dpkg or rpm here"
 fi
+
+rm -f "$PACKAGE_OWNED_PAM" "$PACKAGE_BLOCKER_PAM" \
+    /tmp/facelock-package-owned.sha /tmp/facelock-package-blocker.sha \
+    /tmp/facelock-common-auth.before
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed, $SKIP skipped ==="

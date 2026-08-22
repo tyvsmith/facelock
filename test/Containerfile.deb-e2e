@@ -61,7 +61,8 @@ RUN mkdir -p /build/onnxruntime/lib && \
 # Build the .deb from the host-built binaries and install it
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 RUN bash /build/.github/workflows/scripts/build-deb.sh "0.0.0" "noble" "1" && \
-    (dpkg -i facelock_0.0.0-1~ubuntu24.04.1_amd64.deb || true) && \
+    cp facelock_0.0.0-1~ubuntu24.04.1_amd64.deb /facelock-test-package.deb && \
+    (dpkg -i /facelock-test-package.deb || true) && \
     apt-get update && apt-get install -f -y && \
     rm -rf facelock_0.0.0-1~ubuntu24.04.1_amd64 facelock_0.0.0-1~ubuntu24.04.1_amd64.deb
 

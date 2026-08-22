@@ -48,6 +48,7 @@ RUN mkdir -p /build/onnxruntime/lib && \
 
 # Build the .rpm from pre-built binaries and install it
 RUN bash /build/test/build-rpm-prebuilt.sh "0.0.0" && \
+    cp ./*.rpm /facelock-test-package.rpm && \
     dnf install -y ./*.rpm && \
     rm -rf ~/rpmbuild ./*.rpm
 

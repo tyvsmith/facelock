@@ -844,6 +844,7 @@ fn legacy_invocations_still_parse() {
         ],
         &["facelock", "pam", "add", "--service", "x", "--if-present"],
         &["facelock", "pam", "remove"],
+        &["facelock", "pam", "remove", "--all"],
         &[
             "facelock",
             "pam",
@@ -1066,8 +1067,8 @@ fn pam_remove_keep_backup_is_an_explicit_opt_out() {
     }
 }
 
-/// `--all` is `status`-only, takes no `--service`, and leaves the bare form
-/// alone.
+/// `--all` is an enumerating flag for status and removal, takes no
+/// `--service`, and leaves both bare forms alone.
 ///
 /// The last clause is the compatibility one: `pam status` with no flags has
 /// meant `sudo` since the verb shipped, and its exit code is 0/1/2 about that
@@ -1075,9 +1076,15 @@ fn pam_remove_keep_backup_is_an_explicit_opt_out() {
 /// without changing their command line, which is why `--all` is a flag rather
 /// than a new default (docs/contracts.md, "facelock pam Semantics").
 #[test]
-fn all_is_a_status_only_flag_and_leaves_the_bare_form_alone() {
+fn all_enumerates_status_or_removal_and_leaves_bare_forms_alone() {
     assert!(pam_request(&["status", "--all"]).all);
     assert!(pam_request(&["status", "--all", "--json"]).json);
+    let removal = pam_request(&["remove", "--all"]);
+    assert!(removal.all);
+    assert_eq!(
+        removal.action,
+        facelock_cli::commands::pam::PamAction::Remove
+    );
 
     let bare = pam_request(&["status"]);
     assert!(!bare.all, "bare `pam status` must still mean one service");
@@ -1085,6 +1092,9 @@ fn all_is_a_status_only_flag_and_leaves_the_bare_form_alone() {
         bare.services.is_empty(),
         "...resolved to sudo in the command"
     );
+    let bare_remove = pam_request(&["remove"]);
+    assert!(!bare_remove.all, "bare `pam remove` must still mean sudo");
+    assert!(bare_remove.services.is_empty());
 
     // `--if-present` composes: the pair is documented as answering
     // "everything configured, and absence is not an error".
@@ -1094,10 +1104,10 @@ fn all_is_a_status_only_flag_and_leaves_the_bare_form_alone() {
         // Enumerating and naming are two questions; a request that did both
         // would have to drop one silently.
         &["facelock", "pam", "status", "--all", "--service", "sudo"][..],
-        // A write verb has nothing to enumerate: `add --all` would have to
-        // mean "edit every service file on the machine".
+        &["facelock", "pam", "remove", "--all", "--service", "sudo"],
+        // Addition is deliberately named: `add --all` would edit every PAM
+        // service file on the machine rather than clean Facelock-owned work.
         &["facelock", "pam", "add", "--all"],
-        &["facelock", "pam", "remove", "--all"],
     ] {
         assert!(
             Cli::try_parse_from(argv).is_err(),

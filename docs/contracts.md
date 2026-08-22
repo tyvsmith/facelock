@@ -56,6 +56,7 @@ follow it.
 | `facelock setup --pam` | Alias onto `facelock pam add\|remove` (see "facelock pam" below). Kept, and kept parsing, for every wrapper written against it |
 | `facelock pam add` | Add the facelock line to one or more `/etc/pam.d/<service>` files. Root |
 | `facelock pam remove` | Remove it. Root. Cleans validated Facelock-owned rollback state by default; `--keep-backup` preserves it |
+| `facelock pam remove --all` | Config-independent, whole-machine removal of recognized Facelock-owned direct PAM edits beneath compiled roots. Root. Conflicts with `--service` |
 | `facelock pam status` | Report whether services carry the line. Reads only, **no root** — the probe to branch on instead of grepping `/etc/pam.d` |
 | `facelock setup` choice flags | `--camera <PATH\|auto>`, `--models <standard\|balanced\|high>`, `--execution-provider <cpu\|cuda\|rocm\|openvino\|auto>`, `--encryption <tpm\|keyfile\|none\|auto>`. Precedence: CLI flag > config file > built-in default |
 | `facelock setup` action opt-outs | `--no-pam`, `--no-systemd`, `--no-enroll` decline an action outright (and their `--pam`/`--systemd`/`--enroll` counterparts force it). Later flag wins |
@@ -309,7 +310,8 @@ subject to the auth/open fail-closed checks.
 
 ### facelock pam Semantics
 
-`facelock pam add | remove | status` owns every write to `/etc/pam.d`.
+`facelock pam add | remove | status` and the machine-wide
+`facelock pam remove --all` cleanup own every direct write to `/etc/pam.d`.
 `setup --pam` is an alias onto it (above), and the wizard's step 9 calls the
 same writer, so there is one implementation of the edit and one set of rules.
 
@@ -320,7 +322,9 @@ does not exist, so a writer that looked only in `/etc/pam.d` could not
 configure the service at all. The list is `[pam] config_dirs` (Config Schema
 below) for a distribution whose vendor directory is somewhere else; there is no
 way to ask Linux-PAM at run time which one it was compiled with, so the default
-is the pair above and configuration is never required. A hit that is *refused* —
+for named add, remove and status is the pair above and configuration is never
+required. Machine-wide `remove --all` uses its own fixed roots described below.
+A hit that is *refused* —
 a hard link or any symlink — is still a hit: the search does
 not fall through to the next directory, because that would let a vendor file
 silently take over from an `/etc` entry facelock declined to follow.
@@ -374,10 +378,11 @@ absolute name *replaces* the base — so this is the check, not the join.
 Anything else is accepted: `PAM_CANDIDATES` is the wizard's menu, **not** an
 allowlist, and a service that is not on it must keep working.
 
-**Every symlinked service entry is refused.** The writer `lstat`s the entry for
-diagnostics, but read, mutation and recovery all reopen the confined service
-basename relative to an already-open PAM root with `O_NOFOLLOW`; neither a
-resolved absolute target nor a target recorded in provenance is ever opened.
+**Every symlinked service entry is refused by named add, remove and status.**
+The writer `lstat`s the entry for diagnostics, but read, mutation and recovery
+all reopen the confined service basename relative to an already-open PAM root
+with `O_NOFOLLOW`; neither a resolved absolute target nor a target recorded in
+provenance is ever opened.
 This applies even when the link text appears to remain in the same directory.
 It also prevents Facelock from editing generated authselect state through
 `/etc/pam.d/system-auth` or `/etc/pam.d/password-auth`, and prevents a hand-made
@@ -421,8 +426,9 @@ actually happens: a typo'd or gated service name. It is **not** a transaction:
 a write-phase I/O error on service N leaves 1..N-1 written. Those are reported
 per service and the exit code is non-zero; the remaining services are still
 attempted. Each individual local mutation has its own serialized,
-crash-recoverable transaction and rollback pair, described below. This is not
-the multi-service rollback journal owned by #227.
+crash-recoverable transaction and rollback pair, described below. Named
+`pam add` and `pam remove` do not use a whole-set journal; the compiled-root
+`pam remove --all` transaction is specified separately below.
 
 **`--no-confirm` never implies `--allow-sensitive`.** They are separate
 authorizations: "do not ask me" and "yes, edit the shared auth stack". The
@@ -472,6 +478,8 @@ validation phase, before any prompt exists to skip, so an unattended
 | `pam status --all --if-present` | 0/1/2 | unchanged from `--all`: an enumerated name was found, so there is no absent case to forgive |
 | `pam add`, `pam remove` | 0 | every service reached its requested state and required default rollback-state cleanup completed — including `unchanged`, `overridden` (`add` created the `/etc/pam.d` copy), `vendor-only` (`remove` had nothing of its own to take out of a package-owned file), `absent` under `--if-present`, and `declined` |
 | `pam add`, `pam remove` | non-zero | a validation failure (nothing written) or a write failure, including `cleanup-failed` after the requested PAM state was reached |
+| `pam remove --all` | 0 | every recognized writable direct reference was removed, the final compiled-root scan was clear, and the whole-set transaction committed and cleaned; an empty scan is an idempotent success |
+| `pam remove --all` | non-zero | preflight, journal, identity, write, final-rescan or recovery failure; direct PAM mutations are rolled back where their exact identities prove that safe, otherwise transaction evidence is retained |
 
 `pam status` is on `grep`'s scale and `is-enrolled`'s: a boolean query whose
 exit code is the answer. Across several services the worst outcome wins. A
@@ -479,7 +487,8 @@ exit code is the answer. Across several services the worst outcome wins. A
 asked, and `--json` is how a script tells it from an install.
 
 **`--dry-run`** prints the resolved plan, writes nothing, and exits 0. It is
-honoured *after* the root check (see DEC-6 above).
+honoured *after* the root check (see DEC-6 above). On `remove --all` it performs
+no transaction recovery and creates no state.
 
 **A service that exists in no directory names them all.** The refusal `add`
 and `remove` raise, and the line `status` prints, both list every path tried:
@@ -754,7 +763,8 @@ record intent/exchange. Local remove and vendor-create planning, publication
 and recovery run under the same guard. A competing writer or recovery cannot
 discard an add's prepared pair between persistence and commit. Backup cleanup
 after a successful or no-op remove is a separate locked quarantine phase; this
-does not claim multi-service atomicity or the #227 package-cleanup journal.
+does not make named mutations multi-service atomic. The `pam remove --all`
+transaction below keeps its whole-set lock through batch cleanup.
 
 Recovery treats state as an untrusted hint and re-resolves only the recorded
 confined service under the current PAM write root. It recovers publication
@@ -794,10 +804,145 @@ identities before unlinking. Legacy cleanup is confined to the override root
 and rechecks the exact regular, single-link entry immediately before unlink.
 Malformed provenance, lookalike names, symlinks, hard links, changed entries
 and unrelated administrator files are retained. `--keep-backup` opts out of
-both versioned and legacy cleanup. This per-service behavior does not implement
-#227's compiled-root `remove --all`, package loop, broad lifecycle cleanup or
-multi-file rollback, #206 vendor-drift cleanup, #207 sensitive-authorization
-changes, or #166's final emitted-byte freeze.
+both versioned and legacy cleanup.
+
+**`pam remove --all` is the config-independent whole-machine cleanup.** It
+ignores `[pam].config_dirs` and opens the compiled roots `/etc/pam.d`
+(writable override), `/usr/lib/pam.d` (detection-only vendor state), and
+`/etc/authselect` (detection-only generated state). Missing or corrupt config,
+database, model, camera, daemon and ONNX Runtime state cannot redirect or block
+it. It enumerates already-open directory descriptors and re-resolves each
+confined basename with directory-relative, no-follow operations. A candidate
+must remain a regular, single-link file whose bounded bytes and complete
+identity can be rechecked. Directory contents are detection ground truth;
+provenance is untrusted ownership evidence, never a target path.
+
+No symlink is followed. A symlink is skipped only when its text is the exact
+absolute path of the same service basename beneath a later compiled root that
+this run scans independently. This accounts for stock links such as
+`/etc/pam.d/system-auth -> /etc/authselect/system-auth` without trusting the
+link's contents. Every other symlink, hard-linked, nonregular or unreadable PAM
+entry that contains or could hide a Facelock reference is an unmanaged blocker.
+A reference found in the independently scanned `/usr/lib/pam.d` or
+`/etc/authselect` root is likewise an unmanaged read-only or external-root
+blocker. Structural directories, including authselect profile directories, are
+not PAM service files and are skipped. Nothing outside the fixed roots is
+followed or deleted.
+
+A writable direct file with a conventional PAM service basename is recognized
+as Facelock-owned when every Facelock logical rule uses the exact pre-versioned
+physical bytes `auth      sufficient pam_facelock.so`. Dot-prefixed names and
+the administrator/package artifact suffixes `.facelock-backup`, `.pacnew`,
+`.pacsave`, `.pacorig`, `.rpmnew`, `.rpmsave`, `.rpmorig`, `.dpkg-old`,
+`.dpkg-new`, `.dpkg-dist`, and `~` are not conventional legacy candidates.
+They are considered only when a strict provenance basename exists for that
+exact confined service and the current complete-file hash equals
+`installed_sha256` in its validated committed pair. This lets `remove --all`
+find every arbitrary name accepted by the named writer without treating an
+unowned administrator artifact as an active PAM service. Customized controls,
+options or spacing, corrupt or ambiguous provenance for a candidate, invalid
+bytes, path escapes, link swaps, identity drift and concurrent edits block the
+whole run during preflight. Nothing is changed when preflight finds a blocker.
+An empty scan is an idempotent success.
+
+**The whole set is journaled before the first PAM mutation.** Version 1 state
+is strict JSON with unknown fields rejected, regular single-link fixed-state
+owner and mode `0600`, no-clobber publication, a 4 MiB encoded limit and at
+most 1,024 unique confined services. Its reserved names and exact fields are:
+
+- `.facelock-remove-all-<operation>.json` contains exactly `version`,
+  `operation`, `keep_backup`, and `targets`. Each target contains exactly
+  `service`, strict `backup`, `original`, and `installed_sha256`; `original`
+  contains exactly `device`, `inode`, `links`, `sha256`, `mode`, `uid`, and
+  `gid` and must describe a regular single-link file.
+- `.facelock-remove-all-commit-<operation>.json` contains exactly `version`,
+  `operation`, `journal_sha256`, `keep_backup`, and `targets`. Each target
+  contains exactly `service`, strict `backup`, and `installed`, where
+  `installed` uses the same complete-identity fields and validation.
+
+`operation` is `<seconds>-<exactly-nine-digit-nanoseconds>`: seconds parse as
+`u64`, nanoseconds are below one billion, and collision allocation is bounded.
+Only a prefix plus that valid operation grammar is reserved batch state; a
+prefix-shaped strict provenance basename with another suffix remains ordinary
+per-service provenance. Both state files and every hash are bounded and
+validated, and duplicate services invalidate either target list before
+recovery. A commit pairs with a journal only when operation, keep flag, ordered
+service/backup set, exact journal hash and planned/committed installed hashes
+agree. Multiple, malformed or conflicting reserved entries require manual
+review.
+
+`pam remove --all --dry-run` opens an existing backup directory for read-only
+inspection and requires its owner and mode to be trusted already. It performs
+no owner/mode repair, directory sync, recovery or write locking; an untrusted
+directory makes the preview fail closed with its metadata and entries intact.
+
+One fixed-state-directory flock spans recovery of any earlier journal, the
+authoritative root scan and complete preflight, bounded operation and rollback
+pair allocation, publication of every #171 backup/provenance pair, journal
+publication, every PAM exchange, the final fixed-root active-reference scan,
+commit publication and evidence cleanup. Every per-service rollback pair is
+durable before the journal, and the complete journal is durable before the
+first PAM mutation. Each service then uses the #171 intent, publication
+binding, exact created-identity and `RENAME_EXCHANGE` protocol while retaining
+the displaced original inode.
+
+A later failure or a non-empty or unanswerable final scan reverse-exchanges
+every earlier file in reverse order after complete identity checks. Recovery
+does the same for a prepared journal without a valid commit. The strict,
+self-contained commit authenticates the journal bytes and every installed
+complete identity; once it is durable, recovery finishes per-file publication
+cleanup and validated backup cleanup instead of rolling the PAM files back.
+Any mismatch or ambiguity preserves the journal and per-file intent, binding,
+temp or displaced evidence, including administrator bytes, for review. Files
+are always published as complete byte sequences and PAM password fallback is
+unchanged.
+
+Prepared-journal recovery also recognizes the one provably unstarted
+per-service publication shape: the canonical service still has the journal's
+full original identity, the exact valid `pam_replace` intent agrees with the
+prepared pair's sequence and record hash, and the exact replacement temp and
+publication binding are both absent. It identity-checks and removes only that
+intent before continuing rollback. Any mismatch or extra name remains
+ambiguous. After reverse exchange and identity-checked replacement-temp
+cleanup, rollback removes the exact publication binding before delegating the
+remaining base intent to that intent-only recovery. Every boundary is
+restartable; normal forward publication retains its existing intent-first
+cleanup order. Rollback-pair cleanup is restart-idempotent across cleanup intent,
+both quarantine moves and both unlinks. An exact matching cleanup intent is
+resumed; a target whose canonical pair, quarantine pair and exact cleanup
+intent are all absent is already clean. Partial, substituted or conflicting
+pair state is preserved and blocks journal cleanup.
+
+On success, default cleanup removes only validated Facelock-owned versioned
+pairs and exact validated legacy `<service>.facelock-backup` state for every
+committed target. `--keep-backup` instead commits and preserves the new pairs
+and opts out of legacy cleanup. `--json` uses the standard single remove
+document with one committed `removed` row per target (and a backup path only
+under `--keep-backup`); an idempotent no-op has an empty `services` array.
+`--quiet` suppresses that document.
+
+**Every shipped uninstall surface delegates to this cleanup before deleting
+the binary or PAM module.** This includes the Arch source and binary packages,
+Debian `prerm`, RPM `%preun`, the Omarchy remover and `just uninstall`. Booted
+package coverage exercises direct `dpkg`/`rpm` and their `apt-get`, `apt`, and
+`dnf` frontends for abort retention and blocker-free success. Arch
+also ships `/usr/share/libalpm/hooks/facelock-pam-remove.hook`, a package
+Remove-only `PreTransaction` hook for target `facelock`; `AbortOnFail`
+runs `/usr/bin/facelock pam remove --all` before pacman changes the package,
+and the package scriptlet retains an idempotent second call. Debian and RPM
+propagate cleanup failure so the package, binary and module remain. Source and
+Omarchy removal stop before their deletes. The module can be removed only
+after the cleanup's final compiled-root scan succeeds.
+
+The all-or-nothing guarantee covers direct PAM edits owned and scanned by this
+transaction and retention of the package/module when that cleanup fails. It
+does not cover every package-manager or profile side effect. Debian `prerm`
+currently invokes tolerant `pam-auth-update --remove facelock` before shared
+cleanup; byte-exact profile lifecycle and rollback are #224 scope. Fedora
+authselect profile selection, regeneration and rollback are #226 scope;
+`remove --all` only scans `/etc/authselect` as a detection-only root and never
+edits generated state. This does not implement #206 vendor-drift cleanup, #207
+sensitive-authorization changes, or #166's final emitted-byte freeze.
 
 **`--json`** emits exactly one document on stdout and no human text; `--quiet`
 suppresses even that, leaving the exit code as the whole answer, as it does for
@@ -1284,6 +1429,7 @@ that is not on this list is not being denied, only not yet promised.
 | `pam-if-present` | `pam add`/`pam remove`/`pam status` accept `--if-present` |
 | `pam-json` | `pam add`/`pam remove`/`pam status` accept `--json` |
 | `pam-multi-service` | `pam add`/`pam remove`/`pam status` take a repeatable `--service` — several services in one process, one root check |
+| `pam-remove-all` | `pam remove --all` exists, conflicts with `--service`, and uses compiled-root whole-set cleanup |
 | `pam-status` | `pam status` exists — the unprivileged `/etc/pam.d` read (DEC-6 below) |
 | `pam-status-all` | `pam status --all` exists, and conflicts with `--service` — the enumerating form, which answers "what is configured on this machine?" rather than "is this name configured?" |
 | `quiet` | the global `--quiet` |
@@ -1581,6 +1727,8 @@ writes.
 | `/var/lib/facelock/pam-backups/` | root:root | 700 | Fixed-root PAM rollback state; not affected by `[pam].config_dirs` or `storage.db_path` |
 | `/var/lib/facelock/pam-backups/<service>.<seconds>-<nanoseconds>` | root:root | 600 | Original PAM service bytes; nanoseconds are exactly nine digits |
 | `/var/lib/facelock/pam-backups/<service>.<seconds>-<nanoseconds>.json` | root:root | 600 | Strict versioned provenance for the adjacent rollback bytes |
+| `/var/lib/facelock/pam-backups/.facelock-remove-all-<operation>.json` | root:root | 600 | Strict prepared whole-set PAM removal journal |
+| `/var/lib/facelock/pam-backups/.facelock-remove-all-commit-<operation>.json` | root:root | 600 | Strict self-contained whole-set commit and recovery marker |
 | `/var/log/facelock/` | root:root | 700 | Log dir — per-user auth history and raw face snapshots are root-only |
 | `/var/log/facelock/audit.jsonl` | root:root | 600 | Structured audit log |
 | `/var/log/facelock/snapshots/` | root:root | 700 | Auth snapshots (raw face images) |
@@ -1713,8 +1861,11 @@ handled by the desktop's normal password agent) is unverified pending
 live-desktop testing and may require a design change. Behavior here is
 fail-closed: a non-eligible action is never face-authorized.
 
-`[pam].config_dirs` is where `facelock pam add | remove | status` looks for PAM
-service files, in search order — Linux-PAM's own precedence, earliest wins.
+`[pam].config_dirs` is where named `facelock pam add | remove | status` looks
+for PAM service files, in search order — Linux-PAM's own precedence, earliest
+wins. `facelock pam remove --all` always uses the compiled `/etc/pam.d`,
+`/usr/lib/pam.d`, and detection-only `/etc/authselect` roots and cannot be
+redirected by configuration.
 Default: `["/etc/pam.d", "/usr/lib/pam.d"]`. **The first entry is the override
 directory: every write lands there and every later entry is read-only**, so a
 service that resolves only in a later one is copied into the first before the

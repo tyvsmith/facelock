@@ -17,12 +17,7 @@ if [[ -f $HOME/.config/hypr/hyprlock.conf ]]; then
   facelock hyprlock disable || true
 fi
 
-for service in sudo polkit-1 hyprlock; do
-  if [[ -f /etc/pam.d/$service ]] && grep -q 'pam_facelock\.so' "/etc/pam.d/$service"; then
-    echo "Removing pam_facelock.so from /etc/pam.d/$service..."
-    sudo facelock setup --pam --service "$service" --remove --yes
-  fi
-done
+sudo facelock pam remove --all
 
 echo
 echo "PAM lines removed. Face data, models, and the facelock package remain installed."

@@ -1,0 +1,15 @@
+pkgname=facelock
+pkgver=0.0.0
+pkgrel=1
+pkgdesc='Facelock libalpm cleanup test fixture'
+arch=('x86_64')
+license=('MIT')
+install=facelock.install
+
+package() {
+    install -Dm755 /build/target/release/facelock "$pkgdir/usr/bin/facelock"
+    install -Dm755 /build/target/release/libpam_facelock.so \
+        "$pkgdir/usr/lib/security/pam_facelock.so"
+    install -Dm644 /build/dist/facelock-pam-remove.hook \
+        "$pkgdir/usr/share/libalpm/hooks/facelock-pam-remove.hook"
+}

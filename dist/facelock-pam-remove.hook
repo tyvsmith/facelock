@@ -1,0 +1,12 @@
+[Trigger]
+Operation = Remove
+Type = Package
+Target = facelock
+Target = facelock-git
+Target = facelock-bin
+
+[Action]
+Description = Removing Facelock-owned PAM references...
+When = PreTransaction
+Exec = /usr/bin/facelock pam remove --all
+AbortOnFail

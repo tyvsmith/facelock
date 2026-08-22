@@ -815,6 +815,78 @@ replacement, and every publication-binding role keeps its intent, replacement
 temp, and visible binding. Recovery can therefore classify the complete set;
 checked cleanup remains limited to definite failures before the rename.
 
+Machine-wide `pam remove --all` adds one whole-set transaction over these
+per-service primitives. It ignores `[pam] config_dirs` and scans only the
+compiled `/etc/pam.d`, `/usr/lib/pam.d`, and detection-only `/etc/authselect`
+roots by enumerating already-open directory descriptors. Facelock does not
+follow generated links: it skips one only when the link's exact absolute target
+is the same service beneath a later compiled root that is scanned
+independently. Every other linked entry is a blocker, while a reference found
+in the independently scanned generated root is an unmanaged external-root
+reference. A conventional direct local reference is writable when every
+Facelock rule has the exact pre-versioned emitted bytes. A dot-prefixed or
+package/administrator artifact name is considered only when an exact strict
+provenance basename exists and its current hash matches committed provenance;
+unowned `.pacsave`, `.rpmsave`, `~` and similar artifacts are preserved and
+ignored. Customized rules, corrupt provenance for a candidate, linked or
+unreadable entries, and references in read-only roots are unmanaged blockers;
+preflight reports them without following or changing them. Directory contents
+remain detection ground truth, and provenance is never a target path or an
+instruction to mutate.
+
+The `--dry-run` path validates an existing PAM backup directory read-only. It
+requires the directory's trusted owner and mode without repairing or syncing
+them, acquiring the write lock, or running recovery; a trust failure preserves
+the directory metadata and entries and refuses the preview.
+
+For a clear preflight, Facelock prepares a validated backup/provenance pair for
+every target, then atomically publishes one strict, bounded `remove-all`
+journal before the first PAM exchange. The journal contains only confined
+services, strict backup basenames, full original identities and installed
+hashes. One state-directory flock spans journal recovery, the complete
+preflight, all exchanges, final active-reference rescan, commit publication and
+cleanup. A later identity failure or non-empty final rescan exchanges every
+earlier displaced original inode back in reverse order. Recovery does the same
+for a journal without its commit marker. A strict self-contained commit marker
+binds the journal hash and every published full identity; once durable,
+recovery completes validated publication/state cleanup instead of rolling the
+PAM files back. Ambiguity preserves the journal and per-file evidence.
+Only names whose extracted operation has the strict batch timestamp grammar
+enter this recovery path; prefix-shaped per-service provenance remains
+ordinary provenance. Duplicate services invalidate either journal or commit
+before any recovery cleanup.
+An intent-only PAM replacement is cleaned as unstarted only when the canonical
+file still has the journal's complete original identity, the intent agrees
+with the prepared pair, and both exact temp and binding names are absent.
+After reverse exchange and identity-checked replacement-temp cleanup, rollback
+removes the exact publication binding before delegating the base intent to
+that exact intent-only recovery. Each boundary is restartable; normal forward
+publication retains its existing intent-first cleanup order.
+Rollback-pair cleanup resumes an exact cleanup intent across both quarantine
+moves and unlinks; total absence is already clean, while partial, substituted
+or conflicting state is preserved.
+
+The uninstall call path reaches this command before removing the CLI or PAM
+module and does not parse config or touch the database, models, camera, daemon,
+or ONNX Runtime. Debian `prerm` and RPM `%preun` failures abort their package
+removals. Booted tests exercise direct `dpkg`/`rpm` plus `apt-get`, `apt` and
+`dnf` wrapper abort retention and blocker-free success. Arch packages install
+a Remove-only libalpm `PreTransaction` hook whose
+`AbortOnFail` action runs the same command, with the package scriptlet retaining
+an idempotent second call. Source and Omarchy uninstallers delegate to the same
+path. The module is removed only after the compiled-root final scan succeeds.
+The all-or-nothing guarantee covers the direct PAM edits owned and scanned by
+this transaction, plus retaining the package/module when it fails. Debian's
+separately managed `pam-auth-update` profile lifecycle and byte-exact rollback
+remain #224 scope; the current `prerm` removes that profile before invoking the
+shared direct-edit cleanup.
+Fedora authselect profile selection, regeneration, and rollback remain #226
+scope. This command treats `/etc/authselect` as detection-only and never edits
+generated profile state.
+
+This does not implement #206 vendor-drift cleanup, #207
+sensitive-authorization changes, or #166's final emitted-byte freeze.
+
 #### A0. Config File Trust (Required)
 
 The PAM module runs in a root context, so `/etc/facelock/config.toml` is an
