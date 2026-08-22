@@ -9260,6 +9260,30 @@ mod tests {
         "#%PAM-1.0\nauth      sufficient pam_facelock.so\nauth\t\tinclude\t\tsystem-auth";
 
     #[test]
+    fn pam_line_placement_contract_is_frozen() {
+        const CANONICAL_LINE: &[u8; 36] = b"auth      sufficient pam_facelock.so";
+        const OMARCHY_SKELETON: &[u8] = b"#%PAM-1.0\n\
+auth       required                    pam_deny.so\n\
+account    include                     system-local-login\n";
+        const OMARCHY_CONFIGURED: &[u8] = b"#%PAM-1.0\n\
+auth      sufficient pam_facelock.so\n\
+auth       required                    pam_deny.so\n\
+account    include                     system-local-login\n";
+        const HEADERLESS_NO_AUTH: &[u8] = b"account required pam_unix.so\n";
+        const HEADERLESS_CONFIGURED: &[u8] = b"auth      sufficient pam_facelock.so\n\
+account required pam_unix.so\n";
+
+        assert_eq!(PAM_LINE.as_bytes(), CANONICAL_LINE);
+        assert_eq!(PAM_LINE.len(), 36);
+        assert!(!PAM_LINE.contains('\n'));
+        assert_eq!(with_line_inserted(OMARCHY_SKELETON), OMARCHY_CONFIGURED);
+        assert_eq!(
+            with_line_inserted(HEADERLESS_NO_AUTH),
+            HEADERLESS_CONFIGURED
+        );
+    }
+
+    #[test]
     fn backup_prepare_and_commit_are_versioned_root_only_provenance() {
         let root = tempfile::tempdir().unwrap();
         let backup_dir = root.path().join("pam-backups");

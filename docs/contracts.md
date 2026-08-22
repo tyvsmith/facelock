@@ -1017,8 +1017,7 @@ currently invokes tolerant `pam-auth-update --remove facelock` before shared
 cleanup; byte-exact profile lifecycle and rollback are #224 scope. Fedora
 authselect profile selection, regeneration and rollback are #226 scope;
 `remove --all` only scans `/etc/authselect` as a detection-only root and never
-edits generated state. This does not implement #166's final emitted-byte
-freeze.
+edits generated state.
 
 **`--json`** emits exactly one document on stdout and no human text; `--quiet`
 suppresses even that, leaving the exit code as the whole answer, as it does for
@@ -1153,15 +1152,70 @@ as "not configured".
 process, one root check and one closing hint. Duplicates collapse. No
 `--service` means `sudo`, which is what bare `setup --pam` has always meant.
 
+**PAM line placement.** The direct CLI writer emits exactly this 36-byte
+literal; the literal itself has no trailing newline:
+
+```pam
+auth      sufficient pam_facelock.so
+```
+
+The control is frozen to `sufficient`: a successful face can satisfy the
+stack, while a non-match or unavailable face path continues under the
+service-owned rules that follow. Ordinary login and privilege stacks commonly
+reach their password modules there. Omarchy's face-only context instead
+continues to `pam_deny.so`; its password attempt uses a separate PAM context.
+There is intentionally no `--control` option. A caller cannot silently
+substitute `required`, an extended control, or another stack policy for the
+line whose behavior downstream consumers and Facelock cleanup rely on.
+
+The line is inserted immediately before the first *logical* rule whose first
+ASCII-whitespace-delimited type token is `auth`, matched
+ASCII-case-insensitively and with Linux-PAM's optional leading `-`;
+`authtok_type=` is not an auth type. If no auth rule exists and the first
+physical line is exactly `#%PAM-1.0`, the line follows that header. Without
+that exact leading header it starts at byte 0. This header-aware fallback is
+the post-#192 contract; it supersedes #166's original top-of-file wording.
+
+Omarchy owns this exact backend-neutral `omarchy-lock-face` skeleton:
+
+```pam
+#%PAM-1.0
+auth       required                    pam_deny.so
+account    include                     system-local-login
+```
+
+The direct writer produces this exact stack, leaving Omarchy's face-only lane
+to reach its plain denial when Facelock does not succeed:
+
+```pam
+#%PAM-1.0
+auth      sufficient pam_facelock.so
+auth       required                    pam_deny.so
+account    include                     system-local-login
+```
+
+Add idempotency and named `pam status` recognition are deliberately broader
+than the emitted bytes. Any uncommented logical rule whose semantic bytes
+contain the exact, case-sensitive byte sequence `pam_facelock.so` is an active
+reference: `add` does not emit a duplicate, and `status` reports it present.
+This is substring recognition, not a PAM module-token-boundary promise.
+`pam remove --all` is stricter: a broad active reference is not automatically
+Facelock-owned. Without validated provenance or the exact vendor-copy shape,
+only the exact canonical physical line in a conventional service is eligible
+for cleanup; custom control, spacing, or options block the whole-machine run
+for administrator review rather than being rewritten.
+
+This emitted-byte contract applies only to direct CLI service-file writes.
+The Debian `pam-auth-update` profile intentionally emits
+`[success=end default=ignore] pam_facelock.so`, and the Fedora authselect
+profiles use authselect's generated layout. Both remain visible to the same
+broad `add`/`status` active-reference recognition, but neither is required to
+match the canonical direct-writer bytes.
+
 **Service-file edits are byte-preserving.** A backslash followed only by spaces
 or tabs before LF or CRLF continues the same logical PAM rule, so insertion
 never splits that rule. A `#` ends the semantic rule even after a continuation;
-comment and blank physical lines remain untouched. The line goes above the
-first logical rule whose first ASCII-whitespace-delimited type token is `auth`,
-matched ASCII-case-insensitively and with Linux-PAM's optional leading `-`;
-`authtok_type=` is not an auth type. When there is no auth rule, the line goes
-directly after a leading `#%PAM-1.0` header, or at the top when that header is
-absent.
+comment and blank physical lines remain untouched.
 
 Removal drops the whole genuine logical Facelock rule. For recovery from older
 facelock output that inserted the canonical physical line between an
