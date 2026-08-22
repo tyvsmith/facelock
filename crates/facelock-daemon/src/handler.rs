@@ -1016,12 +1016,13 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         // being made — and the real one, when they sit down, meets a lockout.
         // A face that *was* seen and did not match still charges: that is a
         // guess, and a wrong one.
-        if let AuthOutcome::AuthResult(ref mr) = result {
-            if !mr.matched && mr.face_detected && intent.charges_rate_limit() {
-                if let Err(e) = self.rate_limiter.record_failure(&self.store, &user) {
-                    warn!(user, error = %e, "failed to record auth failure");
-                }
-            }
+        if let AuthOutcome::AuthResult(ref mr) = result
+            && !mr.matched
+            && mr.face_detected
+            && intent.charges_rate_limit()
+            && let Err(e) = self.rate_limiter.record_failure(&self.store, &user)
+        {
+            warn!(user, error = %e, "failed to record auth failure");
         }
         result.into()
     }

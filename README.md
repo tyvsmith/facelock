@@ -16,6 +16,10 @@ yay -S facelock           # or paru -S facelock
 
 ### Debian / Ubuntu (APT)
 
+Debian-family release support is exactly Debian 13 (Trixie) and Ubuntu 26.04
+LTS (Resolute). Both packages use the single `facelock` identity and include
+TPM support.
+
 ```bash
 # Add signing key
 sudo install -d -m 0755 /etc/apt/keyrings
@@ -23,10 +27,8 @@ curl -fsSL https://tysmith.me/facelock/apt/tysmith-archive-keyring.gpg \
   | sudo tee /etc/apt/keyrings/tysmith-archive-keyring.gpg >/dev/null
 
 # Set APT_SUITE to the exact suite for your host:
-# Debian 13 — trixie — TPM
-# Debian 12 — bookworm — legacy
-# Ubuntu 26.04 — resolute — TPM
-# Ubuntu 24.04 — noble — legacy
+# Debian 13 — trixie — TPM required
+# Ubuntu 26.04 LTS — resolute — TPM required
 APT_SUITE=trixie  # Debian 13 example
 echo "deb [signed-by=/etc/apt/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt ${APT_SUITE} facelock" \
   | sudo tee /etc/apt/sources.list.d/facelock.list
@@ -115,15 +117,11 @@ facelock audit          View structured audit log
 
 ### For integrators
 
-`facelock is-enrolled` answers "does this user have a usable enrollment?" as an exit code — `0` yes, `1` no, `2` error, the same convention as `grep` — so a lock screen can decide whether to offer a face-auth affordance without parsing anything:
-
-```bash
-facelock is-enrolled --quiet && show_face_indicator
-```
-
-It is named after systemd's `is-*` family (`systemctl is-active --quiet`), and like those it prints the state word — `enrolled` or `not-enrolled` — when not quiet.
-
-It is cheap and safe to call repeatedly: no daemon activation, no camera, no database access. It answers "enrolled" as soon as the caller's own enrollment marker exists — no group, no re-login (ADR 010); an unreadable or missing marker reports `not-enrolled` rather than erroring. The marker it reads is a hint for the UI — PAM at auth time remains authoritative. See the [CLI reference](book/src/cli-reference.md#facelock-is-enrolled).
+Desktop projects own their setup/removal wrapper and lock-screen UI. Facelock
+provides stable capability, enrollment, and arbitrary-service PAM commands for
+those wrappers; it does not ship desktop-specific downstream scripts. See the
+[integration guide](docs/integrating.md) for the complete contract and a worked
+Omarchy example.
 
 ## Architecture
 
@@ -188,16 +186,11 @@ Facelock works with [hyprlock](https://github.com/hyprwm/hyprlock) on Hyprland (
 
 `facelock hyprlock enable` preserves any existing fingerprint integration (icon 󰈷, `fingerprint:enabled = true`, `pam_fprintd.so`) — face and fingerprint can coexist. If your hyprlock font isn't a Nerd Font, run with `--no-icon`; the functional integration still works.
 
-### Omarchy
-
-On Omarchy, the same flow is wrapped end-to-end (camera check → setup → enrollment → hyprlock tweak → test):
-
-```bash
-omarchy-setup-security-face       # everything in one floating-terminal session
-omarchy-remove-security-face      # symmetric removal
-```
-
-These scripts mirror omarchy's own `omarchy-setup-security-fingerprint` pattern. A walker menu entry under Setup → Security → Face is pending upstream.
+This command family is frozen compatibility surface, not a template for new
+desktop adapters. New desktops use `facelock pam add --service <name>` and own
+their UI/configuration changes downstream. Omarchy likewise owns its
+end-to-end integration and package choice; Facelock only supplies the backend
+contracts described in the [integration guide](docs/integrating.md).
 
 ## Testing
 
@@ -238,8 +231,8 @@ just release 0.2.0        # bump version across all packaging files
 git push origin main --tags  # trigger CI release workflow
 ```
 
-Tagging `vX.Y.Z` builds release binaries, four suite-specific `.deb` artifacts
-(trixie, bookworm, resolute, and noble), and the direct Fedora `.rpm` artifact.
+Tagging `vX.Y.Z` builds release binaries, two suite-specific `.deb` artifacts
+(trixie and resolute), and the direct Fedora `.rpm` artifact.
 Stable tags publish the stable AUR and APT channels; Packit handles production
 COPR builds. Prerelease tags create a GitHub prerelease without entering those
 stable channels. See [docs/releasing.md](docs/releasing.md) for the full process

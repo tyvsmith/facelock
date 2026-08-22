@@ -3,6 +3,11 @@
   "upstream_package_name": "facelock",
   "downstream_package_name": "facelock",
   "upstream_tag_template": "v{version}",
+  "actions": {
+    "post-modifications": [
+      "install -m 0755 dist/rpm/facelock-authselect-retirement-guard dist/facelock-authselect-retirement-guard"
+    ]
+  },
   "jobs": [
     {
       "job": "copr_build",

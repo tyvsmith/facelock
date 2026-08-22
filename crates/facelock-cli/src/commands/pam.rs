@@ -1505,10 +1505,9 @@ impl BackupStore {
         }
         if result.as_ref().is_err_and(|error| {
             error.kind() == ErrorKind::Interrupted || is_ambiguous_publication(error)
-        }) {
-            if let Err(error) = result {
-                return Err(error);
-            }
+        }) && let Err(error) = result
+        {
+            return Err(error);
         }
         let cleanup = self.finish_publication_state(
             &intent_name,
@@ -2246,17 +2245,15 @@ impl BackupStore {
                     &publication.binding.backup,
                     &expected,
                     |_| Ok(()),
-                ) {
-                    if is_ambiguous_publication(&error)
-                        || error.kind() == std::io::ErrorKind::Interrupted
-                    {
-                        return Err(error);
-                    }
-                    // A deterministic vendor mismatch restores the exact
-                    // quarantined inode to the canonical name. The removal
-                    // publication is complete even though retirement was
-                    // declined, so its state evidence may now be finalized.
+                ) && (is_ambiguous_publication(&error)
+                    || error.kind() == std::io::ErrorKind::Interrupted)
+                {
+                    return Err(error);
                 }
+                // A deterministic vendor mismatch restores the exact
+                // quarantined inode to the canonical name. The removal
+                // publication is complete even though retirement was
+                // declined, so its state evidence may now be finalized.
             }
         }
         self.finish_recovered_publication(intent, publication)
@@ -3102,12 +3099,12 @@ fn atomic_state_publish(root: &Path, name: &str, content: &[u8]) -> std::io::Res
         }
         Ok(identity)
     })();
-    if written.is_err() && !published {
-        if let Some(identity) = owned_temp.as_ref() {
-            let _ =
-                unlink_at_if_identity_matches(&directory, &temp_name, identity, MAX_BACKUP_BYTES);
-            let _ = directory.sync_all();
-        }
+    if written.is_err()
+        && !published
+        && let Some(identity) = owned_temp.as_ref()
+    {
+        let _ = unlink_at_if_identity_matches(&directory, &temp_name, identity, MAX_BACKUP_BYTES);
+        let _ = directory.sync_all();
     }
     written
 }
@@ -5114,6 +5111,7 @@ const NON_SERVICE_SUFFIXES: &[&str] = &[
     ".dpkg-old",
     ".dpkg-new",
     ".dpkg-dist",
+    ".pam-old",
     "~",
 ];
 
@@ -6808,12 +6806,12 @@ fn apply_add(target: &Target, no_confirm: bool, sink: &Sink, dirs: &PamDirs) -> 
         return Outcome::Failed(format!("failed to write {path}: {error}"));
     }
 
-    if let Some(prepared) = &prepared {
-        if let Err(error) = transaction.commit(prepared) {
-            return Outcome::Failed(format!(
-                "installed {path}, but failed to commit backup provenance: {error}"
-            ));
-        }
+    if let Some(prepared) = &prepared
+        && let Err(error) = transaction.commit(prepared)
+    {
+        return Outcome::Failed(format!(
+            "installed {path}, but failed to commit backup provenance: {error}"
+        ));
     }
 
     // `notice`, not `info`: these are the messages that tell an operator who
@@ -16322,6 +16320,16 @@ account required pam_unix.so\n";
     }
 
     #[test]
+    fn remove_all_preserves_pam_auth_update_backup() {
+        let dir = seeded(&[("common-auth.pam-old", SUDO_AFTER)]);
+        let dirs = only(dir.path());
+        let before = snapshot(dir.path());
+
+        assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);
+        assert_eq!(snapshot(dir.path()), before);
+    }
+
+    #[test]
     fn remove_all_cleans_exact_legacy_emission_without_provenance() {
         let dir = seeded(&[("pre-0.2-service", SUDO_AFTER)]);
         let dirs = only(dir.path());
@@ -17365,9 +17373,10 @@ account required pam_unix.so\n";
     }
 
     /// A `.facelock-backup` is a byte copy of a configured file and is not a
-    /// service. Neither is a `.pacsave`, a `~` file, or this module's own
-    /// in-flight temp file. Reporting one as configured would be the report
-    /// being confidently wrong, which is what enumeration is for removing.
+    /// service. Neither is a `.pacsave`, pam-auth-update's `.pam-old`, a `~`
+    /// file, or this module's own in-flight temp file. Reporting one as
+    /// configured would be the report being confidently wrong, which is what
+    /// enumeration is for removing.
     #[test]
     fn backups_and_package_manager_leftovers_are_not_services() {
         let dir = seeded(&[
@@ -17376,9 +17385,17 @@ account required pam_unix.so\n";
             ("polkit-1.pacsave", SUDO_AFTER),
             ("hyprlock.rpmsave", SUDO_AFTER),
             ("login.dpkg-old", SUDO_AFTER),
+            ("common-auth.pam-old", SUDO_AFTER),
             ("swaylock~", SUDO_AFTER),
             (".sudo.facelock-1234-5678", SUDO_AFTER),
         ]);
+
+        assert_eq!(scan_directories(&only(dir.path())).names, ["sudo"]);
+    }
+
+    #[test]
+    fn pam_auth_update_backup_is_not_a_service() {
+        let dir = seeded(&[("sudo", SUDO_AFTER), ("common-auth.pam-old", SUDO_AFTER)]);
 
         assert_eq!(scan_directories(&only(dir.path())).names, ["sudo"]);
     }

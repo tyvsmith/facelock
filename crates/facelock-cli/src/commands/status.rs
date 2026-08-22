@@ -386,11 +386,11 @@ fn render_encryption(out: &mut String, encryption: &Fact<EncryptionHealth>) {
                     result(out, false, &StatusMessage::StatusPlaintextEmbeddings);
                 }
             }
-            if let Some((sealed, plaintext)) = encryption.sealed_counts {
-                if sealed + plaintext > 0 {
-                    detail(out, "encrypted", &sealed.to_string());
-                    detail(out, "plaintext", &plaintext.to_string());
-                }
+            if let Some((sealed, plaintext)) = encryption.sealed_counts
+                && sealed + plaintext > 0
+            {
+                detail(out, "encrypted", &sealed.to_string());
+                detail(out, "plaintext", &plaintext.to_string());
             }
         }
     }

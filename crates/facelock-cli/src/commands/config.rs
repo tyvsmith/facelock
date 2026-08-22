@@ -92,11 +92,11 @@ fn open_in_editor(config_path: &std::path::Path) -> anyhow::Result<()> {
     };
 
     // If both old and new configs are valid, check if daemon-relevant settings changed
-    if let (Some(old), Some(new)) = (old_config, new_config) {
-        if needs_daemon_restart(&old, &new) {
-            println!("Daemon-relevant settings changed. Restarting daemon...");
-            crate::commands::daemon::restart_daemon();
-        }
+    if let (Some(old), Some(new)) = (old_config, new_config)
+        && needs_daemon_restart(&old, &new)
+    {
+        println!("Daemon-relevant settings changed. Restarting daemon...");
+        crate::commands::daemon::restart_daemon();
     }
 
     Ok(())

@@ -1,0 +1,30 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG SUITE
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN case "$SUITE" in \
+        trixie) \
+            printf '%s\n' 'deb http://deb.debian.org/debian trixie-backports main' \
+                >/etc/apt/sources.list.d/trixie-backports.list ;; \
+        resolute) ;; \
+        *) echo "unsupported Debian package suite: $SUITE" >&2; exit 2 ;; \
+    esac && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        binutils build-essential clang debhelper dpkg-dev libpam0g-dev \
+        libtss2-dev libv4l-dev libwayland-dev libxkbcommon-dev pkg-config \
+        python3 util-linux-extra xz-utils && \
+    case "$SUITE" in \
+        trixie) apt-get install -y --no-install-recommends -t trixie-backports cargo rustc ;; \
+        resolute) apt-get install -y --no-install-recommends cargo rustc ;; \
+    esac && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY test/run-deb-offline-build.sh /usr/local/bin/run-deb-offline-build.sh
+COPY .github/workflows/scripts/run-networkless.sh /usr/local/libexec/facelock/run-networkless.sh
+RUN chmod +x /usr/local/bin/run-deb-offline-build.sh \
+    /usr/local/libexec/facelock/run-networkless.sh
+
+ENTRYPOINT ["/usr/local/bin/run-deb-offline-build.sh"]

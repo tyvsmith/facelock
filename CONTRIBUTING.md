@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Rust 1.85+ (`rustup update`)
+- Rust 1.88+ (`rustup update`)
 - Linux with V4L2 support
 - A webcam (IR recommended; RGB works for development)
 - Podman (for container tests)

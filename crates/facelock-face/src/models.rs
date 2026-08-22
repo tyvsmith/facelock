@@ -64,12 +64,12 @@ pub fn resolve_model_sha256(
     configured_sha256: Option<&str>,
 ) -> Result<String> {
     if let Some(entry) = manifest.find_by_filename(filename) {
-        if let Some(explicit) = configured_sha256 {
-            if explicit != entry.sha256 {
-                return Err(FacelockError::Detection(format!(
-                    "configured SHA256 for {filename} does not match bundled manifest"
-                )));
-            }
+        if let Some(explicit) = configured_sha256
+            && explicit != entry.sha256
+        {
+            return Err(FacelockError::Detection(format!(
+                "configured SHA256 for {filename} does not match bundled manifest"
+            )));
         }
         return Ok(entry.sha256.clone());
     }

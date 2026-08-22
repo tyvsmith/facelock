@@ -301,10 +301,10 @@ fn read_v4l_by_path(device_path: &str) -> Option<String> {
     let entries = std::fs::read_dir("/dev/v4l/by-path").ok()?;
     let target = std::fs::canonicalize(device_path).ok()?;
     for entry in entries.filter_map(|e| e.ok()) {
-        if let Ok(resolved) = std::fs::canonicalize(entry.path()) {
-            if resolved == target {
-                return entry.file_name().into_string().ok();
-            }
+        if let Ok(resolved) = std::fs::canonicalize(entry.path())
+            && resolved == target
+        {
+            return entry.file_name().into_string().ok();
         }
     }
     None

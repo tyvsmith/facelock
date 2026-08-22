@@ -1,0 +1,52 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG SUITE
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN case "$SUITE" in \
+        trixie) \
+            printf '%s\n' 'deb http://deb.debian.org/debian trixie-backports main' \
+                >/etc/apt/sources.list.d/trixie-backports.list ;; \
+        resolute) ;; \
+        *) echo "unsupported Debian package suite: $SUITE" >&2; exit 2 ;; \
+    esac && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        binutils build-essential ca-certificates clang curl debhelper dpkg-dev \
+        git libpam0g-dev libssl-dev libtss2-dev libv4l-dev libwayland-dev \
+        libxkbcommon-dev pkg-config python3 ripgrep util-linux-extra xz-utils && \
+    case "$SUITE" in \
+        trixie) apt-get install -y --no-install-recommends -t trixie-backports cargo rustc ;; \
+        resolute) apt-get install -y --no-install-recommends cargo rustc ;; \
+    esac && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY . /build/
+RUN tar -xf /build/facelock-git-metadata.tar -C /build && \
+    rm /build/facelock-git-metadata.tar && \
+    git config --global --add safe.directory /build && \
+    git describe --tags --exact-match HEAD >/dev/null
+
+RUN dpkg-query -W -f='${Package} ${Version}\n' cargo rustc && \
+    cargo --version && \
+    rustc --version && \
+    dpkg-query -S "$(command -v cargo)" "$(command -v rustc)" && \
+    dpkg --compare-versions "$(dpkg-query -W -f='${Version}' cargo)" ge 1.88 && \
+    dpkg --compare-versions "$(dpkg-query -W -f='${Version}' rustc)" ge 1.88 && \
+    dpkg-checkbuilddeps
+
+RUN ort_source_url="$(scripts/prepare-ort-bundle.sh source-url)" && \
+    curl --output /tmp/ort.tgz --proto '=https' --tlsv1.2 -fsSL "$ort_source_url" && \
+    scripts/prepare-ort-bundle.sh prepare /tmp/ort.tgz onnxruntime && \
+    rm -f /tmp/ort.tgz
+
+RUN scripts/prepare-cargo-vendor.sh prepare cargo-vendor && \
+    scripts/prepare-cargo-vendor.sh verify cargo-vendor
+
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+RUN bash test/deb-source-contract.sh && \
+    dpkg-checkbuilddeps
+
+ENTRYPOINT ["/build/test/run-deb-offline-build.sh"]

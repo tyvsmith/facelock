@@ -844,12 +844,12 @@ impl Config {
     fn validate(&self) -> Result<(), ConfigError> {
         // device.path is optional — when None, the daemon auto-detects a camera.
         // If explicitly set, reject empty strings.
-        if let Some(ref path) = self.device.path {
-            if path.is_empty() {
-                return Err(ConfigError::Validation(
-                    "device.path must not be empty when specified".into(),
-                ));
-            }
+        if let Some(ref path) = self.device.path
+            && path.is_empty()
+        {
+            return Err(ConfigError::Validation(
+                "device.path must not be empty when specified".into(),
+            ));
         }
         if !(0.0..=1.0).contains(&self.device.dark_threshold) {
             return Err(ConfigError::Validation(format!(

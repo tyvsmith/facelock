@@ -20,6 +20,18 @@ section "Copy repo to writable workdir"
 mkdir -p /work
 tar -C /repo --exclude='./target' -cf - . | tar -C /work -xf -
 cd /work || { echo "FAIL: no workdir"; exit 1; }
+if [ -f .git ]; then
+  # A mounted git worktree carries a pointer to the host's common .git
+  # directory, which is intentionally outside /repo and unavailable here.
+  # Recreate only the disposable copy so Packit's git-archive source contains
+  # the exact mounted working tree, including the uncommitted test subject.
+  rm -f .git
+  git init -q
+  git config user.name "Facelock COPR Test"
+  git config user.email "facelock@example.invalid"
+  git add -A
+  git commit -q -m "COPR test snapshot"
+fi
 git config --global --add safe.directory /work
 echo "Branch: $(git branch --show-current 2>/dev/null)  HEAD: $(git rev-parse --short HEAD 2>/dev/null)"
 
@@ -61,15 +73,17 @@ for candidate in /tmp/mock/facelock-*.x86_64.rpm; do
 done
 if [ -z "$BIN_RPM" ]; then echo "FAIL: no binary RPM produced"; exit 1; fi
 echo "RPM: $BIN_RPM"
-if rpm -qp --requires "$BIN_RPM" | grep -qi 'onnxruntime'; then
-  echo "Requires onnxruntime: OK"
+.github/workflows/scripts/validate-rpm.sh "$BIN_RPM" copr || RESULT=1
+if grep -q 'live_runtime_creates_session_from_checksum_pinned_minimal_model.*ok' /tmp/mock/build.log; then
+  echo "real ORT session smoke: OK"
 else
-  echo "FAIL: built RPM does not Require onnxruntime"; RESULT=1
+  echo "FAIL: pinned-model real ORT session smoke did not pass"; RESULT=1
 fi
 
 section "Install test"
 if dnf install -y "$BIN_RPM"; then
   if rpm -q onnxruntime >/dev/null; then echo "onnxruntime pulled by dnf: OK"; else echo "FAIL: onnxruntime not pulled"; RESULT=1; fi
+  if rpm -q onnxruntime-devel >/dev/null; then echo "FAIL: onnxruntime-devel was installed"; RESULT=1; else echo "onnxruntime-devel absent: OK"; fi
   if facelock --version >/dev/null; then echo "facelock runs: OK"; else echo "FAIL: facelock did not run"; RESULT=1; fi
 else
   echo "FAIL: dnf install of built RPM failed"; RESULT=1

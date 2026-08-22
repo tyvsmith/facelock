@@ -176,7 +176,7 @@ production-ready in the justfile install recipe.
 | Format | Location | Status |
 |--------|----------|--------|
 | Raw binaries | `release.yml` | Released. Triggered on `v*` tags. Uploads `facelock-x86_64-linux-gnu`, `pam_facelock.so`, SHA256SUMS to GitHub Releases. |
-| `.deb` | `release.yml` (build-deb job) | Released. Four suite-specific `.deb` artifacts for trixie, bookworm, resolute, and noble are built in CI and uploaded to GitHub Release. Stable releases publish the matching signed APT suites at `tysmith.me/facelock/apt`. |
+| `.deb` | `release.yml` (build-deb job) | Released. Two suite-specific `.deb` artifacts for trixie and resolute are built in CI and uploaded to GitHub Release. Stable releases publish the matching signed APT suites at `tysmith.me/facelock/apt`. |
 | `.rpm` | `release.yml` (build-rpm job) | Released. Built in CI for the GitHub Release asset. COPR builds from source via Packit (`tyvsmith/facelock`) per `releasing.md`. |
 | PKGBUILD (Arch) | `dist/PKGBUILD` | Released. Automated via tag CI; published to AUR (`facelock`, `facelock-git`). References `facelock.install` file. |
 | Nix flake | `dist/nix/flake.nix` | Exists with NixOS module (`module.nix`), derivation (`default.nix`), and dev shell. Not in nixpkgs. `doCheck = false` (needs camera). |
@@ -191,9 +191,21 @@ production-ready in the justfile install recipe.
 - 4 models total: scrfd_2.5g (3MB), arcface_r50 (166MB), scrfd_10g (17MB, optional), arcface_r100 (249MB, optional)
 - SHA256 verified at download time and at model load time
 
+### Debian source-build coverage
+
+Debian-family release support is exactly Debian 13 Trixie and Ubuntu 26.04
+Resolute. Each suite gate builds the one TPM-enabled `facelock` package from an
+exact-tag quilt source package, then rebuilds the emitted `.dsc` with networking
+denied and empty Cargo/Rustup caches. Trixie selects official Backports
+Rust/Cargo; Resolute selects its native distro toolchain. The source inputs are
+the main archive, reviewed ORT component, deterministic lock-bound Cargo-vendor
+component, and Debian delta. The release build and clean rebuild must agree on
+package metadata, paths, and installed bytes before booted lifecycle and swtpm
+PCR validation run.
+
 ### GitHub release workflow
 - Triggered by pushing a `v*` tag
-- Builds release binaries, four suite-specific `.deb` artifacts (trixie, bookworm, resolute, and noble), and the direct Fedora `.rpm` artifact
+- Builds release binaries, two suite-specific `.deb` artifacts (trixie and resolute), and the direct Fedora `.rpm` artifact
 - Uploads all artifacts to the GitHub Release with auto-generated release notes
 - Single architecture: x86_64 only
 

@@ -1,0 +1,42 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        binutils build-essential ca-certificates curl dbus libpam0g-dev \
+        libpam-runtime python3 swtpm swtpm-tools systemd tpm2-tools && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY test/install-pamtester.sh /tmp/install-pamtester.sh
+RUN sh /tmp/install-pamtester.sh && rm -f /tmp/install-pamtester.sh
+
+RUN useradd -m testuser && echo 'testuser:test' | chpasswd
+
+# Ubuntu's base image excludes /usr/share/doc/* by default. Keep the package's
+# legal and source-provenance payload so the installed-package gate can verify it.
+RUN printf '%s\n' \
+        'path-include=/usr/share/doc/facelock/' \
+        'path-include=/usr/share/doc/facelock/**' \
+        > /etc/dpkg/dpkg.cfg.d/zz-facelock-test-docs
+
+COPY facelock-test-package.deb /facelock-test-package.deb
+RUN cp /etc/pam.d/common-auth /tmp/common-auth.before && \
+    stat -c '%a %u %g' /etc/pam.d/common-auth > /tmp/common-auth.metadata.before && \
+    apt-get update && \
+    apt-get install -y /facelock-test-package.deb && \
+    cmp -s /etc/pam.d/common-auth /tmp/common-auth.before && \
+    test "$(stat -c '%a %u %g' /etc/pam.d/common-auth)" = "$(cat /tmp/common-auth.metadata.before)" && \
+    ! grep -q pam_facelock.so /etc/pam.d/common-auth && \
+    touch /facelock-common-auth-install-invariant && \
+    rm -f /tmp/common-auth.before /tmp/common-auth.metadata.before && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY test/pkg-validate.sh /pkg-validate.sh
+COPY test/polkit-agent-validate.sh /polkit-agent-validate.sh
+COPY test/tpm-pcr-e2e.sh /tpm-pcr-e2e.sh
+COPY test/pam.d/facelock-test /etc/pam.d/facelock-test
+RUN chmod +x /pkg-validate.sh /polkit-agent-validate.sh /tpm-pcr-e2e.sh
+
+CMD ["/lib/systemd/systemd"]

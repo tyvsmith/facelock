@@ -1,0 +1,70 @@
+#!/bin/sh
+set -eu
+
+state=/etc/authselect/authselect.conf
+
+fail() {
+    echo "facelock RPM upgrade stopped: $*" >&2
+    echo "Facelock no longer ships a system-wide authselect profile." >&2
+    echo "Inspect the current identity provider and enabled authselect features." >&2
+    echo "Select an appropriate supported profile with an authselect backup, then retry this package transaction." >&2
+    exit 1
+}
+
+valid_component() {
+    case "$1" in
+        [[:alnum:]]*) ;;
+        *) return 1 ;;
+    esac
+    case "$1" in
+        *[![:alnum:]._-]*) return 1 ;;
+    esac
+}
+
+case "${1:-}" in
+    '' | *[!0-9]*) fail "invalid RPM transaction count" ;;
+esac
+[ "$1" -gt 1 ] || exit 0
+
+if [ ! -e "$state" ] && [ ! -L "$state" ]; then
+    exit 0
+fi
+
+metadata=$(LC_ALL=C stat -c '%F:%u:%g:%a:%h:%s' -- "$state") ||
+    fail "cannot inspect $state"
+case "$metadata" in
+    regular\ file:0:0:644:1:*) ;;
+    *) fail "$state has untrusted type, ownership, mode, or link count" ;;
+esac
+size=${metadata##*:}
+case "$size" in
+    '' | *[!0-9]*) fail "$state has an invalid size" ;;
+esac
+[ "$size" -le 16384 ] || fail "$state exceeds 16384 bytes"
+
+profile=
+IFS= read -r profile < "$state" || [ -n "$profile" ] ||
+    fail "$state has no selected profile"
+
+# Shell variables cannot represent NUL bytes. Compare the first line's raw
+# bytes with the shell-decoded value before interpreting it so malformed state
+# cannot be normalized into a different, apparently valid profile name.
+raw_profile_hex=$(head -n 1 "$state" | od -An -tx1 -v) ||
+    fail "cannot read the selected profile bytes from $state"
+decoded_profile_hex=$(printf '%s\n' "$profile" | od -An -tx1 -v) ||
+    fail "cannot validate the selected profile bytes from $state"
+[ "$raw_profile_hex" = "$decoded_profile_hex" ] ||
+    fail "$state has control bytes or a malformed first line"
+
+case "$profile" in
+    @system-default) ;;
+    custom/*)
+        component=${profile#custom/}
+        valid_component "$component" || fail "$state has an invalid selected profile"
+        ;;
+    */*) fail "$state has an invalid selected profile" ;;
+    *) valid_component "$profile" || fail "$state has an invalid selected profile" ;;
+esac
+
+[ "$profile" != facelock ] ||
+    fail "the retired Facelock authselect profile is still selected"

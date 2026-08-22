@@ -67,7 +67,7 @@ check-pam-standalone:
     fi
     echo "pam-facelock dependency guard passed"
 
-# Verify agent-facing docs still describe the tree they describe.
+# Verify agent-facing docs and executable documentation contracts.
 
 # Pass a git ref to also run the coupling check against it.
 check-agent-docs base='':
@@ -78,9 +78,27 @@ check-agent-docs base='':
     else
         python3 test/check-agent-docs.py
     fi
+    bash test/lifecycle-ownership-contract.sh
+    bash test/rpm-authselect-contract.sh
 
 # Run all checks (test + lint + format + audit + PAM standalone surface + agent docs)
-check: test lint fmt-check audit check-pam-standalone check-agent-docs
+check: test lint fmt-check audit check-pam-standalone check-agent-docs test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test
+
+# Prove the deterministic, exact Cargo source component used by Debian builds.
+test-cargo-vendor-contract:
+    bash test/cargo-vendor-contract.sh
+
+# Static Debian source/metadata/release-consumer contract.
+test-deb-source-contract:
+    bash test/deb-source-contract.sh
+
+# Validate every binary package named by one exact generated manifest.
+test-deb-package-contract manifest:
+    bash test/deb-package-contract.sh --manifest "{{ manifest }}"
+
+# Exercise exact Debian manifest identity, checksum, and atomic-staging mutations.
+test-deb-package-contract-test:
+    bash test/deb-package-contract-test.sh
 
 # Build the PAM test container image (uses host-built release binaries).
 # Keep in sync with .github/workflows/ci.yml, which builds this same image
@@ -674,8 +692,9 @@ uninstall-files:
     echo "==>   /var/lib/facelock/  (face database, ONNX models ~100MB)"
     echo "==>   /var/log/facelock/  (audit logs and snapshots)"
     echo "==>"
-    echo "==> To remove all face data, config, models, and logs:"
-    echo "==>   sudo rm -rf /etc/facelock /var/lib/facelock /var/log/facelock"
+    echo "==> Retained state cleanup is intentionally not automated."
+    echo "==> Cleanup must stay within the fixed roots above, leave configured external paths untouched, and refuse links or mount crossings."
+    echo "==> Filesystem deletion does not securely erase SSDs, snapshots, or backups."
 
 # ---------------------------------------------------------------------------
 # Localization (optional tooling)
@@ -803,7 +822,7 @@ release version:
     release_validate_transition "$OLD_VERSION" "$VERSION"
     ARCH_VERSION=$(release_arch_pkgver "$VERSION")
     ARCH_RELEASE=$(release_next_arch_revision "$VERSION" dist/PKGBUILD)
-    DEBIAN_RELEASE=$(release_next_debian_revision "$VERSION" dist/debian/changelog)
+    DEBIAN_RELEASE=$(release_next_debian_revision "$VERSION" debian/changelog)
     DEBIAN_VERSION=$(release_debian_common_version "$VERSION" "$DEBIAN_RELEASE")
     RPM_VERSION=$(release_rpm_version "$VERSION")
     RPM_COUNTER=$(release_next_rpm_counter "$VERSION" dist/facelock.spec)
@@ -841,11 +860,11 @@ release version:
         echo "  ✓ dist/facelock.spec"
     fi
 
-    # 4. dist/debian/changelog (prepend new entry)
-    if [ -f dist/debian/changelog ]; then
+    # 4. debian/changelog (prepend new entry)
+    if [ -f debian/changelog ]; then
         DATE=$(date -R)
-        sed -i "1i facelock ($DEBIAN_VERSION) unstable; urgency=medium\n\n  * Release v$VERSION.\n\n -- Facelock Contributors <facelock@m.tysmith.me>  $DATE\n" dist/debian/changelog
-        echo "  ✓ dist/debian/changelog"
+        sed -i "1i facelock ($DEBIAN_VERSION) unstable; urgency=medium\n\n  * Release v$VERSION.\n\n -- Ty Smith <ty@tysmith.me>  $DATE\n" debian/changelog
+        echo "  ✓ debian/changelog"
     fi
 
     # 5. Verify it compiles
@@ -898,32 +917,36 @@ test-rpm: build-release
     podman build -t facelock-rpm-test -f test/Containerfile.fedora .
     podman run --rm facelock-rpm-test
 
-# Test .deb packaging in Ubuntu container
-test-deb: build-release
-    #!/usr/bin/env bash
-    set -euo pipefail
-    podman build -t facelock-deb-test -f test/Containerfile.ubuntu .
-    podman run --rm facelock-deb-test
+# Static and booted, model-free Fedora authselect retirement lifecycle.
+test-rpm-authselect:
+    bash test/rpm-authselect-contract.sh
+    podman build -t facelock-rpm-authselect-test -f test/Containerfile.rpm-authselect .
+    bash test/run-rpm-authselect-systemd.sh facelock-rpm-authselect-test
+
+# Run both exact supported-suite Debian package gates.
+test-deb: test-deb-trixie-pkg test-deb-resolute-pkg
 
 # Needs models/*.onnx: the validation starts the daemon under the hardened unit
 # and checks what it holds at runtime. FACELOCK_ALLOW_MISSING_MODELS=1 runs the
 # packaging half only, with the rest counted as skipped.
 
-# Package test — build real .deb, install via dpkg, validate under booted systemd
-test-deb-pkg: (_require-models "1") build-release
+# Debian 13 Trixie package — exact source build, TPM/PCR, and booted lifecycle.
+test-deb-trixie-pkg: (_require-models "1")
     #!/usr/bin/env bash
     set -euo pipefail
-    podman build --build-arg ORT_VERSION={{ _ort-version }} -t facelock-deb-pkg -f test/Containerfile.deb-e2e .
-    test/run-pkg-validate-systemd.sh facelock-deb-pkg
+    test/build-deb-package-image.sh trixie facelock-deb-trixie-pkg
+    podman run --rm facelock-deb-trixie-pkg /tpm-pcr-e2e.sh
+    test/run-pkg-validate-systemd.sh facelock-deb-trixie-pkg
 
-# Package test — build real TPM .deb (trixie), install via dpkg, run automated validation
-test-deb-tpm-pkg: build-release
+# Ubuntu 26.04 Resolute package — exact source build, TPM/PCR, and booted lifecycle.
+test-deb-resolute-pkg: (_require-models "1")
     #!/usr/bin/env bash
     set -euo pipefail
-    podman build --build-arg ORT_VERSION={{ _ort-version }} -t facelock-deb-tpm-pkg -f test/Containerfile.deb-tpm-e2e .
-    podman run --rm facelock-deb-tpm-pkg
+    test/build-deb-package-image.sh resolute facelock-deb-resolute-pkg
+    podman run --rm facelock-deb-resolute-pkg /tpm-pcr-e2e.sh
+    test/run-pkg-validate-systemd.sh facelock-deb-resolute-pkg
 
-# Same model requirement (and same opt-out) as test-deb-pkg.
+# Same model requirement (and same opt-out) as the two Debian suite package gates.
 
 # Package test — build real .rpm, install via dnf, validate under booted systemd
 test-rpm-pkg: (_require-models "1") build-release
@@ -940,10 +963,10 @@ test-copr:
     podman run --privileged --rm -v "$PWD:/repo:ro" facelock-copr-test
 
 # Dev shell — interactive .deb container with host models for fast iteration (requires camera)
-test-deb-dev-shell: build-release
+test-deb-dev-shell:
     #!/usr/bin/env bash
     set -euo pipefail
-    podman build --build-arg ORT_VERSION={{ _ort-version }} -t facelock-deb-pkg -f test/Containerfile.deb-e2e .
+    test/build-deb-package-image.sh resolute facelock-deb-resolute-pkg
     devices=""
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
@@ -953,10 +976,10 @@ test-deb-dev-shell: build-release
         [ -f "$f" ] && mounts="$mounts -v $f:/tmp/host-models/$(basename $f):ro"
     done
     mounts="$mounts -v $(pwd)/test/container-config.toml:/tmp/container-config.toml:ro"
-    echo "Starting dev shell (Ubuntu 24.04, .deb installed, host models). Try:"
+    echo "Starting dev shell (Ubuntu 26.04, .deb installed, host models). Try:"
     echo "  facelock enroll --user root --label myface"
     echo "  facelock test --user root"
-    podman run --rm -it $devices $mounts facelock-deb-pkg \
+    podman run --rm -it $devices $mounts facelock-deb-resolute-pkg \
         bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; cp /tmp/host-models/* /var/lib/facelock/models/ 2>/dev/null; exec bash"
 
 # Dev shell — interactive .rpm container with host models for fast iteration (requires camera)
@@ -980,20 +1003,20 @@ test-rpm-dev-shell: build-release
         bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; cp /tmp/host-models/* /var/lib/facelock/models/ 2>/dev/null; exec bash"
 
 # Release shell — clean-room .deb container, real user experience (requires camera)
-test-deb-release-shell: build-release
+test-deb-release-shell:
     #!/usr/bin/env bash
     set -euo pipefail
-    podman build --build-arg ORT_VERSION={{ _ort-version }} -t facelock-deb-pkg -f test/Containerfile.deb-e2e .
+    test/build-deb-package-image.sh resolute facelock-deb-resolute-pkg
     devices=""
     for d in /dev/video*; do
         [ -e "$d" ] && devices="$devices --device $d"
     done
     mounts="-v $(pwd)/test/container-config.toml:/tmp/container-config.toml:ro"
-    echo "Starting release shell (Ubuntu 24.04, .deb installed, clean room). Try:"
+    echo "Starting release shell (Ubuntu 26.04, .deb installed, clean room). Try:"
     echo "  facelock setup"
     echo "  facelock enroll --user root --label myface"
     echo "  facelock test --user root"
-    podman run --rm -it $devices $mounts facelock-deb-pkg \
+    podman run --rm -it $devices $mounts facelock-deb-resolute-pkg \
         bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; exec bash"
 
 # Release shell — clean-room .rpm container, real user experience (requires camera)
@@ -1013,8 +1036,8 @@ test-rpm-release-shell: build-release
     podman run --rm -it $devices $mounts facelock-rpm-pkg \
         bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; exec bash"
 
-# Test APT repo generation locally (requires reprepro + gpg)
-test-apt-repo:
+# Test APT repo generation locally from both exact manifests (requires reprepro + gpg).
+test-apt-repo trixie_manifest='' resolute_manifest='':
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -1039,36 +1062,68 @@ test-apt-repo:
     # For local testing without GPG, strip SignWith lines
     sed -i '/^SignWith:/d' "${REPO_DIR}/conf/distributions"
 
-    # Find suite-versioned .deb files (from CI artifacts or local package tests).
-    DEB_FILES=$({ find . -maxdepth 1 -name 'facelock_*.deb'; find ./target -maxdepth 1 -name 'facelock_*.deb' 2>/dev/null; })
-    if [ -z "$DEB_FILES" ]; then
-        echo "No .deb files found. Building a test .deb is not required."
+    suites=(trixie resolute)
+    manifests=(
+        "{{ trixie_manifest }}"
+        "{{ resolute_manifest }}"
+    )
+    supplied=0
+    for manifest in "${manifests[@]}"; do
+        if [ -n "$manifest" ]; then
+            supplied=$((supplied + 1))
+        fi
+    done
+
+    if [ "$supplied" -eq 0 ]; then
+        echo "No exact Debian artifact manifest supplied."
         echo "Validating reprepro config only..."
         reprepro -b "${REPO_DIR}" check
         echo ""
         echo "APT repo config: OK"
-        echo "To test with real .deb files, build them first with CI or 'just test-deb'."
+        echo "Pass the trixie and resolute manifests to include their exact .deb payloads."
         exit 0
     fi
+    if [ "$supplied" -ne "${#suites[@]}" ]; then
+        echo "Error: test-apt-repo requires either no manifests or exactly one manifest for each stable suite: trixie, resolute" >&2
+        exit 1
+    fi
 
-    while IFS= read -r deb; do
+    for index in "${!suites[@]}"; do
+        suite="${suites[$index]}"
+        manifest="${manifests[$index]}"
+        [ -n "$manifest" ] || {
+            echo "Error: missing exact generated manifest for $suite" >&2
+            exit 1
+        }
+        bash test/deb-package-contract.sh --manifest "$manifest"
+        manifest_dir=$(cd "$(dirname "$manifest")" && pwd)
+        mapfile -t packages < <(grep -E '\.deb$' "$manifest")
+        if [ "${#packages[@]}" -ne 1 ]; then
+            echo "Error: $suite manifest must name exactly one .deb payload: $manifest" >&2
+            exit 1
+        fi
+        deb="$manifest_dir/${packages[0]}"
         version=$(dpkg-deb -f "$deb" Version)
+        case "$suite" in
+            trixie) expected_suffix='~deb13u1' ;;
+            resolute) expected_suffix='~ubuntu26.04.1' ;;
+        esac
         case "$version" in
-            *~deb13u1) suite=trixie ;;
-            *~deb12u1) suite=bookworm ;;
-            *~ubuntu26.04.1) suite=resolute ;;
-            *~ubuntu24.04.1) suite=noble ;;
-            *) echo "SKIP: $deb has no supported suite suffix"; continue ;;
+            *"$expected_suffix") ;;
+            *)
+                echo "Error: $deb version '$version' does not match stable APT suite '$suite' ($expected_suffix)" >&2
+                exit 1
+                ;;
         esac
         reprepro -b "${REPO_DIR}" includedeb "$suite" "$deb"
-    done <<< "$DEB_FILES"
+    done
 
     echo ""
     echo "=== APT repo structure ==="
     find "${REPO_DIR}" -type f -not -path '*/db/*' -not -path '*/conf/*' | sort
 
     # Validate expected structure
-    for SUITE in trixie bookworm resolute noble; do
+    for SUITE in trixie resolute; do
         [ -f "${REPO_DIR}/dists/${SUITE}/Release" ] || { echo "MISSING: dists/${SUITE}/Release" >&2; exit 1; }
         echo "OK: dists/${SUITE}/Release"
         [ -d "${REPO_DIR}/dists/${SUITE}/facelock/binary-amd64" ] || { echo "MISSING: dists/${SUITE}/facelock/binary-amd64/" >&2; exit 1; }
@@ -1122,8 +1177,8 @@ release-preflight tag='':
         dist/PKGBUILD-git \
         dist/release-matrix.json \
         dist/facelock.spec \
-        dist/debian/control \
-        dist/debian/rules \
+        debian/control \
+        debian/rules \
         dist/apt/conf/distributions \
         .packit.yaml \
         scripts/release-versions.sh \

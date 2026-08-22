@@ -650,6 +650,12 @@ Machine-wide `pam remove --all` deliberately ignores that setting, scans the
 compiled system roots `/etc/pam.d` and `/usr/lib/pam.d`, and separately scans
 the fixed detection-only generated root `/etc/authselect`.
 
+Fedora RPMs support the same service-scoped leaf-file setup. They do not ship
+or select an authselect profile, and Facelock never writes the generated
+`system-auth` or `password-auth` files. Choose an application-owned leaf such
+as `sudo`, `polkit-1`, or another explicit service; generated authselect symlinks
+are refused by the writer's no-follow checks.
+
 ### facelock pam add
 
 ```bash
@@ -746,9 +752,9 @@ ground truth; provenance can authenticate an arbitrary service Facelock
 previously changed, but never supplies a target path. An exact pre-0.2
 `auth      sufficient pam_facelock.so` edit is recognized only under a
 conventional service basename. Dot-prefixed and package/administrator artifact
-names such as `.pacsave`, `.rpmsave` and `~` require strict provenance for that
-exact name or an exact current Facelock vendor-copy header; unowned artifacts
-are ignored and preserved. A customized control,
+names such as `.pacsave`, `.rpmsave`, pam-auth-update `.pam-old`, and `~`
+require strict provenance for that exact name or an exact current Facelock
+vendor-copy header; unowned artifacts are ignored and preserved. A customized control,
 options or spacing, corrupt provenance for a candidate, any other linked entry,
 or a reference in a read-only root is an unmanaged blocker. Nothing is changed
 when preflight finds one. The same scan recognizes an exact unchanged
@@ -794,12 +800,13 @@ and `dnf` frontends through abort retention and blocker-free success. Arch
 packages also ship a Remove-only libalpm `PreTransaction` hook with
 `AbortOnFail`, so pacman stops before removing either file.
 This all-or-nothing promise covers direct PAM edits owned by this command.
-Debian's separately managed `pam-auth-update` profile lifecycle and byte-exact
-profile rollback are tracked in #224; the current `prerm` removes that profile
-before calling the shared direct-edit cleanup.
-Fedora's authselect profile lifecycle is tracked separately in #226; this
-command only detects references in generated `/etc/authselect` state and never
-changes that state.
+The packaged Debian `pam-auth-update` profile is opt-in (`Default: no`), so
+fresh installation leaves `common-auth` unchanged. Its separately managed
+profile lifecycle and byte-exact rollback are tracked in #224; the current
+`prerm` removes that profile before calling the shared direct-edit cleanup.
+Fedora #226 retired the packaged authselect profile and added a read-only
+upgrade guard. This command only detects references in generated
+`/etc/authselect` state and never changes that state.
 
 ### facelock pam status
 

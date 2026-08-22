@@ -33,10 +33,11 @@ matches on it (§4), and `--config` is `global = true`.
 preserving `restart` would mean a hidden duplicate `Commands` variant carried
 until 1.0 and removed in a later breaking change. The project is pre-1.0 at
 0.1.4, no tag ships the renames yet, and nothing outside this repository invokes
-the four names: the byte-coupled surfaces in §4 name none of them, and neither
-do `dist/omarchy/omarchy-setup-security-face` or
-`dist/omarchy/omarchy-remove-security-face` (verified). The rename lands as a
-`feat!:` with a CHANGELOG `BREAKING` line naming each one.
+the four names: the byte-coupled surfaces in §4 name none of them. The two
+in-repository Omarchy prototype wrappers that existed when this ADR was
+accepted also named none of them (verified). Issue #173 later retired those
+prototypes; they are not current callers. The rename lands as a `feat!:` with a
+CHANGELOG `BREAKING` line naming each one.
 
 **`tpm` absorbs the key commands, not a new `key` group.** `tpm` already owns
 the key's lifecycle (`seal-key`, `unseal-key`, `unseal-check`) and `reseal`
@@ -61,6 +62,11 @@ by the rename PR:
 > tpm2-tools, `bench cold-auth` names a measurement. A new command must fit an
 > existing domain before it may claim a top-level name. Commands named by
 > `pam_facelock.so`, the service units, or the Omarchy scripts never move.
+
+At acceptance, “the Omarchy scripts” meant the then-shipped package-owned
+prototypes. Issue #173 later retired those prototypes, so that clause records
+the compatibility analysis at the time; it does not identify a current caller
+or integration surface.
 
 ## 1. Why not the alternatives
 
@@ -138,13 +144,17 @@ subcommands: seven nouns plus `calibrate`.
 None of the four renamed names appears here, which is why the rename stops
 where it does.
 
+The two Omarchy rows record package-owned prototypes that existed when this ADR
+was accepted. Issue #173 later retired them; the rows are historical evidence,
+not current callers or shipped integration points.
+
 | Invocation | Caller |
 |---|---|
 | `facelock auth --user X --config Y` | `pam_facelock.so`, pinned by `legacy_invocations_still_parse` |
 | `facelock daemon` | `systemd/facelock-daemon.service`, `dist/nix/module.nix`, `dist/s6/facelock-daemon/run`, `dist/runit/run`, and a `justfile` check that greps the unit for that exact string |
 | `ExecStart=/usr/bin/facelock daemon`, as a hard-coded literal | `commands::setup::run_systemd` passes it to `refresh_legacy_copy_if_present` as the marker deciding whether the unit at `/etc/systemd/system/facelock-daemon.service` is facelock's and should be refreshed. A rename makes the marker stop matching **silently**: the legacy unit is left stale and nothing fails to compile |
-| `facelock setup --non-interactive`, `facelock devices`, `facelock enroll`, `facelock hyprlock enable`, `facelock test` | `dist/omarchy/omarchy-setup-security-face` |
-| `facelock hyprlock disable`, `facelock setup --pam --service X --remove --yes` | `dist/omarchy/omarchy-remove-security-face` |
+| `facelock setup --non-interactive`, `facelock devices`, `facelock enroll`, `facelock hyprlock enable`, `facelock test` | then-shipped Omarchy setup prototype (retired by #173) |
+| `facelock hyprlock disable`, `facelock setup --pam --service X --remove --yes` | then-shipped Omarchy removal prototype (retired by #173) |
 | `facelock is-enrolled`, `facelock pam status`, `facelock capabilities` | lock screens and wrapper scripts, per `docs/contracts.md` §CLI Subcommands |
 
 ## 5. Implementation

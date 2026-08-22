@@ -1,0 +1,8 @@
+[source.crates-io]
+replace-with = "facelock-vendored-sources"
+
+[source.facelock-vendored-sources]
+directory = "cargo-vendor/vendor"
+
+[net]
+offline = true

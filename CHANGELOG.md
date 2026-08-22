@@ -15,6 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   independent `--allow-sensitive` flag, matching `facelock pam add`; the flag
   requires `--pam`, conflicts with `--remove`, and is advertised by capability
   `setup-allow-sensitive`.
+- **Retired the packaged Fedora authselect profile** (#226): RPMs no longer
+  ship, select, or migrate a system-wide Facelock profile and no longer depend
+  on authselect. Fresh installs and ordinary upgrades leave the selected
+  provider and shared generated PAM files unchanged. An incoming upgrade stops
+  if the old exact `facelock` profile is still selected, with instructions to
+  choose an appropriate profile with an authselect backup before retrying;
+  malformed or unsafe selection state also fails closed. Explicit
+  service-scoped `facelock pam` setup remains the supported opt-in. An
+  already-installed v0.1.4 RPM cannot be retroactively guarded; users must
+  install a guarded release before a later uninstall so the guarded upgrade can
+  retire the old authselect payload first.
 - **`facelock pam status --all`** (#203): enumerate every service in the
   resolved pam.d directories that names `pam_facelock.so`, through the same row
   builder, `action` words and JSON document as `pam status --service`, so the
@@ -220,6 +231,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Debian-family releases now target Debian 13 Trixie and Ubuntu 26.04
+  Resolute only**: both suites ship one TPM-enabled `facelock` package. Debian
+  source packages include deterministic Cargo-vendor and reviewed ONNX Runtime
+  components and rebuild with network access denied from declared distro Rust
+  toolchains. The packaged `pam-auth-update` profile is opt-in, so a fresh
+  install leaves `common-auth` unchanged. Bookworm and Noble remain historical,
+  unsupported artifacts.
+
+- **Desktop integrations now own their setup and removal wrappers** (#173):
+  added `docs/integrating.md` with the stable capability, enrollment, PAM
+  placement, arbitrary-service and Hyprlock policies plus a worked Omarchy
+  example. Facelock packages no longer install the stale
+  `omarchy-setup-security-face` and `omarchy-remove-security-face` prototypes;
+  Omarchy owns those downstream commands.
 - **Face unlock needs no group membership and no re-login** (ADR 010): the
   system-bus policy now admits any local user's `Authenticate` for their own
   account — the daemon already checks that the caller's UID owns the username

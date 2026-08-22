@@ -26,6 +26,11 @@ does not. A bare invocation derives the version from `Cargo.toml` and classifies
 It checks local tools (`git`, `cargo`, `just`, `podman`), the packaging files,
 and release secrets. Fix every `MISSING` before continuing.
 
+For Debian-family artifacts, the active release set is exactly Trixie and
+Resolute. Run both `just test-deb-trixie-pkg` and
+`just test-deb-resolute-pkg`; each proves the TPM-enabled package, exact source
+components, networkless `.dsc` rebuild, and booted lifecycle.
+
 Then confirm independently:
 
 - working tree clean (`just release` also enforces this and aborts)
@@ -49,7 +54,7 @@ It rewrites **six** files with `sed -i`:
 | `dist/PKGBUILD-bin` | per-binary sha256sums are filled in by CI, not here |
 | `dist/PKGBUILD-git` | the runtime `pkgver()` computes the real version; this is the fallback |
 | `dist/facelock.spec` | |
-| `dist/debian/changelog` | prepends a new entry |
+| `debian/changelog` | prepends a new entry |
 
 Then it runs `cargo check --workspace` and **stops**. It does not commit, tag,
 or push — it prints those as instructions. Steps 3 to 5 are yours.
@@ -96,10 +101,10 @@ Only after explicit confirmation. No AI attribution in the commit or tag message
 
 ## Step 6: Watch the publish
 
-The `v*` tag triggers `.github/workflows/release.yml`, which has 9 jobs:
+The `v*` tag triggers `.github/workflows/release.yml`, which has 10 jobs:
 
 ```
-metadata · build · download-ort
+metadata · build · download-ort · prepare-cargo-vendor
 build-deb · build-rpm · build-nix
 publish-aur · publish-apt · trigger-pages
 ```

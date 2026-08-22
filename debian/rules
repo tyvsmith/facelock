@@ -1,0 +1,78 @@
+#!/usr/bin/make -f
+
+export RUSTFLAGS := --remap-path-prefix=$(CURDIR)=/usr/src/facelock
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	scripts/prepare-ort-bundle.sh verify onnxruntime
+	scripts/prepare-cargo-vendor.sh verify cargo-vendor
+	cargo --config debian/cargo-config.toml build --release --workspace --locked --offline --features tpm
+
+override_dh_auto_install:
+	scripts/prepare-ort-bundle.sh verify onnxruntime
+	scripts/prepare-cargo-vendor.sh verify cargo-vendor
+
+	# Binary
+	install -Dm755 target/release/facelock debian/facelock/usr/bin/facelock
+
+	# Polkit agent (optional — only if built)
+	if [ -f target/release/facelock-polkit-agent ]; then \
+		install -Dm755 target/release/facelock-polkit-agent debian/facelock/usr/bin/facelock-polkit-agent; \
+	fi
+
+	# PAM module (Debian uses /lib/security/)
+	install -Dm755 target/release/libpam_facelock.so debian/facelock/lib/security/pam_facelock.so
+
+	# Configuration
+	install -Dm644 config/facelock.toml debian/facelock/etc/facelock/config.toml
+
+	# Quirks database
+	install -dm755 debian/facelock/usr/share/facelock/quirks.d
+	install -Dm644 -t debian/facelock/usr/share/facelock/quirks.d/ config/quirks.d/*.toml
+
+	# systemd units
+	install -Dm644 systemd/facelock-daemon.service debian/facelock/usr/lib/systemd/system/facelock-daemon.service
+
+	# D-Bus policy and activation service
+	install -Dm644 dbus/org.facelock.Daemon.conf debian/facelock/usr/share/dbus-1/system.d/org.facelock.Daemon.conf
+	install -Dm644 dbus/org.facelock.Daemon.service debian/facelock/usr/share/dbus-1/system-services/org.facelock.Daemon.service
+
+	# tmpfiles.d
+	install -Dm644 dist/facelock.tmpfiles debian/facelock/usr/lib/tmpfiles.d/facelock.conf
+
+	# pam-auth-update profile
+	install -Dm644 debian/pam-auth-update debian/facelock/usr/share/pam-configs/facelock
+
+	# Required reviewed CPU ONNX Runtime component and its legal/provenance set
+	install -Dm755 onnxruntime/lib/libonnxruntime.so debian/facelock/usr/lib/facelock/libonnxruntime.so
+	install -Dm644 onnxruntime/GIT_COMMIT_ID debian/facelock/usr/share/doc/facelock/onnxruntime/GIT_COMMIT_ID
+	install -Dm644 onnxruntime/LICENSE debian/facelock/usr/share/doc/facelock/onnxruntime/LICENSE
+	install -Dm644 onnxruntime/PROVENANCE.md debian/facelock/usr/share/doc/facelock/onnxruntime/PROVENANCE.md
+	install -Dm644 onnxruntime/ThirdPartyNotices.txt debian/facelock/usr/share/doc/facelock/onnxruntime/ThirdPartyNotices.txt
+	install -Dm644 onnxruntime/VERSION_NUMBER debian/facelock/usr/share/doc/facelock/onnxruntime/VERSION_NUMBER
+	install -Dm644 onnxruntime/manifest.json debian/facelock/usr/share/doc/facelock/onnxruntime/manifest.json
+	install -Dm644 onnxruntime/SHA256SUMS debian/facelock/usr/share/doc/facelock/onnxruntime/SHA256SUMS
+
+override_dh_auto_test:
+	# Tests require hardware (camera); skip in package build
+	true
+
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start
+
+# Preserve the reviewed upstream ORT bytes and their matching checksum file.
+override_dh_strip:
+	dh_strip -Xlibonnxruntime.so
+
+override_dh_compress:
+	dh_compress -Xonnxruntime
+
+override_dh_auto_clean:
+	cargo clean 2>/dev/null || true
+
+# Cargo's reviewed source component contains upstream Cargo.toml.orig files;
+# dh_clean otherwise mistakes those immutable inputs for editor backup debris.
+override_dh_clean:
+	dh_clean -Xcargo-vendor

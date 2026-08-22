@@ -1,0 +1,45 @@
+FROM registry.fedoraproject.org/fedora:44@sha256:fc3ec3da3ce49de0da0bab5a33223e90866c488d5d04fc6612284169e20a1bdb
+
+RUN dnf -y install --setopt=install_weak_deps=False \
+        authselect coreutils findutils grep python3 util-linux-core rpm-build rpm \
+        pam pam-devel gcc gcc-c++ make curl systemd dbus dbus-daemon \
+        tpm2-tss onnxruntime libxkbcommon \
+    && dnf clean all
+
+ARG FACELOCK_LEGACY_RPM_URL=https://github.com/tyvsmith/facelock/releases/download/v0.1.4/facelock-0.1.4-1.fc44.x86_64.rpm
+ARG FACELOCK_LEGACY_RPM_SHA256=e8d3858adbf001676cc1d25171702c396e6ed22dd2a8c4f0d064a8c2febb3a0b
+RUN mkdir -p /artifacts \
+    && curl -fsSL "$FACELOCK_LEGACY_RPM_URL" -o /artifacts/facelock-old.rpm \
+    && printf '%s  %s\n' "$FACELOCK_LEGACY_RPM_SHA256" /artifacts/facelock-old.rpm \
+        | sha256sum -c -
+
+COPY test/install-pamtester.sh /tmp/install-pamtester.sh
+RUN sh /tmp/install-pamtester.sh \
+    && rm -f /tmp/install-pamtester.sh \
+    && dnf -y remove pam-devel gcc gcc-c++ make \
+    && dnf clean all
+
+WORKDIR /build
+COPY Cargo.toml Cargo.lock LICENSE-MIT LICENSE-APACHE /build/
+COPY config/ /build/config/
+COPY systemd/ /build/systemd/
+COPY dbus/ /build/dbus/
+COPY dist/ /build/dist/
+COPY test/build-rpm-prebuilt.sh /build/test/build-rpm-prebuilt.sh
+COPY .github/workflows/scripts/run-networkless.sh /run-networkless.sh
+COPY .github/workflows/scripts/validate-rpm.sh /build/.github/workflows/scripts/validate-rpm.sh
+COPY test/rpm-authselect-artifact-contract.sh /build/test/rpm-authselect-artifact-contract.sh
+COPY test/build-rpm-authselect-fixtures.sh /build/test/build-rpm-authselect-fixtures.sh
+RUN chmod +x /build/test/build-rpm-prebuilt.sh \
+        /run-networkless.sh \
+        /build/.github/workflows/scripts/validate-rpm.sh \
+        /build/test/build-rpm-authselect-fixtures.sh \
+    && /run-networkless.sh /build/test/build-rpm-authselect-fixtures.sh
+
+RUN useradd -m facelock-password-user \
+    && echo 'facelock-password-user:correct-password' | chpasswd
+
+COPY test/rpm-authselect-lifecycle.sh /rpm-authselect-lifecycle.sh
+RUN chmod +x /rpm-authselect-lifecycle.sh
+
+CMD ["/lib/systemd/systemd"]

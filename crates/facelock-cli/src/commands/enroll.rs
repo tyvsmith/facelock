@@ -134,13 +134,13 @@ fn check_model_count(user: &str, backend: &Backend) {
     // Post-success advisory only: the enrollment already committed, so a
     // failed count here must not turn a successful enrollment into a
     // reported failure.
-    if let Ok(models) = backend.list_models(user) {
-        if models.len() > 5 {
-            Terminal.info(&FaceMessage::TooManyModels {
-                user: user.to_string(),
-                count: models.len(),
-            });
-        }
+    if let Ok(models) = backend.list_models(user)
+        && models.len() > 5
+    {
+        Terminal.info(&FaceMessage::TooManyModels {
+            user: user.to_string(),
+            count: models.len(),
+        });
     }
 }
 

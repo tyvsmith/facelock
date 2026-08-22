@@ -20,6 +20,8 @@ follow it.
   - [facelock is-enrolled Exit Codes](#facelock-is-enrolled-exit-codes)
   - [facelock auth Exit Codes](#facelock-auth-exit-codes)
 - [Release Channels and APT Paths](#release-channels-and-apt-paths)
+- [ONNX Runtime Trust and Fedora RPM Modes](#onnx-runtime-trust-and-fedora-rpm-modes)
+- [Package Lifecycle Ownership](#package-lifecycle-ownership)
 - [Filesystem Paths](#filesystem-paths)
   - [Audit Log Entries](#audit-log-entries)
 - [Config Schema](#config-schema)
@@ -97,8 +99,7 @@ commands and never earn a group. Inside a group the second word is spelled the
 way its domain spells it, verb or noun: `tpm seal-key` and `tpm pcr-baseline`
 follow tpm2-tools, `bench cold-auth` names a measurement. A new command must
 fit an existing domain before it may claim a top-level name. Commands named by
-`pam_facelock.so`, the service units, or the Omarchy scripts never move. See
-ADR 009.
+`pam_facelock.so` or the service units never move. See ADR 009.
 
 The top-level set is pinned by the `TOP_LEVEL_COMMANDS` registry in
 `crates/facelock-cli/src/conformance/flags.rs`, checked in both directions against
@@ -372,12 +373,13 @@ distribution that ships face auth in its own PAM stack is configured, and
 saying otherwise would send an integrator off to create a copy that adds
 nothing.
 
-**Direct service-file editing is the Arch-family path.** Debian and Ubuntu
-compose their stacks with `pam-auth-update` from profiles in
-`/usr/share/pam-configs/`, and Fedora and RHEL with `authselect` (see
-`dist/authselect/facelock`); on those systems a hand-inserted line is
-overwritten by the tool that owns the file. Being able to resolve a vendor
-directory does not make this command idiomatic there.
+**Managed shared stacks are not leaf services.** Debian and Ubuntu compose
+their shared stacks with `pam-auth-update`; Fedora and RHEL use `authselect`.
+Facelock does not write through either manager's generated shared files.
+Explicit named leaf services remain supported on every package family: the
+writer resolves and edits only that requested service under the fixed PAM
+roots, while the sensitive-service gate and no-follow checks refuse generated
+`system-auth` and `password-auth` links.
 
 **Confinement.** A service name is **one path component**: not empty, no `/`,
 not `.` or `..`, no interior NUL. Rejected before any I/O, on `add`, `remove`
@@ -543,9 +545,9 @@ consequences:
 - a service file that could not be **read** is an `unknown` row too. Omitting it
   would report "not configured" for a machine this could not check.
 - `.facelock-backup`, `.pacnew`, `.pacsave`, `.pacorig`, `.rpmnew`, `.rpmsave`,
-  `.rpmorig`, `.dpkg-old`, `.dpkg-new`, `.dpkg-dist`, names ending in `~`, and
-  dotfiles are not services. Each can carry the line, and none is a name
-  Linux-PAM is ever asked for.
+  `.rpmorig`, `.dpkg-old`, `.dpkg-new`, `.dpkg-dist`, pam-auth-update's
+  `.pam-old`, names ending in `~`, and dotfiles are not services. Each can carry
+  the line, and none is a name Linux-PAM is ever asked for.
 - only a **regular file** is read. A FIFO blocks the read until a writer
   appears, and a diagnostic command that hangs on a malformed `/etc/pam.d` is
   worse than one that omits an entry no PAM stack could use; device nodes,
@@ -882,7 +884,8 @@ as Facelock-owned when every Facelock logical rule uses the exact pre-versioned
 physical bytes `auth      sufficient pam_facelock.so`. Dot-prefixed names and
 the administrator/package artifact suffixes `.facelock-backup`, `.pacnew`,
 `.pacsave`, `.pacorig`, `.rpmnew`, `.rpmsave`, `.rpmorig`, `.dpkg-old`,
-`.dpkg-new`, `.dpkg-dist`, and `~` are not conventional legacy candidates.
+`.dpkg-new`, `.dpkg-dist`, `.pam-old`, and `~` are not conventional legacy
+candidates.
 They are considered only when a strict provenance basename exists for that
 exact confined service and the current complete-file hash equals
 `installed_sha256` in its validated committed pair, or when the regular local
@@ -1014,10 +1017,11 @@ The all-or-nothing guarantee covers direct PAM edits owned and scanned by this
 transaction and retention of the package/module when that cleanup fails. It
 does not cover every package-manager or profile side effect. Debian `prerm`
 currently invokes tolerant `pam-auth-update --remove facelock` before shared
-cleanup; byte-exact profile lifecycle and rollback are #224 scope. Fedora
-authselect profile selection, regeneration and rollback are #226 scope;
-`remove --all` only scans `/etc/authselect` as a detection-only root and never
-edits generated state.
+cleanup; byte-exact profile lifecycle and rollback are #224 scope. Fedora is
+separate: #226 owns only RPM payload retirement and the read-only upgrade guard.
+Shared-stack migration, regeneration, editing and rollback are explicitly rejected.
+Automatic profile selection is also rejected. `remove --all` only scans
+`/etc/authselect` as a detection-only root and never edits generated state.
 
 **`--json`** emits exactly one document on stdout and no human text; `--quiet`
 suppresses even that, leaving the exit code as the whole answer, as it does for
@@ -1206,11 +1210,12 @@ for cleanup; custom control, spacing, or options block the whole-machine run
 for administrator review rather than being rewritten.
 
 This emitted-byte contract applies only to direct CLI service-file writes.
-The Debian `pam-auth-update` profile intentionally emits
-`[success=end default=ignore] pam_facelock.so`, and the Fedora authselect
-profiles use authselect's generated layout. Both remain visible to the same
-broad `add`/`status` active-reference recognition, but neither is required to
-match the canonical direct-writer bytes.
+The packaged Debian `pam-auth-update` profile is opt-in (`Default: no`) and
+intentionally emits `[success=end default=ignore] pam_facelock.so`. Legacy or
+administrator-managed Fedora authselect profiles use authselect's generated
+layout; Facelock RPMs no longer ship or select one. Both shapes remain visible
+to the same broad `add`/`status` active-reference recognition, but neither is
+required to match the canonical direct-writer bytes.
 
 **Service-file edits are byte-preserving.** A backslash followed only by spaces
 or tabs before LF or CRLF continues the same logical PAM rule, so insertion
@@ -1817,12 +1822,14 @@ allowlist: `fedora-43-x86_64`, `fedora-44-x86_64`, or
 is any other undeclared target. Rawhide is not a Packit staging or production
 release target; both `fedora-rawhide` and `fedora-rawhide-x86_64` fail
 validation. The prerelease rule is that no alpha may publish to Rawhide.
-Fedora 43 and Fedora 44 supply full lifecycle evidence; Fedora 45 supplies
-required build/runtime smoke. Rawhide cannot supply lifecycle, artifact,
-upgrade, rollback, served-version, or availability evidence; it is limited to
-best-effort pinned Track D smoke only. A Rawhide-only failure is not
-alpha-blocking. Promotion requires a separately reviewed amendment and full
-Fedora gates.
+Fedora 43 and Fedora 44 are the required full-lifecycle targets; Fedora 45 is a
+required build/runtime-smoke target. Issue #230 owns the actual lifecycle
+evidence. Rawhide cannot supply lifecycle, artifact, upgrade, rollback,
+served-version, or availability evidence; it is limited to best-effort pinned
+Track D smoke only. It is non-release and non-gating: its absence or a
+Rawhide-only failure is not alpha-blocking, and its smoke result is not alpha
+acceptance or release evidence. Promotion requires a separately reviewed
+amendment and full Fedora gates.
 
 Issue #236 owns pre-tag and post-publication proof that optional Rawhide serves
 no alpha or candidate build. This contract does not provision, publish to, or
@@ -1831,19 +1838,367 @@ otherwise mutate COPR or Packit infrastructure.
 The public APT base is `https://tysmith.me/facelock/apt/`. Its stable suite
 paths and payload identities are:
 
-| Suite | Public Release path | Architecture | Variant |
+| Suite | Public Release path | Architecture | Package |
 |-------|---------------------|--------------|---------|
-| `trixie` | `https://tysmith.me/facelock/apt/dists/trixie/Release` | amd64 | TPM |
-| `bookworm` | `https://tysmith.me/facelock/apt/dists/bookworm/Release` | amd64 | legacy |
-| `resolute` | `https://tysmith.me/facelock/apt/dists/resolute/Release` | amd64 | TPM |
-| `noble` | `https://tysmith.me/facelock/apt/dists/noble/Release` | amd64 | legacy |
+| `trixie` | `https://tysmith.me/facelock/apt/dists/trixie/Release` | amd64 | `facelock`, TPM enabled |
+| `resolute` | `https://tysmith.me/facelock/apt/dists/resolute/Release` | amd64 | `facelock`, TPM enabled |
 
 The former `main` and `legacy` suite names are retired; they are not aliases or
 redirects. Existing source entries must replace that suite component with the
-host operating-system codename while keeping the `facelock` component. Each
-stable publication consumes exactly one matching package for all four suites,
-and a prerelease or cross-suite version is rejected before signing or repository
+host operating-system codename while keeping the `facelock` component.
+Debian-family release support is exactly Debian 13 (Trixie) and Ubuntu 26.04
+LTS (Resolute). Bookworm and Noble artifacts may remain in historical releases,
+but those suites are unsupported and receive no new packages.
+
+Both suites ship one binary package named `facelock` with TPM support enabled.
+There are no legacy/TPM package-name alternatives and the package declares no
+`Provides`, `Conflicts`, or `Replaces` transition identity. Stable publication
+consumes exactly two suite manifests, one matching package per suite, and a
+prerelease or cross-suite version is rejected before signing or repository
 writes.
+
+### Debian source and binary package contract
+
+Trixie package builds use the official Trixie Backports `cargo` and `rustc`;
+Resolute uses its native distro packages. Both must satisfy the workspace and
+`debian/control` minimum of Rust 1.88. No `rustup` toolchain participates in
+Debian source builds.
+
+The Debian source package contains the exact tagged main upstream tarball, the
+reviewed ORT component, the deterministic Cargo-vendor component, and the
+Debian quilt delta. For upstream `U`, Debian version `V`, and architecture `A`,
+the release manifest lists exactly these eight files in canonical order:
+
+```text
+facelock_U.orig.tar.gz
+facelock_U.orig-onnxruntime.tar.gz
+facelock_U.orig-cargo-vendor.tar.xz
+facelock_V.debian.tar.xz
+facelock_V.dsc
+facelock_V_A.buildinfo
+facelock_V_A.deb
+facelock_V_A.changes
+```
+
+The Cargo component is bound to the exact `Cargo.lock`, contains only regular
+normalized files plus its lock hash, bytewise manifest, and generated legal
+inventory, and is used through the package-only Cargo source replacement. The
+inventory covers every exact vendored crate and records its path, name, version,
+declared license or license-file, available authors/upstream metadata, and every
+referenced license material that exists in the component. The ORT component contains the
+reviewed library, license, third-party notices, version, commit, provenance,
+manifest, and checksums. Neither component is added to the tagged main archive.
+
+Complete `.dsc` rebuilds run with network denied and empty Cargo/Rustup caches.
+The build uses only the extracted source components and declared distro build
+dependencies, with Cargo locked and offline. The clean rebuild must produce the
+same package identity, resolved dependencies, installed path set, and installed
+file hashes as the release build. Fresh installation leaves
+`facelock-daemon.service` disabled and inactive; D-Bus activation remains
+available after explicit setup. Package validation requires the installed TPM
+command surface and the suite-native `libtss2` dependency closure.
+
+## ONNX Runtime Trust and Fedora RPM Modes
+
+ONNX Runtime (ORT) is executable code loaded into the daemon, the
+PAM-spawned oneshot helper, and other privileged Facelock processes. A runtime
+must therefore be selected deterministically and validated **before** it is
+mapped. Loading a bare `libonnxruntime.so.1` through the dynamic linker's
+ambient search path and inspecting it afterward is forbidden: ELF constructors
+may already have executed before any post-map rejection.
+
+### Deterministic candidate order
+
+The resolver considers candidates in this order and stops at the first one
+that passes the applicable trust checks and initializes ORT:
+
+1. A non-empty `ORT_DYLIB_PATH`, **only in an unprivileged process**.
+2. Trusted system locations for the configured GPU provider. ROCm first checks
+   `libonnxruntime.so.1` beneath `/usr/lib64/rocm/lib`, then
+   `/usr/lib/rocm/lib`; any non-CPU provider then checks the configured-GPU
+   compatibility name `libonnxruntime.so` beneath `/usr/lib64`, then
+   `/usr/lib`.
+3. Package-manager stable-SONAME candidates
+   `/usr/lib64/libonnxruntime.so.1`, then
+   `/usr/lib/libonnxruntime.so.1`.
+4. Facelock package-owned stable-SONAME candidates beneath
+   `/usr/lib64/facelock`, then `/usr/lib/facelock`, followed by the existing
+   package-owned unversioned Debian compatibility names in those same roots.
+
+The CPU provider skips step 2. A system runtime therefore precedes a bundled
+CPU fallback even in a direct package. A missing or rejected candidate advances
+to the next fixed candidate; no other directory is searched.
+
+A process is privileged when its real or effective UID or GID is 0, its
+real/effective UID or GID differs, the kernel marks it `AT_SECURE`, or the
+calling thread has any inheritable, permitted, effective, or ambient Linux
+capability. Capability inspection reads `/proc/thread-self/status`, never the
+thread-group leader's status; an unreadable file or a missing, duplicate,
+empty, or malformed capability field fails closed as privileged. Every such
+process ignores `ORT_DYLIB_PATH` entirely and has no `/usr/local` candidate.
+The explicit override is an unprivileged caller choice: it is still opened and
+checked as a bounded ELF with the required architecture and SONAME before
+mapping, but it does not claim package-manager root ownership.
+
+### Privileged pre-map validation
+
+Every privileged system or bundle candidate has a fixed approved trust root
+and a normal relative path beneath it. One descriptor-held component walker is
+used on every kernel, with no alternate or weaker kernel-version path. The
+loader:
+
+- requires the trust root, each ancestor, and every traversed directory to be
+  root-owned and not group- or world-writable; a linked trust root is rejected,
+  and the fixed root is opened and retained with
+  `O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK`
+- inspects every relative component and link through a held parent descriptor
+  using `O_PATH|O_NOFOLLOW|O_NONBLOCK`; directory links, absolute targets,
+  non-normal targets such as `.` or `..`, and paths that escape and later
+  return beneath the root are rejected
+- follows only a root-owned, single-link, relative package SONAME chain beneath
+  the held root; every link target is decomposed and walked again from held
+  descriptors rather than resolved by an ambient pathname lookup
+- opens the final object through its held parent with
+  `O_RDONLY|O_NOFOLLOW|O_NONBLOCK`, then requires a bounded regular file with
+  exactly one hard link, root ownership, no group/world write bits, no
+  setuid/setgid bits, and no `security.capability` xattr
+- requires device, inode, link count, size, UID/GID, mode, modification time,
+  and change time to remain stable across component inspection, the final
+  open, the bounded read, and the last pre-map check
+- requires a 64-bit ELF for the running architecture, SONAME exactly
+  `libonnxruntime.so.1`, and no RPATH/RUNPATH entry except exactly `$ORIGIN` or
+  `${ORIGIN}`
+
+Only after every check passes is the same held read descriptor mapped (for
+example through `/proc/self/fd/<fd>`). No pathname is reopened after validation.
+
+If every candidate is missing, rejected, or fails ORT initialization, model
+loading fails and authentication degrades through its existing password
+fallback. Authentication never downloads a runtime or model.
+
+### Fedora package modes
+
+`dist/facelock.spec` has two mutually exclusive ORT modes:
+
+| RPM channel | Spec mode | Runtime payload and dependency contract |
+|-------------|-----------|-----------------------------------------|
+| GitHub direct RPM (Fedora 44) | `--with bundled_ort` | Installs the pinned CPU runtime as `%{_libdir}/facelock/libonnxruntime.so.1.20.1` with a package-owned `libonnxruntime.so.1` symlink; carries no `BuildRequires` or `Requires` on Fedora `onnxruntime` |
+| Packit/COPR (Fedora 43/44/45) | default `%bcond_with bundled_ort` disabled | Contains no bundled ORT library or bundle metadata; `BuildRequires` and `Requires` Fedora's runtime-only `onnxruntime` package, with `onnxruntime-devel` absent |
+
+The COPR `%check` constructs a real ORT session from the checksum-pinned
+minimal model in `test/fixtures/`; finding a library or running
+`facelock --version` is not a substitute. The two RPM validators independently
+reject a direct RPM with a system-ORT dependency and a COPR RPM with bundled
+payload, and reject the inverse missing dependency/payload.
+
+Track D validates only direct/COPR build success, real ORT runtime
+initialization, and the intended payload and dependency policy. It supplies no
+clean-install, upgrade, erase, rollback, served-repository, availability,
+alpha-acceptance, or release evidence. Issue #230 owns exact-artifact package
+lifecycle proof; issue #236 owns staging and production repository publication
+and served-version proof.
+
+Optional experimental Rawhide may attempt only the separately digest-pinned,
+best-effort system-ORT build/session smoke. It is non-release and non-gating,
+must not publish or modify a COPR channel, and cannot substitute for any
+supported Fedora result or any lifecycle, artifact, served-version,
+availability, alpha-acceptance, or release evidence.
+
+### Reviewed direct-bundle identity
+
+The direct RPM bundle is exactly:
+
+| Field | Reviewed value |
+|-------|----------------|
+| Version | `1.20.1` |
+| Upstream archive | `https://github.com/microsoft/onnxruntime/releases/download/v1.20.1/onnxruntime-linux-x64-1.20.1.tgz` |
+| Archive SHA-256 | `67db4dc1561f1e3fd42e619575c82c601ef89849afc7ea85a003abbac1a1a105` |
+| Upstream commit | `5c1b7ccbff7e5141c1da7a9d963d660e5741c319` |
+| Library SHA-256 | `a5faaf78a37590d3fe640f887620e74f6022d34550172b91ad2131bf0ad77d64` |
+| License identity | MIT |
+
+The release network stage downloads the archive to a file and verifies the
+archive digest **before extraction**. It then verifies `VERSION_NUMBER`,
+`GIT_COMMIT_ID`, and the library digest against the reviewed values. Streaming
+an unverified response into `tar` is forbidden.
+
+The prepared bundle contains the exact library plus upstream `LICENSE`,
+`ThirdPartyNotices.txt`, `VERSION_NUMBER`, and `GIT_COMMIT_ID`, and generated
+`PROVENANCE.md`, `manifest.json`, and `SHA256SUMS`. The checksum file covers
+the library and every listed metadata/provenance file except itself. Direct RPM
+assembly requires and re-verifies the complete prepared bundle.
+
+Before creating the source archive or any rpmbuild tree, the whole assembly
+enters `.github/workflows/scripts/run-networkless.sh`. That wrapper uses
+util-linux `enosys` as a fail-closed seccomp boundary: it denies socket
+creation/connection and message syscalls plus `io_uring_setup`, closes every
+inherited non-stdio file descriptor, and requires a socket probe to fail with
+`ENOSYS` before it invokes the assembly command. Cargo offline mode remains
+defense in depth; it is not the network-isolation boundary.
+
+The installed `libonnxruntime.so.1.20.1` bytes must retain the exact reviewed
+library digest above. Fedora strip/debug/post-processing must not rewrite the
+pinned runtime; bundled mode disables the modifying strip hook, and validation
+extracts the final RPM member and checks its digest. The RPM also ships the
+license, notices, version, commit, checksums, provenance, and component manifest
+under its documentation/license directories.
+
+Those metadata files are inputs for later SBOM, release-manifest, attestation,
+and signing work. Their presence does **not** claim that Track D generated or
+signed a final SBOM/manifest, signed the RPM, or published a release. Issue
+#235 owns native signing and final immutable direct-artifact publication.
+
+### RPM tmpfiles transaction
+
+The RPM transaction creates Facelock's runtime directories through the
+package-scoped `%tmpfiles_create facelock.conf` invocation. It must not run a
+global `systemd-tmpfiles --create` or otherwise process unrelated packages'
+tmpfiles configuration. Package validation observes the directories created by
+the actual install transaction and does not manufacture them with a later
+global tmpfiles command.
+
+## Package Lifecycle Ownership
+
+This is the Wave 0 ownership freeze for issue #232. It defines what later
+package lifecycle work is allowed to remove; it does not claim that the current
+Debian purge script already implements the bounded purge described below.
+**Ordinary removal is not data deletion.** Removing the package must leave a
+machine reinstallable without losing its biometric or operational state.
+
+The ownership classes are deliberately separate:
+
+| Class | Examples | Ordinary removal |
+|-------|----------|------------------|
+| Package-owned static integration | binaries and shared libraries, systemd/OpenRC/runit/s6 units, D-Bus policy and activation, tmpfiles configuration, shipped quirks, PAM/authselect profiles, translations, bundled runtime libraries | Remove through the package manager. These files can be recreated byte-for-byte by reinstalling the package |
+| Administrator configuration | `/etc/facelock/config.toml` and the package manager's saved replacement for an administrator-modified copy | Apply the native package-family rules below. Do not treat administrator configuration as biometric state or as disposable static integration |
+| Biometric and operational state | the database and its WAL/SHM sidecars, encryption keys and sealed keys, downloaded models, enrollment markers, setup state, audit logs, and snapshots under the compiled roots | Preserve all of it. A reinstall reuses it; ordinary removal never interprets absence of the package as consent to discard it |
+| PAM integration and provenance | a `pam_facelock.so` rule, a Facelock-created local override and its provenance header, and `<service>.facelock-backup` rollback files | Attempt safe cleanup inside the fixed PAM root. Delete provenance only after the corresponding PAM cleanup is proven complete |
+| Externally configured state | any database, model directory, key, sealed key, audit log, or snapshot path configured outside the compiled Facelock roots | Never package-owned. Leave it untouched and report it as an external remnant |
+
+PAM provenance and rollback files are not biometric state. They exist to
+explain or reverse an authentication-stack edit, so retaining all of them
+forever makes an otherwise successful uninstall look incomplete. Conversely,
+deleting them before the PAM edit is known to be gone destroys the evidence and
+rollback path for a service that still references a removed module.
+
+**Preserve PAM provenance when cleanup is incomplete; remove it only after
+successful cleanup.** Successful cleanup means the service file was safely
+resolved inside `/etc/pam.d`, its Facelock rule was removed (or was already
+absent), and any candidate override or backup was proven to be Facelock-created
+and no longer needed. A Facelock-created override may be deleted to reveal its
+vendor file only when it has no administrator changes. Never restore a backup
+over a newer service file merely because the backup exists. An unreadable,
+unwritable, wrong-owner, non-regular, changed, linked, or mount-separated
+service file makes cleanup incomplete: preserve its override, provenance
+header, and `.facelock-backup`, and report the exact remnant. Cleanup of one
+service does not authorize deleting provenance for a different service.
+
+### Native configuration lifecycles
+
+The package families reach the same ownership result through different native
+mechanisms:
+
+| Family and operation | Administrator-configuration contract |
+|----------------------|--------------------------------------|
+| Debian `remove` | `/etc/facelock/config.toml` is a Debian conffile and remains at its installed path. Biometric and operational state also remains |
+| Debian `purge` | `dpkg` removes the conffile, and the post-removal purge may then remove only safe remnants inside the compiled roots. Unsafe and external remnants are retained and reported |
+| RPM erase | `/etc/facelock/config.toml` is RPM `%config(noreplace)`. RPM removes an unmodified copy and retains an administrator-modified copy according to RPM semantics, commonly as `config.toml.rpmsave`. A `.rpmsave` is retained state, not evidence of a failed erase and not something a Facelock script deletes |
+| Arch package removal | the `backup` entry follows pacman's native saved-configuration behavior (including `.pacsave` when applicable). Facelock lifecycle code does not bypass it |
+| `just uninstall` | no package manager owns the config, so the source-install uninstall preserves `/etc/facelock` with the biometric and operational state |
+
+Debian `postrm purge` is self-contained. It never invokes the already-removed
+`facelock` binary. By the time `postrm` runs, package payloads cannot be treated
+as available cleanup tools. The future bounded purge must make its decisions
+from fixed constants and the remaining filesystem state, using only utilities
+that the maintainer script can rely on after removal; it cannot delegate safety
+checks or deletion to the CLI it is purging.
+
+RPM and Arch have no Debian-style second `purge` phase. Their ordinary erase
+therefore removes static integration and safely cleaned PAM provenance, while
+preserving biometric state and whatever administrator-configuration artifact
+their package manager retained.
+
+### Fedora authselect retirement boundary
+
+The RPM does not ship or select an authselect profile, does not edit
+`system-auth` or `password-auth`, and has no runtime or scriptlet dependency on
+authselect. Fresh installation is PAM-inert. The supported opt-in is an
+explicit, named leaf service through `facelock pam add --service <name>` or its
+`setup --pam --service <name>` alias. That operation edits only the resolved
+leaf service plus Facelock's fixed backup state; the selected authselect profile
+and shared generated files remain byte-for-byte unchanged.
+
+An incoming RPM upgrade runs the source-controlled
+`facelock-authselect-retirement-guard` from `%pre`, while the old payload is
+still installed. A fresh transaction is an immediate no-op. An upgrade also
+succeeds without authselect installed or when the fixed selection-state file
+`/etc/authselect/authselect.conf` is absent.
+
+An already-installed v0.1.4 RPM cannot be retroactively guarded: direct
+uninstall runs only that installed release's unguarded scriptlets.
+Administrators must install a guarded release before a later uninstall so the
+upgrade guard can first retire the old authselect payload safely.
+
+When that file exists, the guard reads no other authselect path and invokes no
+authselect command. It requires a root-owned, root-group, regular, single-link
+0644 file of at most 16 KiB, compares the first line's original bytes with its
+shell-decoded value so no NUL or other control byte can be discarded, and then
+accepts only the profile grammar used by authselect: one confined profile
+identifier, `custom/<identifier>`, or `@system-default`. A malformed, linked,
+oversized, control-bearing, or wrong-metadata file is untrusted and blocks the
+package transaction without changing it.
+
+The exact retired profile identifier `facelock` also blocks upgrade. The
+diagnostic requires the administrator to inspect the active identity provider
+and features, select an appropriate supported profile while asking authselect
+to create a backup, and retry the RPM transaction. Facelock does not guess a
+replacement or migrate generated PAM state. A different valid identifier,
+including the separately administrator-owned `custom/facelock`, is preserved
+unchanged and does not block the upgrade.
+
+The booted Fedora lifecycle test uses the released 0.1.4 RPM to prove fresh,
+unselected, selected-retired, custom-profile, malformed-state, and
+authselect-absent upgrade cases. It also proves correct and wrong password
+fallback through the real selected profile, and the real RPM package test
+proves that service-scoped setup and removal leave the selection and shared
+generated files unchanged. Neither test mutates the host PAM stack.
+
+### Fixed-root purge boundary
+
+The only purge roots are the compiled Facelock roots:
+`/etc/facelock`, `/var/lib/facelock`, and `/var/log/facelock`. `/etc/pam.d` is
+a separate, fixed root for the narrow PAM cleanup above; it is never a recursive
+purge root. A configured path that remains within a compiled Facelock root is
+eligible for a later Debian purge only under the same safety checks as every
+other descendant.
+
+Configured paths outside those roots are external remnants. This includes
+external values of `daemon.model_dir`, `storage.db_path`, `encryption.key_path`,
+`encryption.sealed_key_path`, `audit.path`, and `snapshots.dir`. Removal and
+purge must leave them untouched, report that they were refused as external, and
+must not claim that all Facelock data is gone. A path becoming external through
+configuration does not expand package ownership.
+
+Any later purge implementation operates from fixed path constants and examines
+each entry without trusting path traversal. It must never follow a symbolic link
+or act through a hard-linked object, never cross a mount point, and never recurse through a
+non-directory or an object whose ownership cannot be proven safe. A root or
+descendant that fails those checks remains in place and is reported. A safe
+root may still be cleaned around an unsafe child, but the final report must name
+every remnant rather than describe the root as removed.
+
+Safety refusals and external remnants must not strand package-manager state.
+In particular, Debian purge reports and preserves an unsafe object but lets the
+maintainer-script lifecycle finish, so a link, mount, or wrong-owner file cannot
+leave the package permanently half-purged. This is not a broad recursive-delete
+contract: later code must enumerate the bounded roots and reject anything it
+cannot prove is inside them.
+
+Finally, filesystem removal does not promise secure erasure. Unlinking files
+does not guarantee that data is absent from SSD flash translation layers,
+snapshots, backups, journal history, or remapped blocks. Lifecycle messages may
+say which names were removed and which remnants remain; they must not describe
+purge as forensic destruction of biometric data.
 
 ## Filesystem Paths
 

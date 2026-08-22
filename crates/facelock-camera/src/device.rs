@@ -236,33 +236,33 @@ fn ir_source_with_quirks_and_ids(
     quirks: Option<&crate::quirks::QuirksDb>,
     usb_ids: Option<&(String, String)>,
 ) -> IrSource {
-    if let Some(db) = quirks {
-        if let Some((quirk, kind)) = db.find_match_with_kind(device, usb_ids) {
-            match quirk.force_ir {
-                Some(false) => return IrSource::None,
-                Some(true) => {
-                    let corroborated = match kind {
-                        // A real hardware identity match — authoritative on
-                        // its own.
-                        crate::quirks::QuirkMatchKind::UsbId => true,
-                        // A name-only match needs corroboration: either a
-                        // real (if DB-unlisted) USB identity, or the
-                        // device's own queried evidence. A virtual
-                        // v4l2loopback node has neither, so a crafted name
-                        // alone can no longer win force_ir through the
-                        // quirks path (#98 Task 3).
-                        crate::quirks::QuirkMatchKind::NameOnly => {
-                            usb_ids.is_some() || has_queried_ir_evidence(device)
-                        }
-                    };
-                    if corroborated {
-                        return IrSource::Quirk;
+    if let Some(db) = quirks
+        && let Some((quirk, kind)) = db.find_match_with_kind(device, usb_ids)
+    {
+        match quirk.force_ir {
+            Some(false) => return IrSource::None,
+            Some(true) => {
+                let corroborated = match kind {
+                    // A real hardware identity match — authoritative on
+                    // its own.
+                    crate::quirks::QuirkMatchKind::UsbId => true,
+                    // A name-only match needs corroboration: either a
+                    // real (if DB-unlisted) USB identity, or the
+                    // device's own queried evidence. A virtual
+                    // v4l2loopback node has neither, so a crafted name
+                    // alone can no longer win force_ir through the
+                    // quirks path (#98 Task 3).
+                    crate::quirks::QuirkMatchKind::NameOnly => {
+                        usb_ids.is_some() || has_queried_ir_evidence(device)
                     }
-                    // Uncorroborated name-only force_ir: fall through to the
-                    // evidence-only heuristic below.
+                };
+                if corroborated {
+                    return IrSource::Quirk;
                 }
-                None => {}
+                // Uncorroborated name-only force_ir: fall through to the
+                // evidence-only heuristic below.
             }
+            None => {}
         }
     }
     heuristic_ir_source(device)

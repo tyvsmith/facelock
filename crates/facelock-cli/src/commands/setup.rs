@@ -4100,8 +4100,7 @@ mod tests {
         for rel in [
             "dist/facelock.install",
             "dist/facelock.spec",
-            "dist/debian/prerm",
-            "dist/omarchy/omarchy-remove-security-face",
+            "debian/prerm",
             "justfile",
         ] {
             let path = root.join(rel);
@@ -4186,7 +4185,7 @@ mod tests {
             "facelock-package-owned",
             "facelock-package-blocker",
             "dpkg removal aborts on an unmanaged PAM reference",
-            "#224-deferred profile mutation is visible after aborted dpkg removal",
+            "aborted dpkg removal leaves inactive common-auth bytes unchanged",
             "rpm removal aborts on an unmanaged PAM reference",
             "PAM module remains after aborted package removal",
             "recognized PAM edit remains after aborted package removal",
@@ -4225,17 +4224,9 @@ mod tests {
         }
         assert!(validation.contains("db:Status-Status"));
         let rpm = fs::read_to_string(root.join("test/Containerfile.rpm-e2e")).unwrap();
-        for rel in [
-            "test/Containerfile.deb-e2e",
-            "test/Containerfile.deb-tpm-e2e",
-        ] {
-            let deb = fs::read_to_string(root.join(rel)).unwrap();
-            assert!(deb.contains("/facelock-test-package.deb"), "{rel}");
-            assert!(
-                deb.contains("(dpkg -i /facelock-test-package.deb || true)"),
-                "{rel}"
-            );
-        }
+        let deb = fs::read_to_string(root.join("test/Containerfile.deb-runtime")).unwrap();
+        assert!(deb.contains("/facelock-test-package.deb"));
+        assert!(deb.contains("apt-get install -y /facelock-test-package.deb"));
         assert!(rpm.contains("/facelock-test-package.rpm"));
     }
 
@@ -4256,7 +4247,8 @@ mod tests {
         let runner = fs::read_to_string(root.join("test/run-pkg-validate-systemd.sh")).unwrap();
 
         assert!(runner.contains("$PWD/models:/facelock-test-models:ro"));
-        assert!(runner.contains("cp /facelock-test-models/*.onnx /var/lib/facelock/models/"));
+        assert!(runner.contains("for model in /facelock-test-models/*.onnx"));
+        assert!(runner.contains("install -m 0644 \"$model\" /var/lib/facelock/models/"));
         assert!(
             !runner.contains("$PWD/models:/var/lib/facelock/models"),
             "the removal test deletes its runtime model directory; the checkout must never be mounted there"

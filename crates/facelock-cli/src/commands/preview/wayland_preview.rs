@@ -505,15 +505,15 @@ impl SeatHandler for PreviewState {
         _: wl_seat::WlSeat,
         capability: Capability,
     ) {
-        if capability == Capability::Keyboard {
-            if let Some(kb) = self.keyboard.take() {
-                kb.release();
-            }
+        if capability == Capability::Keyboard
+            && let Some(kb) = self.keyboard.take()
+        {
+            kb.release();
         }
-        if capability == Capability::Pointer {
-            if let Some(ptr) = self.pointer.take() {
-                ptr.release();
-            }
+        if capability == Capability::Pointer
+            && let Some(ptr) = self.pointer.take()
+        {
+            ptr.release();
         }
     }
 

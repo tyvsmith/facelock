@@ -24,7 +24,7 @@ What actually happened. Include error messages or log output if available.
 
 ## Environment
 
-- **OS/distro**: (e.g. Arch Linux, Ubuntu 24.04)
+- **OS/distro**: (e.g. Arch Linux, Ubuntu 26.04)
 - **Kernel**: (`uname -r`)
 - **Camera**: (e.g. `/dev/video2`, IR or RGB)
 - **Facelock version**: (`facelock --version`)

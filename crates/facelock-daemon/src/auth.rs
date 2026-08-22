@@ -767,10 +767,10 @@ pub fn authenticate_with_embeddings<C: CameraSource, E: FaceProcessor>(
                         error: None,
                     },
                 );
-                if config.snapshots.should_save(true) {
-                    if let Some(ref snap_frame) = last_frame {
-                        save_snapshot(&config.snapshots, user, best_similarity, snap_frame);
-                    }
+                if config.snapshots.should_save(true)
+                    && let Some(ref snap_frame) = last_frame
+                {
+                    save_snapshot(&config.snapshots, user, best_similarity, snap_frame);
                 }
                 // Device-coupling invariant: the winning model must be one the
                 // device policy permitted into `compare_set`. If this ever fires,
@@ -823,10 +823,10 @@ pub fn authenticate_with_embeddings<C: CameraSource, E: FaceProcessor>(
                     error: None,
                 },
             );
-            if config.snapshots.should_save(true) {
-                if let Some(ref snap_frame) = last_frame {
-                    save_snapshot(&config.snapshots, user, best_similarity, snap_frame);
-                }
+            if config.snapshots.should_save(true)
+                && let Some(ref snap_frame) = last_frame
+            {
+                save_snapshot(&config.snapshots, user, best_similarity, snap_frame);
             }
             let response = AuthOutcome::AuthResult(MatchResult {
                 matched: true,
@@ -905,10 +905,10 @@ pub fn authenticate_with_embeddings<C: CameraSource, E: FaceProcessor>(
         },
     );
 
-    if config.snapshots.should_save(false) {
-        if let Some(ref snap_frame) = last_frame {
-            save_snapshot(&config.snapshots, user, best_similarity, snap_frame);
-        }
+    if config.snapshots.should_save(false)
+        && let Some(ref snap_frame) = last_frame
+    {
+        save_snapshot(&config.snapshots, user, best_similarity, snap_frame);
     }
 
     AuthOutcome::AuthResult(MatchResult {

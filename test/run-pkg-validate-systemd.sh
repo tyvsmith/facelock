@@ -69,9 +69,21 @@ if [ -z "$booted" ]; then
     exit 1
 fi
 
+# Never expose checkout files at Facelock's mutable runtime path. Copy only
+# model payloads from the read-only mount into this disposable container after
+# systemd has booted; package tests may then safely exercise lifecycle cleanup.
 if [ "${#onnx[@]}" -gt 0 ]; then
-    podman exec "$cid" /bin/sh -c \
-        'install -d /var/lib/facelock/models && cp /facelock-test-models/*.onnx /var/lib/facelock/models/'
+    podman exec "$cid" sh -eu -c '
+        install -d -m 0755 /var/lib/facelock/models
+        for model in /facelock-test-models/*.onnx; do
+            [ -f "$model" ]
+            install -m 0644 "$model" /var/lib/facelock/models/
+        done
+    '
+fi
+
+if podman exec "$cid" test -x /rpm-service-pam-lifecycle.sh; then
+    podman exec "$cid" /rpm-service-pam-lifecycle.sh
 fi
 
 podman exec "${exec_env[@]}" "$cid" /pkg-validate.sh

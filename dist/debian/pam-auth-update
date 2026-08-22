@@ -1,6 +1,0 @@
-Name: Facelock face authentication
-Default: yes
-Priority: 900
-Auth-Type: Primary
-Auth:
-	[success=end default=ignore]	pam_facelock.so

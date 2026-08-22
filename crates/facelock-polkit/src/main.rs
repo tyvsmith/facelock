@@ -124,14 +124,11 @@ impl PolkitAgent {
 /// Extract the unix username from the polkit identities list.
 fn extract_username(identities: &[(String, HashMap<String, Value<'_>>)]) -> Option<String> {
     for (kind, details) in identities {
-        if kind == "unix-user" {
-            if let Some(Value::U32(uid)) = details.get("uid") {
-                if let Ok(Some(user)) =
-                    nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(*uid))
-                {
-                    return Some(user.name);
-                }
-            }
+        if kind == "unix-user"
+            && let Some(Value::U32(uid)) = details.get("uid")
+            && let Ok(Some(user)) = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(*uid))
+        {
+            return Some(user.name);
         }
     }
     None

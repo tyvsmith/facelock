@@ -158,20 +158,7 @@ release_debian_common_version() {
 release_debian_suite_suffix() {
     case "${1:-}" in
         trixie) printf '~deb13u1\n' ;;
-        bookworm) printf '~deb12u1\n' ;;
         resolute) printf '~ubuntu26.04.1\n' ;;
-        noble) printf '~ubuntu24.04.1\n' ;;
-        *)
-            echo "unsupported Debian/Ubuntu suite '${1:-}'" >&2
-            return 1
-            ;;
-    esac
-}
-
-release_debian_variant() {
-    case "${1:-}" in
-        trixie|resolute) printf 'tpm\n' ;;
-        bookworm|noble) printf 'legacy\n' ;;
         *)
             echo "unsupported Debian/Ubuntu suite '${1:-}'" >&2
             return 1
@@ -426,7 +413,7 @@ release_check_metadata() {
     else
         [ "$spec_release" = '1%{?dist}' ] || { echo "stable RPM Release must be 1%{?dist}" >&2; return 1; }
     fi
-    top_debian="$(sed -n 's/^facelock (\([^)]*\)).*/\1/p' dist/debian/changelog | head -1)"
+    top_debian="$(sed -n 's/^facelock (\([^)]*\)).*/\1/p' debian/changelog | head -1)"
     [[ "$top_debian" == "$debian_upstream-"* ]] || { echo "Debian changelog '$top_debian' does not match $version" >&2; return 1; }
     release_validate_packit_channel "$version" .packit.yaml
 }
@@ -439,7 +426,7 @@ release_write_github_outputs() {
     prerelease="$(release_github_prerelease "$version")" || return 1
     arch_pkgver="$(release_arch_pkgver "$version")" || return 1
     debian_upstream="$(release_debian_upstream "$version")" || return 1
-    debian_revision="$(release_current_debian_revision "$version" dist/debian/changelog)" || return 1
+    debian_revision="$(release_current_debian_revision "$version" debian/changelog)" || return 1
     rpm_version="$(release_rpm_version "$version")" || return 1
     rpm_counter="$(release_current_rpm_counter "$version" dist/facelock.spec)" || return 1
     {

@@ -14,3 +14,5 @@ sha2 = "0.11"
 serde = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
+libc = "0.2"
+object = { version = "0.37.3", default-features = false, features = ["elf", "read_core", "std"] }

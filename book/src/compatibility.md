@@ -6,7 +6,7 @@
 |-----------|-----------|
 | OS | Linux (kernel 4.14+ for V4L2) |
 | Architecture | x86_64 (ONNX Runtime binaries) |
-| Rust | 1.85+ (edition 2024) |
+| Rust | 1.88+ (edition 2024) |
 | Camera | V4L2-compatible (USB webcam, built-in IR) |
 | PAM | Linux-PAM (pam 1.5+) |
 
@@ -24,8 +24,8 @@
 | Distribution | Init System | Mode |
 |-------------|-------------|------|
 | Fedora 38+ | systemd | daemon + D-Bus activation |
-| Ubuntu 22.04+ | systemd | daemon + D-Bus activation |
-| Debian 12+ | systemd | daemon + D-Bus activation |
+| Ubuntu 26.04+ | systemd | daemon + D-Bus activation |
+| Debian 13+ | systemd | daemon + D-Bus activation |
 | Any Linux | any / none | oneshot |
 | Void Linux | runit | oneshot or manual daemon |
 | Alpine Linux | OpenRC | oneshot or manual daemon |
@@ -117,7 +117,7 @@ auth  sufficient  pam_facelock.so
 - `gcc-libs` (C runtime)
 
 ### Build
-- `rust` + `cargo` (1.85+)
+- `rust` + `cargo` (1.88+)
 - `clang` (for ONNX Runtime bindings)
 - System headers: `libv4l-dev`, `libxkbcommon-dev`, `libpam0g-dev` (names vary by distro)
 
@@ -127,7 +127,10 @@ auth  sufficient  pam_facelock.so
 
 ## ONNX Runtime
 
-Facelock uses the `ort` crate (Rust bindings for ONNX Runtime). The runtime binary is downloaded at build time via the `download-binaries` feature.
+Facelock uses the `ort` crate (Rust bindings for ONNX Runtime) and loads the
+compatible shared library dynamically. Native packages either include the
+reviewed CPU runtime or depend on the distribution runtime; source builds use
+a compatible ONNX Runtime installed on the build host.
 
 ### Execution Providers
 

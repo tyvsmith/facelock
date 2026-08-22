@@ -1,0 +1,34 @@
+Source: facelock
+Section: admin
+Priority: optional
+Maintainer: Ty Smith <ty@tysmith.me>
+Rules-Requires-Root: no
+Build-Depends:
+ debhelper-compat (= 13),
+ cargo (>= 1.88),
+ rustc (>= 1.88),
+ clang,
+ pkg-config,
+ python3,
+ libpam0g-dev,
+ libv4l-dev,
+ libxkbcommon-dev,
+ libwayland-dev,
+ libtss2-dev (>= 4.1.3)
+Standards-Version: 4.6.2
+Homepage: https://github.com/tyvsmith/facelock
+
+Package: facelock
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, dbus, libpam-runtime
+Description: Face authentication for Linux PAM
+ Facelock provides Windows Hello-style face authentication for Linux
+ using IR anti-spoofing, ONNX inference, and PAM integration.
+ .
+ Features include persistent daemon with D-Bus activation for fast
+ authentication, oneshot mode for systems without systemd,
+ IR camera requirement to prevent photo spoofing, frame variance
+ checks, and rate limiting.
+ .
+ After installation, run 'sudo facelock setup' to download face
+ recognition models, then 'sudo facelock enroll' to register your face.

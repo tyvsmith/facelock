@@ -12,14 +12,12 @@ yay -S facelock           # or paru -S facelock
 
 ### Debian / Ubuntu (APT)
 
-Use the exact suite and package variant for your platform:
+Use the exact suite for your platform. Both supported packages include TPM support:
 
-| Platform | Suite | Variant |
-|----------|-------|---------|
+| Platform | Suite | Required capability |
+|----------|-------|---------------------|
 | Debian 13 | trixie | TPM |
-| Debian 12 | bookworm | legacy |
 | Ubuntu 26.04 | resolute | TPM |
-| Ubuntu 24.04 | noble | legacy |
 
 ```bash
 # Add signing key
@@ -56,7 +54,7 @@ sudo facelock test        # verify recognition
 
 ## Prerequisites (Building from Source)
 
-- Rust 1.85+ (`rustup update`)
+- Rust 1.88+ (`rustup update`)
 - [just](https://github.com/casey/just) task runner
 - Linux with V4L2 support
 - System dependencies: `libv4l-dev libpam0g-dev clang` (Debian/Ubuntu) or `v4l-utils pam clang` (Arch)
@@ -144,11 +142,20 @@ Set `execution_provider` in `/etc/facelock/config.toml` to `"cuda"`, `"rocm"`, o
 just uninstall
 ```
 
-Config and data are preserved in `/etc/facelock` and `/var/lib/facelock`. To remove everything:
+### Package lifecycle and retained data
 
-```bash
-sudo rm -rf /etc/facelock /var/lib/facelock /var/log/facelock
-```
+Ordinary package removal and `just uninstall` preserve the face database,
+encryption keys, downloaded models, enrollment markers, audit logs, snapshots,
+and setup state. Debian also retains its conffile until `purge`; RPM follows
+`%config(noreplace)` and may retain an administrator-modified config as
+`config.toml.rpmsave`.
+
+Facelock does not currently expose a safe "remove everything" command. Do not
+replace package lifecycle handling with a broad recursive deletion: configured
+state paths can live outside the default directories, and links, mounts, or
+wrong-owner remnants require inspection rather than traversal. The authoritative
+fixed-root, retained-data, and erasure-limit contract is in
+`docs/contracts.md`, "Package Lifecycle Ownership".
 
 ## Configuration
 

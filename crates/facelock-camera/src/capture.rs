@@ -357,14 +357,14 @@ impl<'a> Camera<'a> {
 
         // The converters index rows by pixel width. ISP devices can pad
         // bytesperline, which would shear every decoded frame silently.
-        if let Some(expected) = expected_stride(&format_str, width) {
-            if fmt.stride != expected {
-                return Err(FacelockError::Camera(format!(
-                    "{device_path}: {format_str} bytesperline is {} but facelock expects {expected} \
+        if let Some(expected) = expected_stride(&format_str, width)
+            && fmt.stride != expected
+        {
+            return Err(FacelockError::Camera(format!(
+                "{device_path}: {format_str} bytesperline is {} but facelock expects {expected} \
                      for {width} pixels — padded strides are not supported",
-                    fmt.stride
-                )));
-            }
+                fmt.stride
+            )));
         }
 
         // Create MMAP stream with `MMAP_BUFFERS` buffers and a capture timeout
@@ -419,17 +419,15 @@ impl<'a> Camera<'a> {
                     ) {
                         Ok(shift) => shift,
                         Err(e) => {
-                            if ir_emitter_active {
-                                if let Some(ref xu_info) = emitter_xu_info {
-                                    if let Err(off) =
-                                        ir_emitter::disable_emitter_with_info(&device_path, xu_info)
-                                    {
-                                        tracing::warn!(
-                                            "failed to disable IR emitter on {device_path} after \
+                            if ir_emitter_active
+                                && let Some(ref xu_info) = emitter_xu_info
+                                && let Err(off) =
+                                    ir_emitter::disable_emitter_with_info(&device_path, xu_info)
+                            {
+                                tracing::warn!(
+                                    "failed to disable IR emitter on {device_path} after \
                                              Y16 calibration failed: {off}"
-                                        );
-                                    }
-                                }
+                                );
                             }
                             return Err(e);
                         }
@@ -443,15 +441,15 @@ impl<'a> Camera<'a> {
         // Apply quirk overrides for rotation (warmup_frames is handled by the caller
         // since Camera::open doesn't consume warmup frames itself).
         let rotation = quirk.and_then(|q| q.rotation).unwrap_or(config.rotation);
-        if let Some(q) = quirk {
-            if q.rotation.is_some() || q.warmup_frames.is_some() || q.format_preference.is_some() {
-                tracing::info!(
-                    rotation = ?q.rotation,
-                    warmup_frames = ?q.warmup_frames,
-                    format_preference = ?q.format_preference,
-                    "applied quirk overrides for {device_path}"
-                );
-            }
+        if let Some(q) = quirk
+            && (q.rotation.is_some() || q.warmup_frames.is_some() || q.format_preference.is_some())
+        {
+            tracing::info!(
+                rotation = ?q.rotation,
+                warmup_frames = ?q.warmup_frames,
+                format_preference = ?q.format_preference,
+                "applied quirk overrides for {device_path}"
+            );
         }
 
         Ok(Camera {
@@ -633,13 +631,13 @@ pub fn is_dark_with_config(frame: &Frame, threshold: f32, dark_value: u8) -> boo
 
 impl Drop for Camera<'_> {
     fn drop(&mut self) {
-        if self.ir_emitter_active {
-            if let Some(ref xu_info) = self.emitter_xu_info {
-                match ir_emitter::disable_emitter_with_info(&self.device_path, xu_info) {
-                    Ok(()) => tracing::debug!("IR emitter disabled on {}", self.device_path),
-                    Err(e) => {
-                        tracing::warn!("failed to disable IR emitter on {}: {e}", self.device_path)
-                    }
+        if self.ir_emitter_active
+            && let Some(ref xu_info) = self.emitter_xu_info
+        {
+            match ir_emitter::disable_emitter_with_info(&self.device_path, xu_info) {
+                Ok(()) => tracing::debug!("IR emitter disabled on {}", self.device_path),
+                Err(e) => {
+                    tracing::warn!("failed to disable IR emitter on {}: {e}", self.device_path)
                 }
             }
         }

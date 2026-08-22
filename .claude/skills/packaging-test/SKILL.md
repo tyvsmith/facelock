@@ -16,28 +16,29 @@ All recipes need `podman`. None of the ones in the routing table need a camera.
 
 | Changed | Run |
 |---|---|
-| `dist/debian/**`, `dist/facelock.spec` shared install logic | `just test-deb-pkg` and `just test-rpm-pkg` |
-| `dist/debian/**` only | `just test-deb-pkg` |
+| `debian/**`, `dist/facelock.spec` shared install logic | `just test-deb-trixie-pkg`, `just test-deb-resolute-pkg`, and `just test-rpm-pkg` |
+| `debian/**` only | `just test-deb-trixie-pkg` and `just test-deb-resolute-pkg` |
 | `dist/facelock.spec`, `dist/facelock.install` | `just test-rpm-pkg` |
-| TPM packaging or `facelock-tpm` build features | `just test-deb-tpm-pkg` (builds the trixie TPM `.deb`) |
+| TPM packaging or `facelock-tpm` build features | `just test-deb-trixie-pkg` and `just test-deb-resolute-pkg` |
 | `dist/PKGBUILD*` | `just test-arch-pam`, then a release shell (below) |
 | `.packit.yaml`, or anything COPR consumes | `just test-copr` — slow, opt-in, Packit SRPM plus a mock from-source rebuild |
 | APT repo generation, `publish-apt` workflow | `just test-apt-repo` — needs `reprepro` and `gpg` |
-| `systemd/`, `dbus/`, `polkit/`, install paths | `just test-deb-pkg` or `just test-rpm-pkg` — both validate under booted systemd |
+| `systemd/`, `dbus/`, `polkit/`, install paths | both Debian suite recipes or `just test-rpm-pkg` — all validate under booted systemd |
 | `crates/pam-facelock/**`, `/etc/pam.d` handling | `just test-arch-pam` and `just check-pam-standalone` |
 | File layout, installed paths | `just test-arch-layout` |
 
-Quick syntax-level checks, weaker than the `-pkg` variants: `just test-rpm`
-(Fedora container), `just test-deb` (Ubuntu container). They exercise packaging
-but do not install and boot.
+`just test-deb` delegates to both exact supported-suite package gates. The
+remaining quick syntax-level check is `just test-rpm` (Fedora container), which
+is weaker than `test-rpm-pkg` because it does not install and boot.
 
 ## The `-pkg` recipes are the real ones
 
-`test-deb-pkg`, `test-deb-tpm-pkg` and `test-rpm-pkg` build a real package,
+`test-deb-trixie-pkg`, `test-deb-resolute-pkg`, and `test-rpm-pkg` build a real package,
 install it with `dpkg` or `dnf`, and validate under **booted systemd**. That is
 the only path that catches unit-file, D-Bus policy, polkit and post-install
-scriptlet problems. Prefer them over `test-deb` / `test-rpm` whenever the change
-could affect installed state rather than just packaging syntax.
+scriptlet problems. `test-deb` is an alias for both Debian suite gates; prefer
+`test-rpm-pkg` over `test-rpm` whenever the change could affect installed state
+rather than just packaging syntax.
 
 ## Camera-gated tests
 

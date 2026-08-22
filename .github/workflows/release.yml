@@ -8,13 +8,6 @@ permissions:
   contents: write
   actions: write
 
-env:
-  # ONNX Runtime version to bundle in the GitHub-Release .deb and .rpm packages.
-  # The ort crate uses feature api-20, so the minimum supported ONNX Runtime is
-  # 1.20; this bundled copy satisfies that floor. (The COPR RPM does not bundle
-  # ORT — it depends on Fedora's system onnxruntime package via Packit.)
-  ORT_VERSION: "1.20.1"
-
 jobs:
   metadata:
     name: Validate Release Identity
@@ -38,6 +31,7 @@ jobs:
           release_check_metadata "$GITHUB_REF_NAME"
           release_write_github_outputs "$GITHUB_REF_NAME" "$GITHUB_OUTPUT"
           RELEASE_MATRIX_VERSION="${GITHUB_REF_NAME#v}" python3 test/check-release-matrix.py
+          python3 test/check-rpm-ort-policy.py
 
   build:
     name: Build Release Binaries
@@ -96,134 +90,194 @@ jobs:
     runs-on: ubuntu-latest
     needs: metadata
     steps:
+      - uses: actions/checkout@v7
+
       - name: Download ONNX Runtime for bundling
         run: |
           set -euo pipefail
-          curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz" \
-            | tar xz
-          mkdir -p onnxruntime/lib
-          cp "onnxruntime-linux-x64-${ORT_VERSION}/lib/libonnxruntime.so.${ORT_VERSION}" onnxruntime/lib/libonnxruntime.so
-          test -s onnxruntime/lib/libonnxruntime.so
-          echo "Bundled ORT size: $(du -h onnxruntime/lib/libonnxruntime.so | cut -f1)"
+          ort_source_url="$(scripts/prepare-ort-bundle.sh source-url)"
+          curl --output ort.tgz --proto '=https' --tlsv1.2 -fsSL "$ort_source_url"
+          scripts/prepare-ort-bundle.sh prepare ort.tgz onnxruntime
+          scripts/prepare-ort-bundle.sh component-tar onnxruntime onnxruntime-bundle.tar.xz
 
       - name: Upload ORT artifact
         uses: actions/upload-artifact@v7
         with:
-          name: onnxruntime-bundle
-          path: onnxruntime/
+          path: onnxruntime-bundle.tar.xz
+          archive: false
+
+  prepare-cargo-vendor:
+    name: Prepare Cargo Vendor Component
+    runs-on: ubuntu-latest
+    needs: metadata
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install pinned source-preparation toolchain
+        # Immutable action implementation; the explicit patch release matches
+        # the 1.95 channel selected by rust-toolchain.toml.
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.95.0
+
+      - name: Prepare exact Cargo vendor component
+        run: |
+          scripts/prepare-cargo-vendor.sh prepare cargo-vendor
+          scripts/prepare-cargo-vendor.sh component-tar cargo-vendor cargo-vendor-bundle.tar.xz
+
+      - name: Upload Cargo vendor artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: cargo-vendor-bundle.tar.xz
+          archive: false
 
   build-deb:
     name: Build ${{ matrix.suite }} Debian Package
     runs-on: ubuntu-latest
-    needs: [metadata, build, download-ort]
+    needs: [metadata, download-ort, prepare-cargo-vendor]
     strategy:
       fail-fast: false
       matrix:
         include:
           - suite: trixie
-            variant: tpm
             architecture: amd64
             image: docker.io/library/debian:13@sha256:34cd9e9fd437c0a095ec39cb2e73422c9f30821b0d0848ed74fd0d43bae4d958
-          - suite: bookworm
-            variant: legacy
-            architecture: amd64
-            image: docker.io/library/debian:12@sha256:813017f3d62be4b5891a7acca6a01bdcd4b8513daa81b1ab99d3a50385b26931
           - suite: resolute
-            variant: tpm
             architecture: amd64
             image: docker.io/library/ubuntu:26.04@sha256:6df9e8dd1eac389ebfef692c9648449adeb815d01e16e29cd6f3e50fe64ba9a6
-          - suite: noble
-            variant: legacy
-            architecture: amd64
-            image: docker.io/library/ubuntu:24.04@sha256:d78ab76437b1afc5f01e223d6bf0172763f404bb166441328845adbef44518cb
     container:
       image: ${{ matrix.image }}
     steps:
+      - name: Bootstrap checkout dependencies
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            git
+
       - uses: actions/checkout@v7
 
       - name: Install system dependencies
         run: |
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
+          if [ '${{ matrix.suite }}' = trixie ]; then
+            printf '%s\n' 'deb http://deb.debian.org/debian trixie-backports main' \
+              >/etc/apt/sources.list.d/trixie-backports.list
+          fi
           apt-get update
           apt-get install -y \
-            ca-certificates \
             build-essential \
-            curl \
-            pkg-config \
-            libssl-dev \
             clang \
-            libv4l-dev \
+            curl \
+            debhelper \
+            dpkg-dev \
             libpam0g-dev \
+            libssl-dev \
+            libtss2-dev \
+            libv4l-dev \
+            libwayland-dev \
             libxkbcommon-dev \
-            libwayland-dev
-          if [ "${{ matrix.variant }}" = tpm ]; then
-            apt-get install -y libtss2-dev
-          fi
-
-      - name: Detect libtss2-esys package name and version
-        id: tss
-        run: |
-          set -euo pipefail
-          if [ "${{ matrix.variant }}" = tpm ]; then
-            TSS_PKG=$(dpkg -l 'libtss2-esys*' 2>/dev/null | awk '/^ii/{print $2}' | head -1)
-            TSS_VER=$(dpkg -l 'libtss2-esys*' 2>/dev/null | awk '/^ii/{print $3}' | head -1)
-            if [ -z "$TSS_PKG" ]; then
-              echo "ERROR: No libtss2-esys package found"
-              exit 1
-            fi
-            echo "TSS_DEPENDS=${TSS_PKG} (>= ${TSS_VER})" >> "$GITHUB_OUTPUT"
-            echo "Found: ${TSS_PKG} ${TSS_VER}"
+            pkg-config \
+            python3 \
+            ripgrep \
+            util-linux-extra
+          if [ '${{ matrix.suite }}' = trixie ]; then
+            apt-get install -y -t trixie-backports \
+              cargo \
+              rustc
           else
-            echo "TSS_DEPENDS=" >> "$GITHUB_OUTPUT"
+            apt-get install -y \
+              cargo \
+              rustc
           fi
-
-      - name: Install Rust toolchain
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
-      - name: Build release for suite variant
-        run: |
-          set -euo pipefail
-          . "$HOME/.cargo/env"
-          if [ "${{ matrix.variant }}" = tpm ]; then
-            cargo build --release --workspace --features tpm
-          else
-            cargo build --release --workspace
-          fi
+          dpkg-query -W -f='${Package} ${Version}\n' cargo rustc
+          cargo --version
+          rustc --version
+          dpkg-query -S "$(command -v cargo)" "$(command -v rustc)"
+          dpkg --compare-versions "$(dpkg-query -W -f='${Version}' cargo)" ge 1.88
+          dpkg --compare-versions "$(dpkg-query -W -f='${Version}' rustc)" ge 1.88
+          dpkg-checkbuilddeps
 
       - name: Download ORT bundle
         uses: actions/download-artifact@v8
         with:
-          name: onnxruntime-bundle
-          path: onnxruntime
+          name: onnxruntime-bundle.tar.xz
+          path: .
+          skip-decompress: true
 
-      - name: Verify ORT bundle exists
-        run: test -s onnxruntime/lib/libonnxruntime.so
+      - name: Extract exact ORT bundle
+        run: scripts/prepare-ort-bundle.sh extract-component onnxruntime-bundle.tar.xz onnxruntime
+
+      - name: Verify exact ORT bundle
+        run: scripts/prepare-ort-bundle.sh verify onnxruntime
+
+      - name: Download Cargo vendor bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: cargo-vendor-bundle.tar.xz
+          path: .
+          skip-decompress: true
+
+      - name: Extract exact Cargo vendor bundle
+        run: scripts/prepare-cargo-vendor.sh extract-component cargo-vendor-bundle.tar.xz cargo-vendor
+
+      - name: Verify exact Cargo vendor bundle
+        run: scripts/prepare-cargo-vendor.sh verify cargo-vendor
+
+      - name: Validate Debian source contract
+        run: |
+          bash test/deb-source-contract.sh
+          dpkg-checkbuilddeps
 
       - name: Build suite-specific .deb package
+        id: deb
         run: |
-          . "$HOME/.cargo/env"
+          set -euo pipefail
+          install -d -m700 /tmp/facelock-empty-cargo-home /tmp/facelock-empty-rustup-home
+          test -z "$(find /tmp/facelock-empty-cargo-home -mindepth 1 -print -quit)"
+          test -z "$(find /tmp/facelock-empty-rustup-home -mindepth 1 -print -quit)"
+          CARGO_HOME=/tmp/facelock-empty-cargo-home \
+          RUSTUP_HOME=/tmp/facelock-empty-rustup-home \
+          .github/workflows/scripts/run-networkless.sh \
           .github/workflows/scripts/build-deb.sh \
             "${{ needs.metadata.outputs.cargo-version }}" \
             "${{ matrix.suite }}" \
-            "${{ needs.metadata.outputs.debian-revision }}" \
-            "${{ steps.tss.outputs.TSS_DEPENDS }}"
+            "${{ needs.metadata.outputs.debian-revision }}"
+          source scripts/release-versions.sh
+          package_version="$(release_debian_version \
+            '${{ needs.metadata.outputs.cargo-version }}' \
+            '${{ needs.metadata.outputs.debian-revision }}' \
+            '${{ matrix.suite }}')"
+          architecture="$(dpkg --print-architecture)"
+          manifest="$PWD/facelock_${package_version}_${architecture}.manifest"
+          test -f "$manifest"
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
 
-      - name: Validate .deb contents
-        run: .github/workflows/scripts/validate-deb.sh facelock_*.deb
+      - name: Validate and stage exact Debian manifest
+        run: |
+          set -euo pipefail
+          manifest='${{ steps.deb.outputs.manifest }}'
+          bash test/deb-package-contract.sh --manifest "$manifest" --stage "$PWD/debian-upload"
+          manifest_dir="$(dirname "$manifest")"
+          while IFS= read -r artifact; do
+            case "$artifact" in
+              *.deb) .github/workflows/scripts/validate-deb.sh "$manifest_dir/$artifact" ;;
+            esac
+          done < "$manifest"
 
-      - name: Upload .deb artifact
+      - name: Upload exact Debian artifact set
         uses: actions/upload-artifact@v7
         with:
           name: release-deb-${{ matrix.suite }}
-          path: facelock_*.deb
+          path: debian-upload/
 
       - name: Upload .deb to release
         uses: softprops/action-gh-release@v3
         with:
-          files: facelock_*.deb
+          files: debian-upload/*.deb
 
   build-rpm:
     name: Build RPM Package
@@ -240,6 +294,7 @@ jobs:
             rust cargo clang-devel \
             pam-devel libv4l-devel \
             rpm-build systemd-rpm-macros \
+            util-linux python3 \
             gcc gcc-c++ \
             wayland-devel libxkbcommon-devel \
             tpm2-tss-devel
@@ -247,11 +302,15 @@ jobs:
       - name: Download ORT bundle
         uses: actions/download-artifact@v8
         with:
-          name: onnxruntime-bundle
-          path: onnxruntime
+          name: onnxruntime-bundle.tar.xz
+          path: .
+          skip-decompress: true
 
-      - name: Verify ORT bundle exists
-        run: test -s onnxruntime/lib/libonnxruntime.so
+      - name: Extract exact ORT bundle
+        run: scripts/prepare-ort-bundle.sh extract-component onnxruntime-bundle.tar.xz onnxruntime
+
+      - name: Verify exact ORT bundle
+        run: scripts/prepare-ort-bundle.sh verify onnxruntime
 
       - name: Build release
         run: cargo build --release --workspace --features tpm
@@ -263,7 +322,7 @@ jobs:
         run: cp ~/rpmbuild/RPMS/x86_64/*.rpm ./ 2>/dev/null || cp ~/rpmbuild/RPMS/**/*.rpm ./ 2>/dev/null || true
 
       - name: Validate .rpm contents
-        run: .github/workflows/scripts/validate-rpm.sh "$(ls *.rpm | head -1)"
+        run: .github/workflows/scripts/validate-rpm.sh "$(ls *.rpm | head -1)" direct
 
       - name: Upload .rpm to release
         uses: softprops/action-gh-release@v3
@@ -329,23 +388,11 @@ jobs:
           name: release-deb-trixie
           path: debs/trixie
 
-      - name: Download bookworm .deb artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: release-deb-bookworm
-          path: debs/bookworm
-
       - name: Download resolute .deb artifact
         uses: actions/download-artifact@v8
         with:
           name: release-deb-resolute
           path: debs/resolute
-
-      - name: Download noble .deb artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: release-deb-noble
-          path: debs/noble
 
       - name: Build APT repository
         env:
@@ -353,11 +400,25 @@ jobs:
           APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
+          source scripts/release-versions.sh
+          exact_deb_from_manifest() {
+            local suite="$1"
+            local package_version manifest manifest_dir
+            local -a packages
+            package_version="$(release_debian_version \
+              '${{ needs.metadata.outputs.cargo-version }}' \
+              '${{ needs.metadata.outputs.debian-revision }}' \
+              "$suite")"
+            manifest="debs/$suite/facelock_${package_version}_amd64.manifest"
+            bash test/deb-package-contract.sh --manifest "$manifest" >&2
+            manifest_dir="$(dirname "$manifest")"
+            mapfile -t packages < <(grep -E '\.deb$' "$manifest")
+            test "${#packages[@]}" -eq 1
+            printf '%s/%s\n' "$manifest_dir" "${packages[0]}"
+          }
           .github/workflows/scripts/publish-apt.sh "$(pwd)/apt-repo" \
-            "trixie=$(ls debs/trixie/facelock_*.deb)" \
-            "bookworm=$(ls debs/bookworm/facelock_*.deb)" \
-            "resolute=$(ls debs/resolute/facelock_*.deb)" \
-            "noble=$(ls debs/noble/facelock_*.deb)"
+            "trixie=$(exact_deb_from_manifest trixie)" \
+            "resolute=$(exact_deb_from_manifest resolute)"
 
       - name: Package APT repo artifact
         run: |

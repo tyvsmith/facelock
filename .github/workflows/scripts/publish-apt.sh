@@ -19,7 +19,7 @@ for suite_deb in "$@"; do
   SUITE="${suite_deb%%=*}"
   DEB="${suite_deb#*=}"
   case "$SUITE" in
-    trixie|bookworm|resolute|noble) ;;
+    trixie|resolute) ;;
     *) echo "refusing unknown stable APT suite '$SUITE'" >&2; exit 1 ;;
   esac
   if [ -n "${SEEN_SUITES[$SUITE]:-}" ]; then
@@ -35,8 +35,8 @@ for suite_deb in "$@"; do
   DEBS+=("$DEB")
 done
 
-if [ "${#SUITES[@]}" -ne 4 ]; then
-  echo "publish-apt.sh requires exactly one package for each stable suite: trixie, bookworm, resolute, noble" >&2
+if [ "${#SUITES[@]}" -ne 2 ]; then
+  echo "publish-apt.sh requires exactly one package for each stable suite: trixie, resolute" >&2
   exit 1
 fi
 

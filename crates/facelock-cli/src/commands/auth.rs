@@ -271,10 +271,9 @@ pub fn run(user: String, config_path: Option<String>, verbose: u8) -> i32 {
             face_detected: true,
             ..
         })
-    ) {
-        if let Err(e) = rate_limiter.record_failure(&store, &user) {
-            error!("rate limit record: {e}");
-        }
+    ) && let Err(e) = rate_limiter.record_failure(&store, &user)
+    {
+        error!("rate limit record: {e}");
     }
 
     match response {

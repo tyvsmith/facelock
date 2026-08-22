@@ -35,10 +35,8 @@ identity is converted explicitly for each package manager:
 | GitHub Release | prerelease | release |
 
 The first alpha Debian revisions are
-`0.2.0~alpha.1-1~deb13u1` (trixie),
-`0.2.0~alpha.1-1~deb12u1` (bookworm),
-`0.2.0~alpha.1-1~ubuntu26.04.1` (resolute), and
-`0.2.0~alpha.1-1~ubuntu24.04.1` (noble).
+`0.2.0~alpha.1-1~deb13u1` (trixie) and
+`0.2.0~alpha.1-1~ubuntu26.04.1` (resolute).
 
 Package rebuilds advance independently of the Cargo version. Debian and Arch
 increment their package revision for a rebuild of the same prerelease and reset
@@ -87,8 +85,9 @@ git push origin main --tags
 The `.github/workflows/release.yml` workflow:
 
 1. Builds release binaries and creates a GitHub Release
-2. Downloads ONNX Runtime for bundling in non-Arch packages
-3. Builds four suite-specific `.deb` packages for trixie, bookworm, resolute, and noble
+2. Prepares the pinned ONNX Runtime and lock-bound Cargo-vendor source
+   components with their reviewed manifests and checksums
+3. Builds two suite-specific TPM-enabled `.deb` packages for trixie and resolute
 4. Builds the direct `.rpm` package in the pinned Fedora 44 container and validates contents
 5. Validates Nix flake evaluation
 6. Publishes stable releases to AUR — `facelock`, `facelock-bin`, and `facelock-git` — if `AUR_SSH_KEY` is configured
@@ -104,28 +103,48 @@ which reacts to the GitHub Release published in step 1. See the COPR section bel
 
 #### Debian package channels
 
-| Channel | Build env | TPM | Version suffix | Use case |
-|---------|-----------|-----|----------------|----------|
-| `trixie` | Debian 13 | Yes | `X.Y.Z-1~deb13u1` | Debian 13 |
-| `bookworm` | Debian 12 | No | `X.Y.Z-1~deb12u1` | Debian 12 LTS |
-| `resolute` | Ubuntu 26.04 | Yes | `X.Y.Z-1~ubuntu26.04.1` | Ubuntu 26.04 LTS |
-| `noble` | Ubuntu 24.04 | No | `X.Y.Z-1~ubuntu24.04.1` | Ubuntu 24.04 LTS |
+| Channel | Build env | Rust toolchain | TPM | Version suffix |
+|---------|-----------|----------------|-----|----------------|
+| `trixie` | Debian 13 | official Trixie Backports `cargo` and `rustc` | Yes | `X.Y.Z-1~deb13u1` |
+| `resolute` | Ubuntu 26.04 | native distro `cargo` and `rustc` | Yes | `X.Y.Z-1~ubuntu26.04.1` |
 
-All four `.deb` packages are uploaded to the GitHub Release for direct download.
+Debian-family release support is exactly Debian 13 (Trixie) and Ubuntu 26.04
+LTS (Resolute). Both suites ship one binary package named `facelock` with TPM
+support enabled. No `rustup` toolchain participates in Debian source builds.
+Bookworm and Noble artifacts may remain in historical releases, but those
+suites are unsupported and receive no new packages.
+Trixie package builds use the official Trixie Backports `cargo` and `rustc`;
+Resolute package builds use the native Ubuntu toolchain.
+
+Both `.deb` packages are uploaded to the GitHub Release for direct download.
 Stable packages are published under the matching codename at
-`https://tysmith.me/facelock/apt/`; ABI-distinct packages never share one suite.
+`https://tysmith.me/facelock/apt/`.
+
+Each Debian source package consists of the exact tagged main upstream tarball,
+the reviewed ORT component, the deterministic Cargo-vendor component, and the
+Debian quilt delta. Complete `.dsc` rebuilds run with network denied and empty
+Cargo/Rustup caches. Stable APT publication consumes exactly two suite
+manifests, one for Trixie and one for Resolute, before signing or writing the
+repository.
+
+Each suite manifest contains exactly eight artifacts in this order: the main
+orig tarball, ORT orig component, Cargo-vendor orig component, Debian quilt
+delta, `.dsc`, `.buildinfo`, `.deb`, and `.changes`. The Cargo component carries
+a generated legal inventory covering every exact lock-bound crate; its specific
+DEP-5 stanza precedes the Facelock source catch-all. CI prepares that component
+with Rust 1.95.0 through the immutable `dtolnay/rust-toolchain` action commit
+`4360b52568e2003a75bf9bc1d59f33a8e3fc893c`, matching the repository's pinned
+1.95 toolchain channel.
 
 ### Supported release matrix
 
 `dist/release-matrix.json` is the checked-in authority. The release workflow,
 APT configuration, Packit targets, and this table are checked against it.
 
-| Platform | Architecture | Variant/channel | Runtime | Support tier | Release target | Lifecycle depth |
+| Platform | Architecture | Packaging/channel | Runtime | Support tier | Release target | Lifecycle depth |
 |----------|--------------|-----------------|---------|--------------|----------------|-----------------|
-| Debian 13 trixie | amd64 | TPM, staged APT/direct deb | bundled ORT 1.20.1 | supported | yes | full |
-| Debian 12 bookworm LTS | amd64 | legacy, staged APT/direct deb | bundled ORT 1.20.1 | supported | yes | full |
-| Ubuntu 26.04 LTS | amd64 | TPM, staged APT/direct deb | bundled ORT 1.20.1 | supported | yes | full |
-| Ubuntu 24.04 LTS | amd64 | legacy, staged APT/direct deb | bundled ORT 1.20.1 | supported | yes | full |
+| Debian 13 trixie | amd64 | one `facelock` package; TPM required; staged APT/direct deb | bundled ORT 1.20.1 | supported | yes | full |
+| Ubuntu 26.04 LTS | amd64 | one `facelock` package; TPM required; staged APT/direct deb | bundled ORT 1.20.1 | supported | yes | full |
 | Fedora 43 | x86_64 | staging COPR | system ORT | supported | yes | full through the 2026-12-02 EOL gate |
 | Fedora 44 | x86_64 | staging COPR | system ORT | supported | yes | full |
 | Fedora 45 branched | x86_64 | staging COPR | system ORT | supported | yes | required build/runtime smoke |
@@ -168,10 +187,11 @@ Before releasing, validate packages build and install correctly on each target:
 # Automated (no camera needed)
 just test-arch-pam       # Arch container PAM smoke tests
 just test-rpm            # Fedora — validate file layout from manual install
-just test-deb            # Ubuntu — validate file layout from manual install
-just test-deb-pkg        # Ubuntu 24.04 — build real .deb, install via dpkg, validate
-just test-deb-tpm-pkg    # Debian trixie — build real TPM .deb, install via dpkg, validate
+just test-deb            # delegate to both exact supported-suite package gates
+just test-deb-trixie-pkg    # Debian 13 — offline source rebuild, install, TPM, lifecycle
+just test-deb-resolute-pkg  # Ubuntu 26.04 — the same complete package gate
 just test-rpm-pkg        # Fedora — build real .rpm, install via dnf, validate
+just test-rpm-authselect # Fedora — retired-profile upgrade guard lifecycle
 just test-copr           # COPR-equivalent — Packit SRPM + mock from-source rebuild (slow)
 
 # Interactive (requires camera)
@@ -181,8 +201,9 @@ just test-deb-release-shell  # Ubuntu .deb clean room — real user experience
 just test-rpm-release-shell  # Fedora .rpm clean room — real user experience
 ```
 
-The `test-rpm` / `test-deb` recipes validate file layout from manually installed binaries.
-The `*-pkg` recipes build real packages using the same scripts as CI, install them with
+The `test-rpm` recipe validates file layout from manually installed binaries.
+`test-deb` delegates to both supported-suite `*-pkg` recipes. The `*-pkg`
+recipes build real packages using the same scripts as CI, install them with
 the actual package manager (`dnf` / `dpkg`), and validate the result — testing postinst
 scripts, dependency resolution, ORT bundling, tmpfiles triggers, and the full
 install path.
@@ -190,6 +211,20 @@ install path.
 The `*-dev-shell` recipes mount host models for fast interactive camera testing.
 The `*-release-shell` recipes start from a clean package install with nothing from the
 host — run `facelock setup` to download models, then enroll and test.
+
+The RPM embeds a read-only retired-profile upgrade guard in `%pre`. The
+model-free `test-rpm-authselect` gate boots Fedora with systemd and exercises
+real authselect and PAM password success/failure across fresh, unselected,
+selected-retired, custom-profile, malformed-state, and authselect-absent
+transactions. It never changes the host PAM stack. The exact retired
+`facelock` selection blocks with manual backup-and-reselection guidance;
+ordinary selections are preserved and the new RPM ships no authselect profile
+or dependency.
+
+An already-installed v0.1.4 RPM cannot be retroactively guarded: direct
+uninstall runs only the scriptlets already installed from v0.1.4. Users must
+install a guarded release before a later uninstall so the guarded upgrade can
+retire the old authselect payload first.
 
 ### Release preflight (recommended)
 
@@ -203,8 +238,8 @@ just check
 just test-arch-pam
 just test-rpm
 just test-deb
-just test-deb-pkg
-just test-deb-tpm-pkg
+just test-deb-trixie-pkg
+just test-deb-resolute-pkg
 just test-rpm-pkg
 ```
 
@@ -307,10 +342,12 @@ prerelease staging project is `tyvsmith/facelock-testing`, but provisioning or
 changing it belongs to issue #236 and is not performed by this release-identity
 change.
 
-The COPR RPM is built **from source** and does **not** bundle ONNX Runtime — the
-spec's `Requires: onnxruntime` pulls Fedora's system `onnxruntime` package
-instead. (The `ort` crate feature `api-20` keeps the binary compatible with
-Fedora's ONNX Runtime.)
+The COPR RPM is built **from source** with the spec's default
+`%bcond_with bundled_ort` mode and does **not** bundle ONNX Runtime. Its
+`BuildRequires`/`Requires: onnxruntime` use Fedora's runtime-only package; the
+package check asserts `onnxruntime-devel` is absent and creates a real ORT
+session from the checksum-pinned minimal model in `test/fixtures/`. (The `ort`
+crate feature `api-20` keeps the binary compatible with Fedora's runtime.)
 
 **One-time setup (~10 minutes):**
 
@@ -331,7 +368,8 @@ Fedora's ONNX Runtime.)
    default, so this toggle is required or the build fails resolving crates.
 
 Verify the COPR build locally before relying on it with `just test-copr`, which
-reproduces the Packit SRPM + `mock` from-source rebuild on a Fedora chroot.
+reproduces the Packit SRPM + `mock` from-source rebuild on a Fedora chroot and
+checks that the payload has no bundle while its dependencies select Fedora ORT.
 
 Only a stable-tagged config with the deliberately restored production release
 trigger can populate production COPR automatically. Prerelease staging project
@@ -369,19 +407,17 @@ Automated after setup. The release workflow publishes a signed APT repository to
 
    Or use the web UI: https://github.com/tyvsmith/facelock/settings/secrets/actions
 
-The repository configuration lives in `dist/apt/conf/distributions`. Four
+The repository configuration lives in `dist/apt/conf/distributions`. Two
 codenamed suites are published:
 
-- **`trixie`**: Debian 13 TPM build
-- **`bookworm`**: Debian 12 legacy build
-- **`resolute`**: Ubuntu 26.04 TPM build
-- **`noble`**: Ubuntu 24.04 legacy build
+- **`trixie`**: Debian 13 TPM build using Trixie Backports Rust/Cargo
+- **`resolute`**: Ubuntu 26.04 TPM build using native Rust/Cargo
 
 The former ambiguous `main` and `legacy` suite names are retired. Existing
 clients must replace that suite component in their Facelock source entry with
 their operating-system codename before the first codenamed stable publication.
 Prerelease packages are never inserted into these stable suites.
-Stable publication requires exactly one suite-matching package for all four
+Stable publication requires exactly one suite-matching package for both
 codenames before signing or repository writes begin.
 
 The APT repo is hosted at `https://tysmith.me/facelock/apt/` alongside the docs site. The public keyring is at `https://tysmith.me/facelock/apt/tysmith-archive-keyring.gpg`.
@@ -425,7 +461,7 @@ The version fields synced by `just release` are:
 | `dist/PKGBUILD`, `dist/PKGBUILD-bin` | upstream `_tag`, converted `pkgver`, package `pkgrel` |
 | `dist/PKGBUILD-git` | converted display `pkgver` |
 | `dist/facelock.spec` | converted `Version` and monotonic prerelease `Release` |
-| `dist/debian/changelog` | converted upstream and package revision in first entry |
+| `debian/changelog` | converted upstream and package revision in first entry |
 
 The independently maintained `dist/release-matrix.json` records supported
 targets, lifecycle depth, and immutable environment identities. Release
@@ -440,11 +476,15 @@ build works against any runtime ≥ 1.20.
 
 ONNX Runtime is sourced differently per channel:
 
-- **GitHub-Release `.deb` and `.rpm`**: bundle a CPU-only `libonnxruntime.so`
-  (ORT 1.20.1) at `/usr/lib/facelock/libonnxruntime.so`, because ONNX Runtime is
-  not available in Ubuntu repositories.
-- **COPR RPM** (built from source by Packit): does **not** bundle ORT. The spec's
-  `Requires: onnxruntime` pulls Fedora's system `onnxruntime` package.
+- **GitHub-Release `.deb`**: bundles CPU-only ORT 1.20.1 under
+  `/usr/lib/facelock/`, because ONNX Runtime is not available in Ubuntu
+  repositories.
+- **GitHub-Release direct `.rpm`**: builds the spec with
+  `--with bundled_ort`, installs `libonnxruntime.so.1` under
+  `%{_libdir}/facelock/`, and has no system `onnxruntime` dependency.
+- **COPR RPM** (built from source by Packit): leaves the spec's
+  `%bcond_with bundled_ort` disabled, contains no bundled runtime, and requires
+  Fedora's system `onnxruntime` package.
 - **Arch Linux** (PKGBUILD): depends on the system `onnxruntime` package
   (available in official repos).
 
@@ -452,10 +492,29 @@ The bundled ORT is a CPU-only fallback — users who install a system-wide
 GPU-enabled ONNX Runtime (CUDA, ROCm, OpenVINO) will have it take precedence
 automatically (the search order prefers system paths over the bundled copy).
 
-The bundled ORT version is pinned in `.github/workflows/release.yml` as
-`ORT_VERSION`. When upgrading the `ort` crate dependency, update `ORT_VERSION`
-and, if the new crate requires a higher floor, the `api-NN` feature in
-`crates/facelock-face/Cargo.toml`.
+The reviewed pins in `.github/workflows/release.yml` include the version,
+upstream URL, archive and library SHA-256 values, upstream commit, and MIT
+license identity. The download job verifies the archive before extraction and
+the library after extraction, then emits `manifest.json`, `SHA256SUMS`, and
+`PROVENANCE.md` beside upstream `LICENSE`, `ThirdPartyNotices.txt`,
+`VERSION_NUMBER`, and `GIT_COMMIT_ID`. Direct RPM assembly re-verifies those
+inputs and enters `.github/workflows/scripts/run-networkless.sh` before creating
+the source archive or rpmbuild tree. That wrapper uses util-linux `enosys` to
+deny socket and `io_uring` network syscalls, closes inherited non-stdio file
+descriptors, and requires its network probe to fail with `ENOSYS` before
+invoking `rpmbuild`; `CARGO_NET_OFFLINE=true` remains defense in depth. The RPM
+ships the reviewed inputs under its package documentation/license directories
+for SBOM and provenance consumers.
+
+When upgrading the `ort` crate dependency, update every reviewed ORT pin and
+the RPM bundle filename together and, if the crate requires a higher floor,
+the `api-NN` feature in `crates/facelock-face/Cargo.toml`.
+
+Rawhide may be attempted only with the digest-pinned experimental environment
+recorded in `dist/release-matrix.json`. A Rawhide system-ORT build/session smoke
+is best effort: absence or failure is nonblocking and can never stand in for
+lifecycle, upgrade, rollback, artifact, served-version, availability, or alpha
+release evidence. It must not publish or modify a COPR channel.
 
 ## Upgrade Safety
 

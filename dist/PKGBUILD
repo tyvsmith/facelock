@@ -65,10 +65,6 @@ package() {
     install -Dm644 dist/facelock.tmpfiles "$pkgdir/usr/lib/tmpfiles.d/facelock.conf"
     install -Dm644 dist/facelock-pam-remove.hook "$pkgdir/usr/share/libalpm/hooks/facelock-pam-remove.hook"
 
-    # Omarchy helper scripts (inert if walker/omarchy isn't installed)
-    install -Dm755 dist/omarchy/omarchy-setup-security-face "$pkgdir/usr/bin/omarchy-setup-security-face"
-    install -Dm755 dist/omarchy/omarchy-remove-security-face "$pkgdir/usr/bin/omarchy-remove-security-face"
-
     # Licenses
     install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
     install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"

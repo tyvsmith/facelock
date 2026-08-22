@@ -17,10 +17,8 @@ fn resolve_config_path(
         return path.clone();
     }
 
-    if !is_privileged {
-        if let Some(path) = env_override {
-            return PathBuf::from(path);
-        }
+    if !is_privileged && let Some(path) = env_override {
+        return PathBuf::from(path);
     }
 
     PathBuf::from(DEFAULT_CONFIG_PATH)
