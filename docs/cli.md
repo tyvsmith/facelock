@@ -631,11 +631,18 @@ the facelock line already in it and a two-line header saying what it was forked
 from; the package's own file is left byte for byte. That copy reports
 `overridden` rather than `installed`, and `pam status` reports a service with no
 local copy as `vendor-only` rather than as `missing`. Deleting the override
-restores the vendor file. Set `[pam] config_dirs` if your distribution's vendor
-directory is somewhere else for explicit `add`, named `remove`, and test
-resolution. Machine-wide `pam remove --all` deliberately ignores that setting,
-scans the compiled system roots `/etc/pam.d` and `/usr/lib/pam.d`, and
-separately scans the fixed detection-only generated root `/etc/authselect`.
+restores the vendor file. Named `pam remove` does that automatically only while
+the two-line Facelock header, the bytes below it after removing the module rule,
+and the file owner/mode still match the first existing vendor service in the
+configured search order. If either copy
+has drifted, it removes the module rule but keeps the local override and says
+why. If no current vendor source exists, an exact header naming a normalized
+configured candidate is reported as absent and the local override is retained;
+an arbitrary header path is not trusted or opened. Set `[pam] config_dirs` if your distribution's vendor directory is
+somewhere else for explicit `add`, named `remove`, and test resolution.
+Machine-wide `pam remove --all` deliberately ignores that setting, scans the
+compiled system roots `/etc/pam.d` and `/usr/lib/pam.d`, and separately scans
+the fixed detection-only generated root `/etc/authselect`.
 
 ### facelock pam add
 
@@ -706,6 +713,20 @@ name. Unresolved prepared state is preserved for recovery. `--keep-backup`
 opts out of cleanup. A cleanup error remains non-zero, but the JSON action is
 `cleanup-failed` and the human diagnostic says that the PAM state change
 already completed.
+For a Facelock-created local vendor copy, named removal first uses the normal
+crash-safe complete-file replacement to remove the module rule, then deletes
+the override only after moving its exact published inode to a no-replace
+transaction quarantine and rechecking that inode, canonical-name absence, and
+the current vendor bytes and metadata. The first existing later-root service
+wins; Facelock does not accept a matching lower-priority copy. The pre-removal
+document must contain exactly the
+one Facelock-emitted rule; extra or customized rules are drift. A restart also
+recognizes the exact header-bearing copy after the line is already absent.
+Header, payload, owner/mode, or vendor drift keeps the override; Facelock never
+deletes a merely similar local file. If the current vendor source is absent,
+only a header path derived from a normalized configured later-root candidate is
+recognized, solely to report why the local override is retained; header paths
+are never opened.
 
 `remove --all` is the package-safe, config-independent form. It opens the
 compiled `/etc/pam.d`, `/usr/lib/pam.d`, and detection-only `/etc/authselect`
@@ -720,10 +741,13 @@ previously changed, but never supplies a target path. An exact pre-0.2
 `auth      sufficient pam_facelock.so` edit is recognized only under a
 conventional service basename. Dot-prefixed and package/administrator artifact
 names such as `.pacsave`, `.rpmsave` and `~` require strict provenance for that
-exact name; unowned artifacts are ignored and preserved. A customized control,
+exact name or an exact current Facelock vendor-copy header; unowned artifacts
+are ignored and preserved. A customized control,
 options or spacing, corrupt provenance for a candidate, any other linked entry,
 or a reference in a read-only root is an unmanaged blocker. Nothing is changed
-when preflight finds one.
+when preflight finds one. The same scan recognizes an exact unchanged
+Facelock-created vendor override even if a previous run already removed its
+module rule, so package cleanup can finish that bounded intermediate.
 
 With `--dry-run`, an existing PAM backup directory is inspected read-only and
 must already have its trusted owner and mode. The preview does not repair or
@@ -735,8 +759,16 @@ complete target set and one bounded, root-owned whole-set journal. Each
 replacement re-resolves and rechecks the planned identity. A later failure or
 the final compiled-root rescan finding any active reference exchanges every
 earlier original inode back in reverse order. Only after the rescan is clear is
-a self-contained commit marker published and cleanup finalized. Recovery rolls
-back a prepared journal and completes a durable commit marker. It recognizes
+a self-contained commit marker published and cleanup finalized. Version 2
+journal and commit targets carry a required `delete_override` boolean; version
+1 state remains recoverable and must omit it. Once committed, a flagged target
+is deleted only while the exact installed inode still matches and the
+journaled header payload, owner/mode, and first existing fixed-root vendor
+service still agree. The journal backup's full prepared identity and the
+line-removed installed hash are checked before parsing that shape. An already
+absent flagged target is an idempotent completed
+unlink. Recovery rolls back a prepared journal and completes a durable commit
+marker. It recognizes
 an exact intent-only, pre-publication service as unstarted only while the
 canonical full identity still matches and both temp and binding are absent.
 After a reverse exchange, rollback removes the identity-checked replacement

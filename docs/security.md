@@ -748,6 +748,30 @@ Default removal deletes only validated committed Facelock pairs and the exact
 legacy `<service>.facelock-backup` name; unresolved prepared pairs, malformed
 records, symlinks, hard links, and unrelated administrator backups are never
 followed or removed.
+For an unchanged Facelock-created vendor override, named removal first uses the
+bound `pam_remove` exchange and retains the exact published identity. It
+then moves that exact inode from its canonical service name to the derived
+`.facelock-vendor-retire-<transaction>` quarantine with a no-replace rename
+while the same state transaction lock and publication evidence remain live.
+It rechecks the bounded quarantine identity, canonical absence, exact two-line
+header, payload, owner/mode, exact single-rule emitted document (or exact
+no-rule restart shape), and current regular single-link vendor file before
+checked unlink. Current vendor resolution opens later roots in order and stops
+at the first existing service; malformed, linked, unreadable or oversized
+higher-priority entries block cleanup. The header is parsed only against that
+resolved path and is never opened as a recorded path. If no current source
+resolves, an exact header path derived from a normalized configured later-root
+candidate is recognition-only: the local override is retained and the absent
+source is reported. An arbitrary recorded path is not accepted.
+
+If validation fails while the canonical name is absent, the exact quarantine
+is restored by no-replace rename. A concurrent canonical entry, quarantine
+collision, root-reopen failure, identity mismatch or durability uncertainty
+preserves the names and intent/binding evidence. Recovery resumes quarantine,
+restore and unlink boundaries. Any local or vendor drift preserves the local
+copy after its Facelock rule is removed. The exact header-bearing no-rule
+intermediate is recognized on a restart; merely similar or metadata-drifted
+files are not deleted.
 
 Intent filenames use
 `.facelock-intent-<hyphenated-role>-<transaction>.json`; the JSON `role`
@@ -800,7 +824,8 @@ malformed, mismatching, symlinked, or hard-linked exact entry preserves the
 binding. An orphan binding is removed only after the canonical identity check.
 PAM-directory temps are `.facelock-pam-replace-<transaction>`,
 `.facelock-pam-remove-<transaction>`, or
-`.facelock-vendor-create-<transaction>`. State quarantines are the exact
+`.facelock-vendor-create-<transaction>`; vendor retirement uses the exact
+`.facelock-vendor-retire-<transaction>` quarantine. State quarantines are the exact
 `commit`, `backup`, and `record` role names, and state publication temps bind
 their destination basename and content hash in the filename. Backup and record
 temp destinations additionally require a confined service component, so empty,
@@ -826,7 +851,8 @@ in the independently scanned generated root is an unmanaged external-root
 reference. A conventional direct local reference is writable when every
 Facelock rule has the exact pre-versioned emitted bytes. A dot-prefixed or
 package/administrator artifact name is considered only when an exact strict
-provenance basename exists and its current hash matches committed provenance;
+provenance basename exists and its current hash matches committed provenance,
+or when the regular local file is an exact current Facelock vendor copy;
 unowned `.pacsave`, `.rpmsave`, `~` and similar artifacts are preserved and
 ignored. Customized rules, corrupt provenance for a candidate, linked or
 unreadable entries, and references in read-only roots are unmanaged blockers;
@@ -841,9 +867,12 @@ the directory metadata and entries and refuses the preview.
 
 For a clear preflight, Facelock prepares a validated backup/provenance pair for
 every target, then atomically publishes one strict, bounded `remove-all`
-journal before the first PAM exchange. The journal contains only confined
-services, strict backup basenames, full original identities and installed
-hashes. One state-directory flock spans journal recovery, the complete
+journal before the first PAM exchange. Version 2 journal and commit targets
+contain only confined services, strict backup basenames, full original or
+installed identities, installed hashes and a required `delete_override`
+boolean. Version 1 recovery requires that boolean to be absent; null, mixed or
+mismatching flags invalidate the state. One state-directory flock spans
+journal recovery, the complete
 preflight, all exchanges, final active-reference rescan, commit publication and
 cleanup. A later identity failure or non-empty final rescan exchanges every
 earlier displaced original inode back in reverse order. Recovery does the same
@@ -866,6 +895,16 @@ Rollback-pair cleanup resumes an exact cleanup intent across both quarantine
 moves and unlinks; total absence is already clean, while partial, substituted
 or conflicting state is preserved.
 
+After a commit is durable, a flagged unchanged vendor override is removed only
+if its full committed local identity and the bounded, identity-rechecked
+journal backup still have an exact emitted one-rule or no-rule restart shape.
+The line-removed backup hash must equal the journaled installed hash, and its
+header, payload and metadata must match the first existing current vendor
+service in ordered later roots. The shared quarantine protocol completes the
+unlink and parent sync before batch evidence cleanup. A missing flagged target
+is an idempotent completed unlink on recovery; any drift or unflagged absence
+preserves the evidence and requires review.
+
 The uninstall call path reaches this command before removing the CLI or PAM
 module and does not parse config or touch the database, models, camera, daemon,
 or ONNX Runtime. Debian `prerm` and RPM `%preun` failures abort their package
@@ -884,8 +923,8 @@ Fedora authselect profile selection, regeneration, and rollback remain #226
 scope. This command treats `/etc/authselect` as detection-only and never edits
 generated profile state.
 
-This does not implement #206 vendor-drift cleanup, #207
-sensitive-authorization changes, or #166's final emitted-byte freeze.
+This does not implement #207 sensitive-authorization changes or #166's final
+emitted-byte freeze.
 
 #### A0. Config File Trust (Required)
 

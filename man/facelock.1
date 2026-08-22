@@ -463,6 +463,15 @@ is ever written to: a service found only in a vendor directory is copied there
 first, with the facelock line already in it and a header naming what it was
 forked from, and the package's file is left untouched. Configurable with
 \fB[pam] config_dirs\fR.
+.IP
+Named removal deletes that local override only while its exact Facelock header,
+payload, owner and mode still match the first existing vendor service in search
+order. It moves the exact local inode to a no-replace transaction quarantine
+and rechecks both names and the current vendor before deletion. Otherwise it
+restores or keeps the drifted local copy and reports why. If the current vendor
+source is absent, only a header naming a normalized configured candidate is
+recognized, and only to report why the local copy is retained; the header path
+is never opened.
 .RS
 .TP
 .B add
@@ -503,7 +512,8 @@ plus the detection-only generated root
 instead of configured PAM directories. It recognizes exact pre-versioned
 Facelock rules under conventional service names and current files authenticated
 by strict provenance. Dot-prefixed and package or administrator artifact names
-require provenance for that exact name; unowned artifacts are preserved.
+require provenance for that exact name or an exact current Facelock vendor-copy
+header; unowned artifacts are preserved.
 Customized rules, corrupt provenance, linked files and read-only-root references
 block the whole operation without a write. A link is skipped only when its exact
 target is the same service in a later compiled root that is scanned independently;
@@ -525,6 +535,15 @@ conflicts. This path
 reads no Facelock config,
 database, model, daemon, camera or inference state and is the cleanup command
 used by package uninstallers while the binary and PAM module are still present.
+.IP
+An unchanged Facelock-created vendor override is also a cleanup target, including
+the exact restart state where its module rule is already absent. Version 2 batch
+journal and commit targets carry a required \fBdelete_override\fR boolean;
+version 1 recovery requires that field to be absent. After the commit marker,
+deletion rechecks the exact installed inode and the journaled header payload,
+owner, mode and first existing fixed-root vendor service, plus the journal
+backup identity and line-removed installed hash. Drift preserves the override,
+and an already absent flagged target is an idempotent completed unlink.
 .TP
 .B status
 Report whether services carry the line. Reads only and needs

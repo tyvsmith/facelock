@@ -327,11 +327,16 @@ run_test "pam add again edits the override, writes no second header" \
     "facelock pam add --service facelock-vendor-scratch --json > /tmp/pam-vendor-add2.json 2>/dev/null; test \$? -eq 0 && python3 /tmp/pam-action.py /tmp/pam-vendor-add2.json | grep -qx unchanged && test \$(grep -c '^# Copied from ' /etc/pam.d/facelock-vendor-scratch) -eq 1 && sha256sum -c --status /tmp/pam-vendor.sha" \
     0
 
-run_test "pam remove takes the line out of the override, not the vendor file" \
-    "facelock pam remove --service facelock-vendor-scratch --json > /tmp/pam-vendor-remove.json 2>/dev/null; test \$? -eq 0 && python3 /tmp/pam-action.py /tmp/pam-vendor-remove.json | grep -qx removed && test -f /etc/pam.d/facelock-vendor-scratch && ! grep -q pam_facelock.so /etc/pam.d/facelock-vendor-scratch && sha256sum -c --status /tmp/pam-vendor.sha" \
+run_test "pam remove deletes the unchanged Facelock-created override" \
+    "facelock pam remove --service facelock-vendor-scratch --json > /tmp/pam-vendor-remove.json 2>/dev/null; test \$? -eq 0 && python3 /tmp/pam-action.py /tmp/pam-vendor-remove.json | grep -qx removed && ! test -e /etc/pam.d/facelock-vendor-scratch && sha256sum -c --status /tmp/pam-vendor.sha" \
     0
 
-rm -f /etc/pam.d/facelock-vendor-scratch /etc/pam.d/facelock-vendor-scratch.facelock-backup
+run_test "pam remove keeps a drifted vendor override after removing its line" \
+    "facelock pam add --service facelock-vendor-scratch --json > /dev/null 2>/dev/null && printf '%s\n' '# local customization' >> /etc/pam.d/facelock-vendor-scratch && facelock pam remove --service facelock-vendor-scratch --json > /tmp/pam-vendor-drift-remove.json 2>/dev/null; test \$? -eq 0 && python3 /tmp/pam-action.py /tmp/pam-vendor-drift-remove.json | grep -qx removed && test -f /etc/pam.d/facelock-vendor-scratch && ! grep -q pam_facelock.so /etc/pam.d/facelock-vendor-scratch && grep -qxF '# local customization' /etc/pam.d/facelock-vendor-scratch && sha256sum -c --status /tmp/pam-vendor.sha" \
+    0
+
+rm -f /etc/pam.d/facelock-vendor-scratch \
+      /etc/pam.d/facelock-vendor-scratch.facelock-backup
 
 run_test "pam remove on a vendor-only service is a no-op, exit 0" \
     "facelock pam remove --service facelock-vendor-scratch --json > /tmp/pam-vendor-remove2.json 2>/dev/null; test \$? -eq 0 && python3 /tmp/pam-action.py /tmp/pam-vendor-remove2.json | grep -qx vendor-only && ! test -e /etc/pam.d/facelock-vendor-scratch && sha256sum -c --status /tmp/pam-vendor.sha" \
@@ -352,7 +357,8 @@ rm -f "$VENDOR_PAM_DIR/facelock-vendor-scratch" /tmp/pam-vendor.sha \
       /tmp/pam-vendor-dir.before /tmp/pam-vendor-dir.after \
       /tmp/pam-vendor-status.json /tmp/pam-vendor-add.json \
       /tmp/pam-vendor-add2.json /tmp/pam-vendor-remove.json \
-      /tmp/pam-vendor-remove2.json /tmp/pam-nowhere.out
+      /tmp/pam-vendor-drift-remove.json /tmp/pam-vendor-remove2.json \
+      /tmp/pam-nowhere.out
 
 # The real thing, on the stock image: `sudo facelock setup --pam --service
 # polkit-1` is the invocation omarchy#7040 runs under `set -e`, and it exited 1
@@ -367,8 +373,11 @@ if [ -f /usr/lib/pam.d/polkit-1 ] && [ ! -e /etc/pam.d/polkit-1 ]; then
     run_test "pam status now answers 0 for polkit-1" \
         "facelock pam status --service polkit-1" \
         0
+    run_test "pam remove retires the unchanged polkit-1 override" \
+        "facelock pam remove --service polkit-1 --json > /tmp/pam-polkit-remove.json 2>/dev/null; test \$? -eq 0 && python3 /tmp/pam-action.py /tmp/pam-polkit-remove.json | grep -qx removed && ! test -e /etc/pam.d/polkit-1 && sha256sum -c --status /tmp/pam-polkit.sha" \
+        0
     rm -f /etc/pam.d/polkit-1 /etc/pam.d/polkit-1.facelock-backup \
-          /tmp/pam-polkit.sha /tmp/pam-polkit.out
+          /tmp/pam-polkit.sha /tmp/pam-polkit.out /tmp/pam-polkit-remove.json
 else
     # Not a skip. This is the only end-to-end row for the bug the whole gap
     # exists to fix, so an image that stops presenting the layout must cost a

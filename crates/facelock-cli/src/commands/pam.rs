@@ -241,7 +241,8 @@ const MAX_RECORD_BYTES: usize = 16 * 1024;
 const MAX_BACKUP_BYTES: usize = 1024 * 1024;
 
 /// Whole-machine cleanup journals are path-free and bounded before parsing.
-const REMOVE_ALL_VERSION: u32 = 1;
+const REMOVE_ALL_VERSION: u32 = 2;
+const REMOVE_ALL_LEGACY_VERSION: u32 = 1;
 const MAX_REMOVE_ALL_TARGETS: usize = 1024;
 const MAX_REMOVE_ALL_JOURNAL_BYTES: usize = 4 * 1024 * 1024;
 
@@ -419,6 +420,15 @@ struct RemoveAllJournalTarget {
     backup: String,
     original: FileIdentity,
     installed_sha256: String,
+    #[serde(default, deserialize_with = "deserialize_delete_override")]
+    delete_override: Option<bool>,
+}
+
+fn deserialize_delete_override<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    bool::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -436,6 +446,8 @@ struct RemoveAllCommittedTarget {
     service: String,
     backup: String,
     installed: FileIdentity,
+    #[serde(default, deserialize_with = "deserialize_delete_override")]
+    delete_override: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -455,6 +467,21 @@ enum RemoveAllPoint {
     BeforeMutation(usize),
     AfterMutation(usize),
     CommitMarked,
+    BeforeOverrideDelete(usize),
+    OverrideQuarantined(usize),
+    BeforeOverrideFinalValidation(usize),
+    OverrideRestored(usize),
+    AfterOverrideDelete(usize),
+    JournalUnlinked,
+    CommitUnlinked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VendorRetirePoint {
+    Quarantined,
+    BeforeFinalValidation,
+    Restored,
+    Unlinked,
 }
 
 #[derive(Debug, Clone)]
@@ -505,6 +532,10 @@ fn pam_replace_name(backup: &str) -> String {
 
 fn pam_remove_name(operation: &str) -> String {
     format!(".facelock-pam-remove-{operation}")
+}
+
+fn vendor_retire_name(operation: &str) -> String {
+    format!(".facelock-vendor-retire-{operation}")
 }
 
 fn vendor_create_name(operation: &str) -> String {
@@ -688,7 +719,8 @@ impl BackupTransaction<'_> {
             expected,
             content,
             after_boundary,
-        )
+        )?;
+        Ok(())
     }
 
     fn remove_pam_with_intent(
@@ -699,6 +731,24 @@ impl BackupTransaction<'_> {
         content: &[u8],
     ) -> std::io::Result<()> {
         self.remove_pam_with_intent_hook(mutation, path, expected, content, |_| Ok(()))
+    }
+
+    fn remove_pam_with_intent_and_published_hook(
+        &self,
+        mutation: &PamMutationPlan,
+        path: &Path,
+        expected: &FileIdentity,
+        content: &[u8],
+        after_published: impl FnMut(&FileIdentity) -> std::io::Result<()>,
+    ) -> std::io::Result<FileIdentity> {
+        self.store.remove_pam_with_intent_unlocked_published_hook(
+            mutation,
+            path,
+            expected,
+            content,
+            |_| Ok(()),
+            after_published,
+        )
     }
 
     fn create_vendor_with_intent_hook(
@@ -1339,7 +1389,26 @@ impl BackupStore {
         expected: &FileIdentity,
         content: &[u8],
         after_boundary: impl FnMut(PamRemoveCrashPoint) -> std::io::Result<()>,
-    ) -> std::io::Result<()> {
+    ) -> std::io::Result<FileIdentity> {
+        self.remove_pam_with_intent_unlocked_published_hook(
+            mutation,
+            path,
+            expected,
+            content,
+            after_boundary,
+            |_| Ok(()),
+        )
+    }
+
+    fn remove_pam_with_intent_unlocked_published_hook(
+        &self,
+        mutation: &PamMutationPlan,
+        path: &Path,
+        expected: &FileIdentity,
+        content: &[u8],
+        after_boundary: impl FnMut(PamRemoveCrashPoint) -> std::io::Result<()>,
+        mut after_published: impl FnMut(&FileIdentity) -> std::io::Result<()>,
+    ) -> std::io::Result<FileIdentity> {
         use std::cell::RefCell;
         use std::io::{Error, ErrorKind};
 
@@ -1426,10 +1495,20 @@ impl BackupStore {
                     })
             });
         }
+        if result.is_ok() {
+            result = publication
+                .borrow()
+                .as_ref()
+                .map(|publication| remove_all_binding_identity(&publication.binding))
+                .ok_or_else(|| ambiguous_publication("PAM publication identity is missing"))
+                .and_then(|identity| after_published(&identity));
+        }
         if result.as_ref().is_err_and(|error| {
             error.kind() == ErrorKind::Interrupted || is_ambiguous_publication(error)
         }) {
-            return result;
+            if let Err(error) = result {
+                return Err(error);
+            }
         }
         let cleanup = self.finish_publication_state(
             &intent_name,
@@ -1444,7 +1523,14 @@ impl BackupStore {
                 ))),
             };
         }
-        result
+        match result {
+            Ok(()) => publication
+                .borrow()
+                .as_ref()
+                .map(|publication| remove_all_binding_identity(&publication.binding))
+                .ok_or_else(|| ambiguous_publication("PAM publication identity is missing")),
+            Err(error) => Err(error),
+        }
     }
 
     fn create_vendor_with_intent_unlocked_hook(
@@ -2122,9 +2208,57 @@ impl BackupStore {
             }
             (Some(_), Some(current), None) if installed(current) => {}
             (None, Some(current), None) if installed(current) => {}
+            (Some(_), None, None) if publication.binding.role == PublicationRole::PamRemove => {}
+            (None, None, None) if publication.binding.role == PublicationRole::PamRemove => {}
             _ => return Ok(()),
         }
         directory.sync_all()?;
+
+        if publication.binding.role == PublicationRole::PamRemove {
+            let quarantine = vendor_retire_name(&publication.binding.backup);
+            let quarantine_exists = entry_exists_at(&directory, &quarantine)?;
+            let should_retire = if quarantine_exists {
+                true
+            } else {
+                match read_regular_at_bounded(
+                    &directory,
+                    &publication.binding.service,
+                    MAX_BACKUP_BYTES,
+                )? {
+                    Some((content, current)) if installed(&current) => {
+                        current_vendor_override_matches(
+                            dirs,
+                            &publication.binding.service,
+                            &content,
+                            &current,
+                            true,
+                        )
+                        .unwrap_or(false)
+                    }
+                    _ => false,
+                }
+            };
+            if should_retire {
+                let expected = remove_all_binding_identity(&publication.binding);
+                if let Err(error) = retire_vendor_override_with_hook(
+                    dirs,
+                    &publication.binding.service,
+                    &publication.binding.backup,
+                    &expected,
+                    |_| Ok(()),
+                ) {
+                    if is_ambiguous_publication(&error)
+                        || error.kind() == std::io::ErrorKind::Interrupted
+                    {
+                        return Err(error);
+                    }
+                    // A deterministic vendor mismatch restores the exact
+                    // quarantined inode to the canonical name. The removal
+                    // publication is complete even though retirement was
+                    // declined, so its state evidence may now be finalized.
+                }
+            }
+        }
         self.finish_recovered_publication(intent, publication)
     }
 
@@ -2773,6 +2907,8 @@ fn rename_noreplace_at(
     source: &str,
     destination: &str,
 ) -> std::io::Result<()> {
+    let source_name = source;
+    let destination_name = destination;
     let source = CString::new(source.as_bytes()).map_err(|_| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, "state name contains NUL")
     })?;
@@ -2792,6 +2928,52 @@ fn rename_noreplace_at(
     {
         return Err(std::io::Error::last_os_error());
     }
+    sync_rename_noreplace_parent(directory, source_name, destination_name)
+}
+
+#[cfg(test)]
+type RenameNoreplaceSyncTestHook = Box<dyn FnMut(&str, &str) -> std::io::Result<()>>;
+
+#[cfg(test)]
+thread_local! {
+    static RENAME_NOREPLACE_SYNC_TEST_HOOK: std::cell::RefCell<
+        Option<RenameNoreplaceSyncTestHook>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn install_rename_noreplace_sync_test_hook(
+    hook: impl FnMut(&str, &str) -> std::io::Result<()> + 'static,
+) {
+    RENAME_NOREPLACE_SYNC_TEST_HOOK.with(|slot| {
+        assert!(slot.borrow_mut().replace(Box::new(hook)).is_none());
+    });
+}
+
+#[cfg(test)]
+fn clear_rename_noreplace_sync_test_hook() {
+    RENAME_NOREPLACE_SYNC_TEST_HOOK.with(|slot| {
+        slot.borrow_mut().take();
+    });
+}
+
+#[cfg(test)]
+fn run_rename_noreplace_sync_test_hook(source: &str, destination: &str) -> std::io::Result<()> {
+    RENAME_NOREPLACE_SYNC_TEST_HOOK.with(|slot| match slot.borrow_mut().as_mut() {
+        Some(hook) => hook(source, destination),
+        None => Ok(()),
+    })
+}
+
+fn sync_rename_noreplace_parent(
+    directory: &fs::File,
+    source: &str,
+    destination: &str,
+) -> std::io::Result<()> {
+    #[cfg(test)]
+    run_rename_noreplace_sync_test_hook(source, destination)?;
+    #[cfg(not(test))]
+    let _ = (source, destination);
     directory.sync_all()
 }
 
@@ -3233,10 +3415,9 @@ fn read_regular_nofollow(path: &Path) -> std::io::Result<(Vec<u8>, FileIdentity)
         .file_name()
         .ok_or_else(|| Error::new(ErrorKind::InvalidInput, "PAM path has no file name"))?;
     let directory = open_directory_nofollow(parent)?;
-    let mut file = open_regular_at(&directory, name)?;
+    let file = open_regular_at(&directory, name)?;
     let metadata = file.metadata()?;
-    let mut content = Vec::new();
-    file.read_to_end(&mut content)?;
+    let content = read_open_bounded(&file, MAX_BACKUP_BYTES)?;
     let identity = FileIdentity {
         device: metadata.dev(),
         inode: metadata.ino(),
@@ -4375,6 +4556,15 @@ enum Plan {
     /// happening is decided once, in [`plan_writes`], rather than re-derived
     /// by each applier from the target's origin.
     Override { content: Vec<u8> },
+    /// `remove` found the exact Facelock-emitted local copy of a vendor
+    /// service. The module line is removed through the normal crash-safe
+    /// replacement first; the now-redundant override is then retired so the
+    /// package-owned service becomes authoritative again.
+    DeleteOverride { content: Vec<u8> },
+    /// An exact Facelock header names one configured later-root candidate, but
+    /// that source is currently absent and the local copy already has no
+    /// Facelock rule. Keep it and report the missing source explicitly.
+    RetainVendorOverride { vendor: PathBuf },
     /// The service resolves only in a vendor directory and this verb does not
     /// write there. `remove`'s answer, and a no-op.
     VendorOnly,
@@ -5260,10 +5450,24 @@ fn plan_writes(dirs: &PamDirs, write: &WriteRequest) -> anyhow::Result<Vec<Targe
             // opposite answers about whether that means work to do.
             (Some(content), Origin::Local | Origin::Nowhere { .. }) => {
                 let present = PamDocument::new(&content).has_facelock_rule();
-                if present == (write.action == WriteAction::Remove) {
-                    Plan::Rewrite { content }
-                } else {
+                if write.action == WriteAction::Remove {
+                    let disposition = identity
+                        .as_ref()
+                        .map_or(VendorOverrideDisposition::NotFacelock, |identity| {
+                            classify_vendor_override(dirs, &located, &content, identity)
+                        });
+                    match disposition {
+                        VendorOverrideDisposition::Unchanged => Plan::DeleteOverride { content },
+                        VendorOverrideDisposition::SourceAbsent(vendor) if !present => {
+                            Plan::RetainVendorOverride { vendor }
+                        }
+                        _ if present => Plan::Rewrite { content },
+                        _ => Plan::NoChange,
+                    }
+                } else if present {
                     Plan::NoChange
+                } else {
+                    Plan::Rewrite { content }
                 }
             }
         };
@@ -5635,6 +5839,381 @@ fn with_line_inserted(content: &[u8]) -> Vec<u8> {
 
 fn with_line_removed(content: &[u8]) -> Vec<u8> {
     PamDocument::new(content).with_facelock_removed()
+}
+
+const VENDOR_OVERRIDE_HEADER_SUFFIX: &[u8] =
+    b"# This local override shadows the vendor file and will not track vendor updates.\n";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VendorOverrideDisposition {
+    NotFacelock,
+    Unchanged,
+    Drifted,
+    SourceAbsent(PathBuf),
+}
+
+#[derive(Debug)]
+struct ResolvedVendor {
+    path: PathBuf,
+    content: Vec<u8>,
+    identity: FileIdentity,
+}
+
+/// Resolve the package-owned service exactly as Linux-PAM resolves the search
+/// path after the writable override root: the first existing entry wins. A
+/// malformed first entry is an error, never permission to keep looking for a
+/// later file whose bytes happen to match old provenance.
+fn resolve_current_vendor(
+    dirs: &PamDirs,
+    service: &str,
+) -> std::io::Result<Option<ResolvedVendor>> {
+    use std::io::ErrorKind;
+
+    confined(service)
+        .map_err(|_| std::io::Error::new(ErrorKind::InvalidInput, "invalid PAM service name"))?;
+    for root in dirs.iter().skip(1) {
+        let directory = match open_directory_nofollow(root) {
+            Ok(directory) => directory,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        let file = match open_regular_at(&directory, OsStr::new(service)) {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        let content = read_open_bounded(&file, MAX_BACKUP_BYTES)?;
+        let identity = identity_for_bytes(&file.metadata()?, &content);
+        return Ok(Some(ResolvedVendor {
+            path: root.join(service),
+            content,
+            identity,
+        }));
+    }
+    Ok(None)
+}
+
+/// Normalize one configured candidate path without consulting the
+/// filesystem. Header text is compared only with paths derived from the
+/// configured later roots; it never becomes an input to `open` or traversal.
+fn normalized_configured_path(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+
+    if !path.is_absolute() {
+        return None;
+    }
+    let mut normalized = PathBuf::from("/");
+    for component in path.components() {
+        match component {
+            Component::RootDir | Component::CurDir => {}
+            Component::Normal(component) => normalized.push(component),
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return None;
+                }
+            }
+            Component::Prefix(_) => return None,
+        }
+    }
+    Some(normalized)
+}
+
+fn configured_vendor_header_source(
+    dirs: &PamDirs,
+    service: &str,
+    content: &[u8],
+) -> Option<PathBuf> {
+    let without_line = with_line_removed(content);
+    dirs.iter().skip(1).find_map(|root| {
+        let candidate = normalized_configured_path(&root.join(service))?;
+        vendor_override_payload(&without_line, &candidate).map(|_| candidate)
+    })
+}
+
+/// Validate the exact byte shapes Facelock can emit for a vendor override:
+/// the original copy with exactly one canonical rule, or the restart shape
+/// after that one rule has been removed. Hand-written, duplicate, or custom
+/// module rules are drift even when removing them yields the vendor payload.
+fn exact_vendor_override_shape(
+    content: &[u8],
+    identity: &FileIdentity,
+    vendor: &ResolvedVendor,
+) -> bool {
+    let without_line = with_line_removed(content);
+    let Some(payload) = vendor_override_payload(&without_line, &vendor.path) else {
+        return false;
+    };
+    let header_len = without_line.len() - payload.len();
+    let mut emitted = Vec::with_capacity(header_len + vendor.content.len() + PAM_LINE.len() + 1);
+    emitted.extend_from_slice(&without_line[..header_len]);
+    emitted.extend_from_slice(&with_line_inserted(&vendor.content));
+    (content == without_line || content == emitted)
+        && payload == vendor.content
+        && !PamDocument::new(&vendor.content).has_facelock_rule()
+        && (identity.mode, identity.uid, identity.gid)
+            == (
+                vendor.identity.mode,
+                vendor.identity.uid,
+                vendor.identity.gid,
+            )
+}
+
+fn current_vendor_override_matches(
+    dirs: &PamDirs,
+    service: &str,
+    content: &[u8],
+    identity: &FileIdentity,
+    require_restart_shape: bool,
+) -> std::io::Result<bool> {
+    let Some(vendor) = resolve_current_vendor(dirs, service)? else {
+        return Ok(false);
+    };
+    Ok(exact_vendor_override_shape(content, identity, &vendor)
+        && (!require_restart_shape || !PamDocument::new(content).has_facelock_rule()))
+}
+
+fn vendor_override_payload<'a>(content: &'a [u8], vendor: &Path) -> Option<&'a [u8]> {
+    let first_end = content.iter().position(|byte| *byte == b'\n')? + 1;
+    let second_end = first_end
+        + content[first_end..]
+            .iter()
+            .position(|byte| *byte == b'\n')?
+        + 1;
+    if &content[first_end..second_end] != VENDOR_OVERRIDE_HEADER_SUFFIX {
+        return None;
+    }
+
+    let prefix = format!("# Copied from {} by facelock ", vendor.display());
+    let first = &content[..first_end];
+    let rest = first.strip_prefix(prefix.as_bytes())?;
+    let rest = rest.strip_suffix(b".\n")?;
+    let separator = rest
+        .windows(b" on ".len())
+        .rposition(|part| part == b" on ")?;
+    let version = &rest[..separator];
+    let date = &rest[separator + b" on ".len()..];
+    let version_ok = !version.is_empty()
+        && version
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'));
+    let date_ok = date.len() == 10
+        && date.iter().enumerate().all(|(index, byte)| {
+            matches!(index, 4 | 7) && *byte == b'-'
+                || !matches!(index, 4 | 7) && byte.is_ascii_digit()
+        });
+    (version_ok && date_ok).then_some(&content[second_end..])
+}
+
+fn classify_vendor_override(
+    dirs: &PamDirs,
+    target: &Target,
+    content: &[u8],
+    identity: &FileIdentity,
+) -> VendorOverrideDisposition {
+    match resolve_current_vendor(dirs, &target.service) {
+        Ok(Some(vendor)) => {
+            if exact_vendor_override_shape(content, identity, &vendor) {
+                VendorOverrideDisposition::Unchanged
+            } else {
+                VendorOverrideDisposition::Drifted
+            }
+        }
+        Ok(None) => configured_vendor_header_source(dirs, &target.service, content)
+            .map_or(VendorOverrideDisposition::NotFacelock, |vendor| {
+                VendorOverrideDisposition::SourceAbsent(vendor)
+            }),
+        Err(_) if target.shadowed.is_some() => VendorOverrideDisposition::Drifted,
+        Err(_) => VendorOverrideDisposition::NotFacelock,
+    }
+}
+
+fn read_regular_at_bounded(
+    directory: &fs::File,
+    name: &str,
+    limit: usize,
+) -> std::io::Result<Option<(Vec<u8>, FileIdentity)>> {
+    match open_regular_at(directory, OsStr::new(name)) {
+        Ok(file) => {
+            let content = read_open_bounded(&file, limit)?;
+            let identity = identity_for_bytes(&file.metadata()?, &content);
+            Ok(Some((content, identity)))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn restore_vendor_quarantine(
+    directory: &fs::File,
+    service: &str,
+    quarantine: &str,
+    expected: &FileIdentity,
+) -> std::io::Result<()> {
+    match open_identity_at(directory, service, MAX_BACKUP_BYTES) {
+        Ok(None) => {}
+        Ok(Some(_)) => {
+            return Err(ambiguous_publication(
+                "vendor override could not be restored without overwriting a concurrent file",
+            ));
+        }
+        Err(_) => {
+            return Err(ambiguous_publication(
+                "vendor override canonical name became ambiguous during restore",
+            ));
+        }
+    }
+    rename_noreplace_at(directory, quarantine, service).map_err(|_| {
+        ambiguous_publication("vendor override quarantine could not be restored durably")
+    })?;
+    let restored = open_identity_at(directory, service, MAX_BACKUP_BYTES)
+        .map_err(|_| ambiguous_publication("restored vendor override could not be verified"))?
+        .ok_or_else(|| ambiguous_publication("restored vendor override disappeared"))?;
+    if !identity_matches(expected, &restored) {
+        return Err(ambiguous_publication(
+            "restored vendor override identity became ambiguous",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_vendor_quarantine(
+    dirs: &PamDirs,
+    directory: &fs::File,
+    service: &str,
+    quarantine: &str,
+    expected: &FileIdentity,
+) -> std::io::Result<bool> {
+    let Some((content, quarantined)) =
+        read_regular_at_bounded(directory, quarantine, MAX_BACKUP_BYTES)?
+    else {
+        return Ok(false);
+    };
+    if !identity_matches(expected, &quarantined) {
+        return Ok(false);
+    }
+    if open_identity_at(directory, service, MAX_BACKUP_BYTES)?.is_some() {
+        return Ok(false);
+    }
+    current_vendor_override_matches(dirs, service, &content, &quarantined, true)
+}
+
+fn decline_vendor_retirement(
+    directory: &fs::File,
+    service: &str,
+    quarantine: &str,
+    expected: &FileIdentity,
+    reason: &'static str,
+    after_boundary: &mut impl FnMut(VendorRetirePoint) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let quarantined = open_identity_at(directory, quarantine, MAX_BACKUP_BYTES).map_err(|_| {
+        ambiguous_publication("vendor override quarantine could not be authenticated for restore")
+    })?;
+    let canonical = open_identity_at(directory, service, MAX_BACKUP_BYTES).map_err(|_| {
+        ambiguous_publication("vendor override canonical name became ambiguous before restore")
+    })?;
+    if canonical.is_none()
+        && quarantined
+            .as_ref()
+            .is_some_and(|identity| identity_matches(expected, identity))
+    {
+        restore_vendor_quarantine(directory, service, quarantine, expected)?;
+        after_boundary(VendorRetirePoint::Restored)?;
+        return Err(std::io::Error::other(reason));
+    }
+    Err(ambiguous_publication(
+        "vendor override quarantine state became ambiguous",
+    ))
+}
+
+/// Retire an unchanged local vendor copy without ever unlinking its canonical
+/// PAM service name. The exact inode is first moved to a transaction-derived
+/// quarantine name with no-clobber semantics and the directory is synced.
+/// Only that authenticated quarantine is eligible for checked deletion.
+fn retire_vendor_override_with_hook(
+    dirs: &PamDirs,
+    service: &str,
+    operation: &str,
+    expected: &FileIdentity,
+    mut after_boundary: impl FnMut(VendorRetirePoint) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    use std::io::{Error, ErrorKind};
+
+    confined(service).map_err(|_| Error::new(ErrorKind::InvalidInput, "invalid service"))?;
+    if !valid_backup_name(service, operation) {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "invalid vendor-retirement operation",
+        ));
+    }
+    let directory = open_directory_nofollow(dirs.overrides()).map_err(|_| {
+        ambiguous_publication("vendor override root could not be reopened for quarantine")
+    })?;
+    let quarantine = vendor_retire_name(operation);
+    let existing_quarantine = read_regular_at_bounded(&directory, &quarantine, MAX_BACKUP_BYTES)
+        .map_err(|_| ambiguous_publication("vendor override quarantine could not be inspected"))?;
+    if let Some((_, quarantined)) = existing_quarantine.as_ref() {
+        if !identity_matches(expected, quarantined) {
+            return Err(ambiguous_publication(
+                "vendor override quarantine is not the published removal inode",
+            ));
+        }
+    } else {
+        let current = open_identity_at(&directory, service, MAX_BACKUP_BYTES).map_err(|_| {
+            ambiguous_publication("vendor override canonical name could not be inspected")
+        })?;
+        match current {
+            None => return Ok(()),
+            Some(current) if identity_matches(expected, &current) => {}
+            Some(_) => {
+                return Err(ambiguous_publication(
+                    "vendor override changed before quarantine",
+                ));
+            }
+        }
+        rename_noreplace_at(&directory, service, &quarantine).map_err(|error| {
+            if error.raw_os_error() == Some(libc::EEXIST) {
+                ambiguous_publication("vendor override quarantine name already exists")
+            } else {
+                ambiguous_publication("vendor override could not be quarantined durably")
+            }
+        })?;
+        after_boundary(VendorRetirePoint::Quarantined)?;
+    }
+
+    let initially_valid =
+        validate_vendor_quarantine(dirs, &directory, service, &quarantine, expected);
+    if !matches!(initially_valid, Ok(true)) {
+        return decline_vendor_retirement(
+            &directory,
+            service,
+            &quarantine,
+            expected,
+            "vendor override or current vendor source changed before cleanup",
+            &mut after_boundary,
+        );
+    }
+
+    after_boundary(VendorRetirePoint::BeforeFinalValidation)?;
+    if !matches!(
+        validate_vendor_quarantine(dirs, &directory, service, &quarantine, expected,),
+        Ok(true)
+    ) {
+        return decline_vendor_retirement(
+            &directory,
+            service,
+            &quarantine,
+            expected,
+            "vendor override or current vendor source changed before final cleanup",
+            &mut after_boundary,
+        );
+    }
+    unlink_at_if_identity_matches(&directory, &quarantine, expected, MAX_BACKUP_BYTES).map_err(
+        |_| ambiguous_publication("vendor override quarantine could not be authenticated"),
+    )?;
+    directory.sync_all().map_err(|_| {
+        ambiguous_publication("vendor override quarantine deletion was not durable")
+    })?;
+    after_boundary(VendorRetirePoint::Unlinked)
 }
 
 /// The two comment lines a vendor copy carries, so the next reader knows the
@@ -6070,13 +6649,25 @@ fn apply_add(target: &Target, no_confirm: bool, sink: &Sink, dirs: &PamDirs) -> 
         }
         Plan::Rewrite { content } => (content.as_slice(), false),
         Plan::Override { content } => (content.as_slice(), true),
+        Plan::DeleteOverride { .. } => {
+            debug_assert!(false, "a vendor-delete plan reached `add`");
+            sink.info(&PamMessage::PamNoLineFound { path });
+            return Outcome::Unchanged;
+        }
+        Plan::RetainVendorOverride { .. } => {
+            debug_assert!(false, "a vendor-retain plan reached `add`");
+            sink.info(&PamMessage::PamNoLineFound { path });
+            return Outcome::Unchanged;
+        }
     };
     // Compute the exact installed bytes before allocating provenance: its
     // hash is part of the prepared record and recovery must be able to decide
     // which side of the rename is present after a crash.
     let with_line = with_line_inserted(content);
     let written = if from_vendor {
-        let header = provenance_header(&target.path);
+        let vendor =
+            normalized_configured_path(&target.path).unwrap_or_else(|| target.path.clone());
+        let header = provenance_header(&vendor);
         let mut written = Vec::with_capacity(header.len() + with_line.len());
         written.extend_from_slice(header.as_bytes());
         written.extend_from_slice(&with_line);
@@ -6254,6 +6845,41 @@ fn apply_add(target: &Target, no_confirm: bool, sink: &Sink, dirs: &PamDirs) -> 
 /// existing backup is reported so the operator knows a full restore is
 /// available.
 fn apply_remove(target: &Target, sink: &Sink, dirs: &PamDirs) -> Outcome {
+    apply_remove_with_vendor_hook(target, sink, dirs, |_| Ok(()))
+}
+
+fn remove_success_message(
+    target: &Target,
+    path: String,
+    disposition: VendorOverrideDisposition,
+) -> PamMessage {
+    match disposition {
+        VendorOverrideDisposition::Drifted => PamMessage::PamVendorOverrideRetained {
+            path,
+            vendor: target
+                .shadowed
+                .as_ref()
+                .map(|vendor| vendor.display().to_string())
+                .unwrap_or_default(),
+        },
+        VendorOverrideDisposition::SourceAbsent(vendor) => {
+            PamMessage::PamVendorOverrideSourceAbsent {
+                path,
+                vendor: vendor.display().to_string(),
+            }
+        }
+        VendorOverrideDisposition::NotFacelock | VendorOverrideDisposition::Unchanged => {
+            PamMessage::PamRemoved { path }
+        }
+    }
+}
+
+fn apply_remove_with_vendor_hook(
+    target: &Target,
+    sink: &Sink,
+    dirs: &PamDirs,
+    mut vendor_hook: impl FnMut(VendorRetirePoint) -> std::io::Result<()>,
+) -> Outcome {
     let path = target.path_string();
 
     match &target.plan {
@@ -6273,10 +6899,23 @@ fn apply_remove(target: &Target, sink: &Sink, dirs: &PamDirs) -> Outcome {
             sink.info(&PamMessage::PamNoLineFound { path: path.clone() });
             Outcome::Unchanged
         }
+        Plan::RetainVendorOverride { vendor } => {
+            sink.info(&PamMessage::PamVendorOverrideSourceAbsentNoLine {
+                path,
+                vendor: vendor.display().to_string(),
+            });
+            Outcome::Unchanged
+        }
         // `remove` still takes no backup of its own — it relies on the one
         // `add` wrote, which is the remaining entry under "Limits" in
         // docs/contracts.md. The write itself is atomic, like every other.
         Plan::Rewrite { content } => {
+            let vendor_disposition = target
+                .identity
+                .as_ref()
+                .map_or(VendorOverrideDisposition::NotFacelock, |identity| {
+                    classify_vendor_override(dirs, target, content, identity)
+                });
             let installed = with_line_removed(content);
             let store = match BackupStore::open(dirs.backup_dir()) {
                 Ok(store) => store,
@@ -6314,11 +6953,73 @@ fn apply_remove(target: &Target, sink: &Sink, dirs: &PamDirs) -> Outcome {
             );
             match replacement {
                 Ok(()) => {
-                    sink.info(&PamMessage::PamRemoved { path: path.clone() });
+                    sink.info(&remove_success_message(
+                        target,
+                        path.clone(),
+                        vendor_disposition,
+                    ));
                     Outcome::Removed
                 }
                 Err(error) => Outcome::Failed(format!("failed to write {path}: {error}")),
             }
+        }
+        Plan::DeleteOverride { content } => {
+            let installed = with_line_removed(content);
+            let expected = match target.identity.as_ref() {
+                Some(expected) => expected,
+                None => {
+                    return Outcome::Failed(format!(
+                        "failed to remove {path}: PAM service has no planned file identity"
+                    ));
+                }
+            };
+            let store = match BackupStore::open(dirs.backup_dir()) {
+                Ok(store) => store,
+                Err(error) => {
+                    return Outcome::Failed(format!("failed to open PAM backup state: {error}"));
+                }
+            };
+            let transaction = match store.transaction(dirs) {
+                Ok(transaction) => transaction,
+                Err(error) => {
+                    return Outcome::Failed(format!("failed to recover PAM backup state: {error}"));
+                }
+            };
+            let mutation = match transaction.plan_mutation(&target.service, content, &installed) {
+                Ok(mutation) => mutation,
+                Err(error) => {
+                    return Outcome::Failed(format!("failed to plan removal for {path}: {error}"));
+                }
+            };
+            let operation = mutation.operation.clone();
+            if let Err(error) = transaction.remove_pam_with_intent_and_published_hook(
+                &mutation,
+                &target.path,
+                expected,
+                &installed,
+                |installed_identity| {
+                    retire_vendor_override_with_hook(
+                        dirs,
+                        &target.service,
+                        &operation,
+                        installed_identity,
+                        &mut vendor_hook,
+                    )
+                },
+            ) {
+                return Outcome::Failed(format!(
+                    "failed to remove unchanged vendor override {path}: {error}"
+                ));
+            }
+            sink.info(&PamMessage::PamVendorOverrideRemoved {
+                path: path.clone(),
+                vendor: target
+                    .shadowed
+                    .as_ref()
+                    .map(|vendor| vendor.display().to_string())
+                    .unwrap_or_default(),
+            });
+            Outcome::Removed
         }
         // `plan_writes` builds `Override` for `add` alone. Answered like
         // `VendorOnly` rather than with a failure of its own: if that ever
@@ -6347,6 +7048,32 @@ fn report_plan(target: &Target, action: WriteAction, sink: &Sink) -> Outcome {
         (Plan::Rewrite { .. }, WriteAction::Remove) => {
             sink.info(&PamMessage::PamPlanRemove { path });
             Outcome::Removed
+        }
+        (Plan::DeleteOverride { .. }, WriteAction::Remove) => {
+            sink.info(&PamMessage::PamPlanDeleteOverride {
+                path,
+                vendor: target
+                    .shadowed
+                    .as_ref()
+                    .map(|vendor| vendor.display().to_string())
+                    .unwrap_or_default(),
+            });
+            Outcome::Removed
+        }
+        (Plan::DeleteOverride { .. }, WriteAction::Add) => {
+            debug_assert!(false, "a vendor-delete plan reached an add preview");
+            Outcome::Unchanged
+        }
+        (Plan::RetainVendorOverride { vendor }, WriteAction::Remove) => {
+            sink.info(&PamMessage::PamVendorOverrideSourceAbsentNoLine {
+                path,
+                vendor: vendor.display().to_string(),
+            });
+            Outcome::Unchanged
+        }
+        (Plan::RetainVendorOverride { .. }, WriteAction::Add) => {
+            debug_assert!(false, "a vendor-retain plan reached an add preview");
+            Outcome::Unchanged
         }
         (Plan::Override { content }, _) => {
             sink.info(&PamMessage::PamPlanOverride {
@@ -6685,6 +7412,7 @@ fn apply_all(
                 // fact true.
                 shadows: match &outcome {
                     Outcome::Overridden => Some(target.path_string()),
+                    Outcome::Removed if matches!(target.plan, Plan::DeleteOverride { .. }) => None,
                     _ => target.shadows_string(),
                 },
                 outcome,
@@ -6856,6 +7584,7 @@ fn remove_all_name_is_candidate(
 fn remove_all_services_with_store(
     dirs: &PamDirs,
     open_store: impl FnOnce(&Path) -> std::io::Result<Option<BackupStore>>,
+    include_exact_cleanup_intermediates: bool,
 ) -> anyhow::Result<Vec<String>> {
     let store = open_store(dirs.backup_dir())?;
     let mut services = Vec::new();
@@ -6885,12 +7614,11 @@ fn remove_all_services_with_store(
                 ));
                 continue;
             };
-            if !remove_all_name_is_candidate(store.as_ref(), &service)? {
-                continue;
-            }
+            let name_is_candidate = remove_all_name_is_candidate(store.as_ref(), &service)?;
             let entry_metadata = match metadata_at_nofollow(&directory, OsStr::new(&service)) {
                 Ok(metadata) => metadata,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) if !name_is_candidate => continue,
                 Err(error) => {
                     blockers.push(format!(
                         "{} is unmanaged: {error}",
@@ -6901,6 +7629,9 @@ fn remove_all_services_with_store(
             };
             let file_type = entry_metadata.st_mode & libc::S_IFMT;
             if file_type == libc::S_IFDIR {
+                continue;
+            }
+            if !name_is_candidate && (root_index != 0 || file_type != libc::S_IFREG) {
                 continue;
             }
             if file_type == libc::S_IFLNK {
@@ -6958,15 +7689,54 @@ fn remove_all_services_with_store(
                     continue;
                 }
             };
-            if !PamDocument::new(&content).has_facelock_rule() {
+            let has_facelock_rule = PamDocument::new(&content).has_facelock_rule();
+            if root_index != 0 {
+                if has_facelock_rule {
+                    blockers.push(format!(
+                        "{} is an unmanaged reference outside the writable PAM root",
+                        base.join(&service).display()
+                    ));
+                }
                 continue;
             }
-            if root_index != 0 {
-                blockers.push(format!(
-                    "{} is an unmanaged reference outside the writable PAM root",
-                    base.join(&service).display()
-                ));
-                continue;
+            let identity = identity_for_bytes(&file.metadata()?, &content);
+            let local_origin = Origin::Local;
+            let candidate = Target {
+                service: service.clone(),
+                path: base.join(&service),
+                shadowed: shadowed_vendor(dirs, &service, &local_origin),
+                origin: local_origin,
+                identity: Some(identity.clone()),
+                plan: Plan::NoChange,
+            };
+            match classify_vendor_override(dirs, &candidate, &content, &identity) {
+                VendorOverrideDisposition::Unchanged
+                    if has_facelock_rule || include_exact_cleanup_intermediates =>
+                {
+                    services.push(service);
+                    continue;
+                }
+                VendorOverrideDisposition::Unchanged => continue,
+                VendorOverrideDisposition::Drifted if has_facelock_rule => {
+                    blockers.push(format!(
+                        "{} is an administrator-modified vendor override",
+                        base.join(&service).display()
+                    ));
+                    continue;
+                }
+                VendorOverrideDisposition::Drifted => continue,
+                VendorOverrideDisposition::SourceAbsent(vendor) if has_facelock_rule => {
+                    blockers.push(format!(
+                        "{} is an administrator-modified vendor override: configured vendor source {} is absent",
+                        base.join(&service).display(),
+                        vendor.display()
+                    ));
+                    continue;
+                }
+                VendorOverrideDisposition::SourceAbsent(_) => continue,
+                VendorOverrideDisposition::NotFacelock if !name_is_candidate => continue,
+                VendorOverrideDisposition::NotFacelock if !has_facelock_rule => continue,
+                VendorOverrideDisposition::NotFacelock => {}
             }
             match remove_all_reference_is_owned(store.as_ref(), &service, &content) {
                 Ok(true) => services.push(service),
@@ -6988,11 +7758,15 @@ fn remove_all_services_with_store(
 }
 
 fn remove_all_services(dirs: &PamDirs) -> anyhow::Result<Vec<String>> {
-    remove_all_services_with_store(dirs, BackupStore::open_existing)
+    remove_all_services_with_store(dirs, BackupStore::open_existing, true)
+}
+
+fn remove_all_active_references(dirs: &PamDirs) -> anyhow::Result<Vec<String>> {
+    remove_all_services_with_store(dirs, BackupStore::open_existing, false)
 }
 
 fn remove_all_services_read_only(dirs: &PamDirs) -> anyhow::Result<Vec<String>> {
-    remove_all_services_with_store(dirs, BackupStore::open_existing_read_only)
+    remove_all_services_with_store(dirs, BackupStore::open_existing_read_only, true)
 }
 
 fn valid_remove_all_operation(operation: &str) -> bool {
@@ -7027,8 +7801,20 @@ fn valid_remove_all_target(target: &RemoveAllJournalTarget) -> bool {
 }
 
 fn valid_remove_all_journal(journal: &RemoveAllJournal) -> bool {
-    journal.version == REMOVE_ALL_VERSION
-        && valid_remove_all_operation(&journal.operation)
+    matches!(
+        journal.version,
+        REMOVE_ALL_LEGACY_VERSION | REMOVE_ALL_VERSION
+    ) && match journal.version {
+        REMOVE_ALL_VERSION => journal
+            .targets
+            .iter()
+            .all(|target| target.delete_override.is_some()),
+        REMOVE_ALL_LEGACY_VERSION => journal
+            .targets
+            .iter()
+            .all(|target| target.delete_override.is_none()),
+        _ => false,
+    } && valid_remove_all_operation(&journal.operation)
         && !journal.targets.is_empty()
         && journal.targets.len() <= MAX_REMOVE_ALL_TARGETS
         && journal.targets.iter().all(valid_remove_all_target)
@@ -7046,8 +7832,20 @@ fn valid_remove_all_journal(journal: &RemoveAllJournal) -> bool {
 }
 
 fn valid_remove_all_commit(commit: &RemoveAllCommit) -> bool {
-    commit.version == REMOVE_ALL_VERSION
-        && valid_remove_all_operation(&commit.operation)
+    matches!(
+        commit.version,
+        REMOVE_ALL_LEGACY_VERSION | REMOVE_ALL_VERSION
+    ) && match commit.version {
+        REMOVE_ALL_VERSION => commit
+            .targets
+            .iter()
+            .all(|target| target.delete_override.is_some()),
+        REMOVE_ALL_LEGACY_VERSION => commit
+            .targets
+            .iter()
+            .all(|target| target.delete_override.is_none()),
+        _ => false,
+    } && valid_remove_all_operation(&commit.operation)
         && valid_sha256(&commit.journal_sha256)
         && !commit.targets.is_empty()
         && commit.targets.len() <= MAX_REMOVE_ALL_TARGETS
@@ -7483,6 +8281,7 @@ fn committed_remove_all_targets(
                 service: target.service.clone(),
                 backup: target.backup.clone(),
                 installed,
+                delete_override: target.delete_override,
             })
         })
         .collect()
@@ -7496,14 +8295,78 @@ fn finish_committed_remove_all(
     commit_name: &str,
     commit_identity: &FileIdentity,
 ) -> std::io::Result<()> {
+    finish_committed_remove_all_with_hook(
+        store,
+        dirs,
+        journal,
+        commit,
+        commit_name,
+        commit_identity,
+        |_| Ok(()),
+    )
+}
+
+fn journal_vendor_service_matches(
+    store: &BackupStore,
+    dirs: &PamDirs,
+    target: &RemoveAllJournalTarget,
+) -> std::io::Result<bool> {
+    journal_vendor_service_matches_with_hook(store, dirs, target, || Ok(()))
+}
+
+fn journal_vendor_service_matches_with_hook(
+    store: &BackupStore,
+    dirs: &PamDirs,
+    target: &RemoveAllJournalTarget,
+    after_prepared: impl FnOnce() -> std::io::Result<()>,
+) -> std::io::Result<bool> {
+    let prepared = prepared_for_remove_all_target(store, target)?;
+    after_prepared()?;
+    let state_directory = open_directory_nofollow(&store.root)?;
+    let backup = open_regular_at(&state_directory, OsStr::new(&prepared.backup))?;
+    let original = read_open_bounded(&backup, MAX_BACKUP_BYTES)?;
+    let reopened_backup = identity_for_bytes(&backup.metadata()?, &original);
+    let expected_backup = prepared
+        .backup_identity
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("journaled backup identity is missing"))?;
+    if !identity_matches(expected_backup, &reopened_backup) {
+        return Err(std::io::Error::other(
+            "journaled backup changed before vendor validation",
+        ));
+    }
+    let without_line = with_line_removed(&original);
+    let Some(vendor) = resolve_current_vendor(dirs, &target.service)? else {
+        return Ok(false);
+    };
+    Ok(
+        exact_vendor_override_shape(&original, &target.original, &vendor)
+            && sha256_hex(&without_line) == target.installed_sha256,
+    )
+}
+
+fn finish_committed_remove_all_with_hook(
+    store: &BackupStore,
+    dirs: &PamDirs,
+    journal: Option<(&RemoveAllJournal, &str, &FileIdentity)>,
+    commit: &RemoveAllCommit,
+    commit_name: &str,
+    commit_identity: &FileIdentity,
+    mut after_boundary: impl FnMut(RemoveAllPoint) -> std::io::Result<()>,
+) -> std::io::Result<()> {
     for target in &commit.targets {
         let path = dirs.overrides().join(&target.service);
-        let (_, current) = read_regular_nofollow(&path)?;
-        if !identity_matches(&target.installed, &current) {
-            return Err(std::io::Error::other(format!(
-                "{} changed before remove-all cleanup",
-                target.service
-            )));
+        match read_regular_nofollow(&path) {
+            Ok((_, current)) if identity_matches(&target.installed, &current) => {}
+            Err(error)
+                if target.delete_override.unwrap_or(false)
+                    && error.kind() == std::io::ErrorKind::NotFound => {}
+            _ => {
+                return Err(std::io::Error::other(format!(
+                    "{} changed before remove-all cleanup",
+                    target.service
+                )));
+            }
         }
     }
     store.recover_publications(dirs)?;
@@ -7520,6 +8383,63 @@ fn finish_committed_remove_all(
                 "remove-all publication evidence could not be finalized",
             ));
         }
+    }
+
+    for (index, target) in commit.targets.iter().enumerate() {
+        if !target.delete_override.unwrap_or(false) {
+            continue;
+        }
+        after_boundary(RemoveAllPoint::BeforeOverrideDelete(index))?;
+        if journal.is_none() {
+            let override_directory = open_directory_nofollow(dirs.overrides())?;
+            let canonical_exists = entry_exists_at(&override_directory, &target.service)?;
+            let quarantine_exists =
+                entry_exists_at(&override_directory, &vendor_retire_name(&target.backup))?;
+            if !canonical_exists && !quarantine_exists {
+                continue;
+            }
+            return Err(std::io::Error::other(format!(
+                "{} retains vendor-retirement state without its journal",
+                target.service
+            )));
+        }
+        let planned = journal
+            .as_ref()
+            .and_then(|(journal, _, _)| {
+                journal
+                    .targets
+                    .iter()
+                    .find(|planned| planned.service == target.service)
+            })
+            .ok_or_else(|| {
+                std::io::Error::other(format!("{} has no journaled vendor source", target.service))
+            })?;
+        if !journal_vendor_service_matches(store, dirs, planned)? {
+            return Err(std::io::Error::other(format!(
+                "{} no longer matches its journaled vendor service",
+                target.service
+            )));
+        }
+        retire_vendor_override_with_hook(
+            dirs,
+            &target.service,
+            &target.backup,
+            &target.installed,
+            |point| match point {
+                VendorRetirePoint::Quarantined => {
+                    after_boundary(RemoveAllPoint::OverrideQuarantined(index))
+                }
+                VendorRetirePoint::BeforeFinalValidation => {
+                    after_boundary(RemoveAllPoint::BeforeOverrideFinalValidation(index))
+                }
+                VendorRetirePoint::Restored => {
+                    after_boundary(RemoveAllPoint::OverrideRestored(index))
+                }
+                VendorRetirePoint::Unlinked => {
+                    after_boundary(RemoveAllPoint::AfterOverrideDelete(index))
+                }
+            },
+        )?;
     }
 
     for target in &commit.targets {
@@ -7545,8 +8465,10 @@ fn finish_committed_remove_all(
 
     if let Some((_, name, identity)) = journal {
         unlink_remove_all_state(store, name, identity)?;
+        after_boundary(RemoveAllPoint::JournalUnlinked)?;
     }
-    unlink_remove_all_state(store, commit_name, commit_identity)
+    unlink_remove_all_state(store, commit_name, commit_identity)?;
+    after_boundary(RemoveAllPoint::CommitUnlinked)
 }
 
 #[derive(Debug)]
@@ -7649,6 +8571,7 @@ fn load_remove_all_state(store: &BackupStore) -> std::io::Result<LoadedRemoveAll
                     committed.service == planned.service
                         && committed.backup == planned.backup
                         && committed.installed.sha256 == planned.installed_sha256
+                        && committed.delete_override == planned.delete_override
                 },
             );
         if !corresponding {
@@ -7757,11 +8680,15 @@ fn remove_all_in_with_report_hook(
     let targets = plan_writes(dirs, &write)?;
     let mut planned = Vec::with_capacity(targets.len());
     for target in targets {
-        let Plan::Rewrite { content } = &target.plan else {
-            anyhow::bail!(
-                "remove-all target {} no longer needs a rewrite",
-                target.service
-            );
+        let (content, delete_override) = match &target.plan {
+            Plan::Rewrite { content } => (content, false),
+            Plan::DeleteOverride { content } => (content, true),
+            _ => {
+                anyhow::bail!(
+                    "remove-all target {} no longer needs a rewrite",
+                    target.service
+                );
+            }
         };
         let expected = target.identity.clone().ok_or_else(|| {
             anyhow::anyhow!(
@@ -7772,16 +8699,17 @@ fn remove_all_in_with_report_hook(
         let installed = with_line_removed(content);
         let prepared = transaction.plan(&target.service, content, &installed)?;
         transaction.persist(&prepared, content)?;
-        planned.push((target, installed, prepared, expected));
+        planned.push((target, installed, prepared, expected, delete_override));
     }
     let journal_targets = planned
         .iter()
         .map(
-            |(target, installed, prepared, expected)| RemoveAllJournalTarget {
+            |(target, installed, prepared, expected, delete_override)| RemoveAllJournalTarget {
                 service: target.service.clone(),
                 backup: prepared.backup.clone(),
                 original: expected.clone(),
                 installed_sha256: sha256_hex(installed),
+                delete_override: Some(*delete_override),
             },
         )
         .collect();
@@ -7792,7 +8720,7 @@ fn remove_all_in_with_report_hook(
     }
 
     const HELD: &str = "remove-all publication retained for batch commit";
-    for (index, (target, installed, prepared, expected)) in planned.iter().enumerate() {
+    for (index, (target, installed, prepared, expected, _)) in planned.iter().enumerate() {
         if let Err(error) = hook.borrow_mut()(RemoveAllPoint::BeforeMutation(index)) {
             if error.kind() == ErrorKind::Interrupted {
                 return Err(error.into());
@@ -7817,9 +8745,15 @@ fn remove_all_in_with_report_hook(
                 match hook.borrow_mut()(RemoveAllPoint::AfterMutation(index)) {
                     Ok(()) => Err(Error::new(ErrorKind::Interrupted, HELD)),
                     Err(error) => {
-                        let kind = error.kind();
                         *user_error.borrow_mut() = Some(error);
-                        Err(Error::new(kind, "remove-all hook stopped publication"))
+                        // Publication has already exchanged the two complete
+                        // inodes. Keep the per-file intent and binding until
+                        // the batch rollback consumes them, regardless of the
+                        // caller error's original kind.
+                        Err(Error::new(
+                            ErrorKind::Interrupted,
+                            "remove-all hook stopped publication",
+                        ))
                     }
                 }
             },
@@ -7854,7 +8788,7 @@ fn remove_all_in_with_report_hook(
         }
     }
 
-    if let Err(error) = remove_all_services(dirs).and_then(|remaining| {
+    if let Err(error) = remove_all_active_references(dirs).and_then(|remaining| {
         if remaining.is_empty() {
             Ok(())
         } else {
@@ -7896,24 +8830,29 @@ fn remove_all_in_with_report_hook(
         }
     };
     hook.borrow_mut()(RemoveAllPoint::CommitMarked)?;
-    finish_committed_remove_all(
+    finish_committed_remove_all_with_hook(
         &store,
         dirs,
         Some((&journal, &journal_name, &journal_identity)),
         &commit,
         &commit_name,
         &commit_identity,
+        |point| hook.borrow_mut()(point),
     )?;
     let reports = planned
         .iter()
-        .map(|(target, _, _, _)| ServiceReport {
+        .map(|(target, _, _, _, _)| ServiceReport {
             service: target.service.clone(),
             path: Some(target.reported_path()),
             backup: request
                 .keep_backup
                 .then(|| reported_backup(dirs, target))
                 .flatten(),
-            shadows: target.shadows_string(),
+            shadows: if matches!(target.plan, Plan::DeleteOverride { .. }) {
+                None
+            } else {
+                target.shadows_string()
+            },
             outcome: Outcome::Removed,
         })
         .collect::<Vec<_>>();
@@ -13083,6 +14022,1481 @@ mod tests {
         );
     }
 
+    #[test]
+    fn remove_deletes_an_unchanged_facelock_created_vendor_override() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        let vendor_before = snapshot(&vendor);
+
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        assert!(etc.join("polkit-1").exists());
+
+        assert_eq!(write_in(&dirs, &remove(&["polkit-1"])).unwrap(), WRITE_OK);
+        assert!(
+            !etc.join("polkit-1").exists(),
+            "removing the line must also retire Facelock's unchanged local copy"
+        );
+        assert_eq!(snapshot(&vendor), vendor_before);
+    }
+
+    #[test]
+    fn vendor_override_header_parser_requires_the_exact_bounded_shape() {
+        let vendor = Path::new("/usr/lib/pam.d/polkit-1");
+        let payload = b"#%PAM-1.0\nauth required pam_unix.so\n";
+        let valid = [
+            b"# Copied from /usr/lib/pam.d/polkit-1 by facelock 0.1.4 on 2026-08-20.\n".as_slice(),
+            VENDOR_OVERRIDE_HEADER_SUFFIX,
+            payload,
+        ]
+        .concat();
+        assert_eq!(
+            vendor_override_payload(&valid, vendor),
+            Some(payload.as_slice())
+        );
+
+        let valid_text = String::from_utf8(valid).unwrap();
+        for invalid in [
+            valid_text.replacen("/usr/lib/pam.d/polkit-1", "/tmp/polkit-1", 1),
+            valid_text.replacen("2026-08-20", "2026/08/20", 1),
+            valid_text.replacen("facelock 0.1.4", "facelock 0.1/4", 1),
+            valid_text.replacen("will not track", "might not track", 1),
+        ] {
+            assert_eq!(vendor_override_payload(invalid.as_bytes(), vendor), None);
+        }
+    }
+
+    #[test]
+    fn remove_all_deletes_an_unchanged_facelock_created_vendor_override() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        let vendor_before = snapshot(&vendor);
+
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);
+
+        assert!(
+            !etc.join("polkit-1").exists(),
+            "package-safe cleanup must use the same vendor override retirement"
+        );
+        assert_eq!(snapshot(&vendor), vendor_before);
+    }
+
+    #[test]
+    fn remove_all_finds_a_writer_accepted_nonconventional_vendor_override() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join(".custom"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+
+        assert_eq!(write_in(&dirs, &add(&[".custom"])).unwrap(), WRITE_OK);
+        assert!(etc.join(".custom").exists());
+
+        assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);
+        assert!(!etc.join(".custom").exists());
+        assert_eq!(
+            fs::read_to_string(vendor.join(".custom")).unwrap(),
+            POLKIT_BEFORE
+        );
+    }
+
+    #[test]
+    fn remove_all_finishes_deleting_an_exact_override_whose_line_is_already_absent() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let path = etc.join("polkit-1");
+        let intermediate = with_line_removed(&fs::read(&path).unwrap());
+        fs::write(&path, intermediate).unwrap();
+
+        assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);
+        assert!(
+            !path.exists(),
+            "batch recovery must discover the exact no-line intermediate"
+        );
+    }
+
+    #[test]
+    fn remove_all_preserves_a_content_drifted_vendor_override_as_a_blocker() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let override_path = etc.join("polkit-1");
+        let mut drifted = fs::read(&override_path).unwrap();
+        drifted.extend_from_slice(b"# administrator customization\n");
+        fs::write(&override_path, drifted).unwrap();
+        let before = snapshot(&etc);
+
+        let error = remove_all(&dirs).unwrap_err().to_string();
+
+        assert!(error.contains("administrator"), "got: {error}");
+        assert_eq!(snapshot(&etc), before, "preflight must preserve the file");
+    }
+
+    #[test]
+    fn remove_all_preserves_a_metadata_drifted_vendor_override_as_a_blocker() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let override_path = etc.join("polkit-1");
+        fs::set_permissions(&override_path, fs::Permissions::from_mode(0o600)).unwrap();
+        let before = snapshot(&etc);
+
+        let error = remove_all(&dirs).unwrap_err().to_string();
+
+        assert!(error.contains("administrator"), "got: {error}");
+        assert_eq!(snapshot(&etc), before, "preflight must preserve the file");
+        assert_eq!(fs::metadata(override_path).unwrap().mode() & 0o7777, 0o600);
+    }
+
+    #[test]
+    fn remove_all_vendor_deletion_is_restartable_after_each_committed_unlink() {
+        let (_root, etc, vendor) = pair();
+        for service in ["alpha", "beta"] {
+            fs::write(vendor.join(service), POLKIT_BEFORE).unwrap();
+        }
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["alpha", "beta"])).unwrap(), WRITE_OK);
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+
+        let error = remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::AfterOverrideDelete(0) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "crash after committed vendor override unlink",
+                ));
+            }
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("crash after committed"));
+        assert_eq!(
+            [etc.join("alpha").exists(), etc.join("beta").exists()]
+                .into_iter()
+                .filter(|exists| *exists)
+                .count(),
+            1
+        );
+
+        recover_remove_all_in(&dirs).unwrap();
+
+        assert!(!etc.join("alpha").exists());
+        assert!(!etc.join("beta").exists());
+        assert_eq!(fs::read_dir(dirs.backup_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn remove_all_vendor_deletion_recovers_both_batch_state_unlink_boundaries() {
+        for crash_at in [
+            RemoveAllPoint::JournalUnlinked,
+            RemoveAllPoint::CommitUnlinked,
+        ] {
+            let (_root, etc, vendor) = pair();
+            fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+            let dirs = both(&etc, &vendor);
+            assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+            let request = PamRequest {
+                action: PamAction::Remove,
+                all: true,
+                no_confirm: true,
+                ..PamRequest::default()
+            };
+
+            let error = remove_all_in_with_hook(&dirs, &request, |point| {
+                if point == crash_at {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "crash at remove-all state unlink boundary",
+                    ));
+                }
+                Ok(())
+            })
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("state unlink"),
+                "{crash_at:?}: {error}"
+            );
+            assert!(!etc.join("polkit-1").exists(), "{crash_at:?}");
+            assert!(!fs::read_dir(&etc).unwrap().flatten().any(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".facelock-vendor-retire-")
+            }));
+
+            let store = BackupStore::open_existing(dirs.backup_dir())
+                .unwrap()
+                .unwrap();
+            let (journal, commit) = load_remove_all_state(&store).unwrap();
+            match crash_at {
+                RemoveAllPoint::JournalUnlinked => {
+                    assert!(journal.is_none());
+                    assert!(commit.is_some());
+                }
+                RemoveAllPoint::CommitUnlinked => {
+                    assert!(journal.is_none());
+                    assert!(commit.is_none());
+                }
+                _ => unreachable!(),
+            }
+
+            recover_remove_all_in(&dirs).unwrap();
+            assert_eq!(fs::read_dir(dirs.backup_dir()).unwrap().count(), 0);
+        }
+    }
+
+    #[test]
+    fn remove_all_rolls_back_vendor_overrides_before_the_commit_marker() {
+        let (_root, etc, vendor) = pair();
+        for service in ["alpha", "beta"] {
+            fs::write(vendor.join(service), POLKIT_BEFORE).unwrap();
+        }
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["alpha", "beta"])).unwrap(), WRITE_OK);
+        let before = snapshot(&etc);
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+
+        let error = remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::AfterMutation(0) {
+                return Err(std::io::Error::other("later remove-all mutation failed"));
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("later remove-all mutation failed")
+        );
+        assert_eq!(snapshot(&etc), before);
+        assert_eq!(fs::read_dir(dirs.backup_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn named_vendor_override_retirement_preserves_a_canonical_final_gap_replacement() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let request = remove(&["polkit-1"]);
+        let write = WriteRequest {
+            action: WriteAction::Remove,
+            request: &request,
+            remedy: "--allow-sensitive",
+        };
+        let target = plan_writes(&dirs, &write).unwrap().remove(0);
+        assert!(
+            matches!(target.plan, Plan::DeleteOverride { .. }),
+            "{target:?}"
+        );
+        let path = etc.join("polkit-1");
+        let administrator = b"# replacement during vendor retirement\n";
+
+        let outcome = apply_remove_with_vendor_hook(&target, &Sink::silent(), &dirs, |point| {
+            if point == VendorRetirePoint::BeforeFinalValidation {
+                fs::write(&path, administrator)?;
+            }
+            Ok(())
+        });
+
+        assert!(matches!(outcome, Outcome::Failed(_)), "got: {outcome:?}");
+        assert_eq!(fs::read(&path).unwrap(), administrator);
+        assert!(
+            fs::read_dir(&etc).unwrap().flatten().any(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".facelock-vendor-retire-")),
+            "the authenticated displaced override remains classified by durable evidence"
+        );
+        assert!(fs::read_dir(dirs.backup_dir()).unwrap().count() > 0);
+        let store = BackupStore::open_existing(dirs.backup_dir())
+            .unwrap()
+            .unwrap();
+        store.recover(&dirs).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), administrator);
+        assert!(fs::read_dir(&etc).unwrap().flatten().any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".facelock-vendor-retire-")
+        }));
+    }
+
+    #[test]
+    fn named_vendor_retirement_retains_evidence_when_the_root_cannot_be_reopened() {
+        let root = tempfile::tempdir().unwrap();
+        let etc = root.path().join("etc-pam.d");
+        let vendor = root.path().join("vendor-pam.d");
+        let state = root.path().join("state");
+        fs::create_dir(&etc).unwrap();
+        fs::create_dir(&vendor).unwrap();
+        let dirs = PamDirs {
+            dirs: vec![etc.clone(), vendor.clone()],
+            backup_dir: state.clone(),
+        };
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+
+        let request = remove(&["polkit-1"]);
+        let write = WriteRequest {
+            action: WriteAction::Remove,
+            request: &request,
+            remedy: "--allow-sensitive",
+        };
+        let target = plan_writes(&dirs, &write).unwrap().remove(0);
+        let Plan::DeleteOverride { content } = &target.plan else {
+            panic!("expected vendor override deletion plan: {target:?}");
+        };
+        let installed = with_line_removed(content);
+        let expected = target.identity.as_ref().unwrap();
+        let store = BackupStore::open(&state).unwrap();
+        let transaction = store.transaction(&dirs).unwrap();
+        let mutation = transaction
+            .plan_mutation(&target.service, content, &installed)
+            .unwrap();
+        let operation = mutation.operation.clone();
+        let held_root = root.path().join("held-etc-pam.d");
+
+        let error = transaction
+            .remove_pam_with_intent_and_published_hook(
+                &mutation,
+                &target.path,
+                expected,
+                &installed,
+                |installed_identity| {
+                    fs::rename(&etc, &held_root)?;
+                    fs::write(&etc, b"not a directory\n")?;
+                    retire_vendor_override_with_hook(
+                        &dirs,
+                        &target.service,
+                        &operation,
+                        installed_identity,
+                        |_| Ok(()),
+                    )
+                },
+            )
+            .unwrap_err();
+
+        fs::remove_file(&etc).unwrap();
+        fs::rename(&held_root, &etc).unwrap();
+        assert!(is_ambiguous_publication(&error), "got: {error}");
+        assert!(
+            state
+                .join(intent_name(IntentRole::PamRemove, &operation))
+                .exists()
+        );
+        assert!(
+            state
+                .join(publication_name(PublicationRole::PamRemove, &operation))
+                .exists()
+        );
+    }
+
+    #[test]
+    fn named_vendor_override_retirement_restores_when_vendor_drifts_in_the_final_gap() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let request = remove(&["polkit-1"]);
+        let write = WriteRequest {
+            action: WriteAction::Remove,
+            request: &request,
+            remedy: "--allow-sensitive",
+        };
+        let target = plan_writes(&dirs, &write).unwrap().remove(0);
+        let path = etc.join("polkit-1");
+
+        let outcome = apply_remove_with_vendor_hook(&target, &Sink::silent(), &dirs, |point| {
+            if point == VendorRetirePoint::BeforeFinalValidation {
+                fs::write(
+                    vendor.join("polkit-1"),
+                    b"# package update\nauth required pam_unix.so\n",
+                )?;
+            }
+            Ok(())
+        });
+
+        assert!(matches!(outcome, Outcome::Failed(_)), "got: {outcome:?}");
+        assert!(
+            path.exists(),
+            "the local override is restored without overwrite"
+        );
+        assert!(!PamDocument::new(&fs::read(path).unwrap()).has_facelock_rule());
+    }
+
+    #[test]
+    fn named_vendor_override_retirement_recovers_every_quarantine_boundary() {
+        for crash_at in [
+            VendorRetirePoint::Quarantined,
+            VendorRetirePoint::BeforeFinalValidation,
+            VendorRetirePoint::Unlinked,
+        ] {
+            let (_root, etc, vendor) = pair();
+            fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+            let dirs = both(&etc, &vendor);
+            assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+            let request = remove(&["polkit-1"]);
+            let write = WriteRequest {
+                action: WriteAction::Remove,
+                request: &request,
+                remedy: "--allow-sensitive",
+            };
+            let target = plan_writes(&dirs, &write).unwrap().remove(0);
+
+            let outcome = apply_remove_with_vendor_hook(&target, &Sink::silent(), &dirs, |point| {
+                if point == crash_at {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "crash at named vendor-retirement boundary",
+                    ));
+                }
+                Ok(())
+            });
+            assert!(matches!(outcome, Outcome::Failed(_)), "{crash_at:?}");
+
+            let store = BackupStore::open_existing(dirs.backup_dir())
+                .unwrap()
+                .unwrap();
+            store
+                .recover(&dirs)
+                .unwrap_or_else(|error| panic!("{crash_at:?}: {error}"));
+
+            assert!(!etc.join("polkit-1").exists(), "{crash_at:?}");
+            assert_eq!(
+                fs::read_dir(dirs.backup_dir()).unwrap().count(),
+                0,
+                "{crash_at:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn vendor_quarantine_sync_failure_retains_evidence_and_recovers() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+
+        install_rename_noreplace_sync_test_hook(|source, destination| {
+            if source == "polkit-1" && destination.starts_with(".facelock-vendor-retire-") {
+                return Err(std::io::Error::other(
+                    "injected quarantine directory sync failure",
+                ));
+            }
+            Ok(())
+        });
+        let result = write_in(&dirs, &remove(&["polkit-1"]));
+        clear_rename_noreplace_sync_test_hook();
+
+        assert_eq!(result.unwrap(), WRITE_FAILED);
+        assert!(!etc.join("polkit-1").exists());
+        assert!(fs::read_dir(&etc).unwrap().flatten().any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".facelock-vendor-retire-")
+        }));
+        assert!(fs::read_dir(dirs.backup_dir()).unwrap().count() > 0);
+
+        BackupStore::open_existing(dirs.backup_dir())
+            .unwrap()
+            .unwrap()
+            .recover(&dirs)
+            .unwrap();
+        assert!(!etc.join("polkit-1").exists());
+        assert!(!fs::read_dir(&etc).unwrap().flatten().any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".facelock-vendor-retire-")
+        }));
+        assert_eq!(fs::read_dir(dirs.backup_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn vendor_restore_sync_failure_retains_evidence_and_recovers() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let request = remove(&["polkit-1"]);
+        let write = WriteRequest {
+            action: WriteAction::Remove,
+            request: &request,
+            remedy: "--allow-sensitive",
+        };
+        let target = plan_writes(&dirs, &write).unwrap().remove(0);
+
+        install_rename_noreplace_sync_test_hook(|source, destination| {
+            if source.starts_with(".facelock-vendor-retire-") && destination == "polkit-1" {
+                return Err(std::io::Error::other(
+                    "injected restore directory sync failure",
+                ));
+            }
+            Ok(())
+        });
+        let outcome = apply_remove_with_vendor_hook(&target, &Sink::silent(), &dirs, |point| {
+            if point == VendorRetirePoint::BeforeFinalValidation {
+                fs::write(
+                    vendor.join("polkit-1"),
+                    b"# package update\nauth required pam_unix.so\n",
+                )?;
+            }
+            Ok(())
+        });
+        clear_rename_noreplace_sync_test_hook();
+
+        assert!(matches!(outcome, Outcome::Failed(_)), "got: {outcome:?}");
+        assert!(etc.join("polkit-1").exists());
+        assert!(!fs::read_dir(&etc).unwrap().flatten().any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".facelock-vendor-retire-")
+        }));
+        assert!(fs::read_dir(dirs.backup_dir()).unwrap().count() > 0);
+
+        BackupStore::open_existing(dirs.backup_dir())
+            .unwrap()
+            .unwrap()
+            .recover(&dirs)
+            .unwrap();
+        assert!(etc.join("polkit-1").exists());
+        assert_eq!(fs::read_dir(dirs.backup_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn named_vendor_retirement_holds_the_state_lock_through_quarantine_cleanup() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let request = remove(&["polkit-1"]);
+        let write = WriteRequest {
+            action: WriteAction::Remove,
+            request: &request,
+            remedy: "--allow-sensitive",
+        };
+        let target = plan_writes(&dirs, &write).unwrap().remove(0);
+        let (attempted_tx, attempted_rx) = mpsc::channel();
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let worker = RefCell::new(None);
+
+        let outcome = apply_remove_with_vendor_hook(&target, &Sink::silent(), &dirs, |point| {
+            if point == VendorRetirePoint::BeforeFinalValidation {
+                let competing_dirs = dirs.clone();
+                let attempted_tx = attempted_tx.clone();
+                let acquired_tx = acquired_tx.clone();
+                *worker.borrow_mut() = Some(std::thread::spawn(move || {
+                    let store = BackupStore::open(competing_dirs.backup_dir()).unwrap();
+                    attempted_tx.send(()).unwrap();
+                    let transaction = store.transaction(&competing_dirs).unwrap();
+                    acquired_tx.send(()).unwrap();
+                    drop(transaction);
+                }));
+                attempted_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+                assert!(
+                    acquired_rx
+                        .recv_timeout(Duration::from_millis(100))
+                        .is_err(),
+                    "competing recovery acquired the lock during vendor quarantine cleanup"
+                );
+            }
+            Ok(())
+        });
+
+        assert_eq!(outcome, Outcome::Removed);
+        acquired_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        worker.into_inner().unwrap().join().unwrap();
+    }
+
+    #[test]
+    fn named_vendor_retirement_recovers_after_the_restore_boundary() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let request = remove(&["polkit-1"]);
+        let write = WriteRequest {
+            action: WriteAction::Remove,
+            request: &request,
+            remedy: "--allow-sensitive",
+        };
+        let target = plan_writes(&dirs, &write).unwrap().remove(0);
+
+        let outcome =
+            apply_remove_with_vendor_hook(&target, &Sink::silent(), &dirs, |point| match point {
+                VendorRetirePoint::BeforeFinalValidation => fs::write(
+                    vendor.join("polkit-1"),
+                    b"# package update\nauth required pam_unix.so\n",
+                ),
+                VendorRetirePoint::Restored => Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "crash after vendor-override restore",
+                )),
+                _ => Ok(()),
+            });
+        assert!(matches!(outcome, Outcome::Failed(_)));
+        let restored = fs::read(etc.join("polkit-1")).unwrap();
+        assert!(!PamDocument::new(&restored).has_facelock_rule());
+
+        let store = BackupStore::open_existing(dirs.backup_dir())
+            .unwrap()
+            .unwrap();
+        store.recover(&dirs).unwrap();
+        assert_eq!(fs::read(etc.join("polkit-1")).unwrap(), restored);
+        assert_eq!(fs::read_dir(dirs.backup_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn batch_vendor_retirement_recovers_after_the_restore_boundary() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+
+        let error = remove_all_in_with_hook(&dirs, &request, |point| match point {
+            RemoveAllPoint::BeforeOverrideFinalValidation(0) => fs::write(
+                vendor.join("polkit-1"),
+                b"# package update\nauth required pam_unix.so\n",
+            ),
+            RemoveAllPoint::OverrideRestored(0) => Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "crash after batch vendor-override restore",
+            )),
+            _ => Ok(()),
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("crash after batch"));
+        assert!(etc.join("polkit-1").exists());
+        assert!(fs::read_dir(dirs.backup_dir()).unwrap().count() > 0);
+
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        recover_remove_all_in(&dirs).unwrap();
+        assert!(!etc.join("polkit-1").exists());
+        assert_eq!(fs::read_dir(dirs.backup_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn remove_all_rechecks_a_committed_vendor_override_before_unlink() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let path = etc.join("polkit-1");
+        let holding = etc.join("facelock-committed");
+        let administrator = b"# administrator replacement\n";
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+
+        let error = remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::BeforeOverrideDelete(0) {
+                fs::rename(&path, &holding)?;
+                fs::write(&path, administrator)?;
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("changed"), "got: {error}");
+        assert_eq!(fs::read(&path).unwrap(), administrator);
+        assert!(holding.exists());
+        assert!(
+            fs::read_dir(dirs.backup_dir()).unwrap().count() > 0,
+            "the durable commit remains for explicit recovery"
+        );
+    }
+
+    #[test]
+    fn remove_all_vendor_retirement_preserves_a_canonical_final_gap_replacement() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let path = etc.join("polkit-1");
+        let administrator = b"# replacement during batch retirement\n";
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+
+        let error = remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::BeforeOverrideFinalValidation(0) {
+                fs::write(&path, administrator)?;
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("ambiguous"), "got: {error}");
+        assert_eq!(fs::read(&path).unwrap(), administrator);
+        assert!(fs::read_dir(dirs.backup_dir()).unwrap().count() > 0);
+        assert!(recover_remove_all_in(&dirs).is_err());
+        assert_eq!(fs::read(&path).unwrap(), administrator);
+        assert!(fs::read_dir(&etc).unwrap().flatten().any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".facelock-vendor-retire-")
+        }));
+    }
+
+    #[test]
+    fn remove_all_vendor_retirement_restores_when_vendor_drifts_in_the_final_gap() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+
+        let error = remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::BeforeOverrideFinalValidation(0) {
+                fs::write(
+                    vendor.join("polkit-1"),
+                    b"# package update\nauth required pam_unix.so\n",
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("vendor"), "got: {error}");
+        let restored = fs::read(etc.join("polkit-1")).unwrap();
+        assert!(!PamDocument::new(&restored).has_facelock_rule());
+        assert!(fs::read_dir(dirs.backup_dir()).unwrap().count() > 0);
+    }
+
+    #[test]
+    fn remove_all_vendor_retirement_recovers_every_quarantine_boundary() {
+        for crash_at in [
+            RemoveAllPoint::OverrideQuarantined(0),
+            RemoveAllPoint::BeforeOverrideFinalValidation(0),
+            RemoveAllPoint::AfterOverrideDelete(0),
+        ] {
+            let (_root, etc, vendor) = pair();
+            fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+            let dirs = both(&etc, &vendor);
+            assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+            let request = PamRequest {
+                action: PamAction::Remove,
+                all: true,
+                no_confirm: true,
+                ..PamRequest::default()
+            };
+
+            let error = remove_all_in_with_hook(&dirs, &request, |point| {
+                if point == crash_at {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "crash at batch vendor-retirement boundary",
+                    ));
+                }
+                Ok(())
+            })
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("crash at batch"),
+                "{crash_at:?}: {error}"
+            );
+
+            recover_remove_all_in(&dirs).unwrap_or_else(|error| panic!("{crash_at:?}: {error}"));
+
+            assert!(!etc.join("polkit-1").exists(), "{crash_at:?}");
+            assert_eq!(
+                fs::read_dir(dirs.backup_dir()).unwrap().count(),
+                0,
+                "{crash_at:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn remove_all_does_not_substitute_a_different_later_root_for_the_vendor_source() {
+        let root = tempfile::tempdir().unwrap();
+        let etc = root.path().join("etc");
+        let vendor = root.path().join("vendor");
+        let detection_only = root.path().join("detection-only");
+        for directory in [&etc, &vendor, &detection_only] {
+            fs::create_dir(directory).unwrap();
+        }
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = PamDirs {
+            dirs: vec![etc.clone(), vendor.clone(), detection_only.clone()],
+            backup_dir: root.path().join("state"),
+        };
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+
+        let error = remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::BeforeOverrideDelete(0) {
+                fs::remove_file(vendor.join("polkit-1"))?;
+                fs::write(detection_only.join("polkit-1"), POLKIT_BEFORE)?;
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("vendor"), "got: {error}");
+        assert!(etc.join("polkit-1").exists());
+        assert!(detection_only.join("polkit-1").exists());
+    }
+
+    #[test]
+    fn named_vendor_retirement_rejects_a_new_higher_priority_vendor_entry() {
+        let root = tempfile::tempdir().unwrap();
+        let etc = root.path().join("etc");
+        let higher = root.path().join("higher");
+        let lower = root.path().join("lower");
+        for directory in [&etc, &higher, &lower] {
+            fs::create_dir(directory).unwrap();
+        }
+        fs::write(lower.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = PamDirs {
+            dirs: vec![etc.clone(), higher.clone(), lower.clone()],
+            backup_dir: root.path().join("state"),
+        };
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let request = remove(&["polkit-1"]);
+        let write = WriteRequest {
+            action: WriteAction::Remove,
+            request: &request,
+            remedy: "--allow-sensitive",
+        };
+        let target = plan_writes(&dirs, &write).unwrap().remove(0);
+
+        let outcome = apply_remove_with_vendor_hook(&target, &Sink::silent(), &dirs, |point| {
+            if point == VendorRetirePoint::BeforeFinalValidation {
+                fs::write(higher.join("polkit-1"), POLKIT_BEFORE)?;
+            }
+            Ok(())
+        });
+
+        assert!(matches!(outcome, Outcome::Failed(_)), "got: {outcome:?}");
+        assert!(etc.join("polkit-1").exists());
+        assert!(higher.join("polkit-1").exists());
+    }
+
+    #[test]
+    fn batch_vendor_validation_stops_at_a_new_higher_priority_entry() {
+        let root = tempfile::tempdir().unwrap();
+        let etc = root.path().join("etc");
+        let higher = root.path().join("higher");
+        let lower = root.path().join("lower");
+        for directory in [&etc, &higher, &lower] {
+            fs::create_dir(directory).unwrap();
+        }
+        fs::write(lower.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = PamDirs {
+            dirs: vec![etc.clone(), higher.clone(), lower.clone()],
+            backup_dir: root.path().join("state"),
+        };
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+        remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::CommitMarked {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "inspect committed batch",
+                ));
+            }
+            Ok(())
+        })
+        .unwrap_err();
+        let store = BackupStore::open_existing(dirs.backup_dir())
+            .unwrap()
+            .unwrap();
+        let (journal, _) = load_remove_all_state(&store).unwrap();
+        let journal = journal.unwrap();
+        fs::write(higher.join("polkit-1"), POLKIT_BEFORE).unwrap();
+
+        assert!(!journal_vendor_service_matches(&store, &dirs, &journal.value.targets[0]).unwrap());
+    }
+
+    #[test]
+    fn batch_vendor_validation_rejects_backup_substitution_after_prepared_validation() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+        remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::CommitMarked {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "inspect committed batch",
+                ));
+            }
+            Ok(())
+        })
+        .unwrap_err();
+        let store = BackupStore::open_existing(dirs.backup_dir())
+            .unwrap()
+            .unwrap();
+        let (journal, _) = load_remove_all_state(&store).unwrap();
+        let journal = journal.unwrap();
+        let target = &journal.value.targets[0];
+        let backup_path = dirs.backup_dir().join(&target.backup);
+        let displaced = dirs.backup_dir().join("held-backup");
+
+        let error = journal_vendor_service_matches_with_hook(&store, &dirs, target, || {
+            let bytes = fs::read(&backup_path)?;
+            fs::rename(&backup_path, &displaced)?;
+            fs::write(&backup_path, bytes)?;
+            fs::set_permissions(&backup_path, fs::Permissions::from_mode(0o600))?;
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("backup changed"), "got: {error}");
+        assert!(backup_path.exists());
+        assert!(displaced.exists());
+    }
+
+    #[test]
+    fn batch_vendor_validation_rejects_unemitted_rule_shapes_and_hash_mismatch() {
+        for case in ["duplicate", "custom", "installed-hash"] {
+            let (_root, etc, vendor) = pair();
+            fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+            let dirs = both(&etc, &vendor);
+            assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+            let exact = fs::read(etc.join("polkit-1")).unwrap();
+            let marker = exact
+                .windows(PAM_LINE.len())
+                .position(|window| window == PAM_LINE.as_bytes())
+                .unwrap();
+            let original = match case {
+                "duplicate" => {
+                    let mut bytes = exact.clone();
+                    bytes.splice(marker..marker, format!("{PAM_LINE}\n").bytes());
+                    bytes
+                }
+                "custom" => {
+                    let mut bytes = exact.clone();
+                    bytes.splice(
+                        marker..marker + PAM_LINE.len(),
+                        b"auth required pam_facelock.so debug".iter().copied(),
+                    );
+                    bytes
+                }
+                "installed-hash" => exact.clone(),
+                _ => unreachable!(),
+            };
+            let installed = with_line_removed(&original);
+            let store = BackupStore::open(dirs.backup_dir()).unwrap();
+            let transaction = store.transaction(&dirs).unwrap();
+            let prepared = transaction.plan("polkit-1", &original, &installed).unwrap();
+            transaction.persist(&prepared, &original).unwrap();
+            let vendor_metadata = fs::metadata(vendor.join("polkit-1")).unwrap();
+            let target = RemoveAllJournalTarget {
+                service: "polkit-1".to_owned(),
+                backup: prepared.backup.clone(),
+                original: FileIdentity {
+                    device: 1,
+                    inode: 2,
+                    links: 1,
+                    sha256: sha256_hex(&original),
+                    mode: vendor_metadata.mode(),
+                    uid: vendor_metadata.uid(),
+                    gid: vendor_metadata.gid(),
+                },
+                installed_sha256: if case == "installed-hash" {
+                    sha256_hex(b"different installed bytes")
+                } else {
+                    sha256_hex(&installed)
+                },
+                delete_override: Some(true),
+            };
+            if case == "installed-hash" {
+                // The prepared record is otherwise strict and internally
+                // consistent with the forged journal value.
+                let record_path = dirs.backup_dir().join(format!("{}.json", prepared.backup));
+                let mut record: ProvenanceRecord =
+                    serde_json::from_slice(&fs::read(&record_path).unwrap()).unwrap();
+                record.installed_sha256 = target.installed_sha256.clone();
+                let encoded = serde_json::to_vec_pretty(&record).unwrap();
+                fs::write(&record_path, encoded).unwrap();
+                fs::set_permissions(&record_path, fs::Permissions::from_mode(0o600)).unwrap();
+            }
+
+            assert!(
+                !journal_vendor_service_matches(&store, &dirs, &target).unwrap_or(false),
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn remove_all_preserves_the_override_when_the_vendor_bytes_drift_before_unlink() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+
+        let error = remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::BeforeOverrideDelete(0) {
+                fs::write(
+                    vendor.join("polkit-1"),
+                    b"# vendor update\nauth required pam_unix.so\n",
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("vendor"), "got: {error}");
+        assert!(etc.join("polkit-1").exists());
+        assert!(fs::read_dir(dirs.backup_dir()).unwrap().count() > 0);
+    }
+
+    #[test]
+    fn remove_all_v2_requires_the_delete_override_field_but_v1_forbids_it() {
+        let identity = FileIdentity {
+            device: 1,
+            inode: 2,
+            links: 1,
+            sha256: sha256_hex(b"original"),
+            mode: libc::S_IFREG | 0o644,
+            uid: 0,
+            gid: 0,
+        };
+        let target = serde_json::json!({
+            "service": "sudo",
+            "backup": "sudo.1-000000001",
+            "original": identity,
+            "installed_sha256": sha256_hex(b"installed")
+        });
+        let document = |version, target| {
+            serde_json::json!({
+                "version": version,
+                "operation": "1-000000001",
+                "keep_backup": false,
+                "targets": [target]
+            })
+        };
+
+        let v2_missing: RemoveAllJournal =
+            serde_json::from_value(document(REMOVE_ALL_VERSION, target.clone())).unwrap();
+        assert!(!valid_remove_all_journal(&v2_missing));
+
+        let mut v2_target = target.clone();
+        v2_target["delete_override"] = serde_json::Value::Bool(true);
+        let v2: RemoveAllJournal =
+            serde_json::from_value(document(REMOVE_ALL_VERSION, v2_target)).unwrap();
+        assert!(valid_remove_all_journal(&v2));
+
+        let v1: RemoveAllJournal =
+            serde_json::from_value(document(REMOVE_ALL_LEGACY_VERSION, target.clone())).unwrap();
+        assert!(valid_remove_all_journal(&v1));
+
+        let mut v1_target = target;
+        v1_target["delete_override"] = serde_json::Value::Bool(false);
+        let v1_with_v2_field: RemoveAllJournal =
+            serde_json::from_value(document(REMOVE_ALL_LEGACY_VERSION, v1_target)).unwrap();
+        assert!(!valid_remove_all_journal(&v1_with_v2_field));
+
+        let mut null_target = serde_json::to_value(&v2.targets[0]).unwrap();
+        null_target["delete_override"] = serde_json::Value::Null;
+        assert!(
+            serde_json::from_value::<RemoveAllJournal>(document(REMOVE_ALL_VERSION, null_target,))
+                .is_err(),
+            "the strict v2 boolean must not accept null as an absent field"
+        );
+    }
+
+    #[test]
+    fn vendor_override_messages_make_delete_and_drift_explicit() {
+        let removed = PamMessage::PamVendorOverrideRemoved {
+            path: "/etc/pam.d/polkit-1".to_owned(),
+            vendor: "/usr/lib/pam.d/polkit-1".to_owned(),
+        }
+        .localized();
+        let retained = PamMessage::PamVendorOverrideRetained {
+            path: "/etc/pam.d/polkit-1".to_owned(),
+            vendor: "/usr/lib/pam.d/polkit-1".to_owned(),
+        }
+        .localized();
+
+        assert!(removed.contains("Deleted unchanged local override"));
+        assert!(removed.contains("/usr/lib/pam.d/polkit-1"));
+        assert!(retained.contains("Kept local override"));
+        assert!(retained.contains("administrator or vendor drift"));
+    }
+
+    #[test]
+    fn malformed_vendor_header_selects_the_explicit_retained_message() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let path = etc.join("polkit-1");
+        let mut modified = fs::read(&path).unwrap();
+        modified[0] = b'!';
+        fs::write(&path, &modified).unwrap();
+        let request = remove(&["polkit-1"]);
+        let write = WriteRequest {
+            action: WriteAction::Remove,
+            request: &request,
+            remedy: "--allow-sensitive",
+        };
+        let target = plan_writes(&dirs, &write).unwrap().remove(0);
+        let Plan::Rewrite { content } = &target.plan else {
+            panic!("malformed provenance must be retained, got {target:?}");
+        };
+        let disposition =
+            classify_vendor_override(&dirs, &target, content, target.identity.as_ref().unwrap());
+
+        assert_eq!(disposition, VendorOverrideDisposition::Drifted);
+        assert!(matches!(
+            remove_success_message(&target, target.path_string(), disposition),
+            PamMessage::PamVendorOverrideRetained { .. }
+        ));
+    }
+
+    #[test]
+    fn named_remove_reports_an_absent_configured_vendor_source_after_removing_the_line() {
+        let (_root, etc, vendor) = pair();
+        let vendor_path = vendor.join("polkit-1");
+        fs::write(&vendor_path, POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        fs::remove_file(&vendor_path).unwrap();
+
+        let request = remove(&["polkit-1"]);
+        let write = WriteRequest {
+            action: WriteAction::Remove,
+            request: &request,
+            remedy: "--allow-sensitive",
+        };
+        let target = plan_writes(&dirs, &write).unwrap().remove(0);
+        let Plan::Rewrite { content } = &target.plan else {
+            panic!("missing vendor source must retain the override: {target:?}");
+        };
+        let disposition =
+            classify_vendor_override(&dirs, &target, content, target.identity.as_ref().unwrap());
+        assert_eq!(
+            disposition,
+            VendorOverrideDisposition::SourceAbsent(vendor_path.clone())
+        );
+        assert!(matches!(
+            remove_success_message(&target, target.path_string(), disposition),
+            PamMessage::PamVendorOverrideSourceAbsent { vendor, .. }
+                if vendor == vendor_path.display().to_string()
+        ));
+
+        assert_eq!(
+            apply_remove(&target, &Sink::silent(), &dirs),
+            Outcome::Removed
+        );
+        let retained = fs::read(etc.join("polkit-1")).unwrap();
+        assert!(!PamDocument::new(&retained).has_facelock_rule());
+    }
+
+    #[test]
+    fn named_remove_reports_an_absent_configured_vendor_source_for_a_no_line_restart() {
+        let (_root, etc, vendor) = pair();
+        let vendor_path = vendor.join("polkit-1");
+        fs::write(&vendor_path, POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let local = etc.join("polkit-1");
+        let restart = with_line_removed(&fs::read(&local).unwrap());
+        fs::write(&local, &restart).unwrap();
+        fs::remove_file(&vendor_path).unwrap();
+
+        let request = remove(&["polkit-1"]);
+        let write = WriteRequest {
+            action: WriteAction::Remove,
+            request: &request,
+            remedy: "--allow-sensitive",
+        };
+        let target = plan_writes(&dirs, &write).unwrap().remove(0);
+        assert!(matches!(
+            &target.plan,
+            Plan::RetainVendorOverride { vendor }
+                if vendor == &vendor_path
+        ));
+        assert_eq!(
+            apply_remove(&target, &Sink::silent(), &dirs),
+            Outcome::Unchanged
+        );
+        assert_eq!(fs::read(&local).unwrap(), restart);
+        assert!(
+            PamMessage::PamVendorOverrideSourceAbsentNoLine {
+                path: local.display().to_string(),
+                vendor: vendor_path.display().to_string(),
+            }
+            .localized()
+            .contains("vendor source is absent")
+        );
+    }
+
+    #[test]
+    fn absent_vendor_source_recognition_rejects_an_unconfigured_header_path() {
+        let (_root, etc, vendor) = pair();
+        let vendor_path = vendor.join("polkit-1");
+        fs::write(&vendor_path, POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let local = etc.join("polkit-1");
+        let modified = String::from_utf8(fs::read(&local).unwrap())
+            .unwrap()
+            .replacen(&vendor_path.display().to_string(), "/tmp/admin-source", 1);
+        fs::write(&local, modified).unwrap();
+        fs::remove_file(&vendor_path).unwrap();
+
+        let request = remove(&["polkit-1"]);
+        let write = WriteRequest {
+            action: WriteAction::Remove,
+            request: &request,
+            remedy: "--allow-sensitive",
+        };
+        let target = plan_writes(&dirs, &write).unwrap().remove(0);
+        let Plan::Rewrite { content } = &target.plan else {
+            panic!("unconfigured header path must not own the local override");
+        };
+        assert_eq!(
+            classify_vendor_override(&dirs, &target, content, target.identity.as_ref().unwrap(),),
+            VendorOverrideDisposition::NotFacelock
+        );
+    }
+
+    #[test]
+    fn oversized_local_vendor_override_is_rejected_without_rewrite() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let path = etc.join("polkit-1");
+        let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_len(MAX_BACKUP_BYTES as u64 + 1).unwrap();
+        drop(file);
+        let before = fs::metadata(&path).unwrap();
+
+        let error = write_in(&dirs, &remove(&["polkit-1"])).unwrap_err();
+
+        assert!(error.to_string().contains("failed to read"), "got: {error}");
+        let after = fs::metadata(&path).unwrap();
+        assert_eq!(
+            (after.dev(), after.ino(), after.len()),
+            (before.dev(), before.ino(), before.len())
+        );
+    }
+
+    #[test]
+    fn oversized_vendor_and_batch_backup_block_cleanup_and_preserve_evidence() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let vendor_file = fs::OpenOptions::new()
+            .write(true)
+            .open(vendor.join("polkit-1"))
+            .unwrap();
+        vendor_file.set_len(MAX_BACKUP_BYTES as u64 + 1).unwrap();
+        drop(vendor_file);
+        let before = snapshot(&etc);
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            ..PamRequest::default()
+        };
+
+        assert!(remove_all_in(&dirs, &request).is_err());
+        assert_eq!(snapshot(&etc), before);
+
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        remove_all_in_with_hook(&dirs, &request, |point| {
+            if point == RemoveAllPoint::CommitMarked {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "inspect committed batch",
+                ));
+            }
+            Ok(())
+        })
+        .unwrap_err();
+        let store = BackupStore::open_existing(dirs.backup_dir())
+            .unwrap()
+            .unwrap();
+        let (journal, _) = load_remove_all_state(&store).unwrap();
+        let backup = dirs
+            .backup_dir()
+            .join(&journal.as_ref().unwrap().value.targets[0].backup);
+        let backup_file = fs::OpenOptions::new().write(true).open(&backup).unwrap();
+        backup_file.set_len(MAX_BACKUP_BYTES as u64 + 1).unwrap();
+        drop(backup_file);
+        let backup_before = fs::metadata(&backup).unwrap();
+        let journal_name = journal.as_ref().unwrap().name.clone();
+
+        assert!(recover_remove_all_in(&dirs).is_err());
+        let backup_after = fs::metadata(&backup).unwrap();
+        assert_eq!(
+            (backup_after.dev(), backup_after.ino(), backup_after.len()),
+            (
+                backup_before.dev(),
+                backup_before.ino(),
+                backup_before.len()
+            )
+        );
+        assert!(dirs.backup_dir().join(journal_name).exists());
+        assert!(
+            fs::read_dir(dirs.backup_dir())
+                .unwrap()
+                .flatten()
+                .any(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".facelock-remove-all-commit-"))
+        );
+    }
+
+    #[test]
+    fn a_deleted_vendor_override_report_no_longer_claims_to_shadow_it() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let request = remove(&["polkit-1"]);
+        let write = WriteRequest {
+            action: WriteAction::Remove,
+            request: &request,
+            remedy: "--allow-sensitive",
+        };
+        let targets = plan_writes(&dirs, &write).unwrap();
+
+        let reports = apply_all(&dirs, &targets, &write, &Sink::silent());
+
+        assert_eq!(reports[0].outcome, Outcome::Removed);
+        assert_eq!(reports[0].shadows, None);
+        assert!(!etc.join("polkit-1").exists());
+    }
+
+    #[test]
+    fn named_remove_keeps_content_drift_but_removes_the_module_rule() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let path = etc.join("polkit-1");
+        let mut drifted = fs::read(&path).unwrap();
+        drifted.extend_from_slice(b"# administrator customization\n");
+        fs::write(&path, drifted).unwrap();
+
+        assert_eq!(write_in(&dirs, &remove(&["polkit-1"])).unwrap(), WRITE_OK);
+
+        let retained = fs::read(&path).unwrap();
+        assert!(!PamDocument::new(&retained).has_facelock_rule());
+        assert!(retained.ends_with(b"# administrator customization\n"));
+    }
+
+    #[test]
+    fn named_remove_preserves_a_vendor_override_with_an_extra_module_rule() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let path = etc.join("polkit-1");
+        let mut drifted = fs::read(&path).unwrap();
+        drifted.extend_from_slice(PAM_LINE.as_bytes());
+        drifted.push(b'\n');
+        fs::write(&path, drifted).unwrap();
+
+        assert_eq!(write_in(&dirs, &remove(&["polkit-1"])).unwrap(), WRITE_OK);
+
+        let retained = fs::read(&path).unwrap();
+        assert!(!PamDocument::new(&retained).has_facelock_rule());
+        assert!(vendor_override_payload(&retained, &vendor.join("polkit-1")).is_some());
+    }
+
+    #[test]
+    fn remove_finishes_deleting_an_exact_override_whose_line_is_already_absent() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let path = etc.join("polkit-1");
+        let intermediate = with_line_removed(&fs::read(&path).unwrap());
+        fs::write(&path, intermediate).unwrap();
+
+        assert_eq!(write_in(&dirs, &remove(&["polkit-1"])).unwrap(), WRITE_OK);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn dry_run_previews_vendor_override_deletion_without_writing() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let before = snapshot(&etc);
+        let request = PamRequest {
+            dry_run: true,
+            ..remove(&["polkit-1"])
+        };
+
+        assert_eq!(write_in(&dirs, &request).unwrap(), WRITE_OK);
+        assert_eq!(snapshot(&etc), before);
+    }
+
     /// `remove` resolves the same way so it can *report* a vendor-only
     /// service, and then writes nothing: exit 0, no `/etc` file invented, the
     /// package's file untouched.
@@ -14415,6 +16829,7 @@ mod tests {
                 backup: prepared.backup.clone(),
                 original: expected.clone(),
                 installed_sha256: sha256_hex(&installed),
+                delete_override: Some(false),
             }],
         )
         .unwrap();
@@ -14462,6 +16877,7 @@ mod tests {
                 backup: planned.backup.clone(),
                 original: expected,
                 installed_sha256: sha256_hex(&installed),
+                delete_override: Some(false),
             };
             let beta_path = dir.path().join("beta");
             let (beta_original, beta_expected) = read_regular_nofollow(&beta_path).unwrap();
@@ -14475,6 +16891,7 @@ mod tests {
                 backup: beta_planned.backup,
                 original: beta_expected,
                 installed_sha256: sha256_hex(&beta_installed),
+                delete_override: Some(false),
             };
             create_remove_all_journal(&store, false, vec![target.clone(), beta_target]).unwrap();
             let prepared = prepared_for_remove_all_target(&store, &target).unwrap();
@@ -14526,6 +16943,7 @@ mod tests {
                     backup: planned.backup.clone(),
                     original: expected,
                     installed_sha256: sha256_hex(&installed),
+                    delete_override: Some(false),
                 }],
             )
             .unwrap();

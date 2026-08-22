@@ -339,9 +339,15 @@ it shadows it and will not track vendor updates. The copy reports `overridden`
 rather than `installed`, and the operator is told at the time, on the
 unsuppressible `notice` stream, because a new shadowing file in `/etc` is a
 durable change with a maintenance consequence. Deleting the override restores
-the vendor file; `pam remove` takes the line out and leaves the override in
-place. The vendor file is never read-modified-written, never backed up, and
-never renamed over.
+the vendor file. Named `pam remove` deletes an unchanged Facelock-created
+override after taking out its line; header, payload, metadata, identity or
+current-vendor drift keeps the no-rule local override and reports why. If no
+current vendor source exists, an exact header path derived from a normalized
+configured later-root candidate is recognition only: removal retains the
+local override and reports that the source is absent. An arbitrary path in a
+header is never authority. The
+vendor file is never read-modified-written, never backed up, and never renamed
+over.
 
 **The module is probed too, and that is a different list.** The service-file
 order above says where a *service file* is looked up; the module
@@ -717,6 +723,7 @@ The reserved name grammar is exact:
 - publication bindings: `.facelock-publication-{commit|pam-replace|pam-remove|vendor-create}-<transaction>.json`
 - state quarantine: `.facelock-quarantine-backup-<backup>`, `.facelock-quarantine-record-<backup>.json`, `.facelock-quarantine-commit-<backup>.json`
 - PAM-directory temps: `.facelock-pam-replace-<transaction>`, `.facelock-pam-remove-<transaction>`, `.facelock-vendor-create-<transaction>`
+- PAM-directory vendor-retirement quarantine: `.facelock-vendor-retire-<transaction>`
 - atomic state temps: `.facelock-tmp-<destination>-<64hex-content-hash>-<pid-digits>-<nanos-digits>`
 
 The strict atomic-state-temp destination grammar includes publication-binding
@@ -731,9 +738,9 @@ identity and metadata must all agree before Facelock resumes or removes it.
 Every state match, committed-record transition, quarantine move and unlink
 rechecks that the entry is single-link, state-owner and mode `0600` in addition
 to its content and identity. Same-inode, same-content mode or ownership drift
-is ambiguous and is preserved. State publication, vendor publication and
-quarantine moves use `RENAME_NOREPLACE`; committed-record and existing-PAM
-transitions use `RENAME_EXCHANGE`.
+is ambiguous and is preserved. State publication, vendor publication, state
+quarantine and vendor-retirement quarantine moves use `RENAME_NOREPLACE`;
+committed-record and existing-PAM transitions use `RENAME_EXCHANGE`.
 
 If an atomic state temp-to-final `RENAME_NOREPLACE` succeeds but syncing the
 parent directory fails, the result is `AmbiguousPublication`, not an ordinary
@@ -760,7 +767,9 @@ fallback.
 covers recovery, bounded timestamp and sequence allocation, durable prepare
 intent and rollback-pair publication, PAM intent/temp/exchange, and committed
 record intent/exchange. Local remove and vendor-create planning, publication
-and recovery run under the same guard. A competing writer or recovery cannot
+and recovery run under the same guard; unchanged vendor-override quarantine,
+validation, deletion or restoration completes before the local-remove guard is
+released. A competing writer or recovery cannot
 discard an add's prepared pair between persistence and commit. Backup cleanup
 after a successful or no-op remove is a separate locked quarantine phase; this
 does not make named mutations multi-service atomic. The `pam remove --all`
@@ -806,6 +815,41 @@ Malformed provenance, lookalike names, symlinks, hard links, changed entries
 and unrelated administrator files are retained. `--keep-backup` opts out of
 both versioned and legacy cleanup.
 
+For a local copy created from a vendor-only service, named `pam remove` first
+publishes the complete document without the Facelock rule through the existing
+`pam_remove` exchange protocol. It then deletes the local override only when
+the exact two-line Facelock header names the current vendor service. Current
+vendor resolution reopens the configured later roots in order and stops at the
+first existing entry; a malformed, linked, unreadable or oversized first entry
+is a blocker rather than permission to accept a matching lower-priority file.
+The remaining payload and mode/UID/GID must equal that bounded, regular,
+single-link vendor file, the vendor file must contain no active Facelock rule,
+and the complete local bytes must be either the exact header plus the one
+document emitted by Facelock's insertion or the exact header-plus-vendor
+no-rule restart shape. The journal backup used by batch cleanup is likewise
+reopened within its size bound and must retain its full prepared identity
+before its header is parsed.
+
+The canonical local inode must still have the full identity captured by the
+removal publication. Facelock moves that exact basename to the derived
+`.facelock-vendor-retire-<transaction>` quarantine with a no-replace rename,
+syncs the directory, and rechecks the quarantined identity, canonical absence,
+exact emitted shape and ordered current vendor before identity-checked unlink.
+If the local or vendor check fails while the canonical name remains absent,
+Facelock restores the exact quarantine with a no-replace rename. A concurrent
+canonical entry, quarantine collision, reopen failure, identity mismatch or
+durability uncertainty preserves all available names and durable publication
+evidence as ambiguous. Every quarantine, restore and unlink boundary is
+restartable. Both service names are re-resolved beneath already selected PAM
+roots; the header is a recognition hint, never a path to open. Header, payload,
+metadata, vendor-source or identity drift preserves the local override after
+removing its Facelock rule and reports that decision. When no current vendor
+entry resolves, only a header naming a normalized path derived from a
+configured later root is recognized, and it causes explicit retention rather
+than deletion; the header path is not opened or followed. A restart may finish the
+same exact deletion when the rule-removal exchange completed but the
+header-bearing local override is still present.
+
 **`pam remove --all` is the config-independent whole-machine cleanup.** It
 ignores `[pam].config_dirs` and opens the compiled roots `/etc/pam.d`
 (writable override), `/usr/lib/pam.d` (detection-only vendor state), and
@@ -837,28 +881,40 @@ the administrator/package artifact suffixes `.facelock-backup`, `.pacnew`,
 `.dpkg-new`, `.dpkg-dist`, and `~` are not conventional legacy candidates.
 They are considered only when a strict provenance basename exists for that
 exact confined service and the current complete-file hash equals
-`installed_sha256` in its validated committed pair. This lets `remove --all`
-find every arbitrary name accepted by the named writer without treating an
+`installed_sha256` in its validated committed pair, or when the regular local
+file carries the exact Facelock vendor-copy header and matches its current
+fixed-root vendor source as specified above. This lets `remove --all` find
+every arbitrary name accepted by either named writer path without treating an
 unowned administrator artifact as an active PAM service. Customized controls,
 options or spacing, corrupt or ambiguous provenance for a candidate, invalid
 bytes, path escapes, link swaps, identity drift and concurrent edits block the
 whole run during preflight. Nothing is changed when preflight finds a blocker.
 An empty scan is an idempotent success.
+The initial cleanup scan also recognizes that exact unchanged header-bearing
+vendor override after its Facelock rule is already absent. This is the bounded
+restart shape of the named removal above; other no-rule files are ignored and
+preserved. The final active-reference scan excludes this cleanup-only shape.
 
-**The whole set is journaled before the first PAM mutation.** Version 1 state
+**The whole set is journaled before the first PAM mutation.** Version 2 state
 is strict JSON with unknown fields rejected, regular single-link fixed-state
 owner and mode `0600`, no-clobber publication, a 4 MiB encoded limit and at
 most 1,024 unique confined services. Its reserved names and exact fields are:
 
 - `.facelock-remove-all-<operation>.json` contains exactly `version`,
   `operation`, `keep_backup`, and `targets`. Each target contains exactly
-  `service`, strict `backup`, `original`, and `installed_sha256`; `original`
-  contains exactly `device`, `inode`, `links`, `sha256`, `mode`, `uid`, and
-  `gid` and must describe a regular single-link file.
+  `service`, strict `backup`, `original`, `installed_sha256`, and the required
+  boolean `delete_override`; `original` contains exactly `device`, `inode`,
+  `links`, `sha256`, `mode`, `uid`, and `gid` and must describe a regular
+  single-link file.
 - `.facelock-remove-all-commit-<operation>.json` contains exactly `version`,
   `operation`, `journal_sha256`, `keep_backup`, and `targets`. Each target
-  contains exactly `service`, strict `backup`, and `installed`, where
-  `installed` uses the same complete-identity fields and validation.
+  contains exactly `service`, strict `backup`, `installed`, and the required
+  boolean `delete_override`, where `installed` uses the same complete-identity
+  fields and validation.
+
+Version 1 journal and commit files remain recoverable only when every target
+omits `delete_override`; version 2 requires it on every target. JSON `null` is
+not an absent field. The corresponding journal and commit flags must match.
 
 `operation` is `<seconds>-<exactly-nine-digit-nanoseconds>`: seconds parse as
 `u64`, nanoseconds are below one billion, and collision allocation is bounded.
@@ -868,8 +924,8 @@ per-service provenance. Both state files and every hash are bounded and
 validated, and duplicate services invalidate either target list before
 recovery. A commit pairs with a journal only when operation, keep flag, ordered
 service/backup set, exact journal hash and planned/committed installed hashes
-agree. Multiple, malformed or conflicting reserved entries require manual
-review.
+and `delete_override` flags agree. Multiple, malformed or conflicting reserved
+entries require manual review.
 
 `pam remove --all --dry-run` opens an existing backup directory for read-only
 inspection and requires its owner and mode to be trusted already. It performs
@@ -913,6 +969,22 @@ resumed; a target whose canonical pair, quarantine pair and exact cleanup
 intent are all absent is already clean. Partial, substituted or conflicting
 pair state is preserved and blocks journal cleanup.
 
+After the batch commit marker is durable and per-file publication evidence is
+finalized, each target with `delete_override = true` is unlinked through the
+writable-root directory descriptor only if its full committed identity still
+matches. The corresponding journaled original backup must retain the full
+identity captured by the prepared pair and parse as an exact Facelock-emitted
+one-rule copy or exact no-rule restart shape. Its line-removed SHA-256 must
+equal the journal target's installed hash. The header must name the first
+existing service in the ordered later roots, whose bounded, re-opened regular
+single-link entry must still match the payload and mode/UID/GID and contain no
+active Facelock rule. Facelock never opens an arbitrary path from the header.
+The same no-replace vendor-retirement quarantine protocol above performs the
+committed deletion. Any mismatch preserves the override and the batch
+journal/commit evidence. A crash after a checked unlink is restartable: absence
+is accepted only for a committed `delete_override` target, while any partial,
+substituted or unflagged absence remains ambiguous.
+
 On success, default cleanup removes only validated Facelock-owned versioned
 pairs and exact validated legacy `<service>.facelock-backup` state for every
 committed target. `--keep-backup` instead commits and preserves the new pairs
@@ -941,8 +1013,8 @@ currently invokes tolerant `pam-auth-update --remove facelock` before shared
 cleanup; byte-exact profile lifecycle and rollback are #224 scope. Fedora
 authselect profile selection, regeneration and rollback are #226 scope;
 `remove --all` only scans `/etc/authselect` as a detection-only root and never
-edits generated state. This does not implement #206 vendor-drift cleanup, #207
-sensitive-authorization changes, or #166's final emitted-byte freeze.
+edits generated state. This does not implement #207 sensitive-authorization
+changes or #166's final emitted-byte freeze.
 
 **`--json`** emits exactly one document on stdout and no human text; `--quiet`
 suppresses even that, leaving the exit code as the whole answer, as it does for
