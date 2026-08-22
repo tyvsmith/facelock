@@ -689,6 +689,132 @@ emitter off that much sooner.
 
 ### 5. PAM Module Hardening
 
+#### PAM service writer and backup provenance
+
+`facelock pam add` and `remove` accept only a single service-name component
+and resolve it again beneath the configured PAM roots using directory-relative
+no-follow operations. Service entries must be regular files with one link.
+Immediately before publishing a replacement, the writer compares the opened
+file's device, inode, link count, and SHA-256 hash with the phase-one plan. An
+existing override is published with an atomic exchange: the exact displaced
+inode stays open and is checked again, an intervening administrator or package
+replacement is exchanged back, and only the verified displaced inode is
+unlinked. During that bounded check, the complete new PAM document may be
+briefly visible, but a mismatch restores the complete intervening document;
+neither side is partially written. The file and parent are fsynced, and PAM's
+password fallback is unchanged. A vendor-only service is published into the
+override root with a no-replace rename, so an administrator file that appears
+after planning is preserved. Vendor bytes do not donate a SELinux xattr to the
+local override: the override directory's create/type-transition label applies.
+
+Rollback copies live in the root-only
+`/var/lib/facelock/pam-backups` directory, not in a PAM configuration
+directory. That path is a fixed PAM trust root and does not move with a custom
+`storage.db_path`; it is descriptor-opened without following links and is
+repaired and rechecked as `0700 root:root` before recovery or mutation trusts
+its entries. Each `0600 root:root` backup has the exact name
+`<service>.<seconds>-<nine-digit-nanoseconds>` and an adjacent strict,
+versioned JSON record. Version 1 records contain `version`, a positive
+monotonic `sequence`, `prepared` or `committed` state, a confined `service`,
+the `backup` basename, and `original_sha256`/`installed_sha256`. Records are
+limited to 16 KiB and backup reads to 1 MiB before allocation. The record never
+contains a target path and is treated only as a hint: recovery scans the state
+directory, validates regular single-link files and hashes, rejects duplicate
+or overflowing sequence order, and re-resolves the service under the PAM write
+root. Installed bytes promote a prepared record, unchanged original bytes
+discard the unused Facelock pair, and any mismatch is preserved for manual
+inspection.
+
+Every multi-name mutation first publishes a strict, path-free durable intent.
+The reserved roles are `prepare`, `commit`, `cleanup`, `pam-replace`,
+`pam-remove`, and `vendor-create`, with names derived from a validated strict
+transaction basename. The backup-pair roles bind that basename to the backup;
+the last two roles use it only as a collision-resistant operation key and do
+not create a rollback pair. Role validation also pins which record hash,
+replacement-record hash, and original file identity fields must be present or
+absent. Commit and existing-file PAM publication use exchanges; vendor
+creation uses a no-replace rename; cleanup moves both state entries into
+no-replace quarantine names before unlinking. One state-directory flock spans
+recovery, sequence and name allocation, backup persistence, PAM publication,
+and provenance commit, so recovery cannot discard a prepared pair from an add
+that is still in progress. Recovery validates the intent's role, sequence,
+derived names, bounded hashes, and recorded identity where applicable before
+it resumes or removes anything. Hash-bearing state-write temp names are
+likewise removed only when their exact destination role, owner, mode, link
+count, and contents validate. Thus a crash at any prepare, PAM-directory temp,
+exchange, no-replace publication, quarantine, or unlink boundary has a
+deterministic next action, while an ambiguous lookalike is retained.
+Default removal deletes only validated committed Facelock pairs and the exact
+legacy `<service>.facelock-backup` name; unresolved prepared pairs, malformed
+records, symlinks, hard links, and unrelated administrator backups are never
+followed or removed.
+
+Intent filenames use
+`.facelock-intent-<hyphenated-role>-<transaction>.json`; the JSON `role`
+values for the three PAM mutation roles use serde's snake-case spelling
+`pam_replace`, `pam_remove`, and `vendor_create`. Every intent requires
+`version`, positive `sequence`, confined `service`, strict `backup` transaction
+basename, original/installed hashes, nullable record/replacement-record hashes,
+and nullable device/inode/link and mode/uid/gid identity triples. The role
+predicate requires record hashes only for backup-pair operations, the
+replacement-record hash only for `commit`, the complete stable identity for
+existing-file `pam_replace`/`pam_remove`, and the expected destination
+mode/uid/gid for `vendor_create`; irrelevant non-null fields invalidate the
+intent. Stable identity comparisons bind device, inode, single-link count,
+content hash, mode, uid, and gid, but deliberately exclude timestamps and other
+mutable metadata. State recovery additionally rechecks `0600` and the fixed
+expected state owner on every match; it never adopts the directory's observed
+owner as its authority. A same-inode, same-content entry whose mode or
+ownership changed is therefore ambiguous and is retained rather than finalized
+or removed.
+Publication additionally writes a strict, self-contained
+`.facelock-publication-<role>-<transaction>.json` binding after the replacement
+temp exists and before exchange or no-replace publication. It binds the base
+intent hash, role, sequence, service, operation basename, and the replacement's
+complete device/inode/link/hash/mode/uid/gid identity. The canonical name is
+reopened and full-compared against that identity after publication and before
+any displaced inode or intent is removed. A mismatch retains the canonical
+name, displaced name, intent, and binding for recovery/manual inspection.
+The replacement identity is first captured from the still-open created temp
+after its metadata and contents are synced. Facelock then reopens the reserved
+basename and full-compares it before writing the publication binding; a
+mismatch is ambiguous and retains the intent and filesystem evidence. Error
+cleanup at that creation boundary uses the same identity-checked unlink and
+directory sync rather than unlinking the basename without revalidation.
+If no-clobber binding publication fails, Facelock preserves the colliding state
+entry and reopens and full-compares the still-unpublished replacement temp. It
+removes the base intent only after that exact temp is unlinked and its directory
+is synced. Every identity or cleanup ambiguity retains the base intent and the
+colliding state evidence. The temp is also retained unless its exact,
+identity-checked unlink succeeded and only the subsequent durability sync
+failed, in which case the temp name may already be absent.
+The same full-identity cleanup applies after the binding is durable if source
+drift or an exchange/no-replace failure prevents PAM or vendor publication. A
+substituted reserved temp makes that failure ambiguous and retains the base
+intent, binding, and all remaining evidence.
+Successful cleanup removes the base intent first and the self-contained
+binding last, so a crash between those unlinks can still authenticate the
+canonical inode. Recovery considers the binding orphaned only when the exact
+derived base-intent name is definitely absent; an invalid-mode, invalid-owner,
+malformed, mismatching, symlinked, or hard-linked exact entry preserves the
+binding. An orphan binding is removed only after the canonical identity check.
+PAM-directory temps are `.facelock-pam-replace-<transaction>`,
+`.facelock-pam-remove-<transaction>`, or
+`.facelock-vendor-create-<transaction>`. State quarantines are the exact
+`commit`, `backup`, and `record` role names, and state publication temps bind
+their destination basename and content hash in the filename. Backup and record
+temp destinations additionally require a confined service component, so empty,
+`.` and `..` services are never owned. A reserved name without its complete
+role schema, root/state-directory ownership, `0600` mode, single-link identity,
+and bounded content hash is not considered Facelock-owned.
+If an atomic state temp-to-final rename succeeds but syncing the parent
+directory fails, the operation is ambiguous rather than an ordinary create
+failure. Every caller propagates that ambiguity before cleanup: prepare keeps
+its intent and visible backup or record, commit keeps its intent and named
+replacement, and every publication-binding role keeps its intent, replacement
+temp, and visible binding. Recovery can therefore classify the complete set;
+checked cleanup remains limited to definite failures before the rename.
+
 #### A0. Config File Trust (Required)
 
 The PAM module runs in a root context, so `/etc/facelock/config.toml` is an

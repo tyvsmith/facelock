@@ -1047,6 +1047,25 @@ fn remove_and_status_do_not_offer_allow_sensitive() {
     }
 }
 
+#[test]
+fn pam_remove_keep_backup_is_an_explicit_opt_out() {
+    let default = pam_request(&["remove"]);
+    assert!(!default.keep_backup);
+
+    let kept = pam_request(&["remove", "--keep-backup"]);
+    assert!(kept.keep_backup);
+
+    for argv in [
+        &["facelock", "pam", "add", "--keep-backup"][..],
+        &["facelock", "pam", "status", "--keep-backup"],
+    ] {
+        assert!(
+            Cli::try_parse_from(argv).is_err(),
+            "--keep-backup is remove-only: {argv:?}"
+        );
+    }
+}
+
 /// `--all` is `status`-only, takes no `--service`, and leaves the bare form
 /// alone.
 ///

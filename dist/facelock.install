@@ -11,6 +11,8 @@ _facelock_secure_paths() {
     chmod 755 /var/lib/facelock/models 2>/dev/null || true
     # `facelock is-enrolled` marker dir: traversable by all, listable by none.
     install -d -o root -g root -m 0711 /var/lib/facelock/enrolled 2>/dev/null || true
+    # PAM rollback state contains complete service files: root-only.
+    install -d -o root -g root -m 0700 /var/lib/facelock/pam-backups 2>/dev/null || true
     # Database and sidecars: root-only. Tighten if present, never create.
     for f in /var/lib/facelock/facelock.db /var/lib/facelock/facelock.db-wal /var/lib/facelock/facelock.db-shm; do
         [ -f "$f" ] && chown root:root "$f" 2>/dev/null && chmod 600 "$f" 2>/dev/null

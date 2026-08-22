@@ -108,6 +108,8 @@ in
       # Markers only: a user can open its own 0600 marker by name but cannot
       # enumerate who else is enrolled.
       "d /var/lib/facelock/enrolled 0711 root root -"
+      # PAM rollback state contains complete service files: root-only.
+      "d /var/lib/facelock/pam-backups 0700 root root -"
       # Encrypted biometric templates: root-only. `z` never creates.
       "z /var/lib/facelock/facelock.db 0600 root root -"
       "z /var/lib/facelock/facelock.db-wal 0600 root root -"

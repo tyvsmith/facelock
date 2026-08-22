@@ -109,6 +109,8 @@ EOF
 rm -f /etc/pam.d/facelock-scratch /etc/pam.d/facelock-scratch2 \
       /etc/pam.d/facelock-scratch.facelock-backup \
       /etc/pam.d/facelock-scratch2.facelock-backup
+find /var/lib/facelock/pam-backups -maxdepth 1 \
+    \( -name 'facelock-scratch.*' -o -name 'facelock-scratch2.*' \) -delete
 cat > /etc/pam.d/facelock-scratch <<'EOF'
 #%PAM-1.0
 auth       include        system-auth
@@ -134,8 +136,8 @@ run_test "pam status --if-present: an absent service file is exit 0" \
     "facelock pam status --service facelock-does-not-exist --if-present" \
     0
 
-run_test "pam add: 'installed', backup written, line is the first auth line" \
-    "facelock pam add --service facelock-scratch --json > /tmp/pam-add.json 2>/dev/null; test \$? -eq 0 && python3 /tmp/pam-action.py /tmp/pam-add.json | grep -qx installed && test -f /etc/pam.d/facelock-scratch.facelock-backup && python3 /tmp/pam-first-auth.py /etc/pam.d/facelock-scratch" \
+run_test "pam add: committed root-only state backup, line is the first auth line" \
+    "facelock pam add --service facelock-scratch --json > /tmp/pam-add.json 2>/dev/null; test \$? -eq 0 && python3 /tmp/pam-action.py /tmp/pam-add.json | grep -qx installed && backup=\$(python3 -c 'import json; print(json.load(open(\"/tmp/pam-add.json\"))[\"services\"][0][\"backup\"])') && case \"\$backup\" in /var/lib/facelock/pam-backups/facelock-scratch.*) ;; *) exit 1;; esac && test -f \"\$backup\" && test -f \"\$backup.json\" && test \"\$(stat -c '%a:%U:%G' \"\$backup\")\" = 600:root:root && test \"\$(stat -c '%a:%U:%G' \"\$backup.json\")\" = 600:root:root && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d[\"version\"] == 1 and d[\"sequence\"] > 0 and d[\"state\"] == \"committed\" and d[\"service\"] == \"facelock-scratch\" and \"path\" not in d and \"target\" not in d' \"\$backup.json\" && ! test -e /etc/pam.d/facelock-scratch.facelock-backup && python3 /tmp/pam-first-auth.py /etc/pam.d/facelock-scratch" \
     0
 
 sha256sum /etc/pam.d/facelock-scratch > /tmp/pam-scratch.sha
@@ -238,8 +240,9 @@ run_test "pam add refuses a service file symlinked out of /etc/pam.d" \
 rm -f /etc/pam.d/facelock-scratch-link /tmp/facelock-outside \
       /tmp/facelock-outside.sha /tmp/pam-symlink.out
 
-run_test "pam remove: 'removed' and no facelock line left" \
-    "facelock pam remove --service facelock-scratch --json > /tmp/pam-remove.json 2>/dev/null; test \$? -eq 0 && python3 /tmp/pam-action.py /tmp/pam-remove.json | grep -qx removed && ! grep -q pam_facelock.so /etc/pam.d/facelock-scratch" \
+cp /etc/pam.d/facelock-scratch /etc/pam.d/facelock-scratch.facelock-backup
+run_test "pam remove: line, owned state, and legacy backup are removed" \
+    "facelock pam remove --service facelock-scratch --json > /tmp/pam-remove.json 2>/dev/null; test \$? -eq 0 && python3 /tmp/pam-action.py /tmp/pam-remove.json | grep -qx removed && ! grep -q pam_facelock.so /etc/pam.d/facelock-scratch && ! test -e /etc/pam.d/facelock-scratch.facelock-backup && ! find /var/lib/facelock/pam-backups -maxdepth 1 -name 'facelock-scratch.*' | grep -q ." \
     0
 
 # The `setup --pam` alias must reach the same writer and the same bytes.
@@ -614,6 +617,8 @@ rm -f /etc/pam.d/facelock-scratch /etc/pam.d/facelock-scratch2 \
       /etc/pam.d/facelock-vendor-scratch.facelock-backup \
       /usr/lib/pam.d/facelock-vendor-scratch \
       /tmp/pam-action.py /tmp/pam-first-auth.py
+find /var/lib/facelock/pam-backups -maxdepth 1 \
+    \( -name 'facelock-scratch.*' -o -name 'facelock-scratch2.*' \) -delete
 
 # --- Spec 29: Smart PAM skip (no enrolled faces) ---
 

@@ -117,7 +117,7 @@ threads = 4  # increase if you have more cores
    ```
 3. Restore the PAM backup:
    ```bash
-   cp /etc/pam.d/sudo.facelock-backup /etc/pam.d/sudo
+   cp /var/lib/facelock/pam-backups/sudo.TIMESTAMP /etc/pam.d/sudo
    ```
    Or remove the Facelock line from `/etc/pam.d/sudo`:
    ```bash
@@ -129,7 +129,7 @@ threads = 4  # increase if you have more cores
 
 ```bash
 # From your root shell:
-cp /etc/pam.d/sudo.facelock-backup /etc/pam.d/sudo
+cp /var/lib/facelock/pam-backups/sudo.TIMESTAMP /etc/pam.d/sudo
 ```
 
 ### Prevention

@@ -18,6 +18,9 @@ d /var/lib/facelock/models 0755 root root -
 # enumerate who else is enrolled.
 d /var/lib/facelock/enrolled 0711 root root -
 
+# PAM service-file backups and their provenance records are root-only.
+d /var/lib/facelock/pam-backups 0700 root root -
+
 # The database and its WAL sidecars hold encrypted biometric templates and are
 # read by the daemon (root) only. `z` adjusts an existing file and never
 # creates one, so these are no-ops on a fresh install and tighten an upgraded

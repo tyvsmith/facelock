@@ -37,6 +37,10 @@ pub enum PamMessage {
         service: String,
         error: String,
     },
+    PamBackupCleanupFailed {
+        service: String,
+        error: String,
+    },
     NoPamServicesSelected,
     /// Every path the resolver tried, comma-separated. Not one path: a
     /// service can be absent from `/etc/pam.d` and present in a vendor
@@ -144,10 +148,8 @@ pub enum PamMessage {
     PamInvalidServiceName {
         service: String,
     },
-    /// A service file that is a symlink out of `/etc/pam.d`. Names the target
-    /// because that is the file the operator has to go and edit — on an
-    /// authselect system it is a generated one, and editing it is not the fix
-    /// either.
+    /// A symlinked service file. Names the link text for diagnosis, but the
+    /// writer never follows it, even when it appears to remain in-directory.
     PamServiceSymlinkedOutside {
         path: String,
         target: String,
@@ -276,7 +278,7 @@ impl Message for PamMessage {
             ),
             PamLinePreview { line } => fill(
                 translate(
-                    "  The following line will be added to each selected /etc/pam.d/<service>:\n\n      {line}\n\n  It is inserted above the first existing 'auth' line. A backup\n  (.facelock-backup) is saved before any change, and you'll be asked\n  to confirm each file individually.\n",
+                    "  The following line will be added to each selected /etc/pam.d/<service>:\n\n      {line}\n\n  It is inserted above the first existing 'auth' line. A root-only backup\n  is saved under /var/lib/facelock/pam-backups before any change, and you'll\n  be asked to confirm each file individually.\n",
                 ),
                 &[("line", line.clone())],
             ),
@@ -285,6 +287,12 @@ impl Message for PamMessage {
             }
             PamConfigureFailed { service, error } => fill(
                 translate("  Failed to configure {service}: {error}"),
+                &[("service", service.clone()), ("error", error.clone())],
+            ),
+            PamBackupCleanupFailed { service, error } => fill(
+                translate(
+                    "  PAM service {service} reached the requested state, but rollback-state cleanup failed: {error}",
+                ),
                 &[("service", service.clone()), ("error", error.clone())],
             ),
             NoPamServicesSelected => translate("  No PAM services selected."),
@@ -429,7 +437,7 @@ impl Message for PamMessage {
             ),
             PamServiceSymlinkedOutside { path, target, dir } => fill(
                 translate(
-                    "Refusing to touch {path}: it is a symlink to {target}, which is not inside {dir}.\nEdit that file directly, or the tool that generates it — authselect regenerates system-auth and password-auth from /etc/authselect.",
+                    "Refusing to touch {path}: it is a symlink to {target}. PAM service links are never followed beneath {dir}.\nEdit the real service file directly, or the tool that generates it — authselect regenerates system-auth and password-auth from /etc/authselect.",
                 ),
                 &[
                     ("path", path.clone()),
@@ -525,7 +533,7 @@ impl Message for PamMessage {
 /// above: no wildcard arm, so a variant that renders nothing does not build.
 #[cfg(test)]
 impl super::Samples for PamMessage {
-    const VARIANT_COUNT: usize = 48;
+    const VARIANT_COUNT: usize = 49;
 
     fn samples() -> Vec<Self> {
         use PamMessage::*;
@@ -539,6 +547,10 @@ impl super::Samples for PamMessage {
             },
             PromptSelectPamServices,
             PamConfigureFailed {
+                service: s("sudo"),
+                error: s("e"),
+            },
+            PamBackupCleanupFailed {
                 service: s("sudo"),
                 error: s("e"),
             },

@@ -28,6 +28,8 @@ start_pre() {
     checkpath --directory --owner root:root --mode 0755 /var/lib/facelock/models
     # `facelock is-enrolled` markers: traversable by all, listable by none.
     checkpath --directory --owner root:root --mode 0711 /var/lib/facelock/enrolled
+    # PAM rollback state contains complete service files: root-only.
+    checkpath --directory --owner root:root --mode 0700 /var/lib/facelock/pam-backups
 
     # Database and sidecars hold encrypted biometric templates: root-only.
     # Tighten if present, never create.

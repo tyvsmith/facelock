@@ -481,16 +481,19 @@ since the prompt would block the pipeline reading the document).
 is validated before any file is written. A service file that is a symlink out
 of
 .I /etc/pam.d
-is refused rather than written through; a link that stays inside the directory
-is followed, the gate is applied to the file it reaches, and the backup is
-written beside the real file. A file with more than one hard link is refused
-too \(em a link count says another name for it exists and not where.
+is refused rather than written through; in-directory links are refused too.
+A file with more than one hard link is refused \(em a link count says another
+name for it exists and not where. Before an in-place edit, a 0600 root:root
+backup and its versioned provenance record are written under
+.IR /var/lib/facelock/pam-backups/ .
 .TP
 .B remove
 Remove the facelock line. Root. Same flags as \fBadd\fR except
 \fB\-\-allow\-sensitive\fR, which it does not offer \(em removal can only
 take away a way to authenticate, so there is nothing to gate. It never prompts,
-and the \fI.facelock\-backup\fR file written by \fBadd\fR is left in place.
+and it removes validated Facelock backup state plus the exact legacy adjacent
+\fI.facelock\-backup\fR name by default. \fB\-\-keep\-backup\fR preserves
+both forms of rollback state.
 .TP
 .B status
 Report whether services carry the line. Reads only and needs
@@ -615,6 +618,11 @@ One user's marker, 600 and owned by that user. Contains the model count and
 the time it last changed. A hint for
 .BR "facelock is\-enrolled" ,
 never consulted during authentication.
+.TP
+.I /var/lib/facelock/pam-backups/
+Root-only PAM rollback state. Backups are 0600 root:root with exact
+\fI<service>.<seconds>\-<nine-digit-nanoseconds>\fR names and adjacent
+versioned JSON provenance records; records contain no target path.
 .TP
 .I /usr/share/dbus-1/system.d/org.facelock.Daemon.conf
 D-Bus system bus policy file. Enforces a deny-all default: root may send the

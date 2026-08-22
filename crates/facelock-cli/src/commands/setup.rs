@@ -4384,6 +4384,9 @@ mod action_tests {
         let mut out = BTreeMap::new();
         for entry in fs::read_dir(dir).unwrap() {
             let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_dir() {
+                continue;
+            }
             let bytes = fs::read(entry.path()).unwrap();
             let mut hasher = Sha256::new();
             hasher.update(&bytes);
@@ -4452,9 +4455,12 @@ mod action_tests {
         assert_eq!(configured, vec!["sudo".to_string()]);
         let after = hash_dir(dir.path());
         assert_ne!(before["sudo"], after["sudo"], "sudo must have changed");
-        assert!(
-            after.contains_key("sudo.facelock-backup"),
-            "a backup file must have appeared: {after:?}"
+        assert_eq!(
+            fs::read_dir(dir.path().join(".facelock-pam-backups"))
+                .unwrap()
+                .count(),
+            2,
+            "a dedicated backup and provenance record must have appeared"
         );
         assert!(super::super::pam::is_configured(&only(dir.path()), "sudo"));
     }

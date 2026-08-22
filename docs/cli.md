@@ -662,14 +662,23 @@ answered — no TTY on stdin, no TTY on stderr (where the prompt is drawn, so
 `2>install.log` counts), or `--json` — and the gate is decided before any
 prompt exists, so an unattended `pam add --service system-auth` still refuses.
 
-A service file that is a symlink out of `/etc/pam.d` is refused rather than
-written through: on an authselect system `system-auth` and `password-auth` link
-into `/etc/authselect`, and an edit there is regenerated away. A link that
-stays inside the directory is followed — and gated on the file it reaches, so
-`--service alias` where `alias -> system-auth` still needs
-`--allow-sensitive` — with the backup landing beside the real file. A file with
-more than one hard link is refused too: a link count says another name exists
-and not where, so the edit cannot be shown to stay in the directory.
+Any symlinked service file is refused rather than written through: on an
+authselect system `system-auth` and `password-auth` link into generated state,
+and even an in-directory link would make a recorded service name resolve to a
+different file. A file with more than one hard link is refused too: a link
+count says another name exists and not where, so the edit cannot be shown to
+stay in the directory.
+
+Before an in-place edit, `add` writes a `0600 root:root` backup under
+`/var/lib/facelock/pam-backups/<service>.<timestamp>` and an adjacent versioned
+JSON provenance record. The record stores a confined service name, backup
+basename, positive monotonic sequence, hashes, and prepared/committed state;
+it never stores a target path. Only the exact
+`<service>.<seconds>-<nine-digit-nanoseconds>` basename grammar is recognized.
+This also moves the human and JSON `backup` value from the former adjacent
+`/etc/pam.d/<service>.facelock-backup` location to the dedicated state path.
+Legacy adjacent files remain visible as rollback hints and are removed by a
+default `pam remove`, but they are not rewritten into versioned provenance.
 
 `--dry-run` is honoured after the root check, so it still needs root.
 `pam status` is the unprivileged read to reach for instead.
@@ -680,13 +689,18 @@ and not where, so the edit cannot be shown to stay in the directory.
 sudo facelock pam remove                                     # /etc/pam.d/sudo
 sudo facelock pam remove --service login                     # removal is never gated
 sudo facelock pam remove --service hyprlock --if-present     # a missing file is success
+sudo facelock pam remove --service sudo --keep-backup        # retain rollback state
 sudo facelock pam remove --service sudo --dry-run --json
 ```
 
 Takes the same flags as `add` except `--allow-sensitive`, which it does not
 offer: removal can only take away a way to authenticate, so there is nothing to
-gate. It never prompts either, and the `.facelock-backup` file written by `add`
-is left in place.
+gate. It never prompts either. By default it removes committed Facelock-owned
+provenance and backups for the requested service, including the legacy
+adjacent `<service>.facelock-backup` name. Unresolved prepared state is
+preserved for recovery. `--keep-backup` opts out of cleanup. A cleanup error
+remains non-zero, but the JSON action is `cleanup-failed` and the human
+diagnostic says that the PAM state change already completed.
 
 ### facelock pam status
 

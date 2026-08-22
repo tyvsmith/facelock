@@ -225,8 +225,9 @@ modified.")]
     /// Remove the facelock line from one or more /etc/pam.d service files
     #[command(after_help = "\
 Removal is never gated by the sensitive-service list and never prompts — it can \
-only take away a way to authenticate, and the .facelock-backup file written by \
-`add` is left in place. --yes/--no-confirm is accepted for symmetry with `add`.")]
+only take away a way to authenticate. Facelock-owned backups and legacy \
+.facelock-backup files are cleaned by default; --keep-backup preserves them. \
+--yes/--no-confirm is accepted for symmetry with `add`.")]
     Remove {
         #[command(flatten)]
         service: PamServiceArg,
@@ -235,6 +236,9 @@ only take away a way to authenticate, and the .facelock-backup file written by \
         /// Treat a missing service file as success instead of an error
         #[arg(long = "if-present")]
         if_present: bool,
+        /// Preserve Facelock PAM backups instead of cleaning them up
+        #[arg(long = "keep-backup")]
+        keep_backup: bool,
         #[command(flatten)]
         dry_run: DryRunArg,
         #[command(flatten)]
@@ -287,12 +291,14 @@ impl From<PamCli> for PamRequest {
                 allow_sensitive,
                 if_present,
                 dry_run: dry_run.dry_run,
+                keep_backup: false,
                 json: json.json,
             },
             PamCli::Remove {
                 service,
                 confirm,
                 if_present,
+                keep_backup,
                 dry_run,
                 json,
             } => PamRequest {
@@ -304,6 +310,7 @@ impl From<PamCli> for PamRequest {
                 allow_sensitive: false,
                 if_present,
                 dry_run: dry_run.dry_run,
+                keep_backup,
                 json: json.json,
             },
             PamCli::Status {

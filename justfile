@@ -524,6 +524,7 @@ install-files:
     install -dm711 -o root -g root /var/lib/facelock
     install -dm755 -o root -g root /var/lib/facelock/models
     install -dm711 -o root -g root /var/lib/facelock/enrolled
+    install -dm700 -o root -g root /var/lib/facelock/pam-backups
     install -dm700 -o root -g root /var/log/facelock
     install -dm700 -o root -g root /var/log/facelock/snapshots
 
@@ -543,6 +544,7 @@ install-files:
     [ -d /var/lib/facelock ] && chown root:root /var/lib/facelock && chmod 711 /var/lib/facelock || true
     [ -d /var/lib/facelock/models ] && chown root:root /var/lib/facelock/models && chmod 755 /var/lib/facelock/models || true
     [ -d /var/lib/facelock/enrolled ] && chown root:root /var/lib/facelock/enrolled && chmod 711 /var/lib/facelock/enrolled || true
+    [ -d /var/lib/facelock/pam-backups ] && chown root:root /var/lib/facelock/pam-backups && chmod 700 /var/lib/facelock/pam-backups || true
     [ -d /var/log/facelock ] && chown root:root /var/log/facelock && chmod 700 /var/log/facelock || true
     [ -d /var/log/facelock/snapshots ] && chown root:root /var/log/facelock/snapshots && chmod 700 /var/log/facelock/snapshots || true
     [ -f /var/log/facelock/audit.jsonl ] && chown root:root /var/log/facelock/audit.jsonl && chmod 600 /var/log/facelock/audit.jsonl || true

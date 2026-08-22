@@ -9,6 +9,7 @@
 #     models/                0755 root:root    public, SHA256-verified
 #     enrolled/              0711 root:root
 #       <user>               0600 <user>:<user>
+#     pam-backups/           0700 root:root    rollback state
 #   /var/log/facelock/       0700 root:root
 #     snapshots/             0700 root:root
 #
@@ -63,6 +64,7 @@ echo ""
 assert_path /var/lib/facelock          711 root root
 assert_path /var/lib/facelock/models   755 root root
 assert_path /var/lib/facelock/enrolled 711 root root
+assert_path /var/lib/facelock/pam-backups 700 root root
 assert_path /var/log/facelock          700 root root
 assert_path /var/log/facelock/snapshots 700 root root
 
@@ -150,6 +152,10 @@ run_test "a plain local user cannot list the state dir" \
 
 run_test "a plain local user cannot list enrolled/" \
     "runuser -u outsider -- ls /var/lib/facelock/enrolled" \
+    2
+
+run_test "a plain local user cannot list PAM backups" \
+    "runuser -u outsider -- ls /var/lib/facelock/pam-backups" \
     2
 
 run_test "a plain local user cannot read the database" \

@@ -7,6 +7,7 @@
 //!   models/                     0755 root:root   public, SHA-256 verified
 //!   enrolled/                   0711 root:root   is-enrolled markers only
 //!     <user>                    0600 <user>:<user>
+//!   pam-backups/                0700 root:root   PAM rollback state
 //! ```
 //!
 //! Three properties are load-bearing (ADR 010):
@@ -49,6 +50,13 @@ pub const ENROLLED_DIR_NAME: &str = "enrolled";
 /// ONNX model files, directly in the state directory.
 pub const MODELS_DIR_NAME: &str = "models";
 
+/// Fixed root for PAM rollback backups and their provenance records.
+///
+/// This state belongs to the PAM writer, not to the configured biometric
+/// database. A custom `storage.db_path` therefore cannot relocate the trust
+/// root used to recover PAM mutations.
+pub const PAM_BACKUPS_DIR: &str = "/var/lib/facelock/pam-backups";
+
 /// `root:root`, traverse-only for everyone else: any local user can open
 /// `enrolled/<user>` or a model file by name; nobody but root can list it.
 pub const STATE_DIR_MODE: u32 = 0o711;
@@ -62,6 +70,9 @@ pub const MODELS_DIR_MODE: u32 = 0o755;
 /// marker's own mode is what keeps "am I enrolled?" answerable by that user
 /// alone. No group is involved (ADR 010).
 pub const ENROLLED_DIR_MODE: u32 = 0o711;
+
+/// Backups contain complete PAM service files and are root-only.
+pub const PAM_BACKUPS_DIR_MODE: u32 = 0o700;
 
 /// The database and its `-wal`/`-shm` sidecars: `root:root`, no group access.
 /// Encrypted biometric templates are read by the daemon (root) only.
@@ -78,10 +89,8 @@ pub fn state_dir_for_db(db_path: &Path) -> Option<&Path> {
     db_path.parent().filter(|p| !p.as_os_str().is_empty())
 }
 
-/// Every path the layout manages, derived from one `storage.db_path`.
-///
-/// Derived rather than hardcoded so an alternate install root — or a test
-/// pointing an entire installation at a tempdir — stays internally consistent.
+/// Every path the layout manages from one `storage.db_path`, plus the fixed
+/// PAM rollback trust root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateLayout {
     pub state_dir: PathBuf,
@@ -89,6 +98,7 @@ pub struct StateLayout {
     /// otherwise the built-in `<state_dir>/models`.
     pub models_dir: PathBuf,
     pub enrolled_dir: PathBuf,
+    pub pam_backups_dir: PathBuf,
     /// The configured `storage.db_path`.
     pub db_path: PathBuf,
 }
@@ -101,6 +111,7 @@ impl StateLayout {
         Some(Self {
             models_dir: state_dir.join(MODELS_DIR_NAME),
             enrolled_dir: state_dir.join(ENROLLED_DIR_NAME),
+            pam_backups_dir: PathBuf::from(PAM_BACKUPS_DIR),
             db_path: db_path.to_path_buf(),
             state_dir,
         })
@@ -132,6 +143,10 @@ impl StateLayout {
         specs.push(DirSpec {
             path: &self.enrolled_dir,
             mode: ENROLLED_DIR_MODE,
+        });
+        specs.push(DirSpec {
+            path: &self.pam_backups_dir,
+            mode: PAM_BACKUPS_DIR_MODE,
         });
         specs
     }
@@ -277,6 +292,7 @@ mod tests {
         StateLayout {
             models_dir: state_dir.join(MODELS_DIR_NAME),
             enrolled_dir: state_dir.join(ENROLLED_DIR_NAME),
+            pam_backups_dir: state_dir.join("pam-backups"),
             db_path: state_dir.join("facelock.db"),
             state_dir,
         }
@@ -297,6 +313,29 @@ mod tests {
         assert_eq!(layout.db_path, Path::new("/var/lib/facelock/facelock.db"));
         assert_eq!(layout.models_dir, Path::new("/var/lib/facelock/models"));
         assert_eq!(layout.enrolled_dir, Path::new("/var/lib/facelock/enrolled"));
+        assert_eq!(
+            layout.pam_backups_dir,
+            Path::new("/var/lib/facelock/pam-backups")
+        );
+    }
+
+    #[test]
+    fn a_custom_database_path_does_not_move_pam_backup_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = test_config();
+        config.storage.db_path = tmp
+            .path()
+            .join("custom-state/facelock.db")
+            .to_string_lossy()
+            .into_owned();
+
+        let layout = StateLayout::from_config(&config).unwrap();
+
+        assert_eq!(
+            layout.pam_backups_dir,
+            Path::new("/var/lib/facelock/pam-backups")
+        );
+        assert_ne!(layout.pam_backups_dir, layout.state_dir.join("pam-backups"));
     }
 
     #[test]
@@ -341,6 +380,7 @@ mod tests {
         assert_eq!(find(Path::new("/var/lib/facelock")).mode, 0o711);
         assert_eq!(find(Path::new("/var/lib/facelock/models")).mode, 0o755);
         assert_eq!(find(Path::new("/var/lib/facelock/enrolled")).mode, 0o711);
+        assert_eq!(find(Path::new("/var/lib/facelock/pam-backups")).mode, 0o700);
         assert_eq!(DB_FILE_MODE, 0o600, "the database is root-only");
     }
 
@@ -373,6 +413,7 @@ mod tests {
         assert_eq!(mode(&layout.state_dir), STATE_DIR_MODE);
         assert_eq!(mode(&layout.models_dir), MODELS_DIR_MODE);
         assert_eq!(mode(&layout.enrolled_dir), ENROLLED_DIR_MODE);
+        assert_eq!(mode(&layout.pam_backups_dir), PAM_BACKUPS_DIR_MODE);
         assert_eq!(mode(&layout.db_path), DB_FILE_MODE);
     }
 
@@ -386,6 +427,7 @@ mod tests {
 
         assert_eq!(mode(&layout.state_dir), STATE_DIR_MODE);
         assert_eq!(mode(&layout.enrolled_dir), ENROLLED_DIR_MODE);
+        assert_eq!(mode(&layout.pam_backups_dir), PAM_BACKUPS_DIR_MODE);
     }
 
     #[test]

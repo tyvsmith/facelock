@@ -465,5 +465,5 @@ Since facelock is a PAM module, broken releases can lock users out. Every releas
 2. Pass `just test-arch-pam` (Arch container PAM smoke tests)
 3. Pass `just test-rpm` and `just test-deb` (multi-distro package validation)
 4. Not change PAM auth semantics without explicit changelog entry
-5. Preserve `/etc/pam.d/sudo` backup on install (`sudo.facelock-backup`)
+5. Preserve `/etc/pam.d/sudo` backup on install (`/var/lib/facelock/pam-backups/sudo.<timestamp>`)
 6. Default to `PAM_IGNORE` on internal errors (fall through to password)
