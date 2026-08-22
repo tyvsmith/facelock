@@ -1112,6 +1112,35 @@ fn pam_remove_keep_backup_is_an_explicit_opt_out() {
     }
 }
 
+/// Package removal gets one fixed-root, read-only probe instead of parsing
+/// pam-auth-update state in a maintainer script. It is deliberately a hidden
+/// internal surface and carries no file-selection or mutation flags.
+#[test]
+fn pam_shared_profile_status_is_a_read_only_internal_probe() {
+    let request = pam_request(&["shared-profile-status"]);
+    assert!(request.shared_profile_status);
+    assert_eq!(
+        request.action,
+        facelock_cli::commands::pam::PamAction::Status
+    );
+    assert!(request.services.is_empty());
+    assert!(!request.all);
+
+    for argv in [
+        &["facelock", "pam", "shared-profile-status", "--all"][..],
+        &[
+            "facelock",
+            "pam",
+            "shared-profile-status",
+            "--service",
+            "sudo",
+        ],
+        &["facelock", "pam", "shared-profile-status", "--dry-run"],
+    ] {
+        assert!(Cli::try_parse_from(argv).is_err(), "must reject {argv:?}");
+    }
+}
+
 /// `--all` is an enumerating flag for status and removal, takes no
 /// `--service`, and leaves both bare forms alone.
 ///

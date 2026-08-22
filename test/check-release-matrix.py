@@ -641,9 +641,42 @@ for phrase in debian_source_phrases:
     require(phrase in normalized_releasing, f"release documentation omits Debian source policy: {phrase}")
     require(phrase in normalized_contracts, f"system contracts omit Debian source policy: {phrase}")
 
+compatibility_paths = ("docs/compatibility.md", "book/src/compatibility.md")
+compatibility_support_floor = (
+    "Debian-family support starts at Debian 13+ and Ubuntu 26.04+; "
+    "older Debian and Ubuntu releases are unsupported."
+)
+tested_debian_family_rows = (
+    "| Debian 13 (Trixie) | systemd | daemon + D-Bus activation | Booted package gate |",
+    "| Ubuntu 26.04 LTS (Resolute) | systemd | daemon + D-Bus activation | Booted package gate |",
+)
+debian_family_row = re.compile(r"(?m)^\|[ \t]*(?:Debian|Ubuntu)\b.*\|[ \t]*$")
+for relative_path in compatibility_paths:
+    content = (ROOT / relative_path).read_text()
+    tested_match = re.search(
+        r"(?ms)^## Tested Distributions\s*$\n(.*?)(?=^#{1,6}\s|\Z)",
+        content,
+    )
+    require(tested_match is not None, f"{relative_path} omits the tested distributions section")
+    untested_match = re.search(
+        r"(?ms)^### Expected to Work \(untested\)\s*$\n(.*?)(?=^#{1,6}\s|\Z)",
+        content,
+    )
+    require(untested_match is not None, f"{relative_path} omits the untested distributions section")
+    untested_debian_family_rows = tuple(debian_family_row.findall(untested_match.group(1)))
+    require(not untested_debian_family_rows, f"{relative_path} classifies a supported Debian-family row as untested")
+    normalized_content = re.sub(r"\s+", " ", content)
+    require(
+        compatibility_support_floor in normalized_content,
+        f"{relative_path} omits the exact Debian-family support floor",
+    )
+    actual_tested_debian_family_rows = tuple(debian_family_row.findall(tested_match.group(1)))
+    require(
+        actual_tested_debian_family_rows == tested_debian_family_rows,
+        f"{relative_path} tested Debian-family rows differ: {actual_tested_debian_family_rows!r}",
+    )
+
 compatibility = (ROOT / "docs/compatibility.md").read_text()
-require("Ubuntu 26.04+" in compatibility, "compatibility guide retains an older Ubuntu support floor")
-require("Debian 13+" in compatibility, "compatibility guide retains an older Debian support floor")
 require("Ubuntu 22.04+" not in compatibility, "compatibility guide still claims Ubuntu 22.04 support")
 require("Debian 12+" not in compatibility, "compatibility guide still claims Debian 12 support")
 
@@ -678,10 +711,7 @@ for relative_path in (
     "website/index.html",
 ):
     require("1.88+" in (ROOT / relative_path).read_text(), f"{relative_path} omits the Rust 1.88+ floor")
-book_compatibility = (ROOT / "book/src/compatibility.md").read_text()
-require("Ubuntu 26.04+" in book_compatibility, "book compatibility guide omits Ubuntu 26.04+")
-require("Debian 13+" in book_compatibility, "book compatibility guide omits Debian 13+")
-for relative_path in ("docs/compatibility.md", "book/src/compatibility.md"):
+for relative_path in compatibility_paths:
     require(
         "download-binaries" not in (ROOT / relative_path).read_text(),
         f"{relative_path} falsely claims that the disabled ort download-binaries feature supplies the runtime",

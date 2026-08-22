@@ -246,6 +246,21 @@ const REMOVE_ALL_LEGACY_VERSION: u32 = 1;
 const MAX_REMOVE_ALL_TARGETS: usize = 1024;
 const MAX_REMOVE_ALL_JOURNAL_BYTES: usize = 4 * 1024 * 1024;
 
+/// Debian's fixed `pam-auth-update` roots. A privileged direct PAM edit must
+/// not accept these paths from configuration or the environment.
+const PAM_AUTH_UPDATE_PROFILES_DIR: &str = "/usr/share/pam-configs";
+const PAM_AUTH_UPDATE_STATE_DIR: &str = "/var/lib/pam";
+const PAM_AUTH_UPDATE_PAM_DIR: &str = "/etc/pam.d";
+const PAM_AUTH_UPDATE_PROFILE: &[u8] = concat!(
+    "Name: Facelock face authentication\n",
+    "Default: no\n",
+    "Priority: 900\n",
+    "Auth-Type: Primary\n",
+    "Auth:\n",
+    "\t[success=end default=ignore]\tpam_facelock.so\n",
+)
+.as_bytes();
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum ProvenanceState {
@@ -3427,6 +3442,166 @@ fn read_regular_nofollow(path: &Path) -> std::io::Result<(Vec<u8>, FileIdentity)
     Ok((content, identity))
 }
 
+/// Open one `pam-auth-update` input through an already-validated directory.
+/// The detector is read-only, but it still treats ownership, writable modes,
+/// symlinks and hard links as trust failures: otherwise privileged detection
+/// could be made to read an arbitrary file or accept mutable evidence.
+fn read_pam_auth_update_file(
+    root: &Path,
+    name: &str,
+    expected_owner: (u32, u32),
+) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::{Error, ErrorKind};
+
+    let directory = match open_directory_nofollow(root) {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let directory_metadata = directory.metadata()?;
+    if (directory_metadata.uid(), directory_metadata.gid()) != expected_owner
+        || directory_metadata.mode() & 0o022 != 0
+    {
+        return Err(Error::new(
+            ErrorKind::PermissionDenied,
+            format!("{} has untrusted ownership or permissions", root.display()),
+        ));
+    }
+    let file = match open_regular_at(&directory, OsStr::new(name)) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let metadata = file.metadata()?;
+    if (metadata.uid(), metadata.gid()) != expected_owner || metadata.mode() & 0o022 != 0 {
+        return Err(Error::new(
+            ErrorKind::PermissionDenied,
+            format!(
+                "{}/{} has untrusted ownership or permissions",
+                root.display(),
+                name
+            ),
+        ));
+    }
+    read_open_bounded(&file, MAX_RECORD_BYTES).map(Some)
+}
+
+fn pam_auth_update_state_selects_facelock(content: &[u8]) -> bool {
+    content
+        .split(|byte| *byte == b'\n')
+        .any(|line| line.strip_suffix(b"\r").unwrap_or(line) == b"Module: facelock")
+}
+
+/// Confirm the live Facelock module is inside the generated Primary block,
+/// rather than mistaking an administrator's direct rule elsewhere in
+/// `common-auth` for a selected shared profile.
+fn common_auth_has_managed_facelock(content: &[u8]) -> bool {
+    let mut primary = false;
+    for line in content.split(|byte| *byte == b'\n') {
+        let semantic = line.strip_suffix(b"\r").unwrap_or(line);
+        if semantic.starts_with(b"# here are the per-package modules")
+            && semantic
+                .windows(b"Primary".len())
+                .any(|part| part == b"Primary")
+        {
+            primary = true;
+            continue;
+        }
+        if primary && semantic.starts_with(b"# here's the fallback if no module succeeds") {
+            return false;
+        }
+        if primary && is_facelock_rule(semantic) {
+            return true;
+        }
+    }
+    false
+}
+
+fn active_pam_auth_update_profile(roots: &PamAuthUpdateRoots) -> std::io::Result<bool> {
+    use std::io::{Error, ErrorKind};
+
+    let owner = if roots.is_system() {
+        (0, 0)
+    } else {
+        (unsafe { libc::geteuid() }, unsafe { libc::getegid() })
+    };
+    let state = read_pam_auth_update_file(&roots.state, "auth", owner)?;
+    let selected = state
+        .as_deref()
+        .is_some_and(pam_auth_update_state_selects_facelock);
+    let common_auth = read_pam_auth_update_file(&roots.pam, "common-auth", owner)?;
+    let live = common_auth
+        .as_deref()
+        .is_some_and(common_auth_has_managed_facelock);
+    if !selected && live {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "live PAM graph contains an unselected Facelock profile",
+        ));
+    }
+    if !selected {
+        return Ok(false);
+    }
+    let Some(_) = common_auth else {
+        return Err(Error::new(
+            ErrorKind::NotFound,
+            "selected Facelock profile has no common-auth graph",
+        ));
+    };
+    if !live {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "selected Facelock profile does not match the live PAM graph",
+        ));
+    }
+    let Some(profile) = read_pam_auth_update_file(&roots.profiles, "facelock", owner)? else {
+        return Err(Error::new(
+            ErrorKind::NotFound,
+            "selected Facelock profile metadata is missing",
+        ));
+    };
+    if profile != PAM_AUTH_UPDATE_PROFILE {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "selected Facelock profile metadata does not match the packaged profile",
+        ));
+    }
+    Ok(true)
+}
+
+fn guard_direct_add(dirs: &PamDirs, action: WriteAction) -> anyhow::Result<()> {
+    if action != WriteAction::Add {
+        return Ok(());
+    }
+    let Some(roots) = &dirs.pam_auth_update else {
+        return Ok(());
+    };
+    let active = active_pam_auth_update_profile(roots).map_err(|error| {
+        anyhow::anyhow!("cannot safely inspect the pam-auth-update profile: {error}")
+    })?;
+    if active {
+        return Err(fail(PamMessage::PamAuthUpdateProfileActive));
+    }
+    Ok(())
+}
+
+/// Exit on `pam status`'s 0/1/2 scale: selected and live, unselected, or not
+/// safely knowable. The package script consumes only the code; the diagnostic
+/// for an unsafe graph remains visible on stderr.
+fn shared_profile_status(roots: &PamAuthUpdateRoots) -> i32 {
+    match active_pam_auth_update_profile(roots) {
+        Ok(true) => STATUS_PRESENT,
+        Ok(false) => STATUS_MISSING,
+        Err(error) => {
+            Terminal.error(&PamMessage::PamConfigureFailed {
+                service: "pam-auth-update profile".to_string(),
+                error: error.to_string(),
+            });
+            STATUS_ERROR
+        }
+    }
+}
+
 fn identity_matches(expected: &FileIdentity, actual: &FileIdentity) -> bool {
     (
         expected.device,
@@ -4114,6 +4289,31 @@ const HARD_LINKED: &str = "hard-linked service file";
 pub(crate) struct PamDirs {
     dirs: Vec<PathBuf>,
     backup_dir: PathBuf,
+    pam_auth_update: Option<PamAuthUpdateRoots>,
+}
+
+/// Inputs to the Debian shared-profile detector. Production constructs only
+/// [`PamAuthUpdateRoots::system`]; explicit roots let tests exercise the
+/// detector without reading or mutating the host PAM graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PamAuthUpdateRoots {
+    profiles: PathBuf,
+    state: PathBuf,
+    pam: PathBuf,
+}
+
+impl PamAuthUpdateRoots {
+    fn system() -> Self {
+        Self {
+            profiles: PathBuf::from(PAM_AUTH_UPDATE_PROFILES_DIR),
+            state: PathBuf::from(PAM_AUTH_UPDATE_STATE_DIR),
+            pam: PathBuf::from(PAM_AUTH_UPDATE_PAM_DIR),
+        }
+    }
+
+    fn is_system(&self) -> bool {
+        self == &Self::system()
+    }
 }
 
 impl PamDirs {
@@ -4173,6 +4373,7 @@ impl PamDirs {
         PamDirs {
             dirs,
             backup_dir: PathBuf::from(PAM_BACKUPS_DIR),
+            pam_auth_update: None,
         }
     }
 
@@ -4190,9 +4391,11 @@ impl PamDirs {
     /// a privileged process, so the environment cannot redirect where a root
     /// `pam add` writes.
     pub(crate) fn system() -> Self {
-        crate::resolved::ConfigLoad::read()
+        let mut dirs = crate::resolved::ConfigLoad::read()
             .config()
-            .map_or_else(Self::default, Self::from_config)
+            .map_or_else(Self::default, Self::from_config);
+        dirs.pam_auth_update = Some(PamAuthUpdateRoots::system());
+        dirs
     }
 
     /// Fixed, compiled roots for config-independent machine-wide cleanup.
@@ -4200,6 +4403,7 @@ impl PamDirs {
         PamDirs {
             dirs: PAM_CLEANUP_DIRS.iter().map(PathBuf::from).collect(),
             backup_dir: PathBuf::from(PAM_BACKUPS_DIR),
+            pam_auth_update: None,
         }
     }
 
@@ -4261,6 +4465,7 @@ impl Default for PamDirs {
         PamDirs {
             dirs: PAM_SYSTEM_DIRS.iter().map(PathBuf::from).collect(),
             backup_dir: PathBuf::from(PAM_BACKUPS_DIR),
+            pam_auth_update: None,
         }
     }
 }
@@ -4272,6 +4477,7 @@ impl From<&Path> for PamDirs {
         PamDirs {
             dirs: vec![dir.to_path_buf()],
             backup_dir: dir.join(".facelock-pam-backups"),
+            pam_auth_update: None,
         }
     }
 }
@@ -4329,6 +4535,10 @@ impl PamAction {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PamRequest {
     pub action: PamAction,
+    /// Fixed-root, read-only Debian package lifecycle probe. It is reachable
+    /// only through a hidden internal subcommand and never composes with a
+    /// named or enumerating service operation.
+    pub shared_profile_status: bool,
     /// Requested services, in the order given. Empty means
     /// [`DEFAULT_PAM_SERVICE`].
     pub services: Vec<String>,
@@ -7225,6 +7435,9 @@ fn emit_json(
 /// re-running a `/etc/pam.d` edit under `sudo` from a wrapper script is a
 /// surprise, not a convenience.
 pub fn run(request: PamRequest) -> anyhow::Result<i32> {
+    if request.shared_profile_status {
+        return Ok(shared_profile_status(&PamAuthUpdateRoots::system()));
+    }
     // `status` needs no root and returns before the check, as it always has.
     if request.action == PamAction::Status {
         return Ok(status_in(&PamDirs::system(), &request));
@@ -7460,6 +7673,7 @@ fn write_in(dirs: &PamDirs, request: &PamRequest) -> anyhow::Result<i32> {
     let sink = Sink::verb(request.json);
 
     // Phase one. An `Err` here has written nothing, by construction.
+    guard_direct_add(dirs, action)?;
     let targets = plan_writes(dirs, &write)?;
     let reports = apply_all(dirs, &targets, &write, &sink);
 
@@ -9144,6 +9358,7 @@ pub(crate) fn install_for_setup(request: &PamRequest) -> anyhow::Result<()> {
     };
     let sink = Sink::human();
     let dirs = PamDirs::system();
+    guard_direct_add(&dirs, WriteAction::Add)?;
     let reports = apply_all(&dirs, &plan_writes(&dirs, &write)?, &write, &sink);
     // Before the hint, which the alias has never printed after a failure —
     // unlike the verb, whose closing hint fires whatever the rows say.
@@ -9191,6 +9406,7 @@ pub(crate) fn install_one_in(dirs: &PamDirs, request: &PamRequest) -> anyhow::Re
         remedy: "--allow-sensitive",
     };
     let sink = Sink::human();
+    guard_direct_add(dirs, WriteAction::Add)?;
     let reports = apply_all(dirs, &plan_writes(dirs, &write)?, &write, &sink);
     first_failure(&reports)?;
     Ok(reports
@@ -9227,6 +9443,9 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::BTreeMap;
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    /// Independent contract value so a mutation of the production bound is observable.
+    const EXPECTED_MAX_RECORD_BYTES: usize = 16 * 1024;
 
     // -----------------------------------------------------------------------
     // Goldens captured from `main` (4c8cf28) before the extraction.
@@ -10036,7 +10255,7 @@ account required pam_unix.so\n";
     fn bounded_record_read_refuses_oversized_untrusted_json() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("record");
-        fs::write(&path, vec![b' '; MAX_RECORD_BYTES + 1]).unwrap();
+        fs::write(&path, vec![b' '; EXPECTED_MAX_RECORD_BYTES + 1]).unwrap();
         let file = fs::File::open(path).unwrap();
 
         let error = read_open_bounded(&file, MAX_RECORD_BYTES).unwrap_err();
@@ -12482,32 +12701,83 @@ account required pam_unix.so\n";
     }
 
     #[derive(Debug, PartialEq, Eq)]
-    struct DirectorySnapshot {
+    struct MetadataSnapshot {
         device: u64,
         inode: u64,
+        links: u64,
         mode: u32,
         uid: u32,
         gid: u32,
+        size: u64,
         modified_seconds: i64,
         modified_nanoseconds: i64,
         changed_seconds: i64,
         changed_nanoseconds: i64,
-        entries: BTreeMap<String, Vec<u8>>,
     }
 
-    fn directory_snapshot(dir: &Path) -> DirectorySnapshot {
-        let metadata = fs::symlink_metadata(dir).unwrap();
-        DirectorySnapshot {
+    fn metadata_snapshot(path: &Path) -> MetadataSnapshot {
+        let metadata = fs::symlink_metadata(path).unwrap();
+        MetadataSnapshot {
             device: metadata.dev(),
             inode: metadata.ino(),
+            links: metadata.nlink(),
             mode: metadata.mode(),
             uid: metadata.uid(),
             gid: metadata.gid(),
+            size: metadata.len(),
             modified_seconds: metadata.mtime(),
             modified_nanoseconds: metadata.mtime_nsec(),
             changed_seconds: metadata.ctime(),
             changed_nanoseconds: metadata.ctime_nsec(),
-            entries: snapshot(dir),
+        }
+    }
+
+    #[derive(PartialEq, Eq)]
+    struct FileSnapshot {
+        metadata: MetadataSnapshot,
+        bytes: Vec<u8>,
+    }
+
+    impl std::fmt::Debug for FileSnapshot {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter
+                .debug_struct("FileSnapshot")
+                .field("metadata", &self.metadata)
+                .field("sha256", &sha256_hex(&self.bytes))
+                .finish()
+        }
+    }
+
+    fn file_snapshot(path: &Path) -> FileSnapshot {
+        FileSnapshot {
+            metadata: metadata_snapshot(path),
+            bytes: fs::read(path).unwrap_or_default(),
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct DirectorySnapshot {
+        metadata: MetadataSnapshot,
+        entries: BTreeMap<String, FileSnapshot>,
+    }
+
+    fn directory_snapshot(dir: &Path) -> DirectorySnapshot {
+        let entries = fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|entry| {
+                let entry = entry.unwrap();
+                (!entry.file_type().unwrap().is_dir()).then_some(entry)
+            })
+            .map(|entry| {
+                (
+                    entry.file_name().to_string_lossy().into_owned(),
+                    file_snapshot(&entry.path()),
+                )
+            })
+            .collect();
+        DirectorySnapshot {
+            metadata: metadata_snapshot(dir),
+            entries,
         }
     }
 
@@ -12539,6 +12809,232 @@ account required pam_unix.so\n";
             .unwrap();
         let path = store.latest_committed(service).unwrap().unwrap();
         fs::read(path).unwrap()
+    }
+
+    const FACELOCK_PAM_AUTH_UPDATE_PROFILE: &str = concat!(
+        "Name: Facelock face authentication\n",
+        "Default: no\n",
+        "Priority: 900\n",
+        "Auth-Type: Primary\n",
+        "Auth:\n",
+        "\t[success=end default=ignore]\tpam_facelock.so\n",
+    );
+
+    #[test]
+    fn shared_profile_detector_pins_the_exact_packaged_profile_bytes() {
+        assert_eq!(
+            PAM_AUTH_UPDATE_PROFILE,
+            include_bytes!("../../../../debian/pam-auth-update")
+        );
+    }
+
+    fn pam_auth_update_fixture(active: bool) -> (tempfile::TempDir, PamAuthUpdateRoots) {
+        let root = tempfile::tempdir().unwrap();
+        let profiles = root.path().join("usr/share/pam-configs");
+        let state = root.path().join("var/lib/pam");
+        let pam = root.path().join("etc/pam.d");
+        fs::create_dir_all(&profiles).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        fs::create_dir_all(&pam).unwrap();
+        fs::write(profiles.join("facelock"), FACELOCK_PAM_AUTH_UPDATE_PROFILE).unwrap();
+        fs::write(
+            state.join("auth"),
+            if active {
+                "Module: facelock\n[success=end default=ignore]\tpam_facelock.so\n"
+            } else {
+                "Module: unix\n[success=end default=ignore]\tpam_unix.so\n"
+            },
+        )
+        .unwrap();
+        fs::write(
+            pam.join("common-auth"),
+            if active {
+                concat!(
+                    "# here are the per-package modules (the \"Primary\" block)\n",
+                    "auth\t[success=1 default=ignore]\tpam_facelock.so\n",
+                    "auth\t[success=1 default=ignore]\tpam_unix.so nullok\n",
+                    "# here's the fallback if no module succeeds\n",
+                )
+            } else {
+                concat!(
+                    "# here are the per-package modules (the \"Primary\" block)\n",
+                    "auth\t[success=1 default=ignore]\tpam_unix.so nullok\n",
+                    "# here's the fallback if no module succeeds\n",
+                )
+            },
+        )
+        .unwrap();
+        let roots = PamAuthUpdateRoots {
+            profiles,
+            state,
+            pam,
+        };
+        (root, roots)
+    }
+
+    #[test]
+    fn direct_add_refuses_an_exact_active_pam_auth_update_profile_without_writing() {
+        let (_root, roots) = pam_auth_update_fixture(true);
+        fs::write(roots.pam.join("sudo"), SUDO_BEFORE).unwrap();
+        let dirs = PamDirs {
+            dirs: vec![roots.pam.clone()],
+            backup_dir: roots.pam.join(".facelock-pam-backups"),
+            pam_auth_update: Some(roots),
+        };
+        let before = directory_snapshot(dirs.overrides());
+
+        let error = write_in(&dirs, &add(&["sudo"])).unwrap_err().to_string();
+
+        assert_eq!(
+            error,
+            "Facelock's pam-auth-update profile is active; direct PAM edits would configure Facelock twice. To migrate, run `sudo pam-auth-update --disable facelock`, verify that a real correct password succeeds and a wrong password fails, then retry the original Facelock command with all of its services and flags."
+        );
+        assert_eq!(directory_snapshot(dirs.overrides()), before);
+        assert!(!dirs.backup_dir().exists());
+    }
+
+    #[test]
+    fn direct_add_refuses_symlinked_pam_auth_update_state_without_following_it() {
+        let (_root, roots) = pam_auth_update_fixture(true);
+        fs::write(roots.pam.join("sudo"), SUDO_BEFORE).unwrap();
+        let outside = roots.state.join("administrator-auth");
+        fs::write(&outside, b"do not read or change me\n").unwrap();
+        fs::remove_file(roots.state.join("auth")).unwrap();
+        std::os::unix::fs::symlink(&outside, roots.state.join("auth")).unwrap();
+        let dirs = PamDirs {
+            dirs: vec![roots.pam.clone()],
+            backup_dir: roots.pam.join(".facelock-pam-backups"),
+            pam_auth_update: Some(roots),
+        };
+        let before = directory_snapshot(dirs.overrides());
+
+        let error = write_in(&dirs, &add(&["sudo"])).unwrap_err().to_string();
+
+        assert!(error.contains("cannot safely inspect the pam-auth-update profile"));
+        assert_eq!(fs::read(outside).unwrap(), b"do not read or change me\n");
+        assert_eq!(directory_snapshot(dirs.overrides()), before);
+        assert!(!dirs.backup_dir().exists());
+    }
+
+    #[test]
+    fn oversized_shared_profile_inputs_fail_closed_without_pam_or_backup_mutation() {
+        #[derive(Clone, Copy, Debug)]
+        enum Input {
+            Profile,
+            State,
+            CommonAuth,
+        }
+
+        for input in [Input::Profile, Input::State, Input::CommonAuth] {
+            let (_root, roots) = pam_auth_update_fixture(true);
+            fs::write(roots.pam.join("sudo"), SUDO_BEFORE).unwrap();
+            let input_path = match input {
+                Input::Profile => roots.profiles.join("facelock"),
+                Input::State => roots.state.join("auth"),
+                Input::CommonAuth => roots.pam.join("common-auth"),
+            };
+            let mut oversized = fs::read(&input_path).unwrap();
+            oversized.resize(EXPECTED_MAX_RECORD_BYTES + 1, b'\n');
+            fs::write(&input_path, &oversized).unwrap();
+            for path in [
+                roots.profiles.join("facelock"),
+                roots.state.join("auth"),
+                roots.pam.join("common-auth"),
+                roots.pam.join("sudo"),
+            ] {
+                fs::set_permissions(path, fs::Permissions::from_mode(0o644)).unwrap();
+            }
+            let profiles_before = directory_snapshot(&roots.profiles);
+            let state_before = directory_snapshot(&roots.state);
+            let pam_before = directory_snapshot(&roots.pam);
+            let dirs = PamDirs {
+                dirs: vec![roots.pam.clone()],
+                backup_dir: roots.pam.join(".facelock-pam-backups"),
+                pam_auth_update: Some(roots.clone()),
+            };
+
+            assert_eq!(shared_profile_status(&roots), STATUS_ERROR, "{input:?}");
+            let error = write_in(&dirs, &add(&["sudo"])).unwrap_err().to_string();
+
+            assert!(
+                error.contains("state file exceeds size limit"),
+                "{input:?}: {error}"
+            );
+            assert_eq!(
+                directory_snapshot(&roots.profiles),
+                profiles_before,
+                "{input:?}"
+            );
+            assert_eq!(directory_snapshot(&roots.state), state_before, "{input:?}");
+            assert_eq!(directory_snapshot(&roots.pam), pam_before, "{input:?}");
+            assert!(!dirs.backup_dir().exists(), "{input:?}");
+        }
+    }
+
+    #[test]
+    fn unselected_pam_auth_update_profile_does_not_block_direct_add() {
+        let (_root, roots) = pam_auth_update_fixture(false);
+        fs::write(roots.pam.join("sudo"), SUDO_BEFORE).unwrap();
+        let dirs = PamDirs {
+            dirs: vec![roots.pam.clone()],
+            backup_dir: roots.pam.join(".facelock-pam-backups"),
+            pam_auth_update: Some(roots),
+        };
+
+        assert_eq!(write_in(&dirs, &add(&["sudo"])).unwrap(), WRITE_OK);
+        assert_eq!(
+            fs::read_to_string(dirs.overrides().join("sudo")).unwrap(),
+            SUDO_AFTER
+        );
+    }
+
+    #[test]
+    fn selected_profile_with_an_inconsistent_live_graph_refuses_direct_add() {
+        let (_root, roots) = pam_auth_update_fixture(true);
+        fs::write(
+            roots.pam.join("common-auth"),
+            "auth\t[success=1 default=ignore]\tpam_unix.so nullok\n",
+        )
+        .unwrap();
+        fs::write(roots.pam.join("sudo"), SUDO_BEFORE).unwrap();
+        let dirs = PamDirs {
+            dirs: vec![roots.pam.clone()],
+            backup_dir: roots.pam.join(".facelock-pam-backups"),
+            pam_auth_update: Some(roots),
+        };
+        let before = directory_snapshot(dirs.overrides());
+
+        let error = write_in(&dirs, &add(&["sudo"])).unwrap_err().to_string();
+
+        assert!(error.contains("selected Facelock profile does not match the live PAM graph"));
+        assert_eq!(directory_snapshot(dirs.overrides()), before);
+    }
+
+    #[test]
+    fn live_profile_with_an_unselected_state_refuses_direct_add() {
+        let (_root, roots) = pam_auth_update_fixture(false);
+        fs::write(
+            roots.pam.join("common-auth"),
+            concat!(
+                "# here are the per-package modules (the \"Primary\" block)\n",
+                "auth\t[success=1 default=ignore]\tpam_facelock.so\n",
+                "auth\t[success=1 default=ignore]\tpam_unix.so nullok\n",
+                "# here's the fallback if no module succeeds\n",
+            ),
+        )
+        .unwrap();
+        fs::write(roots.pam.join("sudo"), SUDO_BEFORE).unwrap();
+        let dirs = PamDirs {
+            dirs: vec![roots.pam.clone()],
+            backup_dir: roots.pam.join(".facelock-pam-backups"),
+            pam_auth_update: Some(roots),
+        };
+        let before = directory_snapshot(dirs.overrides());
+
+        let error = write_in(&dirs, &add(&["sudo"])).unwrap_err().to_string();
+
+        assert!(error.contains("live PAM graph contains an unselected Facelock profile"));
+        assert_eq!(directory_snapshot(dirs.overrides()), before);
     }
 
     // -- byte identity with `main` ------------------------------------------
@@ -13983,6 +14479,7 @@ account required pam_unix.so\n";
         PamDirs {
             dirs: vec![etc.to_path_buf(), vendor.to_path_buf()],
             backup_dir: etc.join(".facelock-pam-backups"),
+            pam_auth_update: None,
         }
     }
 
@@ -14395,6 +14892,7 @@ account required pam_unix.so\n";
         let dirs = PamDirs {
             dirs: vec![etc.clone(), vendor.clone()],
             backup_dir: state.clone(),
+            pam_auth_update: None,
         };
         fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
         assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
@@ -14906,6 +15404,7 @@ account required pam_unix.so\n";
         let dirs = PamDirs {
             dirs: vec![etc.clone(), vendor.clone(), detection_only.clone()],
             backup_dir: root.path().join("state"),
+            pam_auth_update: None,
         };
         assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
         let request = PamRequest {
@@ -14942,6 +15441,7 @@ account required pam_unix.so\n";
         let dirs = PamDirs {
             dirs: vec![etc.clone(), higher.clone(), lower.clone()],
             backup_dir: root.path().join("state"),
+            pam_auth_update: None,
         };
         assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
         let request = remove(&["polkit-1"]);
@@ -14977,6 +15477,7 @@ account required pam_unix.so\n";
         let dirs = PamDirs {
             dirs: vec![etc.clone(), higher.clone(), lower.clone()],
             backup_dir: root.path().join("state"),
+            pam_auth_update: None,
         };
         assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
         let request = PamRequest {
@@ -16479,6 +16980,7 @@ account required pam_unix.so\n";
         let dirs = PamDirs {
             dirs: vec![pam.clone(), vendor, authselect.clone()],
             backup_dir: root.path().join("pam-backups"),
+            pam_auth_update: None,
         };
 
         assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);

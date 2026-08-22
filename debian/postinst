@@ -3,11 +3,10 @@ set -e
 
 case "$1" in
     configure)
-        systemd-tmpfiles --create 2>/dev/null || true
-
         # Modes for the current layout, mirroring dist/facelock.tmpfiles for
-        # hosts where tmpfiles did not run. Nothing here moves, creates, or
-        # deletes data; every line is idempotent.
+        # existing paths before compat 13's package-scoped dh_installtmpfiles
+        # generated maintainer-script block runs. Nothing here moves or deletes
+        # data; every line is idempotent.
         # State dir: traversable by everyone, listable by root only (ADR 010).
         chown root:root /var/lib/facelock 2>/dev/null || true
         chmod 711 /var/lib/facelock 2>/dev/null || true
@@ -60,6 +59,14 @@ case "$1" in
         # Bus policy may have changed (ADR 010); ask the bus to re-read it.
         dbus-send --system --type=method_call --dest=org.freedesktop.DBus \
             /org/freedesktop/DBus org.freedesktop.DBus.ReloadConfig 2>/dev/null || true
+
+        # Pick up the upgraded binary only when a daemon was already running.
+        # This includes D-Bus-activated instances while leaving fresh,
+        # disabled and inactive installs untouched.
+        if [ -d /run/systemd/system ] && \
+           systemctl is-active --quiet facelock-daemon.service; then
+            systemctl try-restart facelock-daemon.service 2>/dev/null || true
+        fi
 
         # Register/update the packaged opt-in profile without selecting it.
         if [ -x /usr/sbin/pam-auth-update ]; then

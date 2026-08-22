@@ -62,11 +62,14 @@ case "${1:-}" in
     --control)
         destination="${3:?}"
         mkdir -p "$destination"
-        if [ -f "${2:?}.postinst" ]; then
-            cp "${2:?}.postinst" "$destination/postinst"
-        else
-            printf '%s\n' '#!/bin/sh' 'exit 0' >"$destination/postinst"
-        fi
+        package="${2:?}"
+        for script in postinst prerm postrm; do
+            if [ -f "$package.$script" ]; then
+                cp "$package.$script" "$destination/$script"
+            else
+                printf '%s\n' '#!/bin/sh' 'exit 0' >"$destination/$script"
+            fi
+        done
         ;;
     *) exit 2 ;;
 esac
@@ -107,6 +110,29 @@ create_fixture() {
 
     printf '%s\n' buildinfo >"$root/${binary_basename}.buildinfo"
     printf '%s\n' package >"$root/${binary_basename}.deb"
+    cat >"$root/${binary_basename}.deb.postinst" <<'SH'
+#!/bin/sh
+if [ -d /run/systemd/system ] && \
+           systemctl is-active --quiet facelock-daemon.service; then
+            systemctl try-restart facelock-daemon.service 2>/dev/null || true
+fi
+systemd-tmpfiles ${DPKG_ROOT:+--root="$DPKG_ROOT"} --create facelock.conf || true
+SH
+    cat >"$root/${binary_basename}.deb.prerm" <<'SH'
+#!/bin/sh
+facelock pam shared-profile-status
+facelock pam remove --all --dry-run
+facelock pam remove --all
+if [ -z "$DPKG_ROOT" ] && [ "$1" = remove ] && [ -d /run/systemd/system ]; then
+    deb-systemd-invoke stop 'facelock-daemon.service' >/dev/null || true
+fi
+SH
+    cat >"$root/${binary_basename}.deb.postrm" <<'SH'
+#!/bin/sh
+if [ "$1" = "purge" ]; then
+    deb-systemd-helper purge 'facelock-daemon.service' >/dev/null || true
+fi
+SH
     {
         printf '%s\n' \
             'Format: 1.8' \
@@ -179,6 +205,11 @@ if [ "$1" = configure ]; then
         fi
     fi
 fi
+if [ -d /run/systemd/system ] && \
+           systemctl is-active --quiet facelock-daemon.service; then
+            systemctl try-restart facelock-daemon.service 2>/dev/null || true
+fi
+systemd-tmpfiles ${DPKG_ROOT:+--root="$DPKG_ROOT"} --create facelock.conf || true
 SH
 PATH="$fixture_root/bin:$PATH" \
     bash "$contract" --manifest "$conditional_enable/$manifest_name" >/dev/null
@@ -188,6 +219,11 @@ cp -a "$baseline" "$unconditional_enable"
 cat >"$unconditional_enable/facelock_0.1.4-1~ubuntu26.04.1_amd64.deb.postinst" <<'SH'
 #!/bin/sh
 deb-systemd-helper enable 'facelock-daemon.service' >/dev/null || true
+if [ -d /run/systemd/system ] && \
+           systemctl is-active --quiet facelock-daemon.service; then
+            systemctl try-restart facelock-daemon.service 2>/dev/null || true
+fi
+systemd-tmpfiles ${DPKG_ROOT:+--root="$DPKG_ROOT"} --create facelock.conf || true
 SH
 assert_rejected "accepted unconditional service enablement" \
     env PATH="$fixture_root/bin:$PATH" bash "$contract" \
@@ -198,6 +234,11 @@ cp -a "$baseline" "$automatic_start"
 cat >"$automatic_start/facelock_0.1.4-1~ubuntu26.04.1_amd64.deb.postinst" <<'SH'
 #!/bin/sh
 deb-systemd-invoke start 'facelock-daemon.service' >/dev/null || true
+if [ -d /run/systemd/system ] && \
+           systemctl is-active --quiet facelock-daemon.service; then
+            systemctl try-restart facelock-daemon.service 2>/dev/null || true
+fi
+systemd-tmpfiles ${DPKG_ROOT:+--root="$DPKG_ROOT"} --create facelock.conf || true
 SH
 assert_rejected "accepted automatic service startup" \
     env PATH="$fixture_root/bin:$PATH" bash "$contract" \

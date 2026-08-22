@@ -190,6 +190,9 @@ pub struct PamServiceArg {
 /// construct in a test.
 #[derive(Subcommand)]
 pub enum PamCli {
+    /// Inspect Debian's packaged shared profile for package lifecycle guards
+    #[command(hide = true)]
+    SharedProfileStatus,
     /// Add the facelock line to one or more /etc/pam.d service files
     #[command(after_help = "\
 --yes/--no-confirm only skips the per-file confirmation. Editing one of the \
@@ -274,6 +277,11 @@ read, so 'not configured' and 'not checked' are never the same answer.")]
 impl From<PamCli> for PamRequest {
     fn from(cli: PamCli) -> Self {
         match cli {
+            PamCli::SharedProfileStatus => PamRequest {
+                action: PamAction::Status,
+                shared_profile_status: true,
+                ..PamRequest::default()
+            },
             PamCli::Add {
                 service,
                 confirm,
@@ -283,6 +291,7 @@ impl From<PamCli> for PamRequest {
                 json,
             } => PamRequest {
                 action: PamAction::Add,
+                shared_profile_status: false,
                 services: service.service,
                 all: false,
                 // `--json` implies `--no-confirm` and never `--allow-sensitive`:
@@ -306,6 +315,7 @@ impl From<PamCli> for PamRequest {
                 json,
             } => PamRequest {
                 action: PamAction::Remove,
+                shared_profile_status: false,
                 services: service.service,
                 all,
                 // Symmetry with `add`; `remove` has nothing to suppress today.

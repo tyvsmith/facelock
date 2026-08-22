@@ -580,6 +580,18 @@ Manage the facelock line in `/etc/pam.d` service files. This command owns every 
 
 A service name is looked up in `/etc/pam.d` first and `/usr/lib/pam.d` second — Linux-PAM's own order, first hit wins — because packages ship their configuration there: on current Arch `polkit` installs `/usr/lib/pam.d/polkit-1` and there is no `/etc/pam.d/polkit-1` at all. Only `/etc/pam.d` is ever written to. A service that exists only in a vendor directory is copied there first, with the facelock line already in it and a two-line header saying what it was forked from; the package's own file is left byte for byte. That copy reports `overridden` rather than `installed`, and `pam status` reports a service with no local copy as `vendor-only` rather than as `missing`. Deleting the override restores the vendor file. Set `[pam] config_dirs` if your distribution's vendor directory is somewhere else.
 
+On Debian and Ubuntu, a selected packaged `pam-auth-update` profile is already
+one Facelock authentication path. Direct `pam add` and `setup --pam` refuse
+before writing and give the exact disable and correct/wrong-password validation
+sequence, then tell you to retry the original Facelock command with all of its
+services and flags. Untrusted evidence or any saved-selection/live-graph
+disagreement also fails closed.
+
+`facelock pam shared-profile-status` is an internal, read-only Debian package
+maintainer probe. It exits 0 only for the exact active packaged
+`pam-auth-update` profile, 1 when the profile is cleanly unselected, and 2 for
+untrusted or inconsistent state; it never changes PAM or backup state.
+
 ### facelock pam add
 
 ```bash

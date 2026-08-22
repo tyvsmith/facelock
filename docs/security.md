@@ -992,9 +992,29 @@ path. The module is removed only after the compiled-root final scan succeeds.
 The all-or-nothing guarantee covers the direct PAM edits owned and scanned by
 this transaction, plus retaining the package/module when it fails. Debian's
 packaged `pam-auth-update` profile is opt-in (`Default: no`), so fresh install
-does not alter `common-auth`. Its separately managed lifecycle and byte-exact
-rollback remain #224 scope; the current `prerm` removes that profile before
-invoking the shared direct-edit cleanup.
+does not alter `common-auth`. Direct `pam add` and `setup --pam` inspect only
+the fixed profile, selection-state and live `common-auth` paths with bounded,
+owner/mode/link-checked, no-follow reads. An exact selected and live profile
+refuses a duplicate direct edit; any saved-selection/live-graph disagreement,
+linked evidence, or modified evidence fails closed. Neither case writes PAM or
+backup state.
+
+Debian removal performs that fixed-root profile probe and a read-only
+`remove --all --dry-run` preflight before the journaled direct cleanup, and it
+reaches generated service lifecycle handling only after cleanup commits.
+Ordinary removal stops the daemon but preserves enabled state for reinstall;
+the generated purge path alone retires that state. A selected or unsafe shared
+profile aborts removal with the package, binary, module, PAM graph, direct edits
+and service state retained. The administrator is told to disable
+the profile through `pam-auth-update`, prove a real correct password succeeds
+and a wrong password fails, then retry. No released predecessor recorded exact
+package-auto-enable provenance, so Facelock never guesses that an existing
+selection is package-owned and never silently disables it. Automatic legacy
+profile migration is intentionally deferred until such provenance can support
+an exact graph snapshot, managed regeneration, provenance-owned direct-edit
+reapplication, real authentication validation, and provable restoration or
+retained evidence. An unselected `Default: no` profile causes no managed-graph
+transition when its package metadata is removed.
 The RPM retirement guard reads only `/etc/authselect/authselect.conf` before
 payload replacement. It requires fixed root ownership, mode, link count and a
 16 KiB bound, compares the first line's raw bytes before shell interpretation,

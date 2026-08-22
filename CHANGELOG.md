@@ -527,6 +527,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Debian PAM and daemon package lifecycle is opt-in and state-preserving**
+  (#224): direct `pam add`/`setup --pam` now refuses an already-selected exact
+  `pam-auth-update` profile before writing, using fixed-root no-follow evidence
+  and exact disable/password-validation guidance. Package removal preserves and
+  blocks on every selected or inconsistent shared profile because older
+  releases recorded no proof separating package auto-enable from administrator
+  choice; after explicit disable, it preflights then transactionally cleans
+  direct edits before generated service teardown. Ordinary removal stops the
+  daemon but preserves enabled state for reinstall; purge retires that state.
+  Fresh, reinstall and upgrade paths leave inactive daemons inactive and
+  preserve enabled/disabled state, while an already-active daemon is restarted
+  so it picks up the upgraded binary. Compat 13's generated package-scoped
+  tmpfiles activation is the sole install-time create. The inert packaged
+  profile remains `Default: no`, and fresh install still leaves `common-auth`
+  byte-for-byte unchanged.
 - **PAM service files are resolved through the vendor directories** (#201):
   `/etc/pam.d`, then `/usr/lib/pam.d`, first hit wins, configurable with
   `[pam] config_dirs`. On a current Arch install polkit ships its stack at

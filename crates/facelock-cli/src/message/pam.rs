@@ -205,6 +205,10 @@ pub enum PamMessage {
         paths: String,
         path: String,
     },
+    /// Debian's shared profile is already selected and live. A direct rule
+    /// would create two Facelock auth paths, so the refusal gives the exact
+    /// opt-in migration command and verification sequence.
+    PamAuthUpdateProfileActive,
     PamServiceAbsentSkipped {
         path: String,
     },
@@ -520,6 +524,9 @@ impl Message for PamMessage {
                 ),
                 &[("paths", paths.clone()), ("path", path.clone())],
             ),
+            PamAuthUpdateProfileActive => translate(
+                "Facelock's pam-auth-update profile is active; direct PAM edits would configure Facelock twice. To migrate, run `sudo pam-auth-update --disable facelock`, verify that a real correct password succeeds and a wrong password fails, then retry the original Facelock command with all of its services and flags.",
+            ),
             PamServiceAbsentSkipped { path } => fill(
                 translate("PAM service file absent: {path}. Nothing to add."),
                 &[("path", path.clone())],
@@ -590,7 +597,7 @@ impl Message for PamMessage {
 /// above: no wildcard arm, so a variant that renders nothing does not build.
 #[cfg(test)]
 impl super::Samples for PamMessage {
-    const VARIANT_COUNT: usize = 54;
+    const VARIANT_COUNT: usize = 55;
 
     fn samples() -> Vec<Self> {
         use PamMessage::*;
@@ -709,6 +716,7 @@ impl super::Samples for PamMessage {
                 paths: s("/lib/security/pam_facelock.so, /usr/lib64/security/pam_facelock.so"),
                 path: s("/lib/security/pam_facelock.so"),
             },
+            PamAuthUpdateProfileActive,
             PamServiceAbsentSkipped { path: s("/p") },
             PamPlanAdd {
                 path: s("/p"),

@@ -376,8 +376,20 @@ nothing.
 **Managed shared stacks are not leaf services.** Debian and Ubuntu compose
 their shared stacks with `pam-auth-update`; Fedora and RHEL use `authselect`.
 Facelock does not write through either manager's generated shared files.
-Explicit named leaf services remain supported on every package family: the
-writer resolves and edits only that requested service under the fixed PAM
+Before any direct `pam add` or `setup --pam` plan, Debian's detector reads only
+the compiled `/usr/share/pam-configs/facelock`, `/var/lib/pam/auth`, and
+`/etc/pam.d/common-auth` locations. It requires root-owned, non-writable,
+regular single-link files opened beneath no-follow directory descriptors, the
+exact packaged profile bytes, an exact `Module: facelock` selection, and a live
+Facelock rule inside pam-auth-update's Primary block. An active profile refuses
+the direct edit before backup state is created and says exactly how to run
+`sudo pam-auth-update --disable facelock`, verify password authentication, and
+retry the original Facelock command with all services and flags intact.
+Selected-but-inconsistent or untrusted state fails closed rather than being
+treated as inactive. A live managed rule whose saved selection is absent fails
+closed as well. The roots are not configurable and the environment cannot
+redirect them. Explicit named leaf services remain supported on every package
+family: the writer resolves and edits only that requested service under the PAM
 roots, while the sensitive-service gate and no-follow checks refuse generated
 `system-auth` and `password-auth` links.
 
@@ -1014,14 +1026,35 @@ Omarchy removal stop before their deletes. The module can be removed only
 after the cleanup's final compiled-root scan succeeds.
 
 The all-or-nothing guarantee covers direct PAM edits owned and scanned by this
-transaction and retention of the package/module when that cleanup fails. It
-does not cover every package-manager or profile side effect. Debian `prerm`
-currently invokes tolerant `pam-auth-update --remove facelock` before shared
-cleanup; byte-exact profile lifecycle and rollback are #224 scope. Fedora is
-separate: #226 owns only RPM payload retirement and the read-only upgrade guard.
+transaction and retention of the package/module when that cleanup fails.
+Debian removal adds a read-only boundary before it: the exact shared-profile
+probe runs first, followed by `pam remove --all --dry-run`, then the journaled
+real cleanup, and only then the generated ordinary-removal service stop.
+Ordinary removal preserves the unit's enabled state for reinstall; the
+generated purge path alone retires that state. A selected Facelock
+`pam-auth-update` profile blocks removal without changing `common-auth`, its
+selection state, direct edits, the service, the binary, or the PAM module. The
+diagnostic tells the administrator to run
+`sudo pam-auth-update --disable facelock`, verify that a real correct password
+succeeds and a wrong password fails, and retry removal. Unsafe or inconsistent
+shared-profile state also blocks.
+
+This release deliberately supports no automatic legacy/shared-profile
+migration or deselection. Older packages persisted no durable fact that can
+distinguish a package-auto-enabled profile from a later administrator choice;
+therefore every selected state is administrator-owned and preserved. This is
+the intentionally deferred legacy ambiguity: a future automatic transition
+requires exact package provenance recorded before the choice, a byte-and-
+metadata snapshot of the managed PAM graph, mutation while the old profile and
+binary still exist, `pam-auth-update`, reapplication of only provenance-owned
+direct edits, and real correct/wrong-password validation, with provable restore
+or retained evidence on failure. An unselected profile needs no graph
+transition: its `Default: no` metadata leaves with the package payload after
+the fixed-root direct cleanup succeeds. Fedora is separate:
+#226 owns only RPM payload retirement and the read-only upgrade guard.
 Shared-stack migration, regeneration, editing and rollback are explicitly rejected.
-Automatic profile selection is also rejected. `remove --all` only scans
-`/etc/authselect` as a detection-only root and never edits generated state.
+`remove --all` scans `/etc/authselect` as a detection-only root and never edits
+generated state.
 
 **`--json`** emits exactly one document on stdout and no human text; `--quiet`
 suppresses even that, leaving the exit code as the whole answer, as it does for
@@ -1895,8 +1928,28 @@ dependencies, with Cargo locked and offline. The clean rebuild must produce the
 same package identity, resolved dependencies, installed path set, and installed
 file hashes as the release build. Fresh installation leaves
 `facelock-daemon.service` disabled and inactive; D-Bus activation remains
-available after explicit setup. Package validation requires the installed TPM
-command surface and the suite-native `libtss2` dependency closure.
+available after explicit setup. Reinstall and upgrade restart the daemon only
+when it was already active, including an active D-Bus-activated instance; they
+preserve both enabled and disabled state and leave every inactive instance
+inactive. The post-install convergence still removes the retired `facelock`
+group, fixes ADR 010 ownership, refreshes a recognized legacy D-Bus policy
+copy, asks the bus to reload policy, and registers the opt-in PAM profile
+without selecting it. Package validation requires the installed TPM command
+surface and the suite-native `libtss2` dependency closure.
+
+Compat 13's generated `dh_installtmpfiles` post-install snippet is the sole
+install-time tmpfiles activation and invokes `systemd-tmpfiles` for
+`facelock.conf` only. The source `postinst` never runs a global tmpfiles create,
+so another package's configuration cannot be activated by a Facelock
+transaction.
+
+Trixie's debhelper 13.24 omits its remove-only service stop when
+`dh_installsystemd --no-start` is used, while Resolute's debhelper 13.31 emits
+it. The package build therefore appends debhelper's canonical
+`prerm-systemd-restart` template for the exact Facelock unit only when that stop
+is absent. This compatibility path is idempotent: both suites produce exactly
+one stop after successful PAM cleanup, neither starts or enables the daemon on
+installation, and only the generated purge path retires enabled state.
 
 ## ONNX Runtime Trust and Fedora RPM Modes
 

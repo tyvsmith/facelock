@@ -684,6 +684,21 @@ answered — no TTY on stdin, no TTY on stderr (where the prompt is drawn, so
 `2>install.log` counts), or `--json` — and the gate is decided before any
 prompt exists, so an unattended `pam add --service system-auth` still refuses.
 
+On Debian and Ubuntu, a selected packaged `pam-auth-update` profile is already
+one Facelock auth path. Before planning any direct add (including
+`setup --pam`), Facelock verifies the exact fixed-root profile, saved selection
+and live Primary block without following links. It refuses a duplicate with:
+`sudo pam-auth-update --disable facelock`, verify a real correct password
+succeeds and a wrong password fails, then retry the original Facelock command
+with all of its services and flags.
+Any disagreement between the saved selection and live graph, or untrusted
+state, also refuses without writing PAM or backup state.
+
+`facelock pam shared-profile-status` is an internal, read-only Debian package
+maintainer probe. It exits 0 only for that exact active profile, 1 when the
+profile is cleanly unselected, and 2 for untrusted or inconsistent state; it
+never changes PAM or backup state.
+
 Any symlinked service file is refused rather than written through: on an
 authselect system `system-auth` and `password-auth` link into generated state,
 and even an in-directory link would make a recorded service name resolve to a
@@ -801,9 +816,18 @@ packages also ship a Remove-only libalpm `PreTransaction` hook with
 `AbortOnFail`, so pacman stops before removing either file.
 This all-or-nothing promise covers direct PAM edits owned by this command.
 The packaged Debian `pam-auth-update` profile is opt-in (`Default: no`), so
-fresh installation leaves `common-auth` unchanged. Its separately managed
-profile lifecycle and byte-exact rollback are tracked in #224; the current
-`prerm` removes that profile before calling the shared direct-edit cleanup.
+fresh installation leaves `common-auth` unchanged. Package removal never
+silently disables a selected profile: it probes first and aborts with the
+package, module, PAM graph, direct edits and daemon state retained. Run
+`sudo pam-auth-update --disable facelock`, prove a real correct password
+succeeds and a wrong password fails, then retry removal. No older package
+persisted evidence distinguishing auto-enable from a later administrator
+choice, so every existing selection is preserved; automatic legacy migration
+is intentionally deferred. With the profile unselected, removal performs a
+read-only direct-cleanup preflight and the journaled cleanup before generated
+service lifecycle handling. Ordinary removal stops the daemon but preserves
+its enabled state for reinstall; only purge retires that state. The inert
+profile metadata leaves with the package without a generated-graph transition.
 Fedora #226 retired the packaged authselect profile and added a read-only
 upgrade guard. This command only detects references in generated
 `/etc/authselect` state and never changes that state.

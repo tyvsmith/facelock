@@ -565,6 +565,14 @@ assert_matrix_mutation_rejected \
     "crates/facelock-cli/src/commands/pam.rs" \
     '/pub const DEFAULT_PAM_SERVICE/s/"sudo"/"doas"/'
 assert_matrix_mutation_rejected \
+    "docs compatibility extra Debian tested row" \
+    "docs/compatibility.md" \
+    '/| Debian 13 (Trixie) |/a\| Debian 12 (Bookworm) | systemd | daemon + D-Bus activation | Booted package gate |'
+assert_matrix_mutation_rejected \
+    "book compatibility extra Ubuntu tested row" \
+    "book/src/compatibility.md" \
+    '/| Ubuntu 26.04 LTS (Resolute) |/a\| Ubuntu Noble | systemd | daemon + D-Bus activation | Booted package gate |'
+assert_matrix_mutation_rejected \
     "trixie workflow variant axis reintroduced" \
     ".github/workflows/release.yml" \
     '0,/- suite: trixie/a\            variant: legacy'
@@ -862,7 +870,29 @@ case "${1:-}" in
         ;;
     --control)
         mkdir -p "${3:?}"
-        printf '%s\n' '#!/bin/sh' 'exit 0' >"$3/postinst"
+        cat >"$3/postinst" <<'SCRIPT'
+#!/bin/sh
+if [ -d /run/systemd/system ] && \
+           systemctl is-active --quiet facelock-daemon.service; then
+            systemctl try-restart facelock-daemon.service 2>/dev/null || true
+fi
+systemd-tmpfiles ${DPKG_ROOT:+--root="$DPKG_ROOT"} --create facelock.conf || true
+SCRIPT
+        cat >"$3/prerm" <<'SCRIPT'
+#!/bin/sh
+facelock pam shared-profile-status
+facelock pam remove --all --dry-run
+facelock pam remove --all
+if [ -z "$DPKG_ROOT" ] && [ "$1" = remove ] && [ -d /run/systemd/system ]; then
+    deb-systemd-invoke stop 'facelock-daemon.service' >/dev/null || true
+fi
+SCRIPT
+        cat >"$3/postrm" <<'SCRIPT'
+#!/bin/sh
+if [ "$1" = "purge" ]; then
+    deb-systemd-helper purge 'facelock-daemon.service' >/dev/null || true
+fi
+SCRIPT
         ;;
     *) exit 2 ;;
 esac

@@ -153,6 +153,8 @@ verify_debian_packaged_pam_profile() {
     local before_metadata=/tmp/facelock-common-auth-profile.metadata.before
     local good_output=/tmp/facelock-common-auth-profile.good
     local bad_output=/tmp/facelock-common-auth-profile.bad
+    local active=/tmp/facelock-common-auth-profile.active
+    local selected=/tmp/facelock-pam-state-profile.active
     local failed=0 service_path=/etc/pam.d/facelock-profile-test
 
     cp -- /etc/pam.d/common-auth "$before" || return 1
@@ -164,6 +166,15 @@ verify_debian_packaged_pam_profile() {
     pam-auth-update --enable facelock --force || failed=1
     grep -Eq '^[[:space:]]*auth[[:space:]].*pam_facelock\.so([[:space:]]|$)' \
         /etc/pam.d/common-auth || failed=1
+    cp -- /etc/pam.d/common-auth "$active" || failed=1
+    cp -- /var/lib/pam/auth "$selected" || failed=1
+    apt-get install -y --reinstall /facelock-test-package.deb || failed=1
+    cmp -s "$active" /etc/pam.d/common-auth || failed=1
+    cmp -s "$selected" /var/lib/pam/auth || failed=1
+    if [ -d /run/systemd/system ]; then
+        ! systemctl is-active --quiet facelock-daemon || failed=1
+        [ "$(systemctl is-enabled facelock-daemon 2>/dev/null || true)" = disabled ] || failed=1
+    fi
 
     if ! printf '%s\n' test | LC_ALL=C timeout 30 \
         pamtester facelock-profile-test testuser authenticate >"$good_output" 2>&1; then
@@ -184,12 +195,97 @@ verify_debian_packaged_pam_profile() {
     [ "$(stat -c '%a %u %g' /etc/pam.d/common-auth)" = "$(cat "$before_metadata")" ] || failed=1
     ! grep -q pam_facelock\.so /etc/pam.d/common-auth || failed=1
 
-    rm -f -- "$before" "$before_metadata" "$good_output" "$bad_output" "$service_path"
+    rm -f -- "$before" "$before_metadata" "$good_output" "$bad_output" \
+        "$active" "$selected" "$service_path"
+    return "$failed"
+}
+
+verify_debian_active_profile_removal_guard() {
+    local inactive=/tmp/facelock-common-auth-removal.inactive
+    local inactive_metadata=/tmp/facelock-common-auth-removal.inactive.metadata
+    local inactive_selected=/tmp/facelock-pam-state-removal.inactive
+    local inactive_selected_metadata=/tmp/facelock-pam-state-removal.inactive.metadata
+    local active=/tmp/facelock-common-auth-removal.active
+    local active_metadata=/tmp/facelock-common-auth-removal.active.metadata
+    local selected=/tmp/facelock-pam-state-removal.active
+    local selected_metadata=/tmp/facelock-pam-state-removal.active.metadata
+    local profile=/tmp/facelock-pam-profile-removal
+    local profile_metadata=/tmp/facelock-pam-profile-removal.metadata
+    local remove_output=/tmp/facelock-profile-removal.dpkg
+    local profile_status_output=/tmp/facelock-profile-removal.status
+    local good_output=/tmp/facelock-common-auth-removal.good
+    local bad_output=/tmp/facelock-common-auth-removal.bad
+    local service_path=/etc/pam.d/facelock-profile-removal-test
+    local active_before enabled_before failed=0
+
+    cp -- /etc/pam.d/common-auth "$inactive" || return 1
+    stat -c '%a %u %g' /etc/pam.d/common-auth >"$inactive_metadata" || return 1
+    cp -- /var/lib/pam/auth "$inactive_selected" || return 1
+    stat -c '%a %u %g' /var/lib/pam/auth >"$inactive_selected_metadata" || return 1
+    printf '%s\n' \
+        'auth include common-auth' \
+        'account required pam_permit.so' >"$service_path" || return 1
+    pam-auth-update --enable facelock --force || failed=1
+    cp -- /etc/pam.d/common-auth "$active" || failed=1
+    stat -c '%a %u %g' /etc/pam.d/common-auth >"$active_metadata" || failed=1
+    cp -- /var/lib/pam/auth "$selected" || failed=1
+    stat -c '%a %u %g' /var/lib/pam/auth >"$selected_metadata" || failed=1
+    cp -- /usr/share/pam-configs/facelock "$profile" || failed=1
+    stat -c '%a %u %g' /usr/share/pam-configs/facelock >"$profile_metadata" || failed=1
+    if [ -d /run/systemd/system ]; then
+        active_before="$(systemctl is-active facelock-daemon 2>/dev/null || true)"
+        enabled_before="$(systemctl is-enabled facelock-daemon 2>/dev/null || true)"
+    fi
+
+    if ! facelock pam shared-profile-status >"$profile_status_output" 2>&1; then
+        failed=1
+    fi
+    [ ! -s "$profile_status_output" ] || failed=1
+    if dpkg -r facelock >"$remove_output" 2>&1; then
+        failed=1
+    fi
+    grep -Fq 'facelock: refusing package removal because the pam-auth-update profile is active.' \
+        "$remove_output" || failed=1
+    grep -Fq "run 'sudo pam-auth-update --disable facelock'" "$remove_output" || failed=1
+    cmp -s "$active" /etc/pam.d/common-auth || failed=1
+    [ "$(stat -c '%a %u %g' /etc/pam.d/common-auth)" = "$(cat "$active_metadata")" ] || failed=1
+    cmp -s "$selected" /var/lib/pam/auth || failed=1
+    [ "$(stat -c '%a %u %g' /var/lib/pam/auth)" = "$(cat "$selected_metadata")" ] || failed=1
+    cmp -s "$profile" /usr/share/pam-configs/facelock || failed=1
+    [ "$(stat -c '%a %u %g' /usr/share/pam-configs/facelock)" = "$(cat "$profile_metadata")" ] || failed=1
+    dpkg-query -W -f='${db:Status-Status}\n' facelock 2>/dev/null | grep -qx installed || failed=1
+    [ -x /usr/bin/facelock ] || failed=1
+    [ -f "$PAM_MODULE_PATH" ] || failed=1
+    if [ -d /run/systemd/system ]; then
+        [ "$(systemctl is-active facelock-daemon 2>/dev/null || true)" = "$active_before" ] || failed=1
+        [ "$(systemctl is-enabled facelock-daemon 2>/dev/null || true)" = "$enabled_before" ] || failed=1
+    fi
+
+    pam-auth-update --disable facelock --force || failed=1
+    cmp -s "$inactive" /etc/pam.d/common-auth || failed=1
+    [ "$(stat -c '%a %u %g' /etc/pam.d/common-auth)" = "$(cat "$inactive_metadata")" ] || failed=1
+    cmp -s "$inactive_selected" /var/lib/pam/auth || failed=1
+    [ "$(stat -c '%a %u %g' /var/lib/pam/auth)" = "$(cat "$inactive_selected_metadata")" ] || failed=1
+    if ! printf '%s\n' test | LC_ALL=C timeout 30 \
+        pamtester facelock-profile-removal-test testuser authenticate >"$good_output" 2>&1; then
+        failed=1
+    fi
+    grep -Fq 'successfully authenticated' "$good_output" || failed=1
+    if printf '%s\n' wrong | LC_ALL=C timeout 30 \
+        pamtester facelock-profile-removal-test testuser authenticate >"$bad_output" 2>&1; then
+        failed=1
+    fi
+    grep -Fq 'Authentication failure' "$bad_output" || failed=1
+
+    rm -f -- "$inactive" "$inactive_metadata" "$inactive_selected" \
+        "$inactive_selected_metadata" "$active" "$active_metadata" "$selected" \
+        "$selected_metadata" "$profile" "$profile_metadata" "$remove_output" \
+        "$profile_status_output" "$good_output" "$bad_output" "$service_path"
     return "$failed"
 }
 
 export -f pam_facelock_executes pam_missing_module_control_is_rejected
-export -f verify_debian_packaged_pam_profile
+export -f verify_debian_packaged_pam_profile verify_debian_active_profile_removal_guard
 
 echo "=== Facelock Package Validation ==="
 echo ""
@@ -248,7 +344,7 @@ else
 fi
 
 if [ "$PACKAGE_FORMAT" = deb ]; then
-    run_test "packaged opt-in PAM profile enables, falls back to password, and restores common-auth" \
+    run_test "packaged opt-in PAM profile survives reinstall, falls back to password, and restores common-auth" \
         "verify_debian_packaged_pam_profile"
 fi
 
@@ -364,6 +460,40 @@ daemon_threads_without_cap_chown() {
 }
 export -f daemon_threads_without_cap_chown
 
+verify_debian_reinstall_service_lifecycle() {
+    local before after failed=0
+
+    systemctl disable facelock-daemon >/dev/null 2>&1 || failed=1
+    systemctl start facelock-daemon || failed=1
+    before="$(unit_prop ExecMainStartTimestampMonotonic)"
+    apt-get install -y --reinstall /facelock-test-package.deb || failed=1
+    after="$(unit_prop ExecMainStartTimestampMonotonic)"
+    systemctl is-active --quiet facelock-daemon || failed=1
+    [ "$(systemctl is-enabled facelock-daemon 2>/dev/null || true)" = disabled ] || failed=1
+    [ -n "$before" ] && [ -n "$after" ] && [ "$before" != "$after" ] || failed=1
+
+    systemctl enable facelock-daemon >/dev/null 2>&1 || failed=1
+    before="$after"
+    apt-get install -y --reinstall /facelock-test-package.deb || failed=1
+    after="$(unit_prop ExecMainStartTimestampMonotonic)"
+    systemctl is-active --quiet facelock-daemon || failed=1
+    systemctl is-enabled --quiet facelock-daemon || failed=1
+    [ -n "$after" ] && [ "$before" != "$after" ] || failed=1
+
+    systemctl stop facelock-daemon || failed=1
+    apt-get install -y --reinstall /facelock-test-package.deb || failed=1
+    ! systemctl is-active --quiet facelock-daemon || failed=1
+    systemctl is-enabled --quiet facelock-daemon || failed=1
+
+    systemctl disable facelock-daemon >/dev/null 2>&1 || failed=1
+    apt-get install -y --reinstall /facelock-test-package.deb || failed=1
+    ! systemctl is-active --quiet facelock-daemon || failed=1
+    [ "$(systemctl is-enabled facelock-daemon 2>/dev/null || true)" = disabled ] || failed=1
+
+    return "$failed"
+}
+export -f verify_debian_reinstall_service_lifecycle
+
 if [ -d /run/systemd/system ] && systemctl show facelock-daemon >/dev/null 2>&1; then
     # Not empty: the notification privilege-drop needs CAP_SETUID+CAP_SETGID
     # (ambient, to survive the exec into runuser), and startup needs CAP_CHOWN
@@ -428,6 +558,10 @@ if [ -d /run/systemd/system ] && systemctl show facelock-daemon >/dev/null 2>&1;
         # CAP_CHOWN is "never held while authenticating anyone" — this is the
         # assertion that makes the promise checkable.
         run_test "runtime: no daemon thread holds CAP_CHOWN while serving" "daemon_threads_without_cap_chown"
+        if [ "$PACKAGE_FORMAT" = deb ]; then
+            run_test "Debian reinstall restarts only active daemons and preserves enabled state" \
+                "verify_debian_reinstall_service_lifecycle"
+        fi
         systemctl stop facelock-daemon 2>/dev/null || true
     elif [ "${FACELOCK_ALLOW_MISSING_MODELS:-0}" = "1" ]; then
         # Explicitly asked for a partial run. Name every assertion that is not
@@ -436,6 +570,9 @@ if [ -d /run/systemd/system ] && systemctl show facelock-daemon >/dev/null 2>&1;
         skip_test "facelock-daemon starts under hardened unit" "$no_models"
         skip_test "facelock-daemon answers on D-Bus" "$no_models"
         skip_test "runtime: no daemon thread holds CAP_CHOWN while serving" "$no_models"
+        if [ "$PACKAGE_FORMAT" = deb ]; then
+            skip_test "Debian reinstall restarts only active daemons and preserves enabled state" "$no_models"
+        fi
     else
         # Under a booted systemd, missing models are a broken invocation, not a
         # property of the environment: the whole reason to boot systemd here is
@@ -444,8 +581,9 @@ if [ -d /run/systemd/system ] && systemctl show facelock-daemon >/dev/null 2>&1;
         # that never started a daemon — and the assertion it dropped is the
         # only one that can catch a per-thread capability regression. Fail.
         echo "FAIL: daemon-start block did not run (no ONNX models at /var/lib/facelock/models)"
-        echo "      Missing: the daemon start, its D-Bus Ping, and the runtime"
-        echo "      CAP_CHOWN thread walk — the regression pin for the per-thread"
+        echo "      Missing: the daemon start, its D-Bus Ping, the runtime CAP_CHOWN"
+        echo "      thread walk, and Debian service reinstall lifecycle — the pins for"
+        echo "      active-only restart and the per-thread"
         echo "      capability drop. The unit: CapabilityBoundingSet assertions above"
         echo "      read systemd configuration only and pass either way."
         echo "      Fix: run from a checkout with the ONNX models present"
@@ -463,6 +601,13 @@ fi
 # Package removal test — must come last since it removes the package
 echo ""
 echo "=== Package Removal Test ==="
+
+if [ "$PACKAGE_FORMAT" = deb ]; then
+    run_test "fresh Debian install leaves common-auth unchanged and Facelock-free" \
+        "[ -f /facelock-common-auth-install-invariant ] && ! grep -q pam_facelock.so /etc/pam.d/common-auth"
+    run_test "active administrator-selected profile blocks removal, preserves PAM, and allows verified migration retry" \
+        "verify_debian_active_profile_removal_guard"
+fi
 
 PACKAGE_OWNED_PAM=/etc/pam.d/facelock-package-owned
 PACKAGE_BLOCKER_PAM=/etc/pam.d/facelock-package-blocker
@@ -491,8 +636,6 @@ rm -rf /var/lib/facelock/models
 export ORT_DYLIB_PATH=/facelock-test-missing-onnxruntime.so
 
 if [ "$PACKAGE_FORMAT" = deb ]; then
-    run_test "fresh Debian install leaves common-auth unchanged and Facelock-free" \
-        "[ -f /facelock-common-auth-install-invariant ] && ! grep -q pam_facelock.so /etc/pam.d/common-auth"
     sha256sum /etc/pam.d/common-auth > /tmp/facelock-common-auth.before
     run_test "dpkg removal aborts on an unmanaged PAM reference" \
         "! dpkg -r facelock"
@@ -527,6 +670,8 @@ if [ "$PACKAGE_FORMAT" = deb ]; then
     run_test "apt wrapper preserves blocker bytes after abort" \
         "sha256sum -c --status /tmp/facelock-package-blocker.sha"
     rm -f "$PACKAGE_BLOCKER_PAM"
+    run_test "ordinary Debian removal starts with the daemon enabled" \
+        "systemctl enable facelock-daemon.service"
     run_test "Package removal via dpkg" "dpkg -r facelock"
     run_test "recognized arbitrary PAM edit cleaned before dpkg removes the module" \
         "[ -f $PACKAGE_OWNED_PAM ] && ! grep -q pam_facelock.so $PACKAGE_OWNED_PAM"
@@ -534,8 +679,8 @@ if [ "$PACKAGE_FORMAT" = deb ]; then
     run_test "PAM module removed after dpkg -r" \
         "[ ! -f /lib/security/pam_facelock.so ] && [ ! -f /usr/lib/security/pam_facelock.so ] && [ ! -f /usr/lib64/security/pam_facelock.so ]"
     run_test "Config preserved after dpkg -r (conffile)" "[ -f /etc/facelock/config.toml ]"
-    run_test "facelock reinstalls before apt-get wrapper success" \
-        "apt-get install -y /facelock-test-package.deb"
+    run_test "ordinary Debian remove preserves enabled state across reinstall" \
+        "apt-get install -y /facelock-test-package.deb && systemctl is-enabled --quiet facelock-daemon.service"
     cat > "$PACKAGE_OWNED_PAM" <<'EOF'
 #%PAM-1.0
 auth      sufficient pam_facelock.so

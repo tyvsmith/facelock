@@ -61,6 +61,16 @@ override_dh_auto_test:
 
 override_dh_installsystemd:
 	dh_installsystemd --no-enable --no-start
+	# Trixie's debhelper 13.24 suppresses its remove-only prerm stop when
+	# --no-start is set; Resolute's 13.31 emits it. Reuse debhelper's exact
+	# autoscript only when absent, so fresh installs remain inert and both
+	# suites produce one package-scoped stop in the generated maintscript.
+	grep -Fqs "deb-systemd-invoke stop 'facelock-daemon.service'" \
+		debian/facelock.prerm.debhelper \
+		debian/.debhelper/generated/facelock/prerm.* || \
+		sed "s/#UNITFILES#/'facelock-daemon.service'/" \
+			/usr/share/debhelper/autoscripts/prerm-systemd-restart \
+			>> debian/facelock.prerm.debhelper
 
 # Preserve the reviewed upstream ORT bytes and their matching checksum file.
 override_dh_strip:

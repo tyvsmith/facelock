@@ -31,13 +31,51 @@ grep -Eq '^Default:[[:space:]]*no[[:space:]]*$' debian/pam-auth-update ||
     fail "Debian pam-auth-update profile must be opt-in"
 grep -Fq 'pam-auth-update --package' debian/postinst ||
     fail "Debian postinst must register/update the opt-in PAM profile"
-grep -Fq 'pam-auth-update --remove facelock' debian/prerm ||
-    fail "Debian prerm must retire the packaged PAM profile"
+if grep -Eq 'systemd-tmpfiles[[:space:]].*--create' debian/postinst; then
+    fail "Debian source postinst must leave package-scoped tmpfiles activation to dh_installtmpfiles"
+fi
+[ "$(grep -Foc '#DEBHELPER#' debian/postinst)" -eq 1 ] ||
+    fail "Debian postinst must contain exactly one debhelper substitution marker"
+grep -Fq 'systemctl is-active --quiet facelock-daemon.service' debian/postinst ||
+    fail "Debian postinst must distinguish an already-active daemon"
+grep -Fq 'systemctl try-restart facelock-daemon.service' debian/postinst ||
+    fail "Debian postinst must restart only an already-active daemon"
+grep -Fq 'facelock pam shared-profile-status' debian/prerm ||
+    fail "Debian prerm must refuse removal while the shared profile is selected"
+if grep -Fq 'pam-auth-update --remove facelock' debian/prerm; then
+    fail "Debian prerm must not silently disable an administrator-selected shared profile"
+fi
+grep -Fq 'facelock pam remove --all --dry-run' debian/prerm ||
+    fail "Debian prerm must preflight direct PAM cleanup before any mutation"
 grep -Fq 'facelock pam remove --all' debian/prerm ||
     fail "Debian prerm must delegate direct-edit cleanup to pam remove --all"
 if grep -Eq 'FACELOCK_PAM_SERVICES=|sed -i .pam_facelock' debian/prerm; then
     fail "Debian prerm must not carry a fixed PAM service list or raw sed cleanup"
 fi
+profile_probe_line="$(grep -n -m1 -F 'facelock pam shared-profile-status' debian/prerm | cut -d: -f1)"
+cleanup_preflight_line="$(grep -n -m1 -F 'facelock pam remove --all --dry-run' debian/prerm | cut -d: -f1)"
+cleanup_line="$(grep -n -F 'facelock pam remove --all' debian/prerm | tail -n1 | cut -d: -f1)"
+debhelper_line="$(grep -n -m1 -Fx '#DEBHELPER#' debian/prerm | cut -d: -f1)"
+if grep -Eq 'systemctl[[:space:]]+(stop|disable)[[:space:]]+facelock-daemon' debian/prerm; then
+    fail "Debian source prerm must delegate service stop and purge state to debhelper"
+fi
+[ "$(grep -Foc '#DEBHELPER#' debian/prerm)" -eq 1 ] ||
+    fail "Debian prerm must contain exactly one debhelper substitution marker"
+[ "$profile_probe_line" -lt "$cleanup_preflight_line" ] &&
+    [ "$cleanup_preflight_line" -lt "$cleanup_line" ] &&
+    [ "$cleanup_line" -lt "$debhelper_line" ] ||
+    fail "Debian prerm must probe, preflight and clean PAM before generated service lifecycle handling"
+
+grep -Fq 'dh_installsystemd --no-enable --no-start' debian/rules ||
+    fail "Debian build must keep fresh installs disabled and inactive"
+grep -Fq "deb-systemd-invoke stop 'facelock-daemon.service'" debian/rules ||
+    fail "Debian build must probe for the exact generated daemon stop"
+grep -Fq '/usr/share/debhelper/autoscripts/prerm-systemd-restart' debian/rules ||
+    fail "Debian build must reuse debhelper's canonical remove-stop template"
+grep -Fq 'debian/.debhelper/generated/facelock/prerm.*' debian/rules ||
+    fail "Debian build must detect modern generated prerm fragments before adding a compatibility stop"
+grep -Fq "s/#UNITFILES#/'facelock-daemon.service'/" debian/rules ||
+    fail "Debian compatibility stop must remain scoped to the exact daemon unit"
 
 [ ! -e dist/debian ] || fail "retired dist/debian metadata still exists"
 [ ! -e debian/compat ] || fail "debhelper compat must be declared once, in Build-Depends"
@@ -194,8 +232,41 @@ grep -Fq 'PAM module executes through the synthetic service' test/pkg-validate.s
     fail "package validation must prove pam_facelock executes, not accept a generic PAM failure"
 grep -Fq 'missing PAM module control is rejected' test/pkg-validate.sh ||
     fail "package validation must prove its PAM execution assertion rejects a missing module"
-grep -Fq 'packaged opt-in PAM profile enables, falls back to password, and restores common-auth' test/pkg-validate.sh ||
+grep -Fq 'packaged opt-in PAM profile survives reinstall, falls back to password, and restores common-auth' test/pkg-validate.sh ||
     fail "Debian package validation must exercise the shipped pam-auth-update profile"
+grep -Fq 'active administrator-selected profile blocks removal, preserves PAM, and allows verified migration retry' test/pkg-validate.sh ||
+    fail "Debian package validation must preserve selected shared profiles across removal refusal"
+active_profile_guard_line="$(grep -n -m1 -F '"active administrator-selected profile blocks removal, preserves PAM, and allows verified migration retry"' test/pkg-validate.sh | cut -d: -f1)"
+active_profile_guard_invocation_line="$(grep -n -m1 -Fx \
+    '        "verify_debian_active_profile_removal_guard"' test/pkg-validate.sh |
+    cut -d: -f1 || true)"
+[ -n "$active_profile_guard_invocation_line" ] &&
+    [ "$active_profile_guard_invocation_line" -eq "$((active_profile_guard_line + 1))" ] ||
+    fail "active-profile removal PASS label must invoke the checked guard directly"
+# Match the runner's literal variable spelling, not this contract's value.
+# shellcheck disable=SC2016
+blocker_create_line="$(grep -n -m1 -F 'cat > "$PACKAGE_BLOCKER_PAM"' test/pkg-validate.sh | cut -d: -f1)"
+[ "$active_profile_guard_invocation_line" -lt "$blocker_create_line" ] ||
+    fail "active-profile removal validation must run before creating the unmanaged blocker"
+removal_guard_body="$(sed -n '/^verify_debian_active_profile_removal_guard()/,/^}/p' test/pkg-validate.sh)"
+printf '%s\n' "$removal_guard_body" | grep -Fq 'facelock pam shared-profile-status' ||
+    fail "active-profile removal validation must assert the profile-specific status"
+printf '%s\n' "$removal_guard_body" | grep -Fq 'refusing package removal because the pam-auth-update profile is active' ||
+    fail "active-profile removal validation must assert the profile-specific diagnostic"
+printf '%s\n' "$removal_guard_body" | grep -Fq 'common-auth-removal.active.metadata' ||
+    fail "active-profile removal validation must preserve common-auth metadata"
+printf '%s\n' "$removal_guard_body" | grep -Fq 'pam-state-removal.active.metadata' ||
+    fail "active-profile removal validation must preserve pam-auth-update state metadata"
+disable_profile_line="$(printf '%s\n' "$removal_guard_body" |
+    grep -n -m1 -F 'pam-auth-update --disable facelock --force' | cut -d: -f1)"
+verify_password_line="$(printf '%s\n' "$removal_guard_body" |
+    grep -n -m1 -F 'pamtester facelock-profile-removal-test testuser authenticate' | cut -d: -f1)"
+[ "$disable_profile_line" -lt "$verify_password_line" ] ||
+    fail "Debian removal validation must test passwords after disabling the shared profile"
+grep -Fq 'Debian reinstall restarts only active daemons and preserves enabled state' test/pkg-validate.sh ||
+    fail "Debian package validation must exercise active/inactive and enabled/disabled reinstall state"
+grep -Fq 'ordinary Debian remove preserves enabled state across reinstall' test/pkg-validate.sh ||
+    fail "Debian package validation must prove ordinary removal preserves service enablement"
 grep -Fq 'pam-auth-update --enable facelock --force' test/pkg-validate.sh ||
     fail "Debian package validation must enable the packaged profile through pam-auth-update"
 grep -Fq 'pam-auth-update --disable facelock --force' test/pkg-validate.sh ||

@@ -1,4 +1,4 @@
-.TH FACELOCK 1 "2026-08-20" "facelock" "User Commands"
+.TH FACELOCK 1 "2026-08-21" "facelock" "User Commands"
 .SH NAME
 facelock \- Linux face authentication
 .SH SYNOPSIS
@@ -498,6 +498,17 @@ A file with more than one hard link is refused \(em a link count says another
 name for it exists and not where. Before an in-place edit, a 0600 root:root
 backup and its versioned provenance record are written under
 .IR /var/lib/facelock/pam-backups/ .
+.IP
+On Debian and Ubuntu, a selected packaged \fBpam-auth-update\fR profile is
+already one Facelock authentication path. Before planning a direct add,
+Facelock verifies the fixed profile, saved selection and live Primary block
+with bounded no-follow reads. It refuses a duplicate and instructs the
+administrator to run
+.BR "sudo pam-auth-update --disable facelock" ,
+verify that a real correct password succeeds and a wrong password fails, then
+retry the original Facelock command with all of its services and flags. Any
+saved-selection/live-graph disagreement or untrusted state also refuses without
+a PAM or backup write.
 .TP
 .B remove
 Remove the facelock line. Root. Same flags as \fBadd\fR except
@@ -538,6 +549,17 @@ conflicts. This path
 reads no Facelock config,
 database, model, daemon, camera or inference state and is the cleanup command
 used by package uninstallers while the binary and PAM module are still present.
+.IP
+The Debian package never silently disables a selected shared profile. Removal
+probes it before the direct-edit dry run and aborts with package, module, PAM
+and daemon state retained when it is selected or unsafe. Disable it explicitly
+with \fBpam-auth-update\fR, verify correct and wrong password behavior, then
+retry package removal. Older packages recorded no proof distinguishing an
+automatic selection from an administrator choice, so automatic legacy
+migration is intentionally unsupported. An unselected opt-in profile leaves
+with the package only after direct cleanup commits; generated service handling
+follows that cleanup. Ordinary removal stops the daemon while preserving enabled
+state for reinstall, and purge retires that state.
 .IP
 An unchanged Facelock-created vendor override is also a cleanup target, including
 the exact restart state where its module rule is already absent. Version 2 batch

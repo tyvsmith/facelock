@@ -12,10 +12,15 @@
 
 ## Tested Distributions
 
+Debian-family support starts at Debian 13+ and Ubuntu 26.04+; older Debian and
+Ubuntu releases are unsupported.
+
 | Distribution | Init System | Mode | Status |
 |-------------|-------------|------|--------|
 | Arch Linux | systemd | daemon + D-Bus activation | Primary target |
 | Arch Linux | systemd | oneshot | Tested |
+| Debian 13 (Trixie) | systemd | daemon + D-Bus activation | Booted package gate |
+| Ubuntu 26.04 LTS (Resolute) | systemd | daemon + D-Bus activation | Booted package gate |
 | Container (Arch) | none | daemon (manual) | CI-tested |
 | Container (Arch) | none | oneshot | CI-tested |
 
@@ -24,8 +29,6 @@
 | Distribution | Init System | Mode |
 |-------------|-------------|------|
 | Fedora 38+ | systemd | daemon + D-Bus activation |
-| Ubuntu 26.04+ | systemd | daemon + D-Bus activation |
-| Debian 13+ | systemd | daemon + D-Bus activation |
 | Any Linux | any / none | oneshot |
 | Void Linux | runit | oneshot or manual daemon |
 | Alpine Linux | OpenRC | oneshot or manual daemon |

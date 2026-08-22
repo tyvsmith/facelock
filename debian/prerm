@@ -3,16 +3,30 @@ set -e
 
 case "$1" in
     remove|purge)
-        # Stop and disable systemd units
-        if [ -d /run/systemd/system ]; then
-            systemctl stop facelock-daemon 2>/dev/null || true
-            systemctl disable facelock-daemon 2>/dev/null || true
-        fi
+        # Never guess why a legacy/shared profile is selected. No released
+        # package left durable proof that it auto-enabled the profile, so an
+        # active or inconsistent selection belongs to the administrator and
+        # package removal must not silently rewrite common-auth.
+        profile_status=0
+        facelock pam shared-profile-status >/dev/null || profile_status=$?
+        case "$profile_status" in
+            0)
+                echo "facelock: refusing package removal because the pam-auth-update profile is active." >&2
+                echo "To migrate safely, run 'sudo pam-auth-update --disable facelock', verify a real correct password succeeds and a wrong password fails, then retry package removal." >&2
+                exit 1
+                ;;
+            1)
+                ;;
+            *)
+                echo "facelock: refusing package removal because the pam-auth-update profile state could not be verified safely." >&2
+                exit 1
+                ;;
+        esac
 
-        # Remove the common-auth profile installed from debian/pam-auth-update.
-        if [ -x /usr/sbin/pam-auth-update ]; then
-            pam-auth-update --remove facelock 2>/dev/null || true
-        fi
+        # Complete the read-only preflight before any package lifecycle state
+        # changes. The real remove-all journals and rolls back the whole fixed
+        # root set on a later write or interruption failure.
+        facelock pam remove --all --dry-run
 
         # Scan the fixed PAM roots and atomically clean every Facelock-owned
         # direct edit. A non-zero result aborts dpkg before the module leaves.
