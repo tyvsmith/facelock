@@ -212,15 +212,13 @@ impl AuthOutcome {
 
 /// Which of [`pre_check`]'s environment gates a caller may skip.
 ///
-/// The only intended consumer is `facelock test` (N11, issue #96): it is
-/// root-only, and an admin legitimately runs it over SSH or with the lid
-/// closed on a docked laptop while diagnosing recognition, which is exactly
-/// what `abort_if_ssh`/`abort_if_lid_closed` exist to stop an *attacker* from
-/// doing. Every other gate in `pre_check` (disabled, enrollment,
-/// rate-limiting, `require_ir`) still applies to `test` unchanged — this
-/// struct exists so that carve-out is explicit at every call site instead of
-/// a parallel copy of the gate logic (see #95, which this whole `pre_check`
-/// unification closes).
+/// D-Bus `Authenticate` skips only the daemon process's irrelevant SSH
+/// environment after its server boundary verifies the caller's ProcessFD and
+/// logind session. `facelock test` (N11, issue #96) skips SSH and lid checks
+/// because it is root-only diagnostic recognition. Every other gate in
+/// `pre_check` (disabled, enrollment, rate-limiting, `require_ir`) remains
+/// unchanged. Keeping these contexts explicit avoids a parallel copy of the
+/// gate logic (see #95).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PreCheckContext {
     pub skip_ssh_gate: bool,
@@ -228,10 +226,21 @@ pub struct PreCheckContext {
 }
 
 impl PreCheckContext {
-    /// The default, fully-enforced context every real authentication path
-    /// (daemon `Authenticate`, oneshot `facelock auth`) uses.
+    /// The default, fully-enforced environment context used by one-shot auth
+    /// and direct handler calls. D-Bus `Authenticate` selects
+    /// [`Self::daemon_authenticate`] after checking caller provenance.
     pub fn enforced() -> Self {
         Self::default()
+    }
+
+    /// Daemon `Authenticate` after the D-Bus caller's remote-session
+    /// provenance has been checked: ignore only the daemon's own SSH
+    /// environment and keep the lid gate enforced.
+    pub fn daemon_authenticate() -> Self {
+        Self {
+            skip_ssh_gate: true,
+            skip_lid_gate: false,
+        }
     }
 
     /// `facelock test`'s context (N11): skip the SSH/lid gates, keep
@@ -1435,6 +1444,13 @@ enabled = false
         let ctx = PreCheckContext::test();
         assert!(ctx.skip_ssh_gate);
         assert!(ctx.skip_lid_gate);
+    }
+
+    #[test]
+    fn daemon_authenticate_context_skips_only_daemon_environment_ssh() {
+        let ctx = PreCheckContext::daemon_authenticate();
+        assert!(ctx.skip_ssh_gate);
+        assert!(!ctx.skip_lid_gate);
     }
 
     #[test]

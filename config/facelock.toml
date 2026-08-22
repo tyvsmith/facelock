@@ -176,7 +176,9 @@
 # Default: false
 # disabled = false
 
-# Refuse face auth when connected via SSH (no camera available).
+# Refuse remote face auth. One-shot PAM checks its sanitized SSH
+# environment; non-root daemon Authenticate requires a live D-Bus ProcessFD
+# whose logind session is local. false skips that daemon lookup.
 # Default: true
 # abort_if_ssh = true
 

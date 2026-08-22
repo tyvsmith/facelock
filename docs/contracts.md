@@ -1062,6 +1062,7 @@ that is not on this list is not being denied, only not yet promised.
 |------|---------|
 | `capabilities` | this command exists, so a consumer's membership test is uniform across every name |
 | `config-edit` | `config edit` exists — the verb ADR 009 split out of the old `--edit` flag |
+| `daemon-processfd-session-gate` | daemon `Authenticate` supports the ProcessFD-backed logind remote-session gate documented under IPC Protocol |
 | `daemon-restart` | `daemon restart` exists — the verb ADR 009 moved under `daemon` from the top-level `restart` |
 | `devices-json` | `devices --json` |
 | `is-enrolled` | `is-enrolled` exists — the unprivileged enrollment probe whose exit code is the contract |
@@ -1666,7 +1667,9 @@ hill-climbing oracle by construction rather than by redacting fields):
 - `Authenticate`: root or the matching Unix user. The one user-scoped method
   — screen lockers run their PAM stack as the user, so this is architecture,
   not policy. It is **real authentication**: a failed attempt always
-  consumes rate-limit budget, whatever the caller's UID.
+  consumes rate-limit budget, whatever the caller's UID. When
+  `security.abort_if_ssh = true`, an authorized non-root caller must also
+  prove a live local process/session identity as described below.
 - `TestAuthenticate`: **root only.** Same arguments and same `AuthResult`
   reply as `Authenticate`, and the same gates except that it skips the
   SSH/lid physical-presence aborts and charges no rate-limit budget on
@@ -1699,6 +1702,39 @@ root-only and ingress-budget-free. This availability budget is distinct from
 `security.rate_limit`: the latter remains the persistent, per-target-user
 biometric-guess limiter and still charges root `Authenticate` failures under
 the rules in "facelock test Semantics".
+
+The remote-session gate is bound to the D-Bus caller rather than the daemon's
+environment. For an authorized non-root `Authenticate` with
+`security.abort_if_ssh = true`, the daemon asks
+`org.freedesktop.DBus.GetConnectionCredentials` for the message sender's
+unique bus name and requires the returned `ProcessFD`. It derives the PID from
+that pidfd's kernel metadata, checks that the pidfd is live both before and
+after `org.freedesktop.login1.Manager.GetSessionByPID`, and reads the selected
+session's `Remote` property. It never trusts the credentials' numeric
+`ProcessID`, never classifies the caller from a security label, and rejects a
+PID-reuse race because a dead original pidfd invalidates the intervening
+logind answer.
+
+A remote session, omitted or invalid ProcessFD, dead caller, unavailable or
+inconsistent logind answer, cancellation, or expiry of the four-second
+provenance deadline (covering credentials, ProcessFD validation, and logind)
+all fail closed as the same out-of-band
+`org.freedesktop.DBus.Error.AccessDenied` message: `Authenticate requires a
+live local caller process`. The privileged daemon journal keeps the detailed
+cause; the unprivileged wire does not distinguish remote from unverifiable
+provenance. Credentials and login1 are queried asynchronously without
+retaining the handler mutex. Caller departure, `ReleaseCamera`, suspend, and
+shutdown cancel a pending query, so a stalled system-bus reply cannot delay
+later handler operations or daemon shutdown. This check runs after method
+authorization, non-root ingress charging, the early busy check, and live
+config reload, but before handler preflight or capture admission. UID 0
+bypasses only this remote-session provenance check: ordinary authorization and
+the persistent
+biometric-guess limiter remain unchanged. `TestAuthenticate` remains its
+separate root-only diagnostic method. When `abort_if_ssh = false`, the daemon
+performs no ProcessFD, PID, logind, or session lookup at all. The one-shot
+transport continues to enforce SSH provenance from the PAM-sanitized
+`SSH_CONNECTION` / `SSH_TTY` environment instead of D-Bus.
 
 Ingress buckets are process-local, are discarded after enough idle monotonic
 time to refill the full burst, and are capped at 1024 UID entries with
@@ -1787,8 +1823,9 @@ Sentinel `model_id` values (only meaningful with `matched == false`):
 Recoverable errors travel **in-band** (model_id `-2`), not as D-Bus errors, so
 clients can distinguish "the daemon decided auth cannot proceed" from "the
 daemon is unavailable". D-Bus errors remain for authorization failures,
-daemon-busy, and transport problems. In particular, a rate-limited state is a
-daemon decision and must never make the PAM client retry via a root oneshot.
+daemon-busy, transport problems, and the non-root ProcessFD/session gate above.
+In particular, a rate-limited state is a daemon decision and must never make
+the PAM client retry via a root oneshot.
 
 `-4` exists because `similarity` cannot carry "was a face seen?": the score is
 redacted to `0.0` for every non-root caller, so a user-run locker (hyprlock)

@@ -42,6 +42,14 @@ fn capability_names_are_all_implemented() {
             "config-edit" => {
                 sub(sub(&root, "config"), "edit");
             }
+            "daemon-processfd-session-gate" => {
+                const {
+                    assert!(
+                        facelock_daemon::server::DBUS_PROCESSFD_SESSION_GATE,
+                        "the daemon must compile the ProcessFD-backed remote-session gate"
+                    );
+                }
+            }
             "daemon-restart" => {
                 sub(sub(&root, "daemon"), "restart");
             }

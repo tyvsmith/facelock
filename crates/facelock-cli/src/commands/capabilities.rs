@@ -58,6 +58,7 @@ use crate::message;
 pub const CAPABILITIES: &[&str] = &[
     "capabilities",
     "config-edit",
+    "daemon-processfd-session-gate",
     "daemon-restart",
     "devices-json",
     "is-enrolled",
@@ -136,6 +137,7 @@ mod tests {
     const CAPABILITIES_EVER_EMITTED: &[&str] = &[
         "capabilities",
         "config-edit",
+        "daemon-processfd-session-gate",
         "daemon-restart",
         "devices-json",
         "is-enrolled",

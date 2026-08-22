@@ -9,6 +9,9 @@
 //! plus an injected rebuild recipe ([`HandlerRebuild`]) for the live reload.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
@@ -25,7 +28,7 @@ use nix::unistd::{Uid, User};
 use tracing::{error, info, warn};
 use zbus::{fdo, interface, object_server::SignalEmitter};
 
-use crate::auth::ErrorKind;
+use crate::auth::{ErrorKind, PreCheckContext};
 use crate::cancel::CancelToken;
 use crate::handler::{AuthIntent, CAMERA_POLL_INTERVAL, DaemonRequest, DaemonResponse, Handler};
 
@@ -40,6 +43,179 @@ pub type HandlerRebuild<C, E> = Box<dyn Fn() -> Result<Handler<C, E>, String> + 
 
 /// [`HandlerRebuild`] with the production camera and engine.
 pub type ProductionRebuild = HandlerRebuild<Camera<'static>, FaceEngine>;
+
+/// Capability probe for integrations that require daemon-side remote-session
+/// enforcement from a D-Bus ProcessFD.
+pub const DBUS_PROCESSFD_SESSION_GATE: bool = true;
+
+/// Deliberately uniform authorization error for a remote caller and for an
+/// identity whose local-session provenance cannot be established. Detailed
+/// causes belong in the privileged daemon journal, not on the unprivileged
+/// wire.
+pub const PROCESS_PROVENANCE_DENIED_MESSAGE: &str =
+    "Authenticate requires a live local caller process";
+
+/// Whole-operation deadline for credentials, ProcessFD, and login1
+/// provenance. This stays below the PAM client's D-Bus method timeout so the
+/// daemon can return its uniform fail-closed denial itself.
+const PROCESS_PROVENANCE_TIMEOUT: Duration = Duration::from_secs(4);
+
+/// Cancellation is an atomic flag/epoch rather than an async notification;
+/// poll it cheaply while an async D-Bus provenance request is outstanding.
+const PROCESS_PROVENANCE_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+type SessionCheckFuture = Pin<Box<dyn Future<Output = Result<bool, String>> + Send>>;
+type SessionCheck = Box<dyn FnOnce() -> SessionCheckFuture + Send>;
+
+struct SessionProvenance {
+    check: SessionCheck,
+    timeout: Duration,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ProcessProvenanceError {
+    #[error("D-Bus credentials omitted ProcessFD")]
+    Missing,
+    #[error("invalid D-Bus ProcessFD: {0}")]
+    Invalid(String),
+    #[error("D-Bus ProcessFD no longer identifies a live process")]
+    Dead,
+    #[error("logind session lookup failed: {0}")]
+    SessionLookup(String),
+}
+
+fn pid_from_pidfd(process_fd: BorrowedFd<'_>) -> Result<u32, ProcessProvenanceError> {
+    let fdinfo = std::fs::read_to_string(format!("/proc/self/fdinfo/{}", process_fd.as_raw_fd()))
+        .map_err(|error| ProcessProvenanceError::Invalid(error.to_string()))?;
+    let value = fdinfo
+        .lines()
+        .find_map(|line| line.strip_prefix("Pid:"))
+        .map(str::trim)
+        .ok_or_else(|| {
+            ProcessProvenanceError::Invalid(
+                "descriptor is not a Linux process file descriptor".to_owned(),
+            )
+        })?;
+    if value == "-1" {
+        return Err(ProcessProvenanceError::Dead);
+    }
+
+    let pid = value
+        .parse::<u32>()
+        .map_err(|error| ProcessProvenanceError::Invalid(error.to_string()))?;
+    if pid == 0 {
+        return Err(ProcessProvenanceError::Invalid(
+            "pidfd reported PID 0".to_owned(),
+        ));
+    }
+    Ok(pid)
+}
+
+fn pidfd_is_live(process_fd: BorrowedFd<'_>) -> Result<bool, ProcessProvenanceError> {
+    let mut poll_fd = libc::pollfd {
+        fd: process_fd.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: `poll_fd` points to one initialized pollfd for the duration of
+    // the non-blocking call, and the borrowed descriptor outlives the call.
+    let result = unsafe { libc::poll(&mut poll_fd, 1, 0) };
+    if result < 0 {
+        return Err(ProcessProvenanceError::Invalid(
+            std::io::Error::last_os_error().to_string(),
+        ));
+    }
+    if poll_fd.revents & libc::POLLNVAL != 0 {
+        return Err(ProcessProvenanceError::Invalid(
+            "descriptor was closed".to_owned(),
+        ));
+    }
+    Ok(result == 0)
+}
+
+async fn stable_process_session_is_remote<L, A, Fut>(
+    pid: u32,
+    mut process_is_live: A,
+    lookup_session: L,
+) -> Result<bool, ProcessProvenanceError>
+where
+    L: FnOnce(u32) -> Fut,
+    A: FnMut() -> Result<bool, ProcessProvenanceError>,
+    Fut: Future<Output = Result<bool, String>>,
+{
+    if !process_is_live()? {
+        return Err(ProcessProvenanceError::Dead);
+    }
+    let remote = lookup_session(pid)
+        .await
+        .map_err(ProcessProvenanceError::SessionLookup)?;
+    if !process_is_live()? {
+        return Err(ProcessProvenanceError::Dead);
+    }
+    Ok(remote)
+}
+
+async fn processfd_session_is_remote<L, Fut>(
+    credentials: &zbus::fdo::ConnectionCredentials,
+    lookup_session: L,
+) -> Result<bool, ProcessProvenanceError>
+where
+    L: FnOnce(u32) -> Fut,
+    Fut: Future<Output = Result<bool, String>>,
+{
+    let process_fd = credentials
+        .process_fd()
+        .ok_or(ProcessProvenanceError::Missing)?
+        .as_fd();
+    let pid = pid_from_pidfd(process_fd)?;
+    stable_process_session_is_remote(pid, || pidfd_is_live(process_fd), lookup_session).await
+}
+
+async fn logind_session_is_remote(connection: &zbus::Connection, pid: u32) -> Result<bool, String> {
+    let manager = zbus::Proxy::new(
+        connection,
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+    )
+    .await
+    .map_err(|error| format!("create logind manager proxy: {error}"))?;
+    let session_path: zbus::zvariant::OwnedObjectPath = manager
+        .call("GetSessionByPID", &(pid,))
+        .await
+        .map_err(|error| format!("logind GetSessionByPID({pid}) failed: {error}"))?;
+    let session = zbus::Proxy::new(
+        connection,
+        "org.freedesktop.login1",
+        session_path,
+        "org.freedesktop.login1.Session",
+    )
+    .await
+    .map_err(|error| format!("create logind session proxy: {error}"))?;
+    session
+        .get_property("Remote")
+        .await
+        .map_err(|error| format!("read logind session Remote property: {error}"))
+}
+
+async fn caller_session_is_remote(
+    connection: &zbus::Connection,
+    sender: Option<zbus::names::OwnedUniqueName>,
+) -> Result<bool, String> {
+    let sender = sender.ok_or_else(|| "D-Bus message omitted its sender".to_owned())?;
+    let dbus = zbus::fdo::DBusProxy::new(connection)
+        .await
+        .map_err(|error| format!("create D-Bus credentials proxy: {error}"))?;
+    let credentials = dbus
+        .get_connection_credentials(zbus::names::BusName::from(sender.inner().clone()))
+        .await
+        .map_err(|error| format!("GetConnectionCredentials({sender}) failed: {error}"))?;
+    processfd_session_is_remote(&credentials, |pid| {
+        logind_session_is_remote(connection, pid)
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
 
 /// Failures bringing up or running the D-Bus server.
 #[derive(Debug, thiserror::Error)]
@@ -382,6 +558,39 @@ impl CurrentRequest {
         match self.0.slot.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+}
+
+async fn wait_for_provenance_cancellation(
+    cancel: CancelToken,
+    current: CurrentRequest,
+    cancellation_checkpoint: u64,
+) {
+    loop {
+        if cancel.is_cancelled() || current.cancellation_epoch() != cancellation_checkpoint {
+            return;
+        }
+        tokio::time::sleep(PROCESS_PROVENANCE_CANCEL_POLL_INTERVAL).await;
+    }
+}
+
+async fn run_bounded_session_check(
+    session_check: SessionCheck,
+    cancel: CancelToken,
+    current: CurrentRequest,
+    cancellation_checkpoint: u64,
+    timeout: Duration,
+) -> Result<bool, String> {
+    tokio::select! {
+        biased;
+        _ = wait_for_provenance_cancellation(cancel, current, cancellation_checkpoint) => {
+            Err("caller session provenance cancelled".to_owned())
+        }
+        result = tokio::time::timeout(timeout, session_check()) => {
+            result.unwrap_or_else(|_| {
+                Err(format!("caller session provenance exceeded its {timeout:?} deadline"))
+            })
         }
     }
 }
@@ -964,12 +1173,59 @@ where
         user: &str,
         cancel: CancelToken,
     ) -> fdo::Result<AuthResult> {
+        self.authenticate_as_with_session_check(caller, user, cancel, || async {
+            Err("D-Bus caller process provenance was not supplied".to_string())
+        })
+        .await
+    }
+
+    /// `Authenticate` with a lazy ProcessFD-backed session check. The check
+    /// is invoked only for non-root callers when the installed configuration
+    /// enables `abort_if_ssh`; every other path drops it without lookup.
+    pub async fn authenticate_as_with_session_check<F, Fut>(
+        &self,
+        caller: CallerIdentity,
+        user: &str,
+        cancel: CancelToken,
+        session_check: F,
+    ) -> fdo::Result<AuthResult>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<bool, String>> + Send + 'static,
+    {
+        self.authenticate_as_with_session_check_timeout(
+            caller,
+            user,
+            cancel,
+            PROCESS_PROVENANCE_TIMEOUT,
+            session_check,
+        )
+        .await
+    }
+
+    async fn authenticate_as_with_session_check_timeout<F, Fut>(
+        &self,
+        caller: CallerIdentity,
+        user: &str,
+        cancel: CancelToken,
+        session_timeout: Duration,
+        session_check: F,
+    ) -> fdo::Result<AuthResult>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<bool, String>> + Send + 'static,
+    {
+        let session_provenance = SessionProvenance {
+            check: Box::new(move || Box::pin(session_check())),
+            timeout: session_timeout,
+        };
         self.run_authentication(
             caller,
             user,
             Method::Authenticate,
             AuthIntent::Authenticate,
             cancel,
+            session_provenance,
         )
         .await
     }
@@ -996,16 +1252,28 @@ where
             Method::TestAuthenticate,
             AuthIntent::Test,
             cancel,
+            SessionProvenance {
+                check: Box::new(|| {
+                    Box::pin(async {
+                        Err(
+                            "TestAuthenticate does not resolve caller session provenance"
+                                .to_string(),
+                        )
+                    })
+                }),
+                timeout: PROCESS_PROVENANCE_TIMEOUT,
+            },
         )
         .await
     }
 
     /// The body both authentication entry points share, so the diagnostic
     /// method cannot drift from the real one: same authorization table, same
-    /// capture slot, same handler call, same in-band error encoding, same
-    /// notification, same redaction. Only `method` (which authorization
-    /// applies) and `intent` (what the attempt costs and which gates run)
-    /// differ.
+    /// capture slot, same handler call, same recoverable-error encoding, same
+    /// notification, same redaction. `Authenticate` additionally owns the
+    /// non-root caller-provenance boundary above handler preflight. Only
+    /// `method` (which authorization applies) and `intent` (what the attempt
+    /// costs and which gates run) otherwise differ.
     async fn run_authentication(
         &self,
         caller: CallerIdentity,
@@ -1013,6 +1281,7 @@ where
         method: Method,
         intent: AuthIntent,
         cancel: CancelToken,
+        session_provenance: SessionProvenance,
     ) -> fdo::Result<AuthResult> {
         authorize_method(&caller, method, Some(user))?;
         if method == Method::Authenticate
@@ -1033,13 +1302,55 @@ where
         let cancellation_checkpoint = self.current.cancellation_epoch();
         self.last_activity.store(now_secs(), Ordering::Relaxed);
         self.maybe_reload_handler();
+        let caller_uid = caller.uid;
         let caller_is_root = caller.uid == 0;
+        let pre_check_context = if method == Method::Authenticate {
+            PreCheckContext::daemon_authenticate()
+        } else {
+            intent.pre_check_context()
+        };
         let handler = self.handler.clone();
         let capture_slot = Arc::clone(&self.capture_slot);
         let current = self.current.clone();
+        let operation = method.name();
+
+        // Snapshot only the installed SSH-gate policy under the handler
+        // mutex. Credentials and login1 are asynchronous D-Bus operations;
+        // awaiting either while retaining this guard would let a stalled
+        // system-bus peer pin all later handler operations and shutdown.
+        let provenance_required = if method == Method::Authenticate && !caller_is_root {
+            let handler = Arc::clone(&handler);
+            let capture_slot = Arc::clone(&capture_slot);
+            tokio::task::spawn_blocking(move || {
+                let handler = lock_handler_with_timeout_before_capture(
+                    &handler,
+                    Some((capture_slot.as_ref(), operation)),
+                )?;
+                Ok::<bool, fdo::Error>(handler.config.security.abort_if_ssh)
+            })
+            .await
+            .map_err(|error| fdo::Error::Failed(format!("task join error: {error}")))??
+        } else {
+            false
+        };
+
+        let provenance = if provenance_required {
+            Some(
+                run_bounded_session_check(
+                    session_provenance.check,
+                    cancel.clone(),
+                    current.clone(),
+                    cancellation_checkpoint,
+                    session_provenance.timeout,
+                )
+                .await,
+            )
+        } else {
+            None
+        };
+
         let notifier_factory = self.notifier_factory.clone();
         let user = user.to_string();
-        let operation = method.name();
         let result = tokio::task::spawn_blocking(move || {
             // Keep this guard across both phases. A config reload cannot swap
             // in a new handler after the gates passed but before capture.
@@ -1047,7 +1358,50 @@ where
                 &handler,
                 Some((capture_slot.as_ref(), operation)),
             )?;
-            let response = if let Some(response) = handler.preflight_authenticate(&user, intent) {
+            if method == Method::Authenticate
+                && !caller_is_root
+                && handler.config.security.abort_if_ssh
+            {
+                match provenance {
+                    Some(Ok(false)) => {}
+                    Some(Ok(true)) => {
+                        warn!(
+                            caller_uid,
+                            user, "remote login session denied for Authenticate"
+                        );
+                        return Err(fdo::Error::AccessDenied(
+                            PROCESS_PROVENANCE_DENIED_MESSAGE.to_string(),
+                        ));
+                    }
+                    Some(Err(reason)) => {
+                        warn!(
+                            caller_uid,
+                            user, reason, "caller session provenance unavailable"
+                        );
+                        return Err(fdo::Error::AccessDenied(
+                            PROCESS_PROVENANCE_DENIED_MESSAGE.to_string(),
+                        ));
+                    }
+                    None => {
+                        // The installed policy changed from disabled to
+                        // enabled while this request was outside the lock.
+                        // Never perform provenance I/O under the guard and
+                        // never admit a request that was not checked under
+                        // the policy now governing capture.
+                        warn!(
+                            caller_uid,
+                            user,
+                            "caller session provenance unavailable after abort_if_ssh was enabled"
+                        );
+                        return Err(fdo::Error::AccessDenied(
+                            PROCESS_PROVENANCE_DENIED_MESSAGE.to_string(),
+                        ));
+                    }
+                }
+            }
+            let response = if let Some(response) =
+                handler.preflight_authenticate_with_context(&user, intent, pre_check_context)
+            {
                 response
             } else {
                 // Only a request whose camera-independent gates passed may
@@ -1408,6 +1762,8 @@ impl FacelockService<Camera<'static>, FaceEngine> {
         user: &str,
     ) -> fdo::Result<AuthResult> {
         let caller = resolve_caller_identity(&hdr, connection).await?;
+        let sender = hdr.sender().map(|sender| sender.to_owned().into());
+        let session_connection = connection.clone();
         // One token for this call and nothing else. zbus dispatches each
         // method in its own task, so anything shared between calls is shared
         // between *concurrent* calls: a token owned by the service could be
@@ -1418,7 +1774,11 @@ impl FacelockService<Camera<'static>, FaceEngine> {
         // (ADR 008 §5).
         let cancel = CancelToken::new();
         let _watch = watch_caller_departure(connection, hdr.sender(), cancel.clone()).await;
-        let result = self.authenticate_as(caller, user, cancel).await;
+        let result = self
+            .authenticate_as_with_session_check(caller, user, cancel, move || async move {
+                caller_session_is_remote(&session_connection, sender).await
+            })
+            .await;
 
         // Emit auth_attempted signal (best-effort, don't fail auth if signal
         // fails). The payload deliberately carries no similarity score — the
@@ -2137,6 +2497,9 @@ async fn poll_shutdown(
 mod tests {
     use super::*;
 
+    use std::collections::VecDeque;
+    use std::os::fd::{FromRawFd, OwnedFd};
+
     use facelock_core::config::{Config, NotificationConfig, NotificationMode};
     use facelock_core::notify::{Notifier, NullNotifier};
     use facelock_core::types::{CameraCaps, MatchResult};
@@ -2148,6 +2511,103 @@ mod tests {
             uid,
             username: username.map(str::to_string),
         }
+    }
+
+    fn pidfd_for(pid: u32) -> OwnedFd {
+        // SAFETY: pidfd_open returns a new owned descriptor on success. The
+        // result is checked before ownership is constructed.
+        let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) as i32 };
+        assert!(
+            raw >= 0,
+            "pidfd_open failed: {}",
+            std::io::Error::last_os_error()
+        );
+        // SAFETY: `raw` is a fresh descriptor returned by pidfd_open above.
+        unsafe { OwnedFd::from_raw_fd(raw) }
+    }
+
+    #[tokio::test]
+    async fn processfd_credentials_fail_closed_when_the_fd_is_missing_or_invalid() {
+        let missing = zbus::fdo::ConnectionCredentials::default();
+        assert!(matches!(
+            processfd_session_is_remote(&missing, |_| async { Ok(false) }).await,
+            Err(ProcessProvenanceError::Missing)
+        ));
+
+        let regular: OwnedFd = tempfile::tempfile().expect("regular file").into();
+        let invalid = zbus::fdo::ConnectionCredentials::default().set_process_fd(regular.into());
+        assert!(matches!(
+            processfd_session_is_remote(&invalid, |_| async { Ok(false) }).await,
+            Err(ProcessProvenanceError::Invalid(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_live_processfd_is_the_only_source_of_the_logind_pid() {
+        let credentials = zbus::fdo::ConnectionCredentials::default()
+            .set_process_id(u32::MAX)
+            .set_process_fd(pidfd_for(std::process::id()).into());
+
+        let remote = processfd_session_is_remote(&credentials, |pid| async move {
+            assert_eq!(pid, std::process::id());
+            Ok(false)
+        })
+        .await
+        .expect("live self pidfd");
+
+        assert!(!remote);
+    }
+
+    #[tokio::test]
+    async fn a_dead_processfd_fails_closed_before_logind_lookup() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("spawn child");
+        let process_fd = pidfd_for(child.id());
+        child.kill().expect("kill child");
+        child.wait().expect("reap child");
+        let credentials =
+            zbus::fdo::ConnectionCredentials::default().set_process_fd(process_fd.into());
+
+        let result = processfd_session_is_remote(&credentials, |_| async {
+            panic!("a dead identity must not reach logind")
+        })
+        .await;
+        assert!(matches!(result, Err(ProcessProvenanceError::Dead)));
+    }
+
+    #[tokio::test]
+    async fn death_during_lookup_cannot_authorize_a_reused_numeric_pid() {
+        let mut liveness = VecDeque::from([true, false]);
+        let result = stable_process_session_is_remote(
+            4242,
+            || Ok(liveness.pop_front().expect("two liveness checks")),
+            |pid| async move {
+                assert_eq!(pid, 4242);
+                // Even if logind answered for a process that reused 4242,
+                // the dead pidfd below must make this answer unusable.
+                Ok(false)
+            },
+        )
+        .await;
+
+        assert!(matches!(result, Err(ProcessProvenanceError::Dead)));
+        assert!(liveness.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stable_process_session_preserves_loginds_local_or_remote_answer() {
+        assert!(
+            !stable_process_session_is_remote(10, || Ok(true), |_| async { Ok(false) })
+                .await
+                .unwrap()
+        );
+        assert!(
+            stable_process_session_is_remote(11, || Ok(true), |_| async { Ok(true) })
+                .await
+                .unwrap()
+        );
     }
 
     fn mock_handler_with_timeout(timeout_secs: u32) -> Handler<MockCamera, MockFaceEngine> {
@@ -2200,6 +2660,149 @@ enabled = false
 
     fn mock_service() -> FacelockService<MockCamera, MockFaceEngine> {
         mock_service_with_reload(None, None)
+    }
+
+    fn mock_service_with_remote_gate() -> FacelockService<MockCamera, MockFaceEngine> {
+        let mut handler = mock_handler_with_timeout(1);
+        handler.config.security.abort_if_ssh = true;
+        FacelockService::new(
+            handler,
+            None,
+            None,
+            Arc::new(|_| Box::new(NullNotifier) as Box<dyn Notifier>),
+        )
+    }
+
+    async fn wait_until_set(flag: &AtomicBool) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !flag.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("session check should start");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stalled_provenance_is_bounded_without_holding_the_handler() {
+        let service = Arc::new(mock_service_with_remote_gate());
+        let started = Arc::new(AtomicBool::new(false));
+        let check_started = Arc::clone(&started);
+        let authenticating = Arc::clone(&service);
+
+        let auth = tokio::spawn(async move {
+            authenticating
+                .authenticate_as_with_session_check_timeout(
+                    caller(1000, Some("alice")),
+                    "alice",
+                    CancelToken::new(),
+                    Duration::from_millis(100),
+                    move || async move {
+                        check_started.store(true, Ordering::SeqCst);
+                        std::future::pending::<Result<bool, String>>().await
+                    },
+                )
+                .await
+        });
+
+        wait_until_set(&started).await;
+        tokio::time::timeout(
+            Duration::from_millis(50),
+            service.list_models_as(caller(0, Some("root")), "alice"),
+        )
+        .await
+        .expect("stalled provenance must not retain the handler")
+        .expect("a later root operation remains authorized");
+
+        let denied = tokio::time::timeout(Duration::from_secs(1), auth)
+            .await
+            .expect("provenance deadline must bound the request")
+            .expect("authentication task must not panic");
+        assert!(matches!(
+            denied,
+            Err(fdo::Error::AccessDenied(message))
+                if message == PROCESS_PROVENANCE_DENIED_MESSAGE
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_cancels_a_stalled_provenance_check_without_waiting_for_its_deadline() {
+        let service = Arc::new(mock_service_with_remote_gate());
+        let started = Arc::new(AtomicBool::new(false));
+        let check_started = Arc::clone(&started);
+        let authenticating = Arc::clone(&service);
+
+        let auth = tokio::spawn(async move {
+            authenticating
+                .authenticate_as_with_session_check_timeout(
+                    caller(1000, Some("alice")),
+                    "alice",
+                    CancelToken::new(),
+                    Duration::from_secs(5),
+                    move || async move {
+                        check_started.store(true, Ordering::SeqCst);
+                        std::future::pending::<Result<bool, String>>().await
+                    },
+                )
+                .await
+        });
+
+        wait_until_set(&started).await;
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            service.shutdown_as(caller(0, Some("root"))),
+        )
+        .await
+        .expect("shutdown must not wait for stalled provenance")
+        .expect("root shutdown remains authorized");
+
+        let denied = tokio::time::timeout(Duration::from_millis(250), auth)
+            .await
+            .expect("shutdown must drop the stalled check before its deadline")
+            .expect("authentication task must not panic");
+        assert!(matches!(
+            denied,
+            Err(fdo::Error::AccessDenied(message))
+                if message == PROCESS_PROVENANCE_DENIED_MESSAGE
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn caller_cancellation_drops_a_stalled_provenance_check_before_its_deadline() {
+        let service = Arc::new(mock_service_with_remote_gate());
+        let started = Arc::new(AtomicBool::new(false));
+        let check_started = Arc::clone(&started);
+        let cancel = CancelToken::new();
+        let request_cancel = cancel.clone();
+        let authenticating = Arc::clone(&service);
+
+        let auth = tokio::spawn(async move {
+            authenticating
+                .authenticate_as_with_session_check_timeout(
+                    caller(1000, Some("alice")),
+                    "alice",
+                    request_cancel,
+                    Duration::from_secs(5),
+                    move || async move {
+                        check_started.store(true, Ordering::SeqCst);
+                        std::future::pending::<Result<bool, String>>().await
+                    },
+                )
+                .await
+        });
+
+        wait_until_set(&started).await;
+        cancel.cancel();
+
+        let denied = tokio::time::timeout(Duration::from_millis(250), auth)
+            .await
+            .expect("caller cancellation must drop the stalled check")
+            .expect("authentication task must not panic");
+        assert!(matches!(
+            denied,
+            Err(fdo::Error::AccessDenied(message))
+                if message == PROCESS_PROVENANCE_DENIED_MESSAGE
+        ));
     }
 
     #[tokio::test]
