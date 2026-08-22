@@ -144,6 +144,7 @@ pub struct SetupArgs {
     pub service: Option<String>,
     pub remove: bool,
     pub if_present: bool,
+    pub allow_sensitive: bool,
     pub camera: Option<String>,
     pub models: Option<ModelPreset>,
     pub execution_provider: Option<ExecutionProviderChoice>,
@@ -165,6 +166,7 @@ pub struct SetupPlan {
     pub execution_provider: Option<ExecutionProviderChoice>,
     pub encryption: Option<EncryptionChoice>,
     pub yes: bool,
+    pub allow_sensitive: bool,
 }
 
 impl Default for SetupPlan {
@@ -180,6 +182,7 @@ impl Default for SetupPlan {
             execution_provider: None,
             encryption: None,
             yes: false,
+            allow_sensitive: false,
         }
     }
 }
@@ -269,6 +272,7 @@ pub fn resolve_setup_plan(args: SetupArgs) -> SetupPlan {
         execution_provider: args.execution_provider,
         encryption: args.encryption,
         yes: args.yes,
+        allow_sensitive: args.allow_sensitive,
     }
 }
 
@@ -348,14 +352,14 @@ struct PamKnobs {
 /// because it *is* the security property: `--non-interactive` promises no
 /// prompts, so it suppresses the per-file "Proceed?" confirmation, and it
 /// deliberately does **not** bypass the sensitive-service gate. `setup --yes`
-/// is the one flag that still means both halves — "skip the prompt" *and*
-/// "unlock the sensitive services" — and so maps onto both. On `facelock pam
-/// add` the two are separate flags and neither implies the other.
+/// also suppresses prompts only. `--allow-sensitive` is the separate,
+/// explicit authorization to unlock the sensitive services, matching
+/// `facelock pam add`; neither flag implies the other.
 fn setup_pam_knobs(plan: &SetupPlan) -> PamKnobs {
     let no_prompt = plan.base == Some(BaseMode::NonInteractive);
     PamKnobs {
         no_confirm: plan.yes || no_prompt,
-        allow_sensitive: plan.yes,
+        allow_sensitive: plan.allow_sensitive,
     }
 }
 
@@ -2233,9 +2237,9 @@ fn pam_step_in(
                 service: service.clone(),
             });
             // Step 9 runs only under a wizard base, never
-            // `--non-interactive`, so `setup_pam_knobs` reduces to `plan.yes`
-            // on both knobs here. Splitting them would make `--pam --service X
-            // --yes` start prompting where it never did.
+            // `--non-interactive`, so its prompt knob reduces to `plan.yes`.
+            // Sensitive authorization stays an independent decision carried
+            // by `plan.allow_sensitive`.
             //
             // The returned bool, not the absence of an `Err`, decides whether
             // this service is named in the closing summary and whether the
@@ -4067,21 +4071,19 @@ mod tests {
         }
     }
 
-    /// The wizard's multi-select hands every selected service to the writer
-    /// with the sensitive gate already unlocked (`install_one_in(base,
-    /// &service, true, true)`), because the multi-select *is* the consent and
-    /// no candidate is gated. That argument is only true while the two lists
-    /// are disjoint, and they are two lists in two modules — so the emptiness
-    /// of the intersection is the thing to check, not the list above, which a
-    /// name added to `SENSITIVE_SERVICES` would not appear in.
+    /// The ordinary wizard multi-select does not grant sensitive-service
+    /// authorization. Its candidates therefore have to stay disjoint from
+    /// `SENSITIVE_SERVICES`, or a default wizard selection could unexpectedly
+    /// require a separate authorization. The lists live in different modules,
+    /// so pin their intersection directly rather than relying on the exclusions
+    /// above, which would not notice a new sensitive-service entry.
     #[test]
     fn no_candidate_is_a_sensitive_service() {
         for candidate in PAM_CANDIDATES {
             assert!(
                 !super::super::pam::SENSITIVE_SERVICES.contains(&candidate.service),
-                "`{}` is offered by the wizard, which unlocks the sensitive \
-                 gate for every service it offers — remove it from one list or \
-                 the other",
+                "`{}` is offered by the wizard without implicit sensitive \
+                 authorization — remove it from one list or the other",
                 candidate.service
             );
         }
@@ -4730,16 +4732,17 @@ mod action_tests {
         assert_eq!(before["polkit-1"], after["polkit-1"]);
     }
 
-    /// The `setup --yes` mapping is the security property the flag split has
-    /// to preserve, and it is the one part of it that lives on this side of
-    /// the seam. `commands::pam` pins that the engine honours the knobs;
-    /// this pins that `setup` sets them right.
+    /// `setup --yes` and `--non-interactive` answer prompts only. Neither is
+    /// authorization to edit a shared or login PAM stack.
+    /// `commands::pam` pins that the engine honours the knobs; this pins that
+    /// `setup` keeps prompt suppression separate from sensitive authorization.
     #[test]
-    fn setup_maps_yes_to_both_knobs_and_non_interactive_to_only_one() {
-        let with = |base, yes| {
+    fn setup_maps_prompt_and_sensitive_authorization_independently() {
+        let with = |base, yes, allow_sensitive| {
             setup_pam_knobs(&SetupPlan {
                 base,
                 yes,
+                allow_sensitive,
                 ..SetupPlan::default()
             })
         };
@@ -4750,18 +4753,23 @@ mod action_tests {
         };
 
         // Standalone `--pam`: ask, and refuse the sensitive services.
-        assert_eq!(with(None, false), knobs(false, false));
+        assert_eq!(with(None, false, false), knobs(false, false));
         // `--non-interactive --pam`: no prompts, and *still* refuse them.
         assert_eq!(
-            with(Some(BaseMode::NonInteractive), false),
+            with(Some(BaseMode::NonInteractive), false, false),
             knobs(true, false)
         );
-        // `--pam --yes`: the documented combined meaning — both halves.
-        assert_eq!(with(None, true), knobs(true, true));
+        // `--pam --yes`: suppress the ordinary confirmation, but do not
+        // authorize a sensitive PAM mutation.
+        assert_eq!(with(None, true, false), knobs(true, false));
         assert_eq!(
-            with(Some(BaseMode::NonInteractive), true),
-            knobs(true, true)
+            with(Some(BaseMode::NonInteractive), true, false),
+            knobs(true, false)
         );
+        // `--allow-sensitive` authorizes the gated write and does not answer
+        // the ordinary confirmation by itself.
+        assert_eq!(with(None, false, true), knobs(false, true));
+        assert_eq!(with(None, true, true), knobs(true, true));
     }
 
     // -- `--no-systemd` -----------------------------------------------------

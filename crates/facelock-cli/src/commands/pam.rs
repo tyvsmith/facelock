@@ -22,9 +22,9 @@
 //!    *and* unlocked [`SENSITIVE_SERVICES`], so there was no way to say
 //!    "unattended, and still refuse `system-auth`". [`PamRequest::no_confirm`]
 //!    and [`PamRequest::allow_sensitive`] are now separate, and
-//!    **`--no-confirm` never implies `--allow-sensitive`**. `setup --yes`
-//!    keeps its combined meaning and is the one documented exception; the
-//!    alias maps it onto both.
+//!    **`--no-confirm` never implies `--allow-sensitive`**. The `setup --pam`
+//!    alias exposes the same separation: `--yes` suppresses its prompt and
+//!    `--allow-sensitive` authorizes a gated write.
 //! 4. **A no-op was indistinguishable from an action.** The old writer
 //!    returned `Ok(())` for *installed*, *already present* and *declined*
 //!    alike, which is why integrations pre-grepped `/etc/pam.d/<service>` for
@@ -187,7 +187,7 @@ pub const PAM_MODULE_PATHS: &[&str] = &[
 ];
 
 /// Services whose stacks can lock the machine, or the network, out. Adding
-/// face auth here needs `--allow-sensitive` (`--yes` on the `setup` alias);
+/// face auth here needs `--allow-sensitive` on every CLI surface;
 /// **removing** it needs no gate on sensitivity, because removal can only take
 /// away a way to authenticate — the confinement rules still apply to it, and
 /// to `status`, like any other verb.
@@ -4402,9 +4402,8 @@ struct WriteRequest<'a> {
     action: WriteAction,
     request: &'a PamRequest,
     /// The flag that unlocks [`SENSITIVE_SERVICES`] **on this surface**:
-    /// `--allow-sensitive` on the verb, `--yes` on the `setup --pam` alias,
-    /// which keeps its combined meaning. The refusal has to name the flag the
-    /// caller can actually reach.
+    /// `--allow-sensitive` on both the verb and the `setup --pam` alias. The
+    /// refusal has to name the flag the caller can actually reach.
     remedy: &'a str,
 }
 
@@ -9127,9 +9126,8 @@ fn status_code(outcome: &Outcome, if_present: bool) -> i32 {
 /// builds a request, names every field, and the writer reads the same value in
 /// both phases.
 ///
-/// The `remedy` is `--yes` on all three: `setup --yes` keeps its combined
-/// meaning — it is the documented exception to the flag split — so the refusal
-/// has to name the flag this surface actually honours.
+/// The `remedy` is `--allow-sensitive` on every setup alias. `setup --yes`
+/// suppresses the ordinary confirmation only, matching `pam add --yes`.
 ///
 /// Root is re-checked in the two that `run_with_plan` reaches directly for a
 /// standalone `--pam`, which does not take the base setup's root pre-check.
@@ -9144,7 +9142,7 @@ pub(crate) fn install_for_setup(request: &PamRequest) -> anyhow::Result<()> {
     let write = WriteRequest {
         action: WriteAction::Add,
         request,
-        remedy: "--yes",
+        remedy: "--allow-sensitive",
     };
     let sink = Sink::human();
     let dirs = PamDirs::system();
@@ -9164,7 +9162,7 @@ pub(crate) fn remove_for_setup(request: &PamRequest) -> anyhow::Result<()> {
     let write = WriteRequest {
         action: WriteAction::Remove,
         request,
-        remedy: "--yes",
+        remedy: "--allow-sensitive",
     };
     let sink = Sink::human();
     let dirs = PamDirs::system();
@@ -9192,7 +9190,7 @@ pub(crate) fn install_one_in(dirs: &PamDirs, request: &PamRequest) -> anyhow::Re
     let write = WriteRequest {
         action: WriteAction::Add,
         request,
-        remedy: "--yes",
+        remedy: "--allow-sensitive",
     };
     let sink = Sink::human();
     let reports = apply_all(dirs, &plan_writes(dirs, &write)?, &write, &sink);
@@ -13004,6 +13002,32 @@ mod tests {
 
         assert_eq!(write_in(&only(dir.path()), &request).unwrap(), WRITE_OK);
         assert_eq!(read(&dir, "sshd"), SUDO_AFTER);
+    }
+
+    /// The setup alias uses `--yes` only for prompt suppression. A sensitive
+    /// write stays refused until the alias's explicit authorization is set,
+    /// and the refusal names that authorization rather than the prompt flag.
+    #[test]
+    fn setup_alias_requires_explicit_sensitive_authorization() {
+        let dir = seeded(&[("system-auth", SUDO_BEFORE)]);
+        let before = snapshot(dir.path());
+        let prompt_only = PamRequest {
+            no_confirm: true,
+            ..add(&["system-auth"])
+        };
+
+        let error = install_one_in(&only(dir.path()), &prompt_only)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("--allow-sensitive"), "got: {error}");
+        assert_eq!(before, snapshot(dir.path()));
+
+        let authorized = PamRequest {
+            allow_sensitive: true,
+            ..prompt_only
+        };
+        assert!(install_one_in(&only(dir.path()), &authorized).unwrap());
+        assert_eq!(read(&dir, "system-auth"), SUDO_AFTER);
     }
 
     /// Removal is the safe direction, so it is not gated at all: a user who

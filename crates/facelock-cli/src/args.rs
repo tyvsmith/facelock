@@ -27,9 +27,8 @@ pub struct UserArg {
     pub user: Option<String>,
 }
 
-/// Confirmation bypass for the commands whose only prompt is "are you sure?" —
-/// `remove` and `clear`. `setup` deliberately declares its own `yes` instead,
-/// because there the flag also unlocks a gate; see [`SetupCli`].
+/// Confirmation bypass for commands whose prompt is an ordinary confirmation.
+/// It never grants a separate authorization such as `--allow-sensitive`.
 ///
 /// `--no-confirm` shipped on `setup` only; it is carried as a hidden alias on
 /// every site so a wrapper written against either spelling keeps working.
@@ -62,7 +61,7 @@ pub struct DryRunArg {
 
 /// `facelock setup`'s command line.
 ///
-/// Its only job is to become a [`SetupArgs`]. Naming the 16 fields once means
+/// Its only job is to become a [`SetupArgs`]. Naming the 17 fields once means
 /// `main` and the tests reach the resolver through the same conversion; when
 /// they were two hand-written destructures, a field added to one could be
 /// silently missing from the other.
@@ -71,16 +70,8 @@ pub struct SetupCli {
     /// Run in non-interactive mode (skip wizard)
     #[arg(long)]
     pub non_interactive: bool,
-    // Not a shared `ConfirmArg`: on `setup` the flag means more than it does
-    // elsewhere. It skips the per-file "Proceed?" prompt *and* unlocks the
-    // gate that otherwise refuses to write into a sensitive PAM service
-    // (`SENSITIVE_SERVICES` in commands/pam.rs). Rendering that as plain
-    // prompt suppression would understate what the user is authorizing.
-    // Spelling still cannot drift: `cli_flag_conformance` pins `-y` and the
-    // `no-confirm` alias on every arg named `yes`, wherever it is declared.
-    /// Skip confirmation prompts, and unlock the sensitive-service gate (also: --no-confirm)
-    #[arg(short = 'y', long, alias = "no-confirm")]
-    pub yes: bool,
+    #[command(flatten)]
+    pub confirm: ConfirmArg,
 
     // -- Action pairs. A later flag wins over an earlier one, so a wrapper
     //    script can append an override to a command it did not construct.
@@ -116,6 +107,9 @@ pub struct SetupCli {
     /// Used with --pam: treat an absent service file as success
     #[arg(long = "if-present", requires = "pam")]
     pub if_present: bool,
+    /// Used with --pam: permit sensitive PAM services
+    #[arg(long = "allow-sensitive", requires = "pam", conflicts_with = "remove")]
+    pub allow_sensitive: bool,
 
     // -- Choice flags. Supplying a value answers the question, and so skips
     //    the matching wizard step.
@@ -137,7 +131,7 @@ impl From<SetupCli> for SetupArgs {
     fn from(cli: SetupCli) -> Self {
         let SetupCli {
             non_interactive,
-            yes,
+            confirm,
             pam,
             no_pam,
             systemd,
@@ -148,6 +142,7 @@ impl From<SetupCli> for SetupArgs {
             service,
             remove,
             if_present,
+            allow_sensitive,
             camera,
             models,
             execution_provider,
@@ -155,7 +150,7 @@ impl From<SetupCli> for SetupArgs {
         } = cli;
         SetupArgs {
             non_interactive,
-            yes,
+            yes: confirm.yes,
             pam,
             no_pam,
             systemd,
@@ -166,6 +161,7 @@ impl From<SetupCli> for SetupArgs {
             service,
             remove,
             if_present,
+            allow_sensitive,
             camera,
             models,
             execution_provider,

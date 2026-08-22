@@ -60,6 +60,7 @@ fn matrix_row_bare_setup_is_the_full_wizard() {
     assert_eq!(p.execution_provider, None);
     assert_eq!(p.encryption, None);
     assert!(!p.yes);
+    assert!(!p.allow_sensitive);
 }
 
 #[test]
@@ -1004,7 +1005,7 @@ fn pam_service_is_repeatable_and_ordered() {
 
 /// **`--no-confirm` must never imply `--allow-sensitive`.** They are
 /// separate authorizations: "do not ask me" and "yes, edit system-auth".
-/// `setup --yes` keeps the combined meaning and is the sole exception.
+/// The primary PAM verb and the setup alias both enforce that separation.
 #[test]
 fn no_confirm_and_allow_sensitive_are_independent() {
     for skip_prompts in [
@@ -1027,8 +1028,52 @@ fn no_confirm_and_allow_sensitive_are_independent() {
         "--allow-sensitive accepts a risk; it does not skip the question"
     );
 
-    // `setup --yes` is the documented exception, unchanged.
-    assert!(plan(&["--pam", "--yes"]).yes);
+    // The setup alias must keep the same separation.
+    let setup = plan(&["--pam", "--yes"]);
+    assert!(setup.yes);
+    assert!(!setup.allow_sensitive);
+}
+
+/// `setup --pam` exposes the same explicit sensitive authorization as the
+/// primary `pam add` surface, and the modifier is meaningless without PAM.
+#[test]
+fn setup_accepts_explicit_sensitive_authorization_only_with_pam() {
+    let authorized = [
+        "facelock",
+        "setup",
+        "--pam",
+        "--service",
+        "system-auth",
+        "--yes",
+        "--allow-sensitive",
+    ];
+    assert!(
+        Cli::try_parse_from(authorized).is_ok(),
+        "`{}` must parse",
+        authorized.join(" ")
+    );
+    assert!(
+        Cli::try_parse_from(["facelock", "setup", "--allow-sensitive"]).is_err(),
+        "--allow-sensitive without --pam must be rejected"
+    );
+    assert!(
+        Cli::try_parse_from([
+            "facelock",
+            "setup",
+            "--pam",
+            "--remove",
+            "--allow-sensitive",
+        ])
+        .is_err(),
+        "removal is never sensitive-gated, so it must not accept a meaningless authorization"
+    );
+
+    let resolved = plan(&["--pam", "--allow-sensitive"]);
+    assert!(resolved.allow_sensitive);
+    assert!(
+        !resolved.yes,
+        "sensitive authorization must not suppress the prompt"
+    );
 }
 
 /// `--allow-sensitive` is an `add`-only flag: removal can only take away a

@@ -190,16 +190,19 @@ if [ -n "$PAM_SENSITIVE" ]; then
     run_test "pam add refuses sensitive service $PAM_SENSITIVE under --no-confirm" \
         "facelock pam add --service $PAM_SENSITIVE --no-confirm > /tmp/pam-sensitive.out 2>&1; test \$? -ne 0 && grep -q 'sensitive PAM service' /tmp/pam-sensitive.out && sha256sum -c --status /tmp/pam-sensitive.sha" \
         0
-    # The alias has its own refusal, naming its own flag: `setup --yes` is the
-    # documented exception that means both "do not ask" and "unlock the gate",
-    # so the message has to say --yes and not --allow-sensitive. Without this
-    # row the alias could lose the gate entirely and only the verb would notice.
-    run_test "setup --pam refuses sensitive service $PAM_SENSITIVE without --yes" \
-        "facelock setup --pam --service $PAM_SENSITIVE > /tmp/pam-sensitive-alias.out 2>&1; test \$? -ne 0 && grep -q 'sensitive PAM service' /tmp/pam-sensitive-alias.out && grep -q -- '--yes' /tmp/pam-sensitive-alias.out && sha256sum -c --status /tmp/pam-sensitive.sha" \
+    # The alias must preserve the verb's two independent decisions: --yes
+    # suppresses the ordinary prompt, but only --allow-sensitive authorizes
+    # this write. The hash proves the refusal happened before mutation.
+    run_test "setup --pam --yes refuses sensitive service $PAM_SENSITIVE without --allow-sensitive" \
+        "facelock setup --pam --service $PAM_SENSITIVE --yes > /tmp/pam-sensitive-alias.out 2>&1; test \$? -ne 0 && grep -q 'sensitive PAM service' /tmp/pam-sensitive-alias.out && grep -q -- '--allow-sensitive' /tmp/pam-sensitive-alias.out && sha256sum -c --status /tmp/pam-sensitive.sha" \
+        0
+    run_test "setup --pam explicit authorization configures sensitive service $PAM_SENSITIVE" \
+        "facelock setup --pam --service $PAM_SENSITIVE --yes --allow-sensitive >/tmp/pam-sensitive-authorized.out 2>&1; test \$? -eq 0 && grep -qxF '$PAM_LINE_TEXT' /etc/pam.d/$PAM_SENSITIVE && facelock setup --pam --service $PAM_SENSITIVE --remove --yes >/tmp/pam-sensitive-remove.out 2>&1 && sha256sum -c --status /tmp/pam-sensitive.sha" \
         0
     cp -p /tmp/pam-sensitive.orig "/etc/pam.d/$PAM_SENSITIVE"
     rm -f "/etc/pam.d/$PAM_SENSITIVE.facelock-backup" /tmp/pam-sensitive.orig \
-          /tmp/pam-sensitive-alias.out
+          /tmp/pam-sensitive-alias.out /tmp/pam-sensitive-authorized.out \
+          /tmp/pam-sensitive-remove.out
 else
     echo "SKIP: no sensitive service file in the image to test the gate"
 fi

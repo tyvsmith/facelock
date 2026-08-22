@@ -54,6 +54,7 @@ follow it.
 | `facelock setup` | Interactive setup wizard (camera, models, inference device, encryption, daemon, enrollment, PAM — the daemon before enrollment, so enrollment and the recognition test run on the transport later authentications use); removes a leftover `facelock` group from an older install, best-effort (ADR 010) |
 | `facelock setup --systemd` | Install/enable systemd units |
 | `facelock setup --pam` | Alias onto `facelock pam add\|remove` (see "facelock pam" below). Kept, and kept parsing, for every wrapper written against it |
+| `facelock setup --pam --allow-sensitive` | Explicitly authorize an add to a sensitive PAM service. Does not suppress confirmation and conflicts with `--remove` |
 | `facelock pam add` | Add the facelock line to one or more `/etc/pam.d/<service>` files. Root |
 | `facelock pam remove` | Remove it. Root. Cleans validated Facelock-owned rollback state by default; `--keep-backup` preserves it |
 | `facelock pam remove --all` | Config-independent, whole-machine removal of recognized Facelock-owned direct PAM edits beneath compiled roots. Root. Conflicts with `--service` |
@@ -277,11 +278,12 @@ plan resolution above stays on `setup` — `--pam`, `--no-pam`, `--service`,
 the execution moved. The alias is exact, including the two things that make it
 not a plain forward:
 
-- **`setup --yes` keeps its combined meaning** and is the one documented
-  exception to the flag split below. It maps onto *both* of the writer's knobs:
-  `--no-confirm` (skip the per-file question) **and** `--allow-sensitive`
-  (accept the sensitive services listed below). `--non-interactive` maps onto
-  `--no-confirm` alone, as it always has.
+- **`setup --yes` maps onto `--no-confirm` only.** It suppresses the ordinary
+  per-file question and does not authorize a sensitive PAM mutation.
+  `--non-interactive` has the same prompt-only effect, as it always has.
+  `setup --pam --allow-sensitive` maps onto the writer's separate
+  authorization and does not suppress the question. The flag conflicts with
+  `--remove`, whose safe direction is never sensitive-gated.
 - **The root refusal is a hard error, not a `sudo` re-exec.** Standalone
   `--pam` never offered the interactive escalation (`needs_root_precheck`), and
   `facelock pam add|remove` does not either.
@@ -436,7 +438,8 @@ crash-recoverable transaction and rollback pair, described below. Named
 `pam add` and `pam remove` do not use a whole-set journal; the compiled-root
 `pam remove --all` transaction is specified separately below.
 
-**`--no-confirm` never implies `--allow-sensitive`.** They are separate
+**`--no-confirm` never implies `--allow-sensitive`, including through
+`setup --pam`.** They are separate
 authorizations: "do not ask me" and "yes, edit the shared auth stack". The
 gated services are `common-auth`, `login`, `password-auth`,
 `password-auth-ac`, `sshd`, `system-auth`, `system-auth-ac` and
@@ -450,9 +453,10 @@ spelling made the gate depend on the operator's distribution. `login` and
 `sshd` are the two that are not: each locks one specific door — the TTY, the
 network — rather than every one at once. `--yes` and
 `--no-confirm` are the same flag (the shared `ConfirmArg` spelling, so "skip
-prompts" reads the same on `pam add` as on `remove` and `clear`) and neither
-unlocks the gate. `setup --yes` keeps the combined meaning and is the sole
-exception. `remove` is never gated **on sensitivity** — removal can only take
+prompts" reads the same on `setup`, `pam add`, `remove` and `clear`) and neither
+unlocks the gate. Both `pam add` and its `setup --pam` alias expose the same
+explicit `--allow-sensitive` authorization. `remove` is never gated **on
+sensitivity** — removal can only take
 away a way to authenticate — and never prompts, which is what
 `setup --pam --remove` has always done; the confinement rules below apply to
 every verb, `remove` and `status` included. `--yes`/`--no-confirm` is accepted there for symmetry and has
@@ -1013,8 +1017,8 @@ currently invokes tolerant `pam-auth-update --remove facelock` before shared
 cleanup; byte-exact profile lifecycle and rollback are #224 scope. Fedora
 authselect profile selection, regeneration and rollback are #226 scope;
 `remove --all` only scans `/etc/authselect` as a detection-only root and never
-edits generated state. This does not implement #207 sensitive-authorization
-changes or #166's final emitted-byte freeze.
+edits generated state. This does not implement #166's final emitted-byte
+freeze.
 
 **`--json`** emits exactly one document on stdout and no human text; `--quiet`
 suppresses even that, leaving the exit code as the whole answer, as it does for
@@ -1505,6 +1509,7 @@ that is not on this list is not being denied, only not yet promised.
 | `pam-status` | `pam status` exists — the unprivileged `/etc/pam.d` read (DEC-6 below) |
 | `pam-status-all` | `pam status --all` exists, and conflicts with `--service` — the enumerating form, which answers "what is configured on this machine?" rather than "is this name configured?" |
 | `quiet` | the global `--quiet` |
+| `setup-allow-sensitive` | `setup --pam` accepts `--allow-sensitive` as the explicit sensitive-service authorization; `--yes` remains prompt suppression only |
 | `setup-if-present` | `setup --pam --if-present`, on add and on `--remove` alike |
 | `setup-no-pam` | `setup --no-pam` |
 | `setup-systemd` | `setup --systemd` |

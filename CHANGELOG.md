@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Explicit authorization for sensitive `setup --pam` writes** (#207):
+  `--yes` and its `--no-confirm` alias now suppress only the ordinary per-file
+  confirmation. Adding Facelock to a shared or login PAM stack requires the
+  independent `--allow-sensitive` flag, matching `facelock pam add`; the flag
+  requires `--pam`, conflicts with `--remove`, and is advertised by capability
+  `setup-allow-sensitive`.
 - **`facelock pam status --all`** (#203): enumerate every service in the
   resolved pam.d directories that names `pam_facelock.so`, through the same row
   builder, `action` words and JSON document as `pam status --service`, so the
@@ -54,7 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closing summary or handed to the hyprlock integration.
 - **`facelock pam add | remove | status`** (#180): one command owns every write
   to `/etc/pam.d`, and `setup --pam` is now an alias onto it that keeps parsing
-  and keeps its behaviour. `--service` is repeatable on all three verbs, so
+  for existing wrappers. `--service` is repeatable on all three verbs, so
   several services are configured in one process under one root check.
   Validation is two-phase: a typo'd or gated service name writes nothing at all.
   `add` takes `--allow-sensitive` to unlock the shared auth stacks and

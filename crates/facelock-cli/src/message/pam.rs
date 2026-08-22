@@ -190,10 +190,9 @@ pub enum PamMessage {
         path: String,
         links: String,
     },
-    /// `remedy` is the flag that unlocks this surface: `--allow-sensitive` on
-    /// `pam add`, `--yes` on the `setup --pam` alias, which keeps its
-    /// combined meaning. Carrying it as data is what lets one message be
-    /// truthful on both.
+    /// `remedy` is the explicit flag that unlocks the sensitive gate on the
+    /// current surface. It is `--allow-sensitive` for both `pam add` and the
+    /// `setup --pam` alias.
     PamSensitiveRefused {
         service: String,
         remedy: String,

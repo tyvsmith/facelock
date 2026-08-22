@@ -43,7 +43,7 @@ facelock setup --pam --service polkit-1 # install to a specific service
 facelock setup --pam --remove           # remove the PAM line
 facelock setup --pam --service hyprlock --if-present  # a missing service file is success
 facelock setup --pam --remove --if-present  # ...on removal too
-facelock setup --pam --service sshd -y  # a sensitive service: -y is what unlocks it
+facelock setup --pam --service sshd -y --allow-sensitive  # suppress the prompt and authorize the sensitive write
 facelock setup --no-pam                 # wizard, but never touch /etc/pam.d
 facelock setup --camera /dev/video2     # answer step 1 from the command line
 ```
@@ -72,9 +72,9 @@ Actions are the steps that change the system: PAM, systemd, enrollment. `--no-pa
 |------|---------|
 | *(none)* | Full interactive wizard. If stdin is not a terminal, this falls back to the non-interactive flow. |
 | `--non-interactive` | No prompts. Choices resolve to config-or-default. Runs the base setup only: directories, model download and verification, encryption, path permissions. No PAM, no systemd, no enrollment unless asked for explicitly. |
-| `-y`, `--yes` (alias `--no-confirm`) | Suppress confirmation prompts, and unlock the sensitive-service gate. |
+| `-y`, `--yes` (alias `--no-confirm`) | Suppress ordinary confirmation prompts. Does not authorize a sensitive PAM edit. |
 
-`--non-interactive` suppresses the per-file "Proceed?" confirmation before a PAM edit on its own, since it promises no prompts. It deliberately does **not** unlock the sensitive-service gate: the shared auth stacks `common-auth`, `password-auth`, `password-auth-ac`, `system-auth`, `system-auth-ac` and `system-login`, plus `login` and `sshd`, still require an explicit `--yes`, so `facelock setup --non-interactive --pam --service sshd` refuses until you add it. Locking yourself out of a machine should take two decisions, not one.
+`--yes` and `--non-interactive` suppress the per-file "Proceed?" confirmation; neither unlocks the sensitive-service gate. The shared auth stacks `common-auth`, `password-auth`, `password-auth-ac`, `system-auth`, `system-auth-ac` and `system-login`, plus `login` and `sshd`, require `--allow-sensitive`. Thus even `facelock setup --pam --service sshd --yes` refuses. Locking yourself out of a machine should take two independent decisions: whether to skip the prompt, and whether to authorize the sensitive write.
 
 ### Choice flags
 
@@ -115,7 +115,7 @@ Each pair is a clap override pair: **a later flag wins over an earlier one.** `-
 Two details worth knowing:
 
 - `--pam` inside the wizard configures **exactly one service** — `--service`, defaulting to `sudo`. It does not apply the multi-select's pre-checked candidates. `--pam` means the same thing everywhere, whether or not the base setup is also running.
-- `--pam` is an alias onto [`facelock pam add`](#facelock-pam) / `facelock pam remove`, which is the primary spelling and the one that takes several services in one process. Every `setup --pam` invocation keeps parsing and keeps its behaviour, including that `-y` is what unlocks a sensitive service here where `--allow-sensitive` does it on `facelock pam add`.
+- `--pam` is an alias onto [`facelock pam add`](#facelock-pam) / `facelock pam remove`, which is the primary spelling and the one that takes several services in one process. Existing `setup --pam` invocations keep parsing; sensitive additions now use the same explicit `--allow-sensitive` authorization as `facelock pam add`, while `-y` only suppresses the prompt.
 - `--enroll` answers the "would you like to enroll a face now?" confirmation as well as forcing the step, so it runs unattended. Combined with `--non-interactive` it enrolls without any prompt at all.
 
 ### Action modifiers
@@ -125,6 +125,7 @@ Two details worth knowing:
 | `--service <name>` | `--pam` | Target PAM service. Default `sudo`. |
 | `--remove` | `--pam` | Remove the facelock PAM line instead of adding it. |
 | `--if-present` | `--pam` | Treat an absent service file as success rather than an error, on the add side as well as `--remove`. Read, parse and write failures stay fatal. Without it, a service that is not there is a hard error. |
+| `--allow-sensitive` | `--pam` add | Explicitly authorize adding Facelock to `common-auth`, `login`, `password-auth`, `password-auth-ac`, `sshd`, `system-auth`, `system-auth-ac`, or `system-login`. Does not suppress the confirmation prompt and conflicts with `--remove`. |
 | `--disable` | `--systemd` | Disable and stop the units instead of installing them. |
 
 These `requires` relationships are enforced by the parser. `facelock setup --remove` is a clear error naming the missing `--pam`, not a silently ignored flag.
@@ -141,13 +142,16 @@ When the base setup does run alongside an action, the actions run inside it, at 
 
 ### Compatibility matrix
 
-Single-flag behavior is unchanged. Only combinations that previously *dropped* a flag behave differently, and they change from silently wrong to doing what was asked.
+Most legacy behavior is unchanged. Combinations that previously *dropped* a
+flag now do what was asked, while the security-sensitive `setup --pam --yes`
+case now refuses a shared or login stack until `--allow-sensitive` is present.
 
 | Invocation | Before | After |
 |------------|--------|-------|
 | `setup` | full wizard | unchanged |
 | `setup --non-interactive` | base only, no PAM/systemd/enroll | unchanged |
 | `setup --pam --service sudo` | PAM only | unchanged |
+| `setup --pam --service system-auth -y` | authorized the sensitive write | refuses until `--allow-sensitive` is added; `-y` only suppresses the prompt |
 | `setup --systemd` | systemd only | unchanged |
 | `setup --systemd --pam` | **silently dropped `--pam`** — ran systemd only | runs **both** |
 | `setup --non-interactive --pam` | **silently dropped `--non-interactive`** — ran PAM only | base setup **+** PAM |

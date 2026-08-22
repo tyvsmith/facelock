@@ -923,8 +923,7 @@ Fedora authselect profile selection, regeneration, and rollback remain #226
 scope. This command treats `/etc/authselect` as detection-only and never edits
 generated profile state.
 
-This does not implement #207 sensitive-authorization changes or #166's final
-emitted-byte freeze.
+This does not implement #166's final emitted-byte freeze.
 
 #### A0. Config File Trust (Required)
 

@@ -86,7 +86,7 @@ facelock setup --pam --service polkit-1 # install to a specific service
 facelock setup --pam --remove           # remove the PAM line
 facelock setup --pam --service hyprlock --if-present  # a missing service file is success
 facelock setup --pam --remove --if-present  # ...on removal too
-facelock setup --pam --service sshd -y  # a sensitive service: -y is what unlocks it
+facelock setup --pam --service sshd -y --allow-sensitive  # suppress the prompt and authorize the sensitive write
 facelock setup --no-pam                 # wizard, but never touch /etc/pam.d
 facelock setup --camera /dev/video2     # answer step 1 from the command line
 ```
@@ -103,12 +103,15 @@ since omitting a flag already gives the default.
 |------|---------|
 | *(none)* | Full interactive wizard. Falls back to the non-interactive flow when stdin is not a terminal. |
 | `--non-interactive` | No prompts. Choices resolve to config-or-default. Runs the base setup only: directories, model download and verification, encryption, path permissions. No PAM, no systemd, no enrollment unless asked for explicitly. |
-| `-y`, `--yes` (alias `--no-confirm`) | Suppress confirmation prompts, and unlock the sensitive-service gate. |
+| `-y`, `--yes` (alias `--no-confirm`) | Suppress ordinary confirmation prompts. Does not authorize a sensitive PAM edit. |
 
-`--non-interactive` suppresses the per-file "Proceed?" confirmation on its own,
-since it promises no prompts. It does **not** unlock the sensitive-service
-gate, so `facelock setup --non-interactive --pam --service sshd` refuses until
-`-y` is added. Locking yourself out of a machine takes two decisions.
+`--yes` and `--non-interactive` suppress the per-file "Proceed?" confirmation;
+neither unlocks the sensitive-service gate. The shared auth stacks
+`common-auth`, `password-auth`, `password-auth-ac`, `system-auth`,
+`system-auth-ac` and `system-login`, plus `login` and `sshd`, require
+`--allow-sensitive`. Thus even `facelock setup --pam --service sshd --yes`
+refuses. Locking yourself out of a machine takes two independent decisions:
+whether to skip the prompt, and whether to authorize the sensitive write.
 
 ### Choice flags
 
@@ -166,6 +169,7 @@ forcing the step, so it runs unattended.
 | `--service <NAME>` | `--pam` | Target PAM service. Default `sudo`. |
 | `--remove` | `--pam` | Remove the facelock PAM line instead of adding it. |
 | `--if-present` | `--pam` | Treat an absent service file as success rather than an error, on the add side as well as `--remove`. Read, parse and write failures stay fatal. Without it, a service that is not there is a hard error. |
+| `--allow-sensitive` | `--pam` add | Explicitly authorize adding Facelock to `common-auth`, `login`, `password-auth`, `password-auth-ac`, `sshd`, `system-auth`, `system-auth-ac`, or `system-login`. Does not suppress the confirmation prompt and conflicts with `--remove`. |
 | `--disable` | `--systemd` | Disable and stop the units instead of installing them. |
 
 The parser enforces these, so `facelock setup --remove` is an error naming the
@@ -183,13 +187,15 @@ then PAM.
 
 `--pam` is an alias onto [`facelock pam add | remove`](#facelock-pam), which is
 the primary spelling and the one that takes several services in one process.
-Every `setup --pam` invocation keeps parsing and keeps its behaviour.
+Existing `setup --pam` invocations keep parsing. Sensitive additions now use
+the same explicit `--allow-sensitive` authorization as `facelock pam add`,
+while `-y` only suppresses the prompt.
 
 Eight services are gated: the shared auth stacks `common-auth`,
 `password-auth`, `password-auth-ac`, `system-auth`, `system-auth-ac` and
 `system-login`, plus `login` and `sshd`.
-`facelock setup --pam --service login` refuses until `-y` is added, and on
-`facelock pam add` the same gate is `--allow-sensitive`.
+`facelock setup --pam --service login` refuses until `--allow-sensitive` is
+added, even when `-y` is present.
 
 Every `setup` run reconciles the per-user enrollment markers behind
 [`facelock is-enrolled`](#facelock-is-enrolled) against the database, which is

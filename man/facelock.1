@@ -63,12 +63,15 @@ permissions. No PAM, no systemd, and no enrollment unless explicitly
 requested.
 .TP
 .B \-y\fR, \fB\-\-yes
-Skip confirmation prompts, and unlock the gate that otherwise refuses to modify
-a sensitive PAM service file (\fBcommon\-auth\fR, \fBlogin\fR,
+Skip ordinary confirmation prompts. This does not authorize a sensitive PAM
+edit. Also accepted as \fB\-\-no\-confirm\fR.
+.TP
+.B \-\-allow\-sensitive
+Explicitly authorize adding Facelock to \fBcommon\-auth\fR, \fBlogin\fR,
 \fBpassword\-auth\fR, \fBpassword\-auth\-ac\fR, \fBsshd\fR,
-\fBsystem\-auth\fR, \fBsystem\-auth\-ac\fR, \fBsystem\-login\fR).
-\fB\-\-non\-interactive\fR suppresses the per-file confirmation on its own but
-does \fInot\fR unlock that gate. Also accepted as \fB\-\-no\-confirm\fR.
+\fBsystem\-auth\fR, \fBsystem\-auth\-ac\fR, or \fBsystem\-login\fR. This does
+not suppress the confirmation prompt, requires \fB\-\-pam\fR, and conflicts
+with \fB\-\-remove\fR.
 .TP
 .B \-\-pam
 Install or manage PAM module configuration. On its own, configures one service
@@ -146,10 +149,10 @@ later flag on the command line wins.
 and
 .BR "facelock pam remove" ,
 which is the primary spelling and the one that takes several services in one
-process. Every \fBsetup \-\-pam\fR invocation keeps parsing and keeps its
-behaviour, including the rule that \fB\-y\fR is what unlocks a sensitive
-service here where \fB\-\-allow\-sensitive\fR does it on
+process. Existing \fBsetup \-\-pam\fR invocations keep parsing; sensitive
+additions use the same explicit \fB\-\-allow\-sensitive\fR authorization as
 .BR "facelock pam add" .
+\fB\-y\fR only suppresses the confirmation prompt.
 .TP
 .B is\-enrolled
 Report whether a user has a usable face enrollment. The exit status is the

@@ -442,9 +442,7 @@ fn docs_cli_examples_never_install_into_a_gated_service() {
                 }
                 Commands::Setup(setup) => {
                     let plan = resolve_setup_plan(SetupArgs::from(setup));
-                    // `setup --yes` is the documented exception: it maps onto
-                    // --allow-sensitive as well as --no-confirm.
-                    if plan.yes {
+                    if plan.allow_sensitive {
                         continue;
                     }
                     let PamPref::Install {
@@ -457,7 +455,7 @@ fn docs_cli_examples_never_install_into_a_gated_service() {
                     if let Some(service) = gated(std::slice::from_ref(service)) {
                         panic!(
                             "`{rendered}` in {doc_path} installs into the gated service \
-                             `{service}` without -y, so it fails as written"
+                             `{service}` without --allow-sensitive, so it fails as written"
                         );
                     }
                 }

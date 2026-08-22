@@ -122,6 +122,7 @@ fn capability_names_are_all_implemented() {
                     "`--quiet` must be global — every command honours it"
                 );
             }
+            "setup-allow-sensitive" => assert_long(setup, "allow_sensitive", "allow-sensitive"),
             "setup-if-present" => assert_long(setup, "if_present", "if-present"),
             "setup-no-pam" => assert_long(setup, "no_pam", "no-pam"),
             "setup-systemd" => assert_long(setup, "systemd", "systemd"),
