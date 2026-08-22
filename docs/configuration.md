@@ -84,7 +84,7 @@ Controls how the PAM module reaches the face engine.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `disabled` | bool | `false` | Disable face authentication entirely. PAM returns IGNORE, falling through to the next auth method. |
-| `abort_if_ssh` | bool | `true` | Refuse face auth when connected via SSH (no camera available). |
+| `abort_if_ssh` | bool | `true` | Refuse remote face auth. One-shot PAM uses its sanitized SSH environment; non-root daemon `Authenticate` requires a live D-Bus ProcessFD and a local logind session. `false` skips the daemon's ProcessFD/PID/logind/session lookup. Root bypasses only the daemon remote-session check. |
 | `abort_if_lid_closed` | bool | `true` | Refuse face auth when the laptop lid is closed (camera blocked). |
 | `require_ir` | bool | `true` | Require an IR camera for authentication. RGB cameras are trivially spoofed with a printed photo. Only set to `false` for development/testing. |
 | `require_frame_variance` | bool | `true` | Require multiple frames with different embeddings before accepting. Defends against static photo attacks. |

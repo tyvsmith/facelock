@@ -566,6 +566,31 @@ non-root admission fails closed as the same recoverable in-band rate-limit
 response until daemon restart; the daemon never resumes from possibly
 half-mutated ingress state.
 
+With `security.abort_if_ssh = true`, an admitted non-root `Authenticate` must
+also carry a live process identity from the bus daemon's
+`GetConnectionCredentials` `ProcessFD`. The daemon derives the PID only from
+that pidfd's `/proc/self/fdinfo` metadata, checks pidfd liveness on both sides
+of logind's `GetSessionByPID`, and accepts only a session whose `Remote`
+property is false. It does not use the racy numeric `ProcessID` credential and
+does not require a security label. Missing, malformed, dead, remote, and
+unverifiable identities and expiry of the four-second provenance deadline
+(covering credentials, ProcessFD validation, and logind) all produce the same
+AccessDenied message on the wire; the detailed reason is
+confined to the privileged daemon journal. Credentials and login1 are queried
+asynchronously without retaining the handler mutex. Caller departure,
+`ReleaseCamera`, suspend, and shutdown cancel a pending query, so a stalled
+system-bus reply cannot pin later handler operations or daemon shutdown. A
+caller that exits while logind is being queried cannot authorize a process
+that later reuses its numeric PID because the original pidfd is rechecked
+before the answer is used.
+
+UID 0 bypasses only that remote-session provenance check; it still uses the
+ordinary `Authenticate` authorization and the SQLite-backed biometric-guess
+limiter. When `abort_if_ssh = false`, no ProcessFD, PID, logind, or session
+lookup occurs. `TestAuthenticate` is separately root-only. The one-shot PAM
+fallback retains its environment check, using only the explicitly forwarded
+`SSH_CONNECTION` / `SSH_TTY` variables.
+
 An unenrolled UID is answered by the audited `pre_check` from SQLite
 (`has_models`) before the global capture slot is claimed. Saturated ingress and
 busy-camera rejections happen before that audit writer, which bounds audit-file
@@ -580,14 +605,12 @@ daemon (`StartServiceByName` is open to every context in `system.conf`) and can
 make bounded, cheap self-authentication requests. Distinct local accounts can
 combine their independent refill rates; the hard memory cap does not claim to
 be aggregate admission control. Face unlock continues to fail closed to the
-password. `abort_if_ssh` is enforced by the PAM client from its own environment;
-a direct bus caller is not subject to it, which was already true for group
-members. The first admitted request after a config-file mtime change may pay a
-handler rebuild, but that mtime is claimed before the attempt: a failed rebuild
-keeps the old handler and is not retried until the root-owned config file
-changes again. A completed rebuild is generation-checked before installation;
-if a newer mtime was claimed while it was building, the stale handler is
-discarded rather than reactivating older security configuration.
+password. The first admitted request after a config-file mtime change may pay
+a handler rebuild, but that mtime is claimed before the attempt: a failed
+rebuild keeps the old handler and is not retried until the root-owned config
+file changes again. A completed rebuild is generation-checked before
+installation; if a newer mtime was claimed while it was building, the stale
+handler is discarded rather than reactivating older security configuration.
 
 The scope table's catch-all arm is root-only, so a method added later is closed until it is deliberately opened up. Two entries are spelled out explicitly rather than left to that catch-all, because their root-only scope is load-bearing rather than incidental:
 - `PreviewDetectFrame` runs per-frame with neither `pre_check` nor the rate limiter. For any weaker caller it would be a continuous similarity feed at camera framerate; together with score redaction, denying non-root callers closes the hill-climbing oracle by construction (see A5 below).

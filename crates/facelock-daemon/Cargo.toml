@@ -24,8 +24,9 @@ bytemuck = { version = "1", features = ["derive"] }
 serde = { workspace = true }
 serde_json = "1"
 thiserror = { workspace = true }
-# The D-Bus server (src/server.rs) — async service, runtime, and the
-# signal/sleep watchers. libc backs the post-init capability drop.
+# The D-Bus server (src/server.rs) — async service/runtime and cancellable
+# ProcessFD/logind provenance queries. libc backs pidfd liveness and the
+# post-init capability drop.
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 futures-util = "0.3"

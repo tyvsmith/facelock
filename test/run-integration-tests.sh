@@ -133,6 +133,13 @@ echo ""
 # to a writable location since default may not be writable in containers
 sed -i 's|db_path.*|db_path = "/tmp/facelock-test.db"|' /etc/facelock/config.toml 2>/dev/null || true
 
+# This camera container starts a standalone dbus-daemon, not systemd-logind,
+# so it has no authoritative login sessions for the daemon's ProcessFD gate.
+# Disable only that gate here; unit/service tests cover its fail-closed and
+# local/remote behavior, while the rest of this script keeps exercising the
+# real daemon authentication/capture path.
+sed -i '/^\[security\]/a abort_if_ssh = false' /etc/facelock/config.toml
+
 # Start a real system bus so CLI commands use the D-Bus daemon path.
 mkdir -p /run/dbus
 dbus-uuidgen --ensure=/etc/machine-id >/dev/null 2>&1 || true
