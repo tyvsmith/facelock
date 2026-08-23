@@ -508,6 +508,25 @@ test-arch-release-shell: _build-test-container
     echo "  pamtester facelock-test testuser authenticate"
     podman run --rm -it $devices facelock-pam-test /bin/bash
 
+# Needs no models: nothing in this tier starts the daemon or runs inference, so
+# it is the one packaging gate that runs unattended in CI as it stands. It is
+# also the slow one — the recipe compiles the workspace twice, release for
+# build() and debug for check().
+
+# Package test — build the real dist/PKGBUILD with makepkg, install it with pacman, validate
+test-arch-pkg:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    staging="$(mktemp -d "${TMPDIR:-/tmp}/facelock-arch-pkg.XXXXXX")"
+    # A fixed image tag makes two concurrent runs clobber each other, and the
+    # loser fails in ways that read as a code defect. Take the uniqueness
+    # mktemp already produced. Layer caching is keyed by content, not by tag,
+    # so a fresh tag costs nothing but the final commit.
+    image="facelock-arch-pkg-$(basename "$staging" | cut -d. -f2 | tr '[:upper:]' '[:lower:]')"
+    trap 'rm -rf -- "$staging"; podman rmi -f "$image" >/dev/null 2>&1 || true' EXIT
+    test/build-arch-package-image.sh "$image" "$staging"
+    podman run --rm -v "$staging/source:/staged-source:ro,Z" "$image"
+
 # Build release and install to system
 
 # Run as: just install (builds as you, installs as root)

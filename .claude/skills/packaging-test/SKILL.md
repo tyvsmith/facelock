@@ -18,9 +18,9 @@ All recipes need `podman`. None of the ones in the routing table need a camera.
 |---|---|
 | `debian/**`, `dist/facelock.spec` shared install logic | `just test-deb-trixie-pkg`, `just test-deb-resolute-pkg`, and `just test-rpm-pkg` |
 | `debian/**` only | `just test-deb-trixie-pkg` and `just test-deb-resolute-pkg` |
-| `dist/facelock.spec`, `dist/facelock.install` | `just test-rpm-pkg` |
+| `dist/facelock.spec` | `just test-rpm-pkg` |
 | TPM packaging or `facelock-tpm` build features | `just test-deb-trixie-pkg` and `just test-deb-resolute-pkg` |
-| `dist/PKGBUILD*` | `just test-arch-pam`, then a release shell (below) |
+| `dist/PKGBUILD*`, `dist/facelock.install`, `dist/facelock-pam-remove.hook` | `just test-arch-pkg` |
 | `.packit.yaml` schema only | `just test-packit-config` — real `packit` in a pinned Fedora container, seconds |
 | `.packit.yaml` semantics, or anything COPR consumes | `just test-copr` — slow, opt-in, Packit SRPM plus a mock from-source rebuild |
 | APT repo generation, `publish-apt` workflow | `just test-apt-repo` — needs `reprepro` and `gpg` |
@@ -40,6 +40,27 @@ the only path that catches unit-file, D-Bus policy, polkit and post-install
 scriptlet problems. `test-deb` is an alias for both Debian suite gates; prefer
 `test-rpm-pkg` over `test-rpm` whenever the change could affect installed state
 rather than just packaging syntax.
+
+`test-arch-pkg` is the Arch equivalent and the only recipe that executes
+`dist/PKGBUILD` itself: `source=`, `depends`, `makedepends`, `prepare()`,
+`build()` and `check()`. `makepkg` runs as a non-root builder, `pacman -U`
+installs the result, and the validation covers the installed inventory, the
+`facelock.install` scriptlet, the first documented commands, and the libalpm
+hook that cleans PAM up on removal. It also resolves every dependency name all
+three PKGBUILDs declare, including `PKGBUILD-git`, which is what Omarchy's
+`omarchy-pkg-aur-add facelock-git` pulls.
+
+Three things it does not do. It does not boot systemd, so unit runtime
+behaviour stays with the deb and rpm gates. It checks no source digest:
+`sha256sums` is `SKIP` (#283), the staged tarball is a repack of the working
+tree, and the `source=` URL is never fetched, so a wrong URL passes. And it
+compiles the workspace twice, release for `build()` and debug for `check()`, so
+it is the slowest recipe here. Reach for `test-arch-pam` while iterating and run
+this before pushing a packaging change.
+
+When #283 replaces `SKIP` with a real digest, this lane breaks: a staged tarball
+cannot match a published sum. Move the staged build to `--skipchecksums` and
+assert the real digest separately.
 
 ## Camera-gated tests
 
@@ -66,6 +87,7 @@ the question is "does a fresh install work", a dev shell when iterating.
 
 ## Cost
 
-`test-copr` is self-described as slow and opt-in. The `-pkg` recipes boot a
+`test-copr` and `test-arch-pkg` are slow and opt-in: both compile the workspace
+from source inside the container. The Debian and Fedora `-pkg` recipes boot a
 container under systemd. Run the narrowest recipe the routing table allows
 rather than the whole set.

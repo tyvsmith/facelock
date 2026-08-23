@@ -1,0 +1,54 @@
+# End-to-end Arch package test — `makepkg` builds dist/PKGBUILD as a non-root
+# user, `pacman -U` installs the result, and the installed package is validated.
+#
+# Unlike test/Containerfile, nothing here is host-built. The recipe compiles the
+# tree itself, so this is the only image that executes dist/PKGBUILD's source=,
+# sha256sums, depends, makedepends, prepare(), build() and check().
+#
+# The image carries the recipe and the test scripts and nothing else. The tree
+# the recipe builds is mounted at /staged-source when the container runs, so a
+# source change does not invalidate the image.
+FROM docker.io/library/archlinux:base-devel@sha256:714acd1eef9ae997d95691b1c5220ada0076185b77857c1813f02de0fa83cf7b
+
+# Same pinned archive snapshot as test/Containerfile, so the dependency names
+# the recipe declares resolve against a fixed repository state rather than
+# whatever Arch shipped this morning.
+RUN printf '%s\n' 'Server = https://archive.archlinux.org/repos/2026/08/18/$repo/os/$arch' > /etc/pacman.d/mirrorlist
+
+# base-devel already supplies sudo (makepkg --syncdeps calls pacman through it),
+# gettext (msgfmt, for the recipe's locale stanza) and fakeroot. git is not in
+# base-devel and cargo wants it for any git-sourced crate; util-linux supplies
+# enosys and python backs the probe, both used by run-networkless.sh.
+RUN pacman -Syu --noconfirm --needed git python util-linux && \
+    rm -rf /var/cache/pacman/pkg/*
+
+# systemd-tmpfiles, which the facelock.install scriptlet runs, wants a machine
+# identity even unbooted.
+RUN rm -f /etc/machine-id && \
+    printf '%s\n' 0123456789abcdef0123456789abcdef > /etc/machine-id && \
+    chmod 0444 /etc/machine-id
+
+# makepkg refuses to run as root. It escalates through sudo to install the
+# depends and makedepends the recipe declares, which is the step that catches a
+# renamed or misspelled package (#209).
+RUN useradd -m builder && \
+    printf '%s\n' 'builder ALL=(ALL) NOPASSWD: /usr/bin/pacman' > /etc/sudoers.d/builder && \
+    chmod 0440 /etc/sudoers.d/builder
+
+# Every PKGBUILD, plus the scriptlet and hook they reference. makepkg validates
+# that install= names an existing file, so the whole directory travels together.
+COPY dist/PKGBUILD dist/PKGBUILD-bin dist/PKGBUILD-git dist/facelock.install /recipe/
+
+COPY .github/workflows/scripts/run-networkless.sh /run-networkless.sh
+COPY test/arch-pkgbuild-dependency-contract.sh /arch-pkgbuild-dependency-contract.sh
+COPY test/build-arch-source-package.sh /build-arch-source-package.sh
+COPY test/arch-package-e2e-validate.sh /arch-package-e2e-validate.sh
+COPY test/arch-package-validate.sh /arch-package-validate.sh
+RUN chmod +x /run-networkless.sh /arch-pkgbuild-dependency-contract.sh \
+    /build-arch-source-package.sh /arch-package-e2e-validate.sh \
+    /arch-package-validate.sh
+
+# Dependency names first: a typo there is the cheap failure and must not wait
+# behind a full release build. The e2e validator ends by handing off to
+# arch-package-validate.sh, which removes the package.
+CMD ["/bin/bash", "-c", "/arch-pkgbuild-dependency-contract.sh && /build-arch-source-package.sh && exec /arch-package-e2e-validate.sh"]
