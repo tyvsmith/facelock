@@ -15,6 +15,7 @@ paths:
 | 3 | Arch container PAM smoke | `just test-arch-pam` |
 | 3b | Arch container E2E (daemon) | `just test-arch-integration` |
 | 3c | Arch container E2E (oneshot) | `just test-arch-oneshot` |
+| 3d | Arch package from `dist/PKGBUILD` | `just test-arch-pkg` |
 | 4 | VM testing | Disposable VM with snapshots |
 | 5 | Host PAM | After tiers 3-4, with root shell backup |
 

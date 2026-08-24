@@ -178,7 +178,7 @@ production-ready in the justfile install recipe.
 | Raw binaries | `release.yml` | Released. Triggered on `v*` tags. Uploads `facelock-x86_64-linux-gnu`, `pam_facelock.so`, SHA256SUMS to GitHub Releases. |
 | `.deb` | `release.yml` (build-deb job) | Released. Two suite-specific `.deb` artifacts for trixie and resolute are built in CI and uploaded to GitHub Release. Stable releases publish the matching signed APT suites at `tysmith.me/facelock/apt`. |
 | `.rpm` | `release.yml` (build-rpm job) | Released. Built in CI for the GitHub Release asset. COPR builds from source via Packit (`tyvsmith/facelock`) per `releasing.md`. |
-| PKGBUILD (Arch) | `dist/PKGBUILD` | Released. Automated via tag CI; published to AUR (`facelock`, `facelock-git`). References `facelock.install` file. |
+| PKGBUILD (Arch) | `dist/PKGBUILD` | Released. Automated via tag CI; published to AUR (`facelock`, `facelock-git`). References `facelock.install` file. `just test-arch-pkg` builds and installs it. |
 | Nix flake | `dist/nix/flake.nix` | Exists with NixOS module (`module.nix`), derivation (`default.nix`), and dev shell. Not in nixpkgs. `doCheck = false` (needs camera). |
 | openrc | `dist/openrc/facelock-daemon` | Init script exists. |
 | runit | `dist/runit/run`, `dist/runit/log/run` | Service scripts exist. |
@@ -199,6 +199,56 @@ translation landed.
 - Models are downloaded at runtime via `facelock setup`, not bundled in packages
 - 4 models total: scrfd_2.5g (3MB), arcface_r50 (166MB), scrfd_10g (17MB, optional), arcface_r100 (249MB, optional)
 - SHA256 verified at download time and at model load time
+
+### Arch package coverage
+
+`just test-arch-pkg` is the only path that executes `dist/PKGBUILD` rather than
+reading it. `makepkg` runs as a non-root builder against the real recipe, so
+`source=`, `depends`, `makedepends`, `prepare()`, `build()`, `check()` and
+`package()` all run; `pacman -U` then installs the result and the installed
+package is validated against what `package()` declared, what the
+`facelock.install` scriptlet did on `post_install`, the first commands
+`quickstart.md` tells a user to type, and the libalpm hook that clears PAM
+references before removal.
+
+The recipe fetches a GitHub archive tarball for the released tag. Downloading it
+would test the last release rather than the candidate, so the working tree is
+staged and repacked inside the container under exactly the file name the recipe
+declares, in the directory shape a GitHub archive unpacks to. Source retrieval
+then runs under the same fail-closed network sandbox the Debian lane uses, which
+is what makes "it did not download" enforced rather than asserted.
+
+Only `dist/PKGBUILD` is built. `PKGBUILD-git` differs from it in `source=` and
+`pkgver()` alone, and `PKGBUILD-bin` installs binaries that exist only after a
+release is published. Neither can be built against a working tree without
+substituting away the part that differs. What all three do share is a list of
+package names, which is where #209 went wrong, so every name all three declare
+is resolved against the pinned repository snapshot before the build starts.
+
+Nothing in this tier starts the daemon or runs inference, so unlike the Debian
+and Fedora package gates it needs no ONNX models and no booted systemd, and can
+run unattended. It is also the slowest recipe in the tree: the recipe compiles
+the workspace twice, release for `build()` and debug for `check()`.
+
+What this tier does not cover is integrity. `dist/PKGBUILD` carries
+`sha256sums=('SKIP')` (#283), so `makepkg --verifysource` checks no digest at
+all: it proves only that the declared file name resolved without touching the
+network. The staged tarball is this working tree, so what the sum would cover is
+a repack the lane produced itself. The declared `source=` URL is never fetched
+either, which means a wrong or dead URL still passes here.
+
+That also makes #283 a forward conflict. The moment a real digest replaces
+`SKIP`, the staged tarball cannot match it and this lane fails on every run. The
+intended path is `makepkg --skipchecksums` for the staged build, with the real
+sum checked by a separate assertion that reads `sha256sums` directly rather than
+by handing makepkg a tarball it was never going to accept.
+
+Historical note: the first run of this lane caught a genuine shipping bug.
+`check()` runs `cargo test --workspace`, and the `*_non_root` cases in
+`crates/facelock-cli/tests/cli_smoke.rs` failed on any machine with no
+`/etc/facelock/config.toml`, which is every first AUR install. CI runs the suite
+as root, where those cases skip themselves, and a developer machine already has
+the file, so nothing else was positioned to see it. #264 fixed the ordering.
 
 ### Debian source-build coverage
 
