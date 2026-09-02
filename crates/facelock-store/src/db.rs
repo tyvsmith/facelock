@@ -10,6 +10,15 @@ use facelock_core::types::{FaceEmbedding, FaceModelInfo, Wiped};
 use crate::error::{Result, StoreError};
 use crate::migrations::run_migrations;
 
+/// The fewest embeddings a stored model may hold.
+///
+/// Owned by the store because it is a row invariant, not a capture policy:
+/// [`FaceStore::replace_model_with_embeddings`] refuses a shorter set, so a
+/// model that exists always has enough embeddings to be compared against
+/// from more than one angle (#308). The daemon's enrollment loop derives its
+/// minimum-capture count from this constant, so the two cannot drift.
+pub const MIN_EMBEDDINGS_PER_MODEL: usize = 3;
+
 #[derive(Debug)]
 pub struct FaceStore {
     conn: rusqlite::Connection,
@@ -528,8 +537,9 @@ impl FaceStore {
     /// fails keeps the template it was replacing.
     ///
     /// `sealed` applies to every blob: an enrollment is encrypted or plain,
-    /// never mixed. An empty `embeddings` is refused — a model with nothing to
-    /// compare against must never exist, whatever the caller's gates said.
+    /// never mixed. Fewer than [`MIN_EMBEDDINGS_PER_MODEL`] blobs is refused
+    /// with [`StoreError::Query`] before the transaction opens, whatever the
+    /// caller's own gates said: a model that exists is a complete template.
     pub fn replace_model_with_embeddings(
         &self,
         user: &str,
@@ -539,10 +549,13 @@ impl FaceStore {
         embedder_model: &str,
         device_id: Option<&str>,
     ) -> Result<u32> {
-        if embeddings.is_empty() {
+        if embeddings.len() < MIN_EMBEDDINGS_PER_MODEL {
             return Err(StoreError::Query {
                 path: self.path.clone(),
-                detail: format!("refusing to store a model for {user}/{label} with no embeddings"),
+                detail: format!(
+                    "refusing to store a model for {user}/{label} with {} embeddings (minimum {MIN_EMBEDDINGS_PER_MODEL})",
+                    embeddings.len()
+                ),
             });
         }
 
@@ -1310,7 +1323,7 @@ mod tests {
         let alice_side = store.add_model("alice", "side", &emb, "").unwrap();
         let bob_front = store.add_model("bob", "front", &emb, "").unwrap();
 
-        let blobs = blobs(2);
+        let blobs = blobs(3);
         let refs: Vec<&[u8]> = blobs.iter().map(Vec::as_slice).collect();
         let new_front = store
             .replace_model_with_embeddings("alice", "front", &refs, false, "", None)
@@ -1341,7 +1354,7 @@ mod tests {
             .into_iter()
             .filter(|r| r.0 == new_front)
             .collect();
-        assert_eq!(front_rows.len(), 2);
+        assert_eq!(front_rows.len(), 3);
         let orphaned: u32 = store
             .conn
             .query_row(
@@ -1389,6 +1402,32 @@ mod tests {
         assert_eq!(rows.len(), 1, "the old model keeps its embedding");
         assert_eq!(rows[0].0, old_id);
         assert_eq!(rows[0].1[0], emb[0]);
+    }
+
+    #[test]
+    fn replace_model_refuses_fewer_than_the_minimum_embeddings() {
+        let store = FaceStore::open_memory().unwrap();
+        let emb = test_embedding();
+        let old_id = store.add_model("alice", "front", &emb, "").unwrap();
+
+        // Two embeddings: enough to exist, not enough to be a template. The
+        // store enforces the floor itself so no caller's gate can drift.
+        let blobs = blobs(2);
+        let refs: Vec<&[u8]> = blobs.iter().map(Vec::as_slice).collect();
+        let err = store
+            .replace_model_with_embeddings("alice", "front", &refs, false, "", None)
+            .unwrap_err();
+        assert!(
+            matches!(err, StoreError::Query { .. }) && err.to_string().contains("2 embeddings"),
+            "a short set is refused with the count it got, got: {err:?}"
+        );
+        let models = store.list_models("alice").unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(
+            models[0].id, old_id,
+            "a refused replacement changes nothing"
+        );
+        assert_eq!(store.get_user_embeddings("alice").unwrap().len(), 1);
     }
 
     #[test]

@@ -30,7 +30,9 @@ pub enum EnrollOutcome {
     Cancelled,
 }
 
-const MIN_CAPTURES: usize = 3;
+/// The store refuses a model with fewer embeddings than this, so the capture
+/// gate and the row invariant are one number (#308).
+const MIN_CAPTURES: usize = facelock_store::MIN_EMBEDDINGS_PER_MODEL;
 const MAX_CAPTURES: usize = 10;
 const INTER_FRAME_DELAY: Duration = Duration::from_millis(200);
 
