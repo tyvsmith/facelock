@@ -42,6 +42,17 @@ run_test() {
         result=$?
     fi
 
+    # Exit 77 is a validator saying it could not reach its subject
+    # (test/polkit-agent-validate.sh). That is a skip, never a pass, and it is
+    # mandatory: nothing in this lane opted out of it.
+    if [ "$result" -eq 77 ]; then
+        local reason
+        reason="$(sed -n 's/^SKIP: //p' /tmp/test-output | head -n 1)"
+        echo "SKIP"
+        skip_test "$name" "${reason:-exit 77}"
+        return
+    fi
+
     if [ "$expected_result" = "any" ] || [ "$result" -eq "$expected_result" ]; then
         echo "PASS"
         PASS=$((PASS + 1))
