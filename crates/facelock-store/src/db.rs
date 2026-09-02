@@ -187,19 +187,17 @@ impl FaceStore {
         self.add_model_with_device(user, label, embedding, embedder_model, None)
     }
 
-    /// Add a face model with its embedding and the enrolling camera's canonical
-    /// device fingerprint (`Some("vid:pid:serial")`), or `None` when the camera
-    /// exposes no readable USB identity. Returns the new model ID.
-    pub fn add_model_with_device(
+    /// Insert the `face_models` row for a new model inside `tx` and return
+    /// its ID. Every model-creating write goes through here, so the row shape
+    /// and its timestamp are defined once.
+    fn insert_model_row(
         &self,
+        tx: &rusqlite::Transaction<'_>,
         user: &str,
         label: &str,
-        embedding: &FaceEmbedding,
         embedder_model: &str,
         device_id: Option<&str>,
     ) -> Result<u32> {
-        let tx = self.conn.unchecked_transaction().map_err(|e| self.err(e))?;
-
         // Stored as INTEGER (i64) in SQLite. Cast keeps the code portable
         // across rusqlite versions (0.39+ no longer impls ToSql/FromSql for u64
         // because SQLite INTEGER is signed 64-bit).
@@ -214,7 +212,23 @@ impl FaceStore {
         )
         .map_err(|e| self.err(e))?;
 
-        let model_id = tx.last_insert_rowid() as u32;
+        Ok(tx.last_insert_rowid() as u32)
+    }
+
+    /// Add a face model with its embedding and the enrolling camera's canonical
+    /// device fingerprint (`Some("vid:pid:serial")`), or `None` when the camera
+    /// exposes no readable USB identity. Returns the new model ID.
+    pub fn add_model_with_device(
+        &self,
+        user: &str,
+        label: &str,
+        embedding: &FaceEmbedding,
+        embedder_model: &str,
+        device_id: Option<&str>,
+    ) -> Result<u32> {
+        let tx = self.conn.unchecked_transaction().map_err(|e| self.err(e))?;
+
+        let model_id = self.insert_model_row(&tx, user, label, embedder_model, device_id)?;
 
         let bytes: &[u8] = bytemuck::cast_slice(embedding.as_slice());
         tx.execute(
@@ -489,21 +503,7 @@ impl FaceStore {
     ) -> Result<u32> {
         let tx = self.conn.unchecked_transaction().map_err(|e| self.err(e))?;
 
-        // Stored as INTEGER (i64) in SQLite. Cast keeps the code portable
-        // across rusqlite versions (0.39+ no longer impls ToSql/FromSql for u64
-        // because SQLite INTEGER is signed 64-bit).
-        let created_at: i64 = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-
-        tx.execute(
-            "INSERT INTO face_models (user, label, created_at, embedder_model, device_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![user, label, created_at, embedder_model, device_id],
-        )
-        .map_err(|e| self.err(e))?;
-
-        let model_id = tx.last_insert_rowid() as u32;
+        let model_id = self.insert_model_row(&tx, user, label, embedder_model, device_id)?;
         let sealed_int: i64 = if sealed { 1 } else { 0 };
 
         tx.execute(
@@ -530,7 +530,6 @@ impl FaceStore {
     /// `sealed` applies to every blob: an enrollment is encrypted or plain,
     /// never mixed. An empty `embeddings` is refused — a model with nothing to
     /// compare against must never exist, whatever the caller's gates said.
-    #[allow(clippy::too_many_arguments)] // mirrors add_model_raw_with_device plus the blob set
     pub fn replace_model_with_embeddings(
         &self,
         user: &str,
@@ -557,21 +556,7 @@ impl FaceStore {
         )
         .map_err(|e| self.err(e))?;
 
-        // Stored as INTEGER (i64) in SQLite. Cast keeps the code portable
-        // across rusqlite versions (0.39+ no longer impls ToSql/FromSql for u64
-        // because SQLite INTEGER is signed 64-bit).
-        let created_at: i64 = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-
-        tx.execute(
-            "INSERT INTO face_models (user, label, created_at, embedder_model, device_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![user, label, created_at, embedder_model, device_id],
-        )
-        .map_err(|e| self.err(e))?;
-
-        let model_id = tx.last_insert_rowid() as u32;
+        let model_id = self.insert_model_row(&tx, user, label, embedder_model, device_id)?;
         let sealed_int: i64 = if sealed { 1 } else { 0 };
 
         for data in embeddings {
