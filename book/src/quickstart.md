@@ -35,6 +35,10 @@ sudo apt update
 sudo apt install facelock
 ```
 
+Source entries written for v0.1.4 name the `main` or `legacy` suite. They
+keep working until 0.3.0: `main` serves the trixie package and `legacy`
+serves no package. Replace that suite with your host's codename before then.
+
 ### Fedora / RHEL (COPR)
 
 ```bash

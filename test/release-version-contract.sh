@@ -16,6 +16,11 @@ fail() {
 }
 
 cleanup() {
+    for gnupg_home in "${apt_keygen_home:-}" "${apt_publisher_gnupg:-}"; do
+        if [ -d "$gnupg_home" ]; then
+            GNUPGHOME="$gnupg_home" gpgconf --kill gpg-agent 2>/dev/null || true
+        fi
+    done
     rm -f "$packit_fixture"
     rm -f "${packit_complex_fixture:-}" "${packit_commented_fixture:-}"
     rm -f "${github_output_fixture:-}"
@@ -270,7 +275,7 @@ cp "$repo_root/dist/nix/default.nix" "$matrix_root/dist/nix/"
 cp "$repo_root/docs/releasing.md" "$repo_root/docs/contracts.md" "$repo_root/docs/integrating.md" "$repo_root/docs/security.md" "$repo_root/docs/compatibility.md" "$repo_root/docs/quickstart.md" "$matrix_root/docs/"
 cp "$repo_root/docs/adr/009-cli-verb-noun-shape.md" "$matrix_root/docs/adr/"
 cp "$repo_root/docs/testing-roadmap.md" "$matrix_root/docs/"
-cp "$repo_root/README.md" "$repo_root/CONTRIBUTING.md" "$matrix_root/"
+cp "$repo_root/README.md" "$repo_root/CONTRIBUTING.md" "$repo_root/Cargo.toml" "$matrix_root/"
 cp "$repo_root/book/src/quickstart.md" "$repo_root/book/src/contributing.md" "$repo_root/book/src/compatibility.md" "$matrix_root/book/src/"
 cp "$repo_root/.github/ISSUE_TEMPLATE/bug_report.md" "$matrix_root/.github/ISSUE_TEMPLATE/"
 cp "$repo_root/crates/facelock-cli/src/commands/pam.rs" "$matrix_root/crates/facelock-cli/src/commands/"
@@ -336,15 +341,23 @@ assert_matrix_mutation_rejected() {
     local context="$1"
     local relative_file="$2"
     local expression="$3"
+    local diagnostic="${4:-}"
     local mutation_root="$tmp_root/matrix-mutation-$matrix_mutation_index"
+    local checker_output
     matrix_mutation_index=$((matrix_mutation_index + 1))
     cp -R "$matrix_root" "$mutation_root"
     sed -i "$expression" "$mutation_root/$relative_file"
     if cmp -s "$matrix_root/$relative_file" "$mutation_root/$relative_file"; then
         fail "matrix mutation fixture did not change $relative_file: $context"
     fi
-    if RELEASE_MATRIX_VERSION=0.2.0 python3 "$mutation_root/test/check-release-matrix.py" >/dev/null 2>&1; then
+    if checker_output=$(RELEASE_MATRIX_VERSION=0.2.0 python3 "$mutation_root/test/check-release-matrix.py" 2>&1); then
         fail "release matrix checker accepted drift: $context"
+    fi
+    if [ -n "$diagnostic" ]; then
+        case "$checker_output" in
+            *"$diagnostic"*) ;;
+            *) fail "release matrix checker rejected $context for another reason: $checker_output" ;;
+        esac
     fi
     echo "release matrix mutation case: $context rejected"
 }
@@ -654,6 +667,108 @@ assert_matrix_mutation_rejected \
     "stable publication suite input resolute to duplicate trixie" \
     ".github/workflows/release.yml" \
     's/"resolute=$(exact_deb_from_manifest resolute)"/"trixie=$(exact_deb_from_manifest resolute)"/'
+# The v0.1.4 suite names stay published until 0.3.0 (#310). Every place that
+# promise lives must agree, and the window must actually close.
+assert_matrix_mutation_rejected \
+    "compatibility suite retire_at removed" \
+    "dist/release-matrix.json" \
+    '0,/"retire_at": "0.3.0"/s//"retired": "0.3.0"/' \
+    "has no stable retire_at version"
+assert_matrix_mutation_rejected \
+    "compatibility suites retire at different versions" \
+    "dist/release-matrix.json" \
+    '0,/"retire_at": "0.3.0"/s//"retire_at": "0.4.0"/' \
+    "must share one retirement version"
+assert_matrix_mutation_rejected \
+    "compatibility suite main sourced from resolute" \
+    "dist/release-matrix.json" \
+    's/"source": "trixie"/"source": "resolute"/' \
+    "compatibility APT suite main source drifted"
+assert_matrix_mutation_rejected \
+    "compatibility suite legacy stanza dropped from the APT config" \
+    "dist/apt/conf/distributions" \
+    's/^Codename: legacy$/Codename: bookworm/' \
+    "APT config suites"
+assert_matrix_mutation_rejected \
+    "compatibility suite main description silent about the deprecation" \
+    "dist/apt/conf/distributions" \
+    's/^\(Description: .*\)deprecated\(.*trixie.*\)$/\1renamed\2/' \
+    "must name the deprecation and the codenamed replacement"
+assert_matrix_mutation_rejected \
+    "compatibility suite legacy left unsigned" \
+    "dist/apt/conf/distributions" \
+    '/^Codename: legacy$/,/^SignWith: default$/s/^SignWith: default$/SignWith: no/' \
+    "APT suite legacy SignWith drifted"
+assert_matrix_mutation_rejected \
+    "APT publisher stops mirroring trixie into main" \
+    ".github/workflows/scripts/publish-apt.sh" \
+    's/includedeb main/includedeb trixie/' \
+    "does not populate compatibility suite main"
+assert_matrix_mutation_rejected \
+    "APT publisher stops exporting legacy" \
+    ".github/workflows/scripts/publish-apt.sh" \
+    's/export legacy/export resolute/' \
+    "does not populate compatibility suite legacy"
+assert_matrix_mutation_rejected \
+    "APT repo artifact drops the dists tree" \
+    ".github/workflows/release.yml" \
+    's/dists pool tysmith-archive-keyring.gpg/pool tysmith-archive-keyring.gpg/' \
+    "must carry the whole dists tree"
+assert_matrix_mutation_rejected \
+    "README migration note dropped" \
+    "README.md" \
+    's/keep working until 0.3.0/keep working/' \
+    "README.md omits the APT compatibility window"
+assert_matrix_mutation_rejected \
+    "quickstart migration note dropped" \
+    "book/src/quickstart.md" \
+    's/keep working until 0.3.0/keep working/' \
+    "book/src/quickstart.md omits the APT compatibility window"
+assert_matrix_mutation_rejected \
+    "release checklist line dropped" \
+    "docs/releasing.md" \
+    's/compatibility suites present until 0.3.0/compatibility suites present/' \
+    "docs/releasing.md omits the APT compatibility window"
+assert_matrix_mutation_rejected \
+    "contract retirement version dropped" \
+    "docs/contracts.md" \
+    's/removed at 0.3.0/removed later/' \
+    "docs/contracts.md omits the APT compatibility window"
+
+for retired_version in 0.3.0 0.3.0-alpha.1 1.0.0; do
+    if checker_output=$(RELEASE_MATRIX_VERSION="$retired_version" python3 "$matrix_root/test/check-release-matrix.py" 2>&1); then
+        fail "release matrix checker kept the APT compatibility suites at $retired_version"
+    fi
+    case "$checker_output" in
+        *"reached retire_at 0.3.0"*) ;;
+        *) fail "release matrix checker rejected $retired_version for another reason: $checker_output" ;;
+    esac
+    echo "release matrix expiry case: compatibility suites rejected at $retired_version"
+done
+RELEASE_MATRIX_VERSION=0.2.9 python3 "$matrix_root/test/check-release-matrix.py" >/dev/null
+echo "release matrix expiry case: compatibility suites accepted at 0.2.9"
+
+# The terminal state is reachable: with the stanzas, the publisher steps and
+# the window claims gone, 0.3.0 passes.
+retired_root="$tmp_root/matrix-retired"
+cp -R "$matrix_root" "$retired_root"
+awk 'BEGIN { RS = ""; ORS = "\n\n" } !/Codename: (main|legacy)\n/' \
+    "$matrix_root/dist/apt/conf/distributions" > "$retired_root/dist/apt/conf/distributions"
+sed -i '/reprepro -b "${REPO_DIR}" includedeb main /d; /reprepro -b "${REPO_DIR}" export legacy/d' \
+    "$retired_root/.github/workflows/scripts/publish-apt.sh"
+sed -i 's/`main` and `legacy` are compatibility suites/`main` and `legacy` were compatibility suites/; s/removed at 0.3.0/removed in 0.3.0/' \
+    "$retired_root/docs/contracts.md"
+sed -i 's/compatibility suites present until 0.3.0/compatibility suites removed in 0.3.0/' "$retired_root/docs/releasing.md"
+sed -i 's/keep working until 0.3.0/stopped working in 0.3.0/' "$retired_root/README.md" "$retired_root/book/src/quickstart.md"
+if ! checker_output=$(RELEASE_MATRIX_VERSION=0.3.0 python3 "$retired_root/test/check-release-matrix.py" 2>&1); then
+    fail "release matrix checker rejected the retired compatibility-suite state at 0.3.0: $checker_output"
+fi
+echo "release matrix expiry case: retired state accepted at 0.3.0"
+if RELEASE_MATRIX_VERSION=0.2.0 python3 "$retired_root/test/check-release-matrix.py" >/dev/null 2>&1; then
+    fail "release matrix checker accepted the retired compatibility-suite state inside the window"
+fi
+echo "release matrix expiry case: retired state rejected at 0.2.0"
+
 assert_matrix_mutation_rejected \
     "production required supported chroot missing" \
     "dist/release-matrix.json" \
@@ -822,6 +937,89 @@ case "$apt_guard_output" in
     *"does not match stable APT suite"*) ;;
     *) fail "stable APT publisher did not reject the suite/version mismatch before signing setup: $apt_guard_output" ;;
 esac
+
+# Run to completion under an ephemeral signing key, the publisher must fill
+# every suite the config declares: the codenamed pair, `main` with trixie's
+# exact package, and `legacy` exported with signed empty indexes (#310).
+# reprepro is a recording stand-in; gpg is real, in throwaway homes. Both
+# homes differ from $HOME/.gnupg, which is what gives them their own agent
+# socket rather than the user's.
+apt_keygen_home="$tmp_root/apt-keygen"
+apt_publisher_gnupg="$tmp_root/apt-publisher-gnupg"
+apt_tree_root="$tmp_root/apt-tree"
+apt_tree_debs="$tmp_root/apt-tree-debs"
+mkdir -p "$apt_tree_debs"
+mkdir -m 700 "$apt_keygen_home"
+GNUPGHOME="$apt_keygen_home" gpg --batch --quiet --pinentry-mode loopback --passphrase contract-passphrase \
+    --quick-generate-key "Facelock contract test <apt-contract@example.invalid>" ed25519 sign never
+apt_private_key="$(GNUPGHOME="$apt_keygen_home" gpg --batch --quiet --pinentry-mode loopback \
+    --passphrase contract-passphrase --armor --export-secret-keys)"
+for suite in trixie resolute; do
+    : > "$apt_tree_debs/$suite.deb"
+done
+cat > "$tmp_root/bin/dpkg-deb" <<'SH'
+#!/usr/bin/env bash
+case "$2" in
+    */trixie.deb) printf '%s\n' '0.2.0-1~deb13u1' ;;
+    */resolute.deb) printf '%s\n' '0.2.0-1~ubuntu26.04.1' ;;
+    *) exit 1 ;;
+esac
+SH
+cat > "$tmp_root/bin/reprepro" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = -b ] || exit 2
+repo_dir="${2:-}"
+command="${3:-}"
+suite="${4:-}"
+printf '%s\n' "$*" >> "$repo_dir/reprepro-calls"
+index_dir="$repo_dir/dists/$suite/facelock/binary-amd64"
+mkdir -p "$index_dir"
+case "$command" in
+    includedeb)
+        package="${5:-}"
+        mkdir -p "$repo_dir/pool/facelock"
+        cp -- "$package" "$repo_dir/pool/facelock/"
+        printf 'Package: facelock\nFilename: pool/facelock/%s\n\n' "$(basename "$package")" >> "$index_dir/Packages"
+        ;;
+    export) : >> "$index_dir/Packages" ;;
+    *) exit 2 ;;
+esac
+: > "$repo_dir/dists/$suite/Release"
+: > "$repo_dir/dists/$suite/InRelease"
+SH
+chmod +x "$tmp_root/bin/dpkg-deb" "$tmp_root/bin/reprepro"
+if ! apt_tree_output=$(
+    cd "$repo_root" && \
+        GNUPGHOME="$apt_publisher_gnupg" APT_GPG_PRIVATE_KEY="$apt_private_key" APT_GPG_PASSPHRASE=contract-passphrase \
+        PATH="$tmp_root/bin:$PATH" \
+        bash .github/workflows/scripts/publish-apt.sh "$apt_tree_root" \
+        "trixie=$apt_tree_debs/trixie.deb" "resolute=$apt_tree_debs/resolute.deb" 2>&1
+); then
+    printf '%s\n' "$apt_tree_output"
+    fail "stable APT publisher did not build the compatibility tree"
+fi
+for suite in trixie resolute main legacy; do
+    for index in Release InRelease; do
+        [ -f "$apt_tree_root/dists/$suite/$index" ] || fail "stable APT publisher left dists/$suite/$index unpublished"
+    done
+done
+grep -Fqx -- "-b $apt_tree_root includedeb main $apt_tree_debs/trixie.deb" "$apt_tree_root/reprepro-calls" \
+    || fail "stable APT publisher did not place trixie's exact package in main"
+grep -Fqx -- "-b $apt_tree_root export legacy" "$apt_tree_root/reprepro-calls" \
+    || fail "stable APT publisher did not export legacy"
+[ ! -s "$apt_tree_root/dists/legacy/facelock/binary-amd64/Packages" ] \
+    || fail "stable APT publisher listed a package in legacy"
+cmp -s "$apt_tree_root/dists/main/facelock/binary-amd64/Packages" "$apt_tree_root/dists/trixie/facelock/binary-amd64/Packages" \
+    || fail "main index differs from the trixie index"
+! grep -q resolute "$apt_tree_root/dists/main/facelock/binary-amd64/Packages" \
+    || fail "main index carries the resolute package"
+[ -s "$apt_tree_root/tysmith-archive-keyring.gpg" ] || fail "stable APT publisher exported no public keyring"
+case "$apt_tree_output" in
+    *"Release file (main)"*"Release file (legacy)"*) ;;
+    *) fail "stable APT publisher did not print the compatibility suite Release files" ;;
+esac
+echo "stable APT publisher case: codenamed and compatibility suites published"
 
 assert_rejected bash "$repo_root/.github/workflows/scripts/publish-aur.sh" 0.2.0-alpha.1 unused
 # A stable version with an implausible source digest must be refused before any
