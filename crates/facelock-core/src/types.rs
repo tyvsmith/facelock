@@ -461,7 +461,7 @@ pub fn device_allowed_model_ids(
 /// so a sealed embedding cannot even be decrypted under a different device
 /// id. `None` for a missing or empty id: at authentication that is how a
 /// legacy unbound row decrypts; at enrollment it is a refusal
-/// (`SecurityConfig::require_device_aad`).
+/// (`Config::require_device_aad`).
 pub fn device_binding_aad(device_id: Option<&str>) -> Option<Vec<u8>> {
     device_id
         .filter(|s| !s.is_empty())
@@ -469,7 +469,7 @@ pub fn device_binding_aad(device_id: Option<&str>) -> Option<Vec<u8>> {
 }
 
 /// A stored template's standing under opt-in hard device binding
-/// (`security.bind_device_aad`), as `SecurityConfig::classify_device_binding`
+/// (`security.bind_device_aad`), as `Config::classify_device_binding`
 /// reads it off the row's `device_id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceBinding {
