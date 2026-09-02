@@ -297,8 +297,8 @@ Captures 3-10 frames over ~15 seconds. Requires exactly one face per frame. Re-e
 
 Under a non-default `--config`, enrollment uses direct camera access under that
 file and never the running daemon, which reads only `/etc/facelock/config.toml`;
-a note on stderr says so. The same holds for `test`, `list`, `remove` and
-`clear`.
+a note on stderr says so. The same holds for `test`, `list`, `remove`,
+`clear`, `devices` and `preview` (which then has only its text preview).
 
 Without `--skip-setup-check`, an install whose setup-complete marker is missing
 is offered `facelock setup` first and enrolls through it, since setup enrolls a

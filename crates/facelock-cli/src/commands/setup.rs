@@ -6417,6 +6417,10 @@ mod action_tests {
         ));
         check_unit_reads_this_config().unwrap();
 
+        // With no process override the effective path is whatever
+        // `FACELOCK_CONFIG` says when the test runs unprivileged, so it is
+        // cleared too, as paths.rs's own tests do.
+        unsafe { std::env::remove_var("FACELOCK_CONFIG") };
         facelock_core::paths::clear_process_config_override();
         check_unit_reads_this_config().unwrap();
     }

@@ -115,3 +115,24 @@ impl super::Samples for AccessMessage {
         ]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The two `--config` lines (#314) spell the default path out because it
+    /// is the whole reason; a moved default must move them too.
+    #[test]
+    fn config_override_lines_name_the_default_path() {
+        use AccessMessage::*;
+        let default = facelock_core::paths::DEFAULT_CONFIG_PATH;
+
+        let note = DirectByConfigOverride.localized();
+        assert!(note.contains(default), "{note}");
+        assert!(note.contains("direct camera access"), "{note}");
+
+        let preview = PreviewGraphicalDaemonConfigOverride.localized();
+        assert!(preview.contains(default), "{preview}");
+        assert!(preview.contains("text-only"), "{preview}");
+    }
+}

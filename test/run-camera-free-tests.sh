@@ -482,6 +482,15 @@ mkdir -p /run/systemd/system
 run_test "setup --systemd (standalone) under --config is refused before systemctl" \
     "facelock --config $OVERRIDE_CONFIG setup --systemd > /tmp/setup-override-standalone.out 2>&1; test \$? -ne 0 && grep -q -- '--systemd is not supported with --config $OVERRIDE_CONFIG' /tmp/setup-override-standalone.out && ! grep -q 'Validating installed' /tmp/setup-override-standalone.out && ! test -e $SYSTEMCTL_CALLS"
 
+# Positive control for the shim: `--systemd --disable` reads no config file
+# and is allowed under an override, so it reaches `systemctl disable --now`,
+# which the shim records (and fails, so the command exits non-zero). Without
+# this row the two `! test -e` assertions above would hold just as well with
+# a shim setup never execs.
+run_test "setup --systemd --disable under --config reaches systemctl (shim positive control)" \
+    "facelock --config $OVERRIDE_CONFIG setup --systemd --disable > /tmp/setup-override-disable.out 2>&1; ! grep -q -- '--systemd is not supported' /tmp/setup-override-disable.out && grep -qx 'disable --now facelock-daemon' $SYSTEMCTL_CALLS"
+rm -f "$SYSTEMCTL_CALLS"
+
 # The default path is not an override, however it is spelled: the same
 # standalone invocation naming the real file through a `..` component gets
 # past the identity check and on to the asset validation, which is where

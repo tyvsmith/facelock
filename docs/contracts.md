@@ -147,7 +147,9 @@ The invariants it pins:
   `global = true`, and are accepted on either side of the subcommand name. No
   command re-declares them. `facelock daemon -c X` and `facelock -c X daemon`
   are equivalent, as are `facelock is-enrolled --quiet` and
-  `facelock --quiet is-enrolled`
+  `facelock --quiet is-enrolled`. A non-default `--config` makes `setup
+  --systemd` refuse and routes every backend-using command direct (see
+  "facelock setup Flag Composition" and "Operating Modes")
 - `--verbose` counts its repeats, one level per `-v` from the program's own
   starting level (`warn` for the CLI, `info` for `daemon run`). `RUST_LOG`
   outranks it
