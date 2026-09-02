@@ -481,7 +481,12 @@ rm -f "$SYSTEMCTL_CALLS"
 if [ -e /usr/bin/systemctl ]; then
     REAL_SYSTEMCTL="/tmp/facelock-systemctl.real"
     mv /usr/bin/systemctl "$REAL_SYSTEMCTL"
+    # Armed the instant the real binary is aside: a failed shim write below
+    # must still put it back from the EXIT trap.
+    SYSTEMCTL_SHIMMED=1
 fi
+# Armed for the write itself too, so a partial shim is removed on exit even
+# where no real binary was displaced.
 SYSTEMCTL_SHIMMED=1
 printf '#!/bin/sh\necho "$*" >> %s\nexit 1\n' "$SYSTEMCTL_CALLS" > /usr/bin/systemctl
 chmod 0755 /usr/bin/systemctl
