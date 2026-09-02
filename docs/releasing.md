@@ -109,7 +109,7 @@ which reacts to the GitHub Release published in step 1. See the COPR section bel
 | `resolute` | Ubuntu 26.04 | native distro `cargo` and `rustc` | Yes | `X.Y.Z-1~ubuntu26.04.1` |
 
 Debian-family release support is exactly Debian 13 (Trixie) and Ubuntu 26.04
-LTS (Resolute). Both suites ship one binary package named `facelock` with TPM
+LTS (Resolute). Both codenamed suites ship one binary package named `facelock` with TPM
 support enabled. No `rustup` toolchain participates in Debian source builds.
 Bookworm and Noble artifacts may remain in historical releases, but those
 suites are unsupported and receive no new packages.
@@ -536,7 +536,7 @@ clients whose source entry was written for v0.1.4:
 - **`legacy`**: no package; `reprepro export` writes signed empty indexes so
   `apt update` keeps succeeding
 
-Those clients must replace the suite component in their Facelock source entry
+Those clients must replace the suite in their Facelock source entry
 with their operating-system codename before 0.3.0. `dist/release-matrix.json`
 declares the window under `apt_suites.compat`, and `check-release-matrix.py`
 fails the first tree at or past `retire_at` that still carries the stanzas.
