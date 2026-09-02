@@ -44,7 +44,7 @@ schedules:
 |---|---|---|
 | Pull request | every lane | only when the diff reaches a package |
 | Nightly (07:00 UTC) | every lane | none |
-| `just release-preflight` | evidence of a green run at HEAD | none |
+| `just release-preflight` | lane evidence uploaded by a green run at HEAD | none |
 
 The pull-request filter is a `changes` job running
 `.github/workflows/scripts/classify-changes.sh`, plain bash over a merge-base
@@ -55,8 +55,9 @@ to review. Add a path there when a new file can reach a built package.
 So a green pull request is **not** packaging-verified unless the packaging jobs
 actually ran on it. A Rust-only change that breaks the packaged runtime is caught
 by the nightly matrix within a day, and by the release gate before it ships.
-`just test-packaging-matrix` runs every lane locally and records the commit, for
-a maintainer without CI in reach.
+`just test-packaging-matrix` runs every lane locally and records each lane's
+evidence, for a maintainer without CI in reach; a run that skipped anything is
+refused, not recorded.
 
 ## Which E2E tier a new assertion belongs in
 

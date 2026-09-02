@@ -26,6 +26,13 @@ does not. A bare invocation derives the version from `Cargo.toml` and classifies
 It checks local tools (`git`, `cargo`, `just`, `podman`), the packaging files,
 and release secrets. Fix every `MISSING` before continuing.
 
+It also needs complete packaging evidence at this commit: the
+`packaging-evidence-*` artifacts of a successful `packaging.yml` run
+(`gh workflow run packaging.yml --ref main`, then wait for it), or a local
+`just test-packaging-matrix` (30-60+ minutes, needs the ONNX models). A
+`FACELOCK_ALLOW_MISSING_MODELS=1` run never counts, and a run whose lanes were
+path-filtered away has no artifacts and is refused.
+
 For Debian-family artifacts, the active release set is exactly Trixie and
 Resolute. Run both `just test-deb-trixie-pkg` and
 `just test-deb-resolute-pkg`; each proves the TPM-enabled package, exact source
