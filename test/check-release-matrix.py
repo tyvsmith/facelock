@@ -719,12 +719,15 @@ for artifact in ("deb-${{ matrix.suite }}", "rpm-${{ matrix.release }}", "arch")
         f"name: packaging-evidence-{artifact}" in packaging_workflow,
         f"packaging workflow does not upload the packaging-evidence-{artifact} artifact",
     )
+# One upload step per lane job: deb, rpm, arch. The two matrix jobs run the
+# same step once per entry, so the step count stays three. A new lane job (the
+# copr job #230 adds) brings its own upload step and bumps this count.
+EVIDENCE_UPLOAD_STEPS = 3
 require(
-    # One upload step per lane job: deb, rpm, arch. The two matrix jobs run the
-    # same step once per entry, so the step count stays three.
-    packaging_workflow.count("path: .packaging-evidence/") == 3
-    and packaging_workflow.count("if-no-files-found: error") == 3,
-    "packaging workflow evidence uploads must fail the job when a lane recorded nothing",
+    packaging_workflow.count("path: .packaging-evidence/") == EVIDENCE_UPLOAD_STEPS
+    and packaging_workflow.count("if-no-files-found: error") == EVIDENCE_UPLOAD_STEPS,
+    f"packaging workflow must carry exactly {EVIDENCE_UPLOAD_STEPS} evidence upload steps, each failing "
+    "the job when its lane recorded nothing; a new lane job adds one and bumps the count",
 )
 require(
     'python3 test/packaging-evidence.py ci-run --commit "$HEAD_SHA" --run "$run_id"' in justfile
