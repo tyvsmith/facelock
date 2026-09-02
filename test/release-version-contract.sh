@@ -972,6 +972,8 @@ if git -C "$repo_root" rev-parse -q --verify 'v0.1.4^{commit}' >/dev/null 2>&1; 
         | cmp -s - "$repo_root/test/fixtures/apt-distributions-v0.1.4" \
         || fail "test/fixtures/apt-distributions-v0.1.4 differs from v0.1.4:dist/apt/conf/distributions"
     echo "APT fixture case: v0.1.4 distributions fixture matches the tag"
+else
+    echo "APT fixture case: skipped, v0.1.4 not reachable in this checkout"
 fi
 
 # Run to completion under an ephemeral signing key, the publisher must fill
