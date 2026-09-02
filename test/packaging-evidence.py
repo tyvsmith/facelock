@@ -266,8 +266,9 @@ def check_record(record: dict, head: str, expected: dict[str, str] | None) -> li
     def problem(message: str) -> None:
         problems.append(f"lane {name}: {message}")
 
-    if record.get("schema") != SCHEMA:
-        problem(f"schema is {record.get('schema')!r}, not {SCHEMA}")
+    schema = record.get("schema")
+    if not isinstance(schema, int) or isinstance(schema, bool) or schema != SCHEMA:
+        problem(f"schema is {schema!r}, not {SCHEMA}")
     for field in ("name", "commit", "status", *LANE_FIELDS):
         if not isinstance(record.get(field), str) or not record[field]:
             problem(f"{field} is missing")
@@ -307,8 +308,9 @@ def check_marker(marker: object, head: str, matrix: dict) -> list[str]:
     if not isinstance(marker, dict):
         return ["the marker is not a JSON object"]
     problems: list[str] = []
-    if marker.get("schema") != SCHEMA:
-        problems.append(f"schema is {marker.get('schema')!r}, not {SCHEMA}")
+    schema = marker.get("schema")
+    if not isinstance(schema, int) or isinstance(schema, bool) or schema != SCHEMA:
+        problems.append(f"schema is {schema!r}, not {SCHEMA}")
     if marker.get("commit") != head:
         problems.append(f"commit {marker.get('commit')!r} is not HEAD {head}")
     if marker.get("tree_clean") is not True:

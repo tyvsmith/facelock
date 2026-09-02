@@ -412,6 +412,10 @@ assert_matrix_mutation_rejected \
     "justfile" \
     's@packaging-evidence.py ci-run --commit@packaging-evidence.py ci-run-disabled --commit@'
 assert_matrix_mutation_rejected \
+    "release preflight swallowing the evidence command's own failure" \
+    "justfile" \
+    's@ci-run --commit "\$HEAD_SHA" --run "\$run_id"; then@ci-run --commit "$HEAD_SHA" --run "$run_id" || true; then@'
+assert_matrix_mutation_rejected \
     "packaging workflow keeping the evidence artifact name only in a comment" \
     ".github/workflows/packaging.yml" \
     's/^          name: packaging-evidence-arch$/          # name: packaging-evidence-arch\n          name: packaging-evidence-arch-moved/'
@@ -444,6 +448,10 @@ assert_matrix_mutation_rejected \
     "packaging matrix echoing the commit into the marker beside the aggregate" \
     "justfile" \
     's@^        --evidence-dir .packaging-evidence --output .packaging-matrix-verified$@&\n    echo "$commit" > .packaging-matrix-verified@'
+assert_matrix_mutation_rejected \
+    "packaging matrix teeing the commit into the marker beside the aggregate" \
+    "justfile" \
+    's@^        --evidence-dir .packaging-evidence --output .packaging-matrix-verified$@&\n    echo "$commit" | tee --append .packaging-matrix-verified@'
 # A marker write that exists only in a trailing comment is not a marker write:
 # the guard reads executable text, not the whole line.
 harmless_comment_root="$tmp_root/matrix-harmless-comment"
@@ -1591,6 +1599,14 @@ assert_evidence_refused "record without a schema" \
     'del lanes["test-arch-pkg"]["schema"]' "schema"
 assert_evidence_refused "record with another schema" \
     'lanes["test-arch-pkg"]["schema"] = 2' "schema"
+assert_evidence_refused "record with schema true" \
+    'lanes["test-arch-pkg"]["schema"] = True' "schema"
+assert_evidence_refused "record with schema 1.0" \
+    'lanes["test-arch-pkg"]["schema"] = 1.0' "schema"
+assert_evidence_refused "marker with schema true" \
+    'marker["schema"] = True' "schema"
+assert_evidence_refused "marker with schema 1.0" \
+    'marker["schema"] = 1.0' "schema"
 assert_evidence_refused "required lane listed twice" \
     'marker["required_lanes"].append("test-arch-pkg")' "required lane set"
 assert_evidence_refused "record for a lane the matrix does not require" \

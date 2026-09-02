@@ -778,16 +778,26 @@ def recipe_commands(body: str) -> list[str]:
 
 
 def recipe_runs(commands: list[str], command: str) -> bool:
-    """Whether a recipe line starts with `command` as the thing it executes."""
-    return any(
-        line == command or line.startswith(command + " ") or line.startswith(command + ";")
-        for line in commands
-    )
+    """Whether a recipe line executes `command` and nothing else: only a
+    trailing line-continuation backslash, an inline `; then` closing an `if`
+    or `elif`, or trailing whitespace may follow it. A shell operator after
+    the command (`||`, `&&`, `|`, or `;` before anything but `then`) does not
+    count as running it."""
+    for line in commands:
+        if not line.startswith(command):
+            continue
+        rest = line[len(command) :]
+        if re.fullmatch(r"\s*\\?", rest) or re.fullmatch(r";\s+then\s*", rest):
+            return True
+    return False
 
 
 # A write into the marker by anything but the evidence script: `> file`,
-# `>> file`, or `tee file`.
-MARKER_WRITE = re.compile(r"""(?:>{1,2}\s*|\btee\s+(?:-[a-z]+\s+)*)["']?(?:\./)?\.packaging-matrix-verified\b""")
+# `>> file`, or `tee file` (short options like `-a` or long ones like
+# `--append`, optionally `=value`-bearing, ahead of the path).
+MARKER_WRITE = re.compile(
+    r"""(?:>{1,2}\s*|\btee\s+(?:(?:-[a-z]+|--[a-z][a-z-]*(?:=\S+)?)\s+)*)["']?(?:\./)?\.packaging-matrix-verified\b"""
+)
 
 
 evidence_uploads = [
