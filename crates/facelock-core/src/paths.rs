@@ -113,6 +113,30 @@ fn names_a_different_file(a: &Path, b: &Path) -> bool {
     resolved_identity(a) != resolved_identity(b)
 }
 
+/// Passes of [`resolve_once`] before a spelling is taken as it stands. Each
+/// pass past the first is only needed when a `..` folded by the one before
+/// exposed a symlink; a chain longer than this is left unresolved, which
+/// compares as "different", the fail-closed side.
+const RESOLVE_PASSES: usize = 4;
+
+/// [`resolve_once`], repeated until the result stops changing. One pass
+/// folds a trailing `..` lexically, which can land back in existing
+/// territory and re-descend into a component that exists as a symlink
+/// (`/exists/ghost/../real_symlink/config.toml`); the next pass then
+/// resolves that symlink the way the kernel would, since the prefix now
+/// exists as far as it.
+fn resolved_identity(path: &Path) -> PathBuf {
+    let mut current = path.to_path_buf();
+    for _ in 0..RESOLVE_PASSES {
+        let folded = resolve_once(&current);
+        if folded == current {
+            break;
+        }
+        current = folded;
+    }
+    current
+}
+
 /// The deepest existing ancestor, resolved on the filesystem, with the
 /// remaining components applied lexically. A component that does not exist
 /// cannot be a symlink, so folding its `.` and `..` is exactly what the
@@ -122,7 +146,7 @@ fn names_a_different_file(a: &Path, b: &Path) -> bool {
 /// existing ancestor at all, a relative path whose first component is
 /// missing, is returned as spelled, which compares unequal to anything
 /// resolved: the fail-closed default for what cannot be answered.
-fn resolved_identity(path: &Path) -> PathBuf {
+fn resolve_once(path: &Path) -> PathBuf {
     let components: Vec<Component<'_>> = path.components().collect();
     for split in (1..=components.len()).rev() {
         let prefix: PathBuf = components[..split].iter().collect();
@@ -337,6 +361,42 @@ mod tests {
             .join("etc")
             .join("config.toml");
         assert!(!names_a_different_file(&via_link, &default));
+    }
+
+    /// A trailing `..` can pop back into existing territory and re-descend
+    /// into a component that exists as a symlink: `/exists/ghost/..` is
+    /// `/exists` again, and `real_symlink` under it must then be resolved,
+    /// not joined as spelled. One lexical pass alone would call this
+    /// spelling of the default a different file.
+    #[test]
+    fn a_symlink_exposed_by_dot_dot_is_resolved() {
+        let dir = tempfile::tempdir().unwrap();
+        let exists = dir.path().join("exists");
+        let target = dir.path().join("target");
+        std::fs::create_dir(&exists).unwrap();
+        std::fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, exists.join("real_symlink")).unwrap();
+        let default = target.join("config.toml");
+
+        let exposed = exists
+            .join("ghost")
+            .join("..")
+            .join("real_symlink")
+            .join("config.toml");
+        assert!(!names_a_different_file(&exposed, &default));
+
+        // Two levels deep, still within the pass bound.
+        std::os::unix::fs::symlink(&exists, dir.path().join("hop")).unwrap();
+        let twice = dir
+            .path()
+            .join("ghost")
+            .join("..")
+            .join("hop")
+            .join("ghost")
+            .join("..")
+            .join("real_symlink")
+            .join("config.toml");
+        assert!(!names_a_different_file(&twice, &default));
     }
 
     /// `..` at the root stays at the root, as the kernel resolves `/..`, so
