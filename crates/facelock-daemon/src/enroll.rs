@@ -310,6 +310,7 @@ pub fn enroll<C: CameraSource, E: FaceProcessor>(
         device_id,
         device_aad.as_deref(),
         &accepted,
+        cancel,
     )
 }
 
@@ -343,6 +344,8 @@ impl EmbeddingSealer for SoftwareSealer {
 /// authentication can load is always a complete one; and because nothing was
 /// written before this point, a failure here — sealing or storage — leaves
 /// the store exactly as it was, previous same-label model included (#308).
+/// `cancel` is re-checked right before the write, so a caller that departs
+/// during sealing gets `Cancelled` and the same unchanged store.
 #[allow(clippy::too_many_arguments)]
 fn persist_enrollment<S: EmbeddingSealer>(
     store: &FaceStore,
@@ -353,6 +356,7 @@ fn persist_enrollment<S: EmbeddingSealer>(
     device_id: Option<&str>,
     device_aad: Option<&[u8]>,
     accepted: &[FaceEmbedding],
+    cancel: &CancelToken,
 ) -> EnrollOutcome {
     let mut sealed: Vec<Vec<u8>> = Vec::new();
     if let Some(sealer) = sealer {
@@ -379,6 +383,19 @@ fn persist_enrollment<S: EmbeddingSealer>(
             .map(|embedding| bytemuck::cast_slice(embedding.as_slice()))
             .collect()
     };
+
+    // Last look at the token before the only write: the caller-departure
+    // watch can fire while the set is being sealed, after the loop's final
+    // check. Past this point the commit itself is the residual window.
+    if cancel.is_cancelled() {
+        info!(
+            user,
+            label,
+            captures = accepted.len(),
+            "enrollment cancelled before commit"
+        );
+        return EnrollOutcome::Cancelled;
+    }
 
     match store.replace_model_with_embeddings(
         user,
@@ -757,6 +774,7 @@ mod tests {
             None,
             None,
             &accepted,
+            &CancelToken::new(),
         );
 
         match outcome {
@@ -774,6 +792,76 @@ mod tests {
         assert_eq!(models.len(), 1, "got: {models:?}");
         assert_eq!(models[0].id, previous);
         assert_eq!(store.count_sealed().unwrap(), (0, 1));
+    }
+
+    /// Seals normally but cancels `token` on its first call: the caller
+    /// departs while finalization is sealing, after the loop's last check.
+    struct CancellingSealer {
+        token: CancelToken,
+        calls: std::cell::Cell<usize>,
+    }
+
+    impl EmbeddingSealer for CancellingSealer {
+        fn seal_embedding_with_aad(
+            &self,
+            _embedding: &FaceEmbedding,
+            _aad: Option<&[u8]>,
+        ) -> facelock_core::error::Result<Vec<u8>> {
+            self.calls.set(self.calls.get() + 1);
+            self.token.cancel();
+            Ok(vec![0xCD; 16])
+        }
+    }
+
+    #[test]
+    fn cancellation_during_sealing_persists_nothing() {
+        let store = FaceStore::open_memory().unwrap();
+        let previous = store
+            .add_model("alice", "front", &fixtures::known_embedding(9), "")
+            .unwrap();
+        let previous_rows = store.get_user_embeddings_raw("alice").unwrap();
+        let accepted: Vec<FaceEmbedding> = [0, 40, 80]
+            .into_iter()
+            .map(fixtures::known_embedding)
+            .collect();
+        let cancel = CancelToken::new();
+        let sealer = CancellingSealer {
+            token: cancel.clone(),
+            calls: std::cell::Cell::new(0),
+        };
+
+        let outcome = persist_enrollment(
+            &store,
+            "",
+            "alice",
+            "front",
+            Some(&sealer),
+            None,
+            None,
+            &accepted,
+            &cancel,
+        );
+
+        assert!(
+            matches!(outcome, EnrollOutcome::Cancelled),
+            "got: {outcome:?}"
+        );
+        assert_eq!(
+            sealer.calls.get(),
+            accepted.len(),
+            "sealing itself is not interrupted"
+        );
+        let models = store.list_models("alice").unwrap();
+        assert_eq!(models.len(), 1, "got: {models:?}");
+        assert_eq!(
+            models[0].id, previous,
+            "the previous same-label model survived"
+        );
+        assert_eq!(
+            store.get_user_embeddings_raw("alice").unwrap(),
+            previous_rows,
+            "its rows are untouched and nothing sealed here was written"
+        );
     }
 
     #[test]

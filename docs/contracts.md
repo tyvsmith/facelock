@@ -3021,10 +3021,13 @@ same-label template still in place and still authenticating. A model row written
 version or later is therefore a complete template, and `facelock list` and `Authenticate`
 can never observe an attempt that did not finish; the store itself refuses to commit a
 model with fewer than `MIN_EMBEDDINGS_PER_MODEL` (3) embeddings, the same floor the
-capture loop enforces. The guarantee is one-sided: a caller that cancelled is never
-surprised by a template, but a caller whose reply is lost after the commit (the daemon
-killed, the bus connection dropped, a client timeout between commit and reply) may find a
-valid template it reported as failed. No migration inspects rows written by earlier
+capture loop enforces. The cancel token is checked once more immediately before the
+store write, after sealing, so a caller that departs during finalization still gets
+`Cancelled` and an unchanged store; the residual window is the commit itself. The
+guarantee is therefore one-sided: a caller that cancelled is never surprised by a
+template, but a caller whose reply is lost after the commit (the daemon killed, the bus
+connection dropped, a client timeout between commit and reply) may find a valid template
+it reported as failed. No migration inspects rows written by earlier
 versions: a partial model the old flow left behind stays until `facelock remove` or
 `facelock clear` deletes it.
 
