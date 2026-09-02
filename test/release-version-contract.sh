@@ -396,6 +396,26 @@ assert_matrix_mutation_rejected \
     "test/Containerfile.packit" \
     's|@sha256:[0-9a-f]*||'
 assert_matrix_mutation_rejected \
+    "packaging workflow Fedora lanes uploading no evidence artifact" \
+    ".github/workflows/packaging.yml" \
+    's/name: packaging-evidence-rpm-/name: packaging-evidence-fedora-/'
+assert_matrix_mutation_rejected \
+    "packaging workflow tolerating a lane that recorded nothing" \
+    ".github/workflows/packaging.yml" \
+    's/if-no-files-found: error/if-no-files-found: warn/'
+assert_matrix_mutation_rejected \
+    "release preflight validating something other than the packaging marker" \
+    "justfile" \
+    's@validate --commit "\$HEAD_SHA" .packaging-matrix-verified@validate --commit "$HEAD_SHA" .hardware-tiers-verified@'
+assert_matrix_mutation_rejected \
+    "release preflight skipping the workflow-run evidence download" \
+    "justfile" \
+    's@packaging-evidence.py ci-run --commit@packaging-evidence.py ci-run-disabled --commit@'
+assert_matrix_mutation_rejected \
+    "packaging matrix recording without aggregating lane evidence" \
+    "justfile" \
+    's@packaging-evidence.py aggregate --commit@packaging-evidence.py aggregate-disabled --commit@'
+assert_matrix_mutation_rejected \
     "PKGBUILD-git dropping the onnxruntime runtime dependency" \
     "dist/PKGBUILD-git" \
     "s/ 'onnxruntime'//"

@@ -702,6 +702,30 @@ require(
     f"packaging workflow Debian lanes {sorted(workflow_deb_lanes)} are not the "
     f"declared APT suites {sorted(expected_suites)}",
 )
+# #313: a green packaging.yml conclusion is not release evidence; the lane
+# records its jobs upload are. Every lane job uploads them and fails when its
+# lane recorded nothing, or `just release-preflight` has nothing to validate
+# and quietly falls back to the local marker.
+for artifact in ("deb-${{ matrix.suite }}", "rpm-${{ matrix.release }}", "arch"):
+    require(
+        f"name: packaging-evidence-{artifact}" in packaging_workflow,
+        f"packaging workflow does not upload the packaging-evidence-{artifact} artifact",
+    )
+require(
+    packaging_workflow.count("path: .packaging-evidence/") == 3
+    and packaging_workflow.count("if-no-files-found: error") == 3,
+    "packaging workflow evidence uploads must fail the job when a lane recorded nothing",
+)
+require(
+    'python3 test/packaging-evidence.py ci-run --commit "$HEAD_SHA" --run "$run_id"' in justfile
+    and 'python3 test/packaging-evidence.py validate --commit "$HEAD_SHA" .packaging-matrix-verified' in justfile,
+    "release-preflight does not validate packaging evidence through test/packaging-evidence.py",
+)
+require(
+    'python3 test/packaging-evidence.py aggregate --commit "$commit" --tree-clean' in justfile
+    and re.search(r"(?m)^\s+printf '%s\\n' \"\$commit\" > \.packaging-matrix-verified", justfile) is None,
+    "test-packaging-matrix must aggregate lane evidence, never write the commit alone",
+)
 require(
     "rawhide" not in packaging_workflow.lower(),
     "packaging workflow declares a Rawhide lane; Rawhide is experimental and never a gate",
