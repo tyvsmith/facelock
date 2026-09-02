@@ -1547,6 +1547,62 @@ agent resolves the target username to a uid. If the name does not resolve, the
 agent refuses to respond. It never substitutes UID 0 — the previous
 `unwrap_or(0)` behavior would have authenticated an unresolvable name as root.
 
+### 8. CI Trust Boundary
+
+The workflows anyone can trigger carry one external credential,
+`CLAUDE_CODE_OAUTH_TOKEN`, in two workflows. `release.yml` holds the
+publishing credentials and runs only on `v*` tag pushes.
+`claude-code-review.yml` runs on `pull_request`, where GitHub withholds secrets
+from fork heads, and skips any PR whose head is not this repository.
+
+`claude.yml` answers `@claude` on issues, comments and reviews. Anyone can
+raise those events on a public repository, so text alone never selects its
+job. The job's `if:` requires, per event, that the author's
+`author_association` is `OWNER` or `COLLABORATOR`, read from the payload field
+that carries it (`comment`, `review` or `issue`); a payload without the field
+fails closed, because `contains(array, null)` is false. `issues: assigned`
+gates on the issue author, not the assigner (assigning needs triage or above).
+`COLLABORATOR` includes read-only and triage outside collaborators; the action
+then requires write access before it does anything. `MEMBER` is not accepted:
+it never occurs on a user-owned repository, and after a transfer to an
+organization it would admit every member.
+
+The gate decides who starts the job, not what reaches the model. A stranger's
+issue body is still the prompt once a maintainer answers it with `@claude`;
+the action strips hidden markdown, but read the raw text first.
+
+The two review events (`pull_request_review`, `pull_request_review_comment`)
+also require the head repository to be this one, defense in depth on the two
+payloads that carry it. `issue_comment` carries no head repository, only the
+issue number, so the same guard cannot be written for it: a trusted `@claude`
+on a fork PR does start the job, and the action fetches `refs/pull/<n>/head`,
+the fork's code, into a job holding the OAuth token and a write-capable App
+token. The action refuses actors without write access on its own, but only
+after the job has started with the secret in its environment; the workflow
+gate keeps the job from being scheduled at all.
+
+The job's `permissions:` scope `github.token` only: `contents`,
+`pull-requests`, `issues` and `actions` as `read`, plus `id-token: write`.
+The action does not write through `github.token`. It exchanges the job's OIDC
+token for a short-lived Claude GitHub App installation token that requests
+`contents`, `pull-requests` and `issues` as `write`, plus whatever the
+workflow adds through `additional_permissions` (here `actions: read`), and
+hands that token to Claude as `GITHUB_TOKEN`; `claude_code_oauth_token`
+covers only the Claude API. `id-token: write` is what makes that exchange
+possible, and it is the scope's cost: anything running in the job can mint
+OIDC tokens for any audience, including the one that yields the App token.
+
+No workflow uses `pull_request_target`. `test/check-workflow-policy.py` pins,
+for every `.yml` and `.yaml` workflow: the per-event author gate and the
+read-only `github.token` ceiling on every job of a workflow that subscribes to
+an actor-authored event, the accepted set, `issues: types` as exactly
+`[opened, assigned]`, the same-repo guard on the two review events, the
+same-repo guard and the same ceiling on every secret-bearing `pull_request`
+job, a 40-hex pin on
+`anthropics/claude-code-action` with its bypass inputs
+(`allowed_non_write_users`, `allowed_bots`, `github_token`) refused, and the
+`pull_request_target` ban. It runs in `just check` and in CI.
+
 ## Security Configuration Reference
 
 ```toml
