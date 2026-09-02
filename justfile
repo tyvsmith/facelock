@@ -1618,7 +1618,7 @@ release-preflight tag='':
         echo "MISSING: no complete packaging evidence for $HEAD_SHA (reasons above)"
         echo "  Run the matrix in CI against this commit, then re-run preflight:"
         echo "    gh workflow run packaging.yml --ref $(git rev-parse --abbrev-ref HEAD)"
-        echo "  Or run every lane locally (30-60+ minutes, needs podman and the ONNX models):"
+        echo "  Or run every lane locally (2+ hours, needs podman and the ONNX models):"
         echo "    just test-packaging-matrix"
         failed=1
     fi
@@ -1658,7 +1658,9 @@ _packaging-evidence-reset:
     date -u +%Y-%m-%dT%H:%M:%SZ > .packaging-evidence/started-at
 
 # The same lanes `.github/workflows/packaging.yml` runs, in one command, for a
-# maintainer without CI in reach (#229). It is 30-60+ minutes and needs podman
+# maintainer without CI in reach (#229). It needs podman and the ONNX models and
+# takes upwards of two hours: the three COPR lanes measured 31, 23 and 20 minutes
+# on their own, because each rebuilds the workspace from source inside mock.
 # plus the ONNX models; CI is the faster path, and `just release-preflight`
 # accepts a green run of that workflow at HEAD through the evidence artifacts
 # its lanes upload, validated the same way as this record.

@@ -295,7 +295,7 @@ gates, every declared Fedora lane, the Arch package built from the real
 checksum-verifies the ONNX models first, through `.github/actions/fetch-models`,
 so the daemon-start assertions execute instead of being counted as skipped.
 
-Three schedules, because the full matrix is 30-60+ minutes and most pull
+Three schedules, because the full matrix runs for hours and most pull
 requests touch no packaging:
 
 | When | Lanes | Filtered |

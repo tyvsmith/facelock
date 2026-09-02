@@ -3,7 +3,7 @@ name: Packaging
 # Every .deb, .rpm and Arch gate used to be local-only, invoked by hand, for a
 # release that ships through four channels (#229). This is where they run.
 #
-# Three schedules, because the full matrix is 30-60+ minutes and most pull
+# Three schedules, because the full matrix runs for hours and most pull
 # requests touch no packaging:
 #
 #   pull request   path-filtered by the `changes` job below
