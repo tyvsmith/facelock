@@ -7,7 +7,12 @@
 # silently pick a release.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
-RUN dnf install -y --setopt=install_weak_deps=False \
+# The Cisco OpenH264 repo Fedora enables by default is a single unpinned host
+# with no mirrors (ciscobinary.openh264.org). Nothing here needs a codec, and a
+# packaging gate that fails when that one host is unreachable reports a network
+# outage as a packaging regression. Disabled by glob so it stays harmless on a
+# release whose image does not ship the repo.
+RUN dnf install -y --setopt=install_weak_deps=False --disablerepo='*openh264*' \
         packit mock rpm-build git tar python3 \
     && dnf clean all
 COPY test/copr-build.sh /copr-build.sh

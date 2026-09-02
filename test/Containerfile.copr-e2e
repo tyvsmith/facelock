@@ -23,7 +23,13 @@ FROM ${BASE_IMAGE}
 # dbus-daemon for the D-Bus and polkit boundary checks, binutils for the PAM
 # symbol assertions, gettext for the packaged catalogs, strace for the
 # pamtester diagnostics in rpm-service-pam-lifecycle.sh.
-RUN dnf -y install pam authselect dbus dbus-daemon rpm systemd binutils gettext \
+# The Cisco OpenH264 repo Fedora enables by default is a single unpinned host
+# with no mirrors (ciscobinary.openh264.org). Nothing here needs a codec, and a
+# packaging gate that fails when that one host is unreachable reports a network
+# outage as a packaging regression. Disabled by glob so it stays harmless on a
+# release whose image does not ship the repo.
+RUN dnf -y install --disablerepo='*openh264*' \
+        pam authselect dbus dbus-daemon rpm systemd binutils gettext \
         glibc libxkbcommon tpm2-tss ca-certificates openssl-libs python3 util-linux strace \
     && dnf clean all
 
