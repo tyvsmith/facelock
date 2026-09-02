@@ -1222,6 +1222,390 @@ if (
 fi
 [ ! -e "$apt_recipe_podman_log" ] || fail "test-apt-repo reached the container with an incomplete manifest set"
 
+# Packaging matrix evidence (#313). The recipes and runners run for real; only
+# the containers are answered for by a stub podman, and the stages that build
+# images or run this very contract are stubbed to succeed. The stub keys the
+# model-dependent branch off what the runner mounted, as the real images do.
+evidence_root="$tmp_root/evidence-root"
+mkdir -p "$evidence_root/dist" "$evidence_root/test" "$evidence_root/models" "$evidence_root/target/release"
+cp "$repo_root/justfile" "$evidence_root/"
+cp "$repo_root/dist/release-matrix.json" "$evidence_root/dist/"
+cp "$repo_root/test/packaging-evidence.py" \
+    "$repo_root/test/run-pkg-validate-systemd.sh" \
+    "$repo_root/test/run-rpm-smoke-systemd.sh" \
+    "$evidence_root/test/"
+cat >"$evidence_root/test/build-deb-package-image.sh" <<'SH'
+#!/usr/bin/env bash
+install -m 0444 /dev/null "${3:?}"
+SH
+cat >"$evidence_root/test/build-arch-package-image.sh" <<'SH'
+#!/usr/bin/env bash
+mkdir -p "${2:?}/source"
+SH
+cat >"$evidence_root/test/fedora-lane-image.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'stub-fedora:%s\n' "${1:?}"
+SH
+printf '#!/usr/bin/env bash\nexit 0\n' >"$evidence_root/test/release-version-contract.sh"
+printf 'raise SystemExit(0)\n' >"$evidence_root/test/check-release-matrix.py"
+chmod +x "$evidence_root"/test/*.sh
+# A required model no candidate source holds keeps `_link-models auto` from
+# quietly refilling models/ from a host install during the opt-out case.
+cat >"$evidence_root/models/manifest.toml" <<'TOML'
+[[models]]
+filename = "fixture-only.onnx"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+TOML
+printf '%s\n' '/target' '*.onnx' '/.packaging-matrix-verified' '/.packaging-evidence/' >"$evidence_root/.gitignore"
+touch "$evidence_root/target/release/facelock" "$evidence_root/target/release/facelock-polkit-agent" "$evidence_root/target/release/libpam_facelock.so"
+touch "$evidence_root/models/scrfd_2.5g_bnkps.onnx" "$evidence_root/models/w600k_r50.onnx"
+git -C "$evidence_root" init -q
+git -C "$evidence_root" config user.name evidence-test
+git -C "$evidence_root" config user.email evidence-test@example.invalid
+git -C "$evidence_root" add .
+git -C "$evidence_root" -c commit.gpgsign=false commit -qm baseline
+evidence_head="$(git -C "$evidence_root" rev-parse HEAD)"
+cat >"$tmp_root/bin/podman" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+    build|rmi|rm) exit 0 ;;
+    run)
+        shift
+        detached=0
+        models=nomodels
+        image=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                -d) detached=1; shift ;;
+                -v)
+                    case "$2" in *:/facelock-test-models:*) models=models ;; esac
+                    shift 2 ;;
+                --security-opt|-w) shift 2 ;;
+                -*) shift ;;
+                *) image="$1"; break ;;
+            esac
+        done
+        if [ "$detached" = 1 ]; then
+            printf 'stub-%s-%s\n' "$image" "$models"
+            exit 0
+        fi
+        case "$image" in
+            facelock-arch-pkg-*)
+                printf 'RESULTS_JSON: {"pass":29,"fail":0,"skip":0,"allowed_skip":0,"mandatory_skip":0,"models_present":true}\n' ;;
+        esac
+        exit 0 ;;
+    exec)
+        shift
+        opt_out=0
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                -e)
+                    case "$2" in FACELOCK_ALLOW_MISSING_MODELS=1) opt_out=1 ;; esac
+                    shift 2 ;;
+                -*) shift ;;
+                *) break ;;
+            esac
+        done
+        cid="$1"
+        shift
+        case "$cid" in stub-facelock-deb-*) format=deb ;; *) format=rpm ;; esac
+        case "$cid" in *-models) models=1 ;; *) models=0 ;; esac
+        case "${1:-}" in
+            systemctl) echo running ;;
+            test)
+                case "${2:-} ${3:-}" in
+                    "-x /deb-package-lifecycle.sh") [ "$format" = deb ] ;;
+                    "-x /rpm-service-pam-lifecycle.sh"|"-x /rpm-config-lifecycle.sh") [ "$format" = rpm ] ;;
+                    *) exit 1 ;;
+                esac ;;
+            /pkg-validate.sh)
+                if [ "${STUB_PKG_VALIDATE_MANDATORY_SKIP:-0}" = 1 ]; then
+                    printf 'RESULTS_JSON: {"pass":39,"fail":0,"skip":1,"allowed_skip":0,"mandatory_skip":1,"models_present":true}\n'
+                elif [ "$models" = 1 ]; then
+                    printf 'RESULTS_JSON: {"pass":40,"fail":0,"skip":0,"allowed_skip":0,"mandatory_skip":0,"models_present":true}\n'
+                elif [ "$opt_out" = 1 ]; then
+                    printf 'RESULTS_JSON: {"pass":37,"fail":0,"skip":3,"allowed_skip":3,"mandatory_skip":0,"models_present":false}\n'
+                else
+                    printf 'RESULTS_JSON: {"pass":37,"fail":1,"skip":0,"allowed_skip":0,"mandatory_skip":0,"models_present":false}\n'
+                    exit 1
+                fi ;;
+            /rpm-runtime-smoke.sh)
+                printf 'RESULTS_JSON: {"pass":8,"fail":0,"skip":0,"allowed_skip":0,"mandatory_skip":0,"models_present":true}\n' ;;
+            /rpm-config-lifecycle.sh)
+                if [ "${STUB_RPM_CONFIG_LIFECYCLE_FAIL:-0}" = 1 ]; then exit 1; fi ;;
+        esac
+        exit 0 ;;
+    *) exit 2 ;;
+esac
+SH
+chmod +x "$tmp_root/bin/podman"
+run_packaging_matrix() {
+    (
+        cd "$evidence_root"
+        PATH="$tmp_root/bin:$PATH" env FACELOCK_RELEASE_BINARIES_PREBUILT=1 "$@" just test-packaging-matrix
+    )
+}
+evidence_validate() {
+    python3 "$evidence_root/test/packaging-evidence.py" validate --commit "$evidence_head" "$@"
+}
+
+# A complete run replaces whatever marker and lane records were there before
+# it started, and writes evidence preflight accepts.
+printf '%s\n' "$evidence_head" >"$evidence_root/.packaging-matrix-verified"
+mkdir -p "$evidence_root/.packaging-evidence"
+printf '%s\n' '{"stale": true}' >"$evidence_root/.packaging-evidence/stale-lane.json"
+run_packaging_matrix >"$tmp_root/evidence-complete.log" 2>&1 ||
+    fail "test-packaging-matrix refused a complete run: $(cat "$tmp_root/evidence-complete.log")"
+[ ! -e "$evidence_root/.packaging-evidence/stale-lane.json" ] ||
+    fail "test-packaging-matrix kept a lane record from before the run"
+evidence_validate "$evidence_root/.packaging-matrix-verified" ||
+    fail "release preflight refused the marker a complete matrix run wrote"
+python3 - "$evidence_root/.packaging-matrix-verified" "$evidence_head" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    marker = json.load(handle)
+assert marker["schema"] == 1, marker
+assert marker["commit"] == sys.argv[2], marker["commit"]
+assert marker["tree_clean"] is True
+assert marker["started_at"] and marker["finished_at"] and marker["started_at"] <= marker["finished_at"]
+expected = [
+    "test-arch-pkg",
+    "test-deb-resolute-pkg",
+    "test-deb-trixie-pkg",
+    "test-rpm-pkg-43",
+    "test-rpm-pkg-44",
+    "test-rpm-smoke-45",
+]
+assert sorted(marker["required_lanes"]) == expected, marker["required_lanes"]
+lanes = {lane["name"]: lane for lane in marker["lanes"]}
+assert sorted(lanes) == expected, sorted(lanes)
+for lane in lanes.values():
+    assert lane["status"] == "pass" and lane["models_present"] is True, lane
+    assert lane["fail"] == lane["skip"] == lane["allowed_skip"] == lane["mandatory_skip"] == 0, lane
+    assert lane["pass"] > 0 and lane["commit"] == sys.argv[2], lane
+assert lanes["test-deb-trixie-pkg"]["target"] == "debian-trixie"
+assert lanes["test-deb-trixie-pkg"]["channel"] == "apt"
+assert lanes["test-deb-resolute-pkg"]["target"] == "ubuntu-resolute"
+assert lanes["test-rpm-pkg-43"]["channel"] == "direct-rpm"
+assert lanes["test-rpm-pkg-43"]["build_origin"] == "host-binaries"
+assert lanes["test-rpm-pkg-43"]["runtime_policy"] == "bundled-ort"
+assert lanes["test-rpm-smoke-45"]["depth"] == "smoke"
+assert lanes["test-arch-pkg"]["channel"] == "aur"
+assert lanes["test-arch-pkg"]["runtime_policy"] == "system-ort"
+PY
+cp "$evidence_root/.packaging-matrix-verified" "$tmp_root/evidence-good.json"
+cp -R "$evidence_root/.packaging-evidence" "$tmp_root/evidence-good-records"
+rm -f "$tmp_root/evidence-good-records/started-at"
+
+# The model opt-out still runs, for local diagnostics, but the partial records
+# it leaves are refused and no marker is written.
+rm "$evidence_root"/models/*.onnx
+if run_packaging_matrix FACELOCK_ALLOW_MISSING_MODELS=1 >"$tmp_root/evidence-optout.log" 2>&1; then
+    fail "test-packaging-matrix recorded a FACELOCK_ALLOW_MISSING_MODELS=1 run"
+fi
+[ ! -e "$evidence_root/.packaging-matrix-verified" ] ||
+    fail "the opt-out run left a marker behind"
+grep -q 'test-deb-trixie-pkg' "$tmp_root/evidence-optout.log" ||
+    fail "the opt-out refusal did not name the partial lane: $(cat "$tmp_root/evidence-optout.log")"
+grep -q 'models_present' "$tmp_root/evidence-optout.log" ||
+    fail "the opt-out refusal did not name the missing models: $(cat "$tmp_root/evidence-optout.log")"
+python3 - "$evidence_root/.packaging-evidence" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+records = {path.stem: json.loads(path.read_text()) for path in Path(sys.argv[1]).glob("*.json")}
+trixie = records["test-deb-trixie-pkg"]
+# Three pkg-validate.sh skips plus the runner's own active-upgrade skip.
+assert trixie["models_present"] is False and trixie["status"] == "partial", trixie
+assert trixie["skip"] == trixie["allowed_skip"] == 4, trixie
+fedora = records["test-rpm-pkg-43"]
+assert fedora["models_present"] is False and fedora["skip"] == fedora["allowed_skip"] == 3, fedora
+assert records["test-arch-pkg"]["status"] == "pass"
+PY
+touch "$evidence_root/models/scrfd_2.5g_bnkps.onnx" "$evidence_root/models/w600k_r50.onnx"
+
+# A lane that exits 0 while reporting a mandatory skip is refused by the
+# aggregate itself, not only by its own exit status.
+if run_packaging_matrix STUB_PKG_VALIDATE_MANDATORY_SKIP=1 >"$tmp_root/evidence-mandatory.log" 2>&1; then
+    fail "test-packaging-matrix recorded a run with a mandatory skip"
+fi
+[ ! -e "$evidence_root/.packaging-matrix-verified" ] ||
+    fail "the mandatory-skip run left a marker behind"
+grep -q 'mandatory_skip' "$tmp_root/evidence-mandatory.log" ||
+    fail "the mandatory-skip refusal did not name the skip class: $(cat "$tmp_root/evidence-mandatory.log")"
+
+# A stage after pkg-validate.sh that fails fails the lane, and its record says
+# so: the record is written last, so it covers the whole runner.
+if run_packaging_matrix STUB_RPM_CONFIG_LIFECYCLE_FAIL=1 >"$tmp_root/evidence-late-stage.log" 2>&1; then
+    fail "test-packaging-matrix recorded a run whose config lifecycle stage failed"
+fi
+[ ! -e "$evidence_root/.packaging-matrix-verified" ] ||
+    fail "the failed config-lifecycle run left a marker behind"
+python3 - "$evidence_root/.packaging-evidence/test-rpm-pkg-43.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    lane = json.load(handle)
+assert lane["status"] == "fail", lane
+PY
+
+evidence_case_index=0
+assert_evidence_refused() {
+    local context="$1"
+    local mutation="$2"
+    local expected="$3"
+    local marker="$tmp_root/evidence-case-$evidence_case_index.json"
+    local output
+    evidence_case_index=$((evidence_case_index + 1))
+    python3 - "$tmp_root/evidence-good.json" "$marker" "$mutation" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    marker = json.load(handle)
+lanes = {lane["name"]: lane for lane in marker["lanes"]}
+exec(sys.argv[3])
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    json.dump(marker, handle)
+PY
+    if output=$(evidence_validate "$marker" 2>&1); then
+        fail "packaging evidence accepted: $context"
+    fi
+    case "$output" in
+        *"$expected"*) ;;
+        *) fail "packaging evidence refusal for '$context' did not say '$expected': $output" ;;
+    esac
+    echo "packaging evidence case: $context refused"
+}
+assert_evidence_refused "stale commit" \
+    'marker["commit"] = "0" * 40' "commit"
+assert_evidence_refused "interrupted run without finished_at" \
+    'del marker["finished_at"]' "finished_at"
+assert_evidence_refused "missing required lane record" \
+    'marker["lanes"] = [lane for lane in marker["lanes"] if lane["name"] != "test-rpm-pkg-44"]' "test-rpm-pkg-44"
+assert_evidence_refused "required lane set narrowed" \
+    'marker["required_lanes"].remove("test-rpm-pkg-44")' "required lane set"
+assert_evidence_refused "allowed skip" \
+    'lanes["test-deb-trixie-pkg"].update(skip=1, allowed_skip=1)' "skip"
+assert_evidence_refused "mandatory skip" \
+    'lanes["test-rpm-pkg-43"].update(skip=1, mandatory_skip=1)' "mandatory_skip"
+assert_evidence_refused "models absent" \
+    'lanes["test-deb-resolute-pkg"]["models_present"] = False' "models_present"
+assert_evidence_refused "partial status" \
+    'lanes["test-deb-resolute-pkg"]["status"] = "partial"' "status"
+assert_evidence_refused "failed assertion" \
+    'lanes["test-arch-pkg"]["fail"] = 1' "fail"
+assert_evidence_refused "lane that asserted nothing" \
+    'lanes["test-arch-pkg"]["pass"] = 0' "no assertion"
+assert_evidence_refused "lane record from another commit" \
+    'lanes["test-rpm-smoke-45"]["commit"] = "0" * 40' "commit"
+assert_evidence_refused "direct RPM record claiming another channel" \
+    'lanes["test-rpm-pkg-43"]["channel"] = "copr"' "channel"
+assert_evidence_refused "lane depth downgraded" \
+    'lanes["test-rpm-pkg-44"]["depth"] = "smoke"' "depth"
+assert_evidence_refused "duplicate lane records" \
+    'marker["lanes"].append(dict(lanes["test-arch-pkg"]))' "more than once"
+assert_evidence_refused "dirty tree" \
+    'marker["tree_clean"] = False' "tree_clean"
+assert_evidence_refused "unknown schema" \
+    'marker["schema"] = 2' "schema"
+assert_evidence_refused "skip count that does not add up" \
+    'lanes["test-deb-trixie-pkg"]["skip"] = 2' "skip"
+
+if output=$(evidence_validate "$tmp_root/evidence-missing.json" 2>&1); then
+    fail "packaging evidence accepted a missing marker"
+fi
+case "$output" in
+    *"no packaging evidence"*) ;;
+    *) fail "missing marker refusal did not say so: $output" ;;
+esac
+printf '%s\n' '{"schema": 1, "commit": ' >"$tmp_root/evidence-malformed.json"
+if output=$(evidence_validate "$tmp_root/evidence-malformed.json" 2>&1); then
+    fail "packaging evidence accepted malformed JSON"
+fi
+case "$output" in
+    *"not JSON"*) ;;
+    *) fail "malformed marker refusal did not say so: $output" ;;
+esac
+printf '%s\n' "$evidence_head" >"$tmp_root/evidence-legacy.json"
+if output=$(evidence_validate "$tmp_root/evidence-legacy.json" 2>&1); then
+    fail "packaging evidence accepted the legacy one-line marker"
+fi
+case "$output" in
+    *"legacy"*"schema 1"*|*"schema 1"*"legacy"*) ;;
+    *) fail "legacy marker refusal did not name the new format: $output" ;;
+esac
+
+# Aggregation from lane records alone, as the CI path does: a record short is a
+# missing lane, never a smaller lane set.
+partial_records="$tmp_root/evidence-partial-records"
+cp -R "$tmp_root/evidence-good-records" "$partial_records"
+rm "$partial_records/test-deb-resolute-pkg.json"
+if output=$(python3 "$evidence_root/test/packaging-evidence.py" aggregate \
+        --commit "$evidence_head" --evidence-dir "$partial_records" --tree-clean \
+        --started-at 2026-09-01T00:00:00Z --output "$tmp_root/evidence-partial.json" 2>&1); then
+    fail "packaging evidence aggregated a lane set with a record missing"
+fi
+[ ! -e "$tmp_root/evidence-partial.json" ] || fail "a refused aggregate still wrote a marker"
+case "$output" in
+    *"test-deb-resolute-pkg"*) ;;
+    *) fail "aggregate refusal did not name the missing lane: $output" ;;
+esac
+
+# The CI path: a successful packaging.yml run is evidence only when its
+# evidence artifacts aggregate into an accepted marker for this commit.
+cat >"$tmp_root/bin/gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1 $2" in
+    "run view")
+        printf '%s\n' "${STUB_GH_RUN_VIEW:?}" ;;
+    "run download")
+        [ -n "${STUB_GH_ARTIFACTS:-}" ] || { echo "no artifacts match any of the names or patterns provided" >&2; exit 1; }
+        dir=""
+        while [ $# -gt 0 ]; do
+            case "$1" in --dir) dir="$2"; shift 2 ;; *) shift ;; esac
+        done
+        for record in "$STUB_GH_ARTIFACTS"/*.json; do
+            name="$(basename "$record" .json)"
+            mkdir -p "$dir/packaging-evidence-$name"
+            cp "$record" "$dir/packaging-evidence-$name/"
+        done ;;
+    *) exit 2 ;;
+esac
+SH
+chmod +x "$tmp_root/bin/gh"
+ci_run_view="{\"conclusion\":\"success\",\"headSha\":\"$evidence_head\",\"createdAt\":\"2026-09-01T07:00:00Z\",\"updatedAt\":\"2026-09-01T08:00:00Z\"}"
+PATH="$tmp_root/bin:$PATH" STUB_GH_RUN_VIEW="$ci_run_view" STUB_GH_ARTIFACTS="$tmp_root/evidence-good-records" \
+    python3 "$evidence_root/test/packaging-evidence.py" ci-run --commit "$evidence_head" --run 12345 ||
+    fail "release preflight refused a packaging.yml run carrying complete evidence"
+if output=$(PATH="$tmp_root/bin:$PATH" STUB_GH_RUN_VIEW="$ci_run_view" \
+        python3 "$evidence_root/test/packaging-evidence.py" ci-run --commit "$evidence_head" --run 12345 2>&1); then
+    fail "release preflight accepted a packaging.yml run without evidence artifacts"
+fi
+case "$output" in
+    *"no packaging evidence artifact"*) ;;
+    *) fail "artifact-less run refusal did not say so: $output" ;;
+esac
+if PATH="$tmp_root/bin:$PATH" STUB_GH_RUN_VIEW="$ci_run_view" STUB_GH_ARTIFACTS="$partial_records" \
+        python3 "$evidence_root/test/packaging-evidence.py" ci-run --commit "$evidence_head" --run 12345 >/dev/null 2>&1; then
+    fail "release preflight accepted a packaging.yml run missing a lane artifact"
+fi
+if PATH="$tmp_root/bin:$PATH" STUB_GH_RUN_VIEW="${ci_run_view/success/failure}" STUB_GH_ARTIFACTS="$tmp_root/evidence-good-records" \
+        python3 "$evidence_root/test/packaging-evidence.py" ci-run --commit "$evidence_head" --run 12345 >/dev/null 2>&1; then
+    fail "release preflight accepted a failed packaging.yml run"
+fi
+if PATH="$tmp_root/bin:$PATH" STUB_GH_RUN_VIEW="${ci_run_view/$evidence_head/$(printf '0%.0s' $(seq 40))}" STUB_GH_ARTIFACTS="$tmp_root/evidence-good-records" \
+        python3 "$evidence_root/test/packaging-evidence.py" ci-run --commit "$evidence_head" --run 12345 >/dev/null 2>&1; then
+    fail "release preflight accepted a packaging.yml run at another commit"
+fi
+echo "packaging evidence: recipe, marker, and workflow-run cases OK"
+
 cp "$repo_root/justfile" "$repo_root/Cargo.toml" "$repo_root/Cargo.lock" "$release_repo/"
 cp "$repo_root/dist/PKGBUILD" "$repo_root/dist/PKGBUILD-bin" "$repo_root/dist/PKGBUILD-git" "$repo_root/dist/facelock.spec" "$release_repo/dist/"
 cp "$repo_root/debian/changelog" "$release_repo/debian/"
