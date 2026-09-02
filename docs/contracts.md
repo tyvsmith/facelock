@@ -3019,10 +3019,14 @@ passing with too few frames; a rejected set; a sealing error; a storage error; a
 crash) leaves the store exactly as it was: no model, no embeddings, and a previous
 same-label template still in place and still authenticating. A model row written by this
 version or later is therefore a complete template, and `facelock list` and `Authenticate`
-can never observe an attempt that did not finish; the store also refuses to commit a model
-with no embeddings at all. No migration inspects rows written by earlier versions: a
-partial model the old flow left behind stays until `facelock remove` or `facelock clear`
-deletes it.
+can never observe an attempt that did not finish; the store itself refuses to commit a
+model with fewer than `MIN_EMBEDDINGS_PER_MODEL` (3) embeddings, the same floor the
+capture loop enforces. The guarantee is one-sided: a caller that cancelled is never
+surprised by a template, but a caller whose reply is lost after the commit (the daemon
+killed, the bus connection dropped, a client timeout between commit and reply) may find a
+valid template it reported as failed. No migration inspects rows written by earlier
+versions: a partial model the old flow left behind stays until `facelock remove` or
+`facelock clear` deletes it.
 
 **Camera hold semantics (ADR 008).** `device.camera_release_secs` (default **3**) is the
 number of seconds the **daemon** keeps the camera streaming **after a failed

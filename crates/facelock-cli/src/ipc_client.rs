@@ -156,9 +156,11 @@ pub fn send_enroll(
     let proxy = Proxy::new_owned(connection, BUS_NAME, OBJECT_PATH, INTERFACE_NAME)
         .map_err(|e| anyhow::anyhow!("D-Bus proxy failed: {e}"))?;
 
-    // A client-side timeout does NOT cancel the daemon's enrollment — it runs
-    // to completion and persists. Say so instead of leaving the user to retry
-    // into a duplicate label.
+    // A client-side timeout ends this process, which drops the bus connection;
+    // the daemon's caller-departure watch then cancels the enrollment and
+    // nothing is stored (#308). The one exception is a commit that landed
+    // before we gave up: the reply is lost but the template is real, which is
+    // why the message sends the user to `facelock list` before retrying.
     let result: (u32, u32) = proxy.call("Enroll", &(user, label)).map_err(|e| {
         if is_timeout_error(&e) {
             anyhow::Error::new(e).context(explain(&AccessMessage::EnrollTimedOutClientSide))

@@ -557,8 +557,9 @@ never a lockout.
 Enrollment persists a template only once every accepted embedding has passed the capture
 gates and been sealed, in one store transaction that also replaces the previous same-label
 model (#308); a cancelled or failed enrollment leaves the store untouched, so a partial
-template can never authenticate and a failed re-enrollment keeps the template it was
-replacing (`docs/contracts.md`, "Enrollment atomicity").
+template written by this version can never authenticate and a failed re-enrollment keeps
+the template it was replacing. Templates the old flow left behind are covered in
+`docs/contracts.md`, "Enrollment atomicity".
 
 **In memory**, the long-lived compare sets are held in a drop guard (`Wiped` in
 `facelock-core`) that zeroizes them on every exit path, unwind included: the authentication
