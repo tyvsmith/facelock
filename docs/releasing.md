@@ -201,7 +201,9 @@ just test-rpm-pkg        # Fedora — build real .rpm, install via dnf, validate
 just test-rpm-lanes      # every declared Fedora target at its declared depth
 just test-rpm-authselect # Fedora — retired-profile upgrade guard lifecycle
 just test-packit-config  # Packit config schema — real `packit` in a pinned Fedora container
-just test-copr           # COPR-equivalent — Packit SRPM + mock from-source rebuild (slow)
+just test-copr           # COPR-equivalent build only — Packit SRPM + mock from-source rebuild (slow)
+just test-copr-pkg 43    # the same rebuild, then install it and run the booted lifecycle
+just test-copr-lanes     # every Packit/COPR target rebuilt from source at its declared depth
 
 # Interactive (requires camera)
 just test-deb-dev-shell      # Ubuntu .deb with host models — fast iteration
@@ -229,6 +231,23 @@ the lifecycle depth `dist/release-matrix.json` gives it: full lifecycle for
 Fedora 43 and 44, build plus runtime smoke for branched Fedora 45. Rawhide is
 optional and experimental, has no lane, and can never stand in for a Fedora 43,
 44, or 45 result.
+
+Each Fedora target needs two lanes, not one. `test-rpm-lanes` proves the direct
+`.rpm`: host-built binaries, bundled ONNX Runtime. That is not the delivery
+path the matrix declares for Fedora, which is Packit publishing to COPR against
+Fedora's system ONNX Runtime. `just test-copr-lanes` proves that one at the
+same declared depths — `test-copr-pkg 43`, `test-copr-pkg 44`,
+`test-copr-smoke 45`. Each rebuilds the package from source in a mock chroot
+(the `test-copr` half), exports the RPM it built, installs it with `dnf` so the
+package's own `Requires: onnxruntime` resolves, and boots it for the same
+validation the direct lane runs. `just test-packaging-matrix` requires both,
+and `test/packaging-evidence.py` refuses a direct-RPM record offered as a COPR
+target's evidence.
+
+The COPR lanes are slow even by this file's standards: each one compiles the
+whole workspace and runs the spec's `%check` inside the mock chroot, and mock
+needs a privileged container, so they run serially through a single staging
+path (`target/copr-lane/facelock.rpm`). Never run two at once.
 
 `test/fedora-lane-image.sh` resolves each lane's digest-pinned base image from
 the matrix, so no Containerfile carries its own Fedora digest. It refuses a
@@ -306,6 +325,16 @@ release gate below catches it before anything ships. When a change is
 packaging-relevant in a way the filter cannot see, run the lane by hand or add
 the path to `classify-changes.sh`.
 
+**The COPR jobs go further and skip pull requests entirely.** Each one compiles
+the workspace inside a mock chroot, which needs a privileged container, and no
+pull request has been shown to get one on a rootless-podman runner; making that
+a required check before it is proven would block every packaging merge on an
+unproven capability. So a COPR-only break — something that shows up when the
+package is rebuilt from source or run against Fedora's system ONNX Runtime, and
+not otherwise — survives its own pull request even when the filter fires. The
+nightly and the pre-release `workflow_dispatch` are unfiltered and do run them;
+locally, `just test-copr-lanes`.
+
 ### Release preflight (recommended)
 
 Run this before creating/pushing a release tag:
@@ -339,7 +368,9 @@ Every packaging lane writes a record of what it claimed and what it counted,
 and `test/packaging-evidence.py` accepts the set only when every lane the
 release matrix requires is present at this commit with zero skips and the ONNX
 models on hand (the contract is in `docs/contracts.md`, "Packaging matrix
-evidence"). Preflight reads it from the `packaging-evidence-*` artifacts a
+evidence"). That set includes a COPR lane per Packit release target beside the
+direct-RPM lane, so a green Fedora `.rpm` result alone leaves the evidence
+incomplete. Preflight reads it from the `packaging-evidence-*` artifacts a
 successful `packaging.yml` run at that exact commit uploaded, fetched with
 `gh run download`, or from `.packaging-matrix-verified`, which
 `just test-packaging-matrix` writes after running every lane locally. A run's

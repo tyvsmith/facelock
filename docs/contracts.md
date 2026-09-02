@@ -2129,8 +2129,9 @@ is any other undeclared target. Rawhide is not a Packit staging or production
 release target; both `fedora-rawhide` and `fedora-rawhide-x86_64` fail
 validation. The prerelease rule is that no alpha may publish to Rawhide.
 Fedora 43 and Fedora 44 are the required full-lifecycle targets; Fedora 45 is a
-required build/runtime-smoke target. Issue #230 owns the actual lifecycle
-evidence. Rawhide cannot supply lifecycle, artifact, upgrade, rollback,
+required build/runtime-smoke target. That evidence is the COPR lane per target
+described under "Packaging matrix evidence"; a direct-RPM result cannot supply
+it. Rawhide cannot supply lifecycle, artifact, upgrade, rollback,
 served-version, or availability evidence; it is limited to best-effort pinned
 Track D smoke only. It is non-release and non-gating: its absence or a
 Rawhide-only failure is not alpha-blocking, and its smoke result is not alpha
@@ -2188,7 +2189,8 @@ every record before its first lane, then folds the records into
 ```json
 {"schema": 1, "commit": "<40-hex sha>", "tree_clean": true,
  "started_at": "<ISO 8601 UTC>", "finished_at": "<ISO 8601 UTC>",
- "required_lanes": ["test-arch-pkg", "test-deb-resolute-pkg", "test-deb-trixie-pkg",
+ "required_lanes": ["test-arch-pkg", "test-copr-pkg-43", "test-copr-pkg-44",
+                    "test-copr-smoke-45", "test-deb-resolute-pkg", "test-deb-trixie-pkg",
                     "test-rpm-pkg-43", "test-rpm-pkg-44", "test-rpm-smoke-45"],
  "lanes": [{"name": "test-deb-trixie-pkg", "target": "debian-trixie", "channel": "apt",
             "build_origin": "container-source-build", "runtime_policy": "bundled-ort",
@@ -2197,11 +2199,12 @@ every record before its first lane, then folds the records into
             "status": "pass"}]}
 ```
 
-Lane claims use a fixed vocabulary. `channel`: `apt`, `direct-rpm`, `aur`
-(#230 adds `copr`). `build_origin`: `container-source-build` (the Debian
-assembler and `.dsc` rebuild), `host-binaries` (release binaries staged from
-`target/release`), `makepkg-source-build` (#230 adds `mock-source-rebuild`).
-`runtime_policy`: `bundled-ort`, `system-ort`. `depth`: `full`, `smoke`.
+Lane claims use a fixed vocabulary. `channel`: `apt`, `direct-rpm`, `aur`,
+`copr`. `build_origin`: `container-source-build` (the Debian assembler and
+`.dsc` rebuild), `host-binaries` (release binaries staged from
+`target/release`), `makepkg-source-build`, `mock-source-rebuild` (Packit SRPM
+rebuilt from source in a mock chroot). `runtime_policy`: `bundled-ort`,
+`system-ort`. `depth`: `full`, `smoke`.
 `status`: `pass`; `partial` for an exit 0 with an allowed skip or without
 models; `fail` for a non-zero exit, a failed assertion, or a mandatory skip.
 The counters are assertion counts by class, and `skip` equals
@@ -2213,9 +2216,34 @@ withheld.
 
 `required_lanes` derives from `dist/release-matrix.json`: one Debian lane per
 APT suite whose platform row is a non-optional release target, the Arch recipe
-lane, and one direct-RPM lane per `fedora.packit_release_targets` entry at the
-depth its platform rows declare. A row whose `evidence_eligibility.lifecycle`
-is false (Rawhide) contributes nothing.
+lane, and *two* Fedora lanes per `fedora.packit_release_targets` entry, both at
+the depth its platform rows declare. A row whose
+`evidence_eligibility.lifecycle` is false (Rawhide) contributes nothing.
+
+The two Fedora lanes exist because the matrix declares two Fedora delivery
+paths and neither proves the other (#230). The direct-RPM lane
+(`test-rpm-pkg-<release>` / `test-rpm-smoke-<release>`) stages host-built
+binaries and a bundled ONNX Runtime. The COPR lane
+(`test-copr-pkg-<release>` / `test-copr-smoke-<release>`) is what COPR itself
+would publish: a Packit SRPM rebuilt from source in a mock chroot, installed
+with `dnf` so the package's own `Requires: onnxruntime` resolves against
+Fedora's system runtime, then booted for the same validation. A COPR lane is
+required for a target only while some platform row for that release declares
+`system ORT`; the artifact is checked against the COPR channel rules
+(`validate-rpm.sh <rpm> copr`), which fail if a bundled runtime rode along.
+Because the validator compares every lane attribute against what the matrix
+requires, a direct-RPM record offered as a COPR target's evidence is refused on
+`channel`, and a COPR record built from host binaries or run against a bundled
+runtime is refused on `build_origin` or `runtime_policy`.
+
+The COPR lane's `full` depth is the booted package lifecycle
+(`test/pkg-validate.sh` plus the RPM service/PAM lifecycle), not the
+`%config(noreplace)` upgrade halves: those need a second, higher-versioned
+package, and a second mock source rebuild per release is not what that
+assertion is worth. The direct-RPM lane runs them against the same
+`dist/facelock.spec`, so the file flags and scriptlets they pin are covered;
+what is not covered is a COPR-only upgrade difference, which is why this
+sentence exists.
 
 The marker is refused, and the aggregate refuses to write it, unless all of
 the following hold: `schema` is 1; `commit` equals HEAD; `tree_clean` is true;
@@ -2232,15 +2260,17 @@ evidence, and a record from one channel cannot stand in for another's lane.
 The legacy one-line commit marker is refused with a message naming this
 format. Preflight reads evidence from two places, in order: the
 `packaging-evidence-*` artifacts a successful `packaging.yml` run at HEAD
-uploaded (`packaging-evidence-deb-<suite>`, `packaging-evidence-rpm-<release>`
-and `packaging-evidence-arch`, fetched with `gh run download` and aggregated
-the same way), then the local marker. `.packaging-evidence/` is dot-prefixed,
-so every upload step sets `include-hidden-files: true`; without it
-`actions/upload-artifact` finds no files and `if-no-files-found: error` fails
-the job. A run without those artifacts is not
-evidence, whatever its conclusion; neither is a pull-request run, which builds
-the merge commit, nor a run of any other workflow. The marker and the
-artifacts are maintainer-trust records: preflight checks their shape and their
+uploaded (`packaging-evidence-deb-<suite>`, `packaging-evidence-rpm-<release>`,
+`packaging-evidence-copr-<release>` and `packaging-evidence-arch`, fetched with
+`gh run download` and aggregated the same way), then the local marker.
+`.packaging-evidence/` is dot-prefixed, so every upload step sets
+`include-hidden-files: true`; without it `actions/upload-artifact` finds no
+files and `if-no-files-found: error` fails the job. A run without those
+artifacts is not evidence, whatever its conclusion; neither is a pull-request
+run, which builds the merge commit, nor a run of any other workflow. The `copr`
+jobs do not run on pull requests at all, so only an unfiltered run -- the
+nightly or a `workflow_dispatch` -- can carry the full lane set. The marker and
+the artifacts are maintainer-trust records: preflight checks their shape and their
 binding to HEAD and the matrix, not that a real lane produced them. A forged
 record is a deliberate act, not the slip this gate exists to catch.
 
