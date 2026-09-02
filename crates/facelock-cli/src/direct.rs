@@ -317,9 +317,7 @@ pub fn enroll(config: &Config, user: &str, label: &str) -> anyhow::Result<(u32, 
     // the template, and judged against the binding policy before the first
     // model write so a refusal leaves nothing behind (#309).
     let fingerprint = &camera.capabilities().fingerprint;
-    config
-        .ensure_enrollment_binding_allowed(fingerprint)
-        .map_err(|m| anyhow::anyhow!(m))?;
+    config.ensure_enrollment_binding_allowed(fingerprint)?;
     let device_id = fingerprint.canonical_for_storage();
     let mut engine = load_engine(config)?;
 

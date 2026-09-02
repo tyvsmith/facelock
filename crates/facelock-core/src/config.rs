@@ -357,6 +357,17 @@ pub enum EnrollmentBindingError {
          enroll on a camera that reports idVendor and idProduct."
     )]
     LegacyBarredNeedsIdentity { identity: String },
+    /// Hard binding in force (`bind_device_aad` with an encryption method)
+    /// and no non-empty device id to seal under (#312).
+    #[error(
+        "refusing to enroll: security.bind_device_aad = true seals each template under its \
+         enrolling camera's device id, and this camera exposes no usable USB identity, so \
+         the template could not be bound. Enroll on a camera that reports both idVendor and \
+         idProduct, or set security.bind_device_aad = false; that disables hard binding for \
+         new enrollments only, and every template already sealed under it stops decrypting \
+         until re-enrolled."
+    )]
+    HardBindingNeedsDeviceId,
 }
 
 impl SecurityConfig {
@@ -931,10 +942,8 @@ impl Config {
     pub fn ensure_enrollment_binding_allowed(
         &self,
         fp: &crate::types::DeviceFingerprint,
-    ) -> Result<(), String> {
-        self.security
-            .ensure_enrollment_binding_allowed(fp)
-            .map_err(|refusal| refusal.to_string())?;
+    ) -> Result<(), EnrollmentBindingError> {
+        self.security.ensure_enrollment_binding_allowed(fp)?;
         self.require_device_aad(fp.canonical_for_storage().as_deref())
             .map(|_| ())
     }
@@ -946,21 +955,16 @@ impl Config {
     /// rather than the unbound template `device_aad` would quietly produce
     /// (#312). `Ok(None)` when hard binding is not in force: ordinary
     /// encryption, no AAD.
-    pub fn require_device_aad(&self, device_id: Option<&str>) -> Result<Option<Vec<u8>>, String> {
+    pub fn require_device_aad(
+        &self,
+        device_id: Option<&str>,
+    ) -> Result<Option<Vec<u8>>, EnrollmentBindingError> {
         if !self.hard_binding_active() {
             return Ok(None);
         }
         crate::types::device_binding_aad(device_id)
             .map(Some)
-            .ok_or_else(|| {
-                "refusing to enroll: security.bind_device_aad = true seals each template \
-                 under its enrolling camera's device id, and this camera exposes no usable \
-                 USB identity, so the template could not be bound. Enroll on a camera that \
-                 reports both idVendor and idProduct, or set security.bind_device_aad = \
-                 false; that disables hard binding for new enrollments only, and every \
-                 template already sealed under it stops decrypting until re-enrolled."
-                    .into()
-            })
+            .ok_or(EnrollmentBindingError::HardBindingNeedsDeviceId)
     }
 
     /// How a stored template stands under the hard-binding policy, from the
@@ -1634,16 +1638,16 @@ allow_plaintext = true
     #[test]
     fn require_device_aad_refuses_without_a_device_id() {
         for device_id in [None, Some("")] {
-            let err = hard_binding().require_device_aad(device_id).unwrap_err();
-            assert!(
-                err.contains("security.bind_device_aad"),
-                "must name the key: {err}"
-            );
-            assert!(
-                err.contains("bind_device_aad = false"),
-                "must name the remedy: {err}"
+            assert_eq!(
+                hard_binding().require_device_aad(device_id),
+                Err(EnrollmentBindingError::HardBindingNeedsDeviceId)
             );
         }
+        let text = EnrollmentBindingError::HardBindingNeedsDeviceId.to_string();
+        assert!(
+            text.contains("set security.bind_device_aad = false"),
+            "must name the key and the remedy: {text}"
+        );
     }
 
     #[test]
@@ -1675,8 +1679,11 @@ allow_plaintext = true
                 ..Default::default()
             },
         ] {
-            let err = policy.ensure_enrollment_binding_allowed(&fp).unwrap_err();
-            assert!(err.contains("security.bind_device_aad"), "{err}");
+            assert_eq!(
+                policy.ensure_enrollment_binding_allowed(&fp),
+                Err(EnrollmentBindingError::HardBindingNeedsDeviceId),
+                "{fp:?}"
+            );
         }
         assert_eq!(
             policy.ensure_enrollment_binding_allowed(&camera_with_serial(None)),

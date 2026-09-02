@@ -144,7 +144,8 @@ pub fn enroll<C: CameraSource, E: FaceProcessor>(
     // callers judge the live fingerprint first; this holds for every caller.
     let device_aad = match config.require_device_aad(device_id) {
         Ok(aad) => aad,
-        Err(message) => {
+        Err(refusal) => {
+            let message = refusal.to_string();
             warn!(user, label, "enroll refused: {message}");
             return EnrollOutcome::Error { message };
         }
