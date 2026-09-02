@@ -257,8 +257,9 @@ bind_legacy_templates    = true      # default; allow-with-warn for pre-V6 / NUL
 - **`model`** (default) compares VID:PID only. Invisible to single-camera users; blocks a
   cross-model swap. Identical same-model cameras are accepted (documented behavior).
 - **`unit`** additionally requires a matching serial. Blocks even a same-model swap, but only
-  works on cameras that expose a stable serial — enrollment at `unit` on a serial-less camera
-  is refused with an explanatory error rather than silently downgrading. The check runs once
+  works on cameras that expose a stable serial — enrollment at `unit` on a camera without a
+  serial, or without a full vendor:product identity, is refused with an explanatory error
+  rather than silently downgrading (a NULL row would bind to nothing). The check runs once
   the camera is open and before the first model write (#309), so a refusal leaves no template
   behind; the error names `security.device_match_granularity` and the way out. It judges the
   id that would be stored, not whether `bind_templates_to_device` is on today, so a template
@@ -266,7 +267,8 @@ bind_legacy_templates    = true      # default; allow-with-warn for pre-V6 / NUL
 - **Legacy / unidentifiable cameras**: a pre-V6 template (NULL `device_id`) or one enrolled
   on a camera exposing no USB identity is stored NULL and governed by `bind_legacy_templates`.
   A vendor id without a product id (or the reverse) is no identity: the matcher needs both,
-  so such a camera is stored NULL too rather than under an id that could never match.
+  so at `model` such a camera is stored NULL too rather than under an id that could never
+  match, and at `unit` it is refused.
   Default allow-with-warn so an upgrade never breaks existing enrollments; a one-line log
   nudges re-enrollment. Set it `false` to require every template to carry a matching id.
 - **Enroll per camera**: enrolling the same user on a second camera creates a *second* template

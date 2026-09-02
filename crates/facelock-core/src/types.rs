@@ -1183,8 +1183,10 @@ mod tests {
 
     /// The enrollment precondition and the authentication matcher agree:
     /// every canonical id enrollment would persist for a camera matches that
-    /// same camera at the granularity it was accepted under. Enumerates every
-    /// field shape the sysfs reader can hand back (#309).
+    /// same camera at the granularity it was accepted under, and under
+    /// `unit` there is always one: a NULL row would bind to nothing, so the
+    /// strictest policy never accepts a camera that stores one. Enumerates
+    /// every field shape the sysfs reader can hand back (#309).
     #[test]
     fn accepted_enrollment_ids_match_their_own_camera() {
         use crate::config::SecurityConfig;
@@ -1202,7 +1204,14 @@ mod tests {
                         if security.ensure_enrollment_binding_allowed(&live).is_err() {
                             continue;
                         }
-                        if let Some(stored) = live.canonical_for_storage() {
+                        let stored = live.canonical_for_storage();
+                        if granularity == DeviceMatchGranularity::Unit {
+                            assert!(
+                                stored.is_some(),
+                                "{live:?} accepted at unit would be stored NULL and bind to nothing"
+                            );
+                        }
+                        if let Some(stored) = stored {
                             assert!(
                                 device_ids_match(&stored, &live, granularity),
                                 "{stored:?} accepted at {granularity:?} cannot match its own camera"

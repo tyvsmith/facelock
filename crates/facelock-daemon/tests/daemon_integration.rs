@@ -901,9 +901,22 @@ fn a_cancelled_re_enrollment_keeps_the_previous_template_authenticating() {
 /// are diverse enough to enroll and an in-memory store to inspect afterwards.
 /// The keyfile lives under `key_dir` so the default encryption really seals.
 fn binding_handler(
+    config: Config,
+    fingerprint: facelock_core::types::DeviceFingerprint,
+    key_dir: &Path,
+) -> facelock_daemon::handler::Handler<MockCamera, MockFaceEngine> {
+    binding_handler_with_factory(config, fingerprint, key_dir, |caps| {
+        Box::new(move |_cfg| Ok(MockCamera::bright(640, 480, 64).with_caps(caps.clone())))
+    })
+}
+
+/// [`binding_handler`] with the camera factory supplied by the test, for a
+/// test that needs to observe the opens themselves.
+fn binding_handler_with_factory(
     mut config: Config,
     fingerprint: facelock_core::types::DeviceFingerprint,
     key_dir: &Path,
+    factory: impl FnOnce(CameraCaps) -> MockCameraFactory,
 ) -> facelock_daemon::handler::Handler<MockCamera, MockFaceEngine> {
     use facelock_daemon::handler::Handler;
     use facelock_daemon::rate_limit::RateLimiter;
@@ -920,9 +933,7 @@ fn binding_handler(
         fingerprint,
         ..Default::default()
     };
-    let camera_caps = caps.clone();
-    let factory: MockCameraFactory =
-        Box::new(move |_cfg| Ok(MockCamera::bright(640, 480, 64).with_caps(camera_caps.clone())));
+    let factory = factory(caps.clone());
     let engine = MockFaceEngine::cycling(vec![
         fixtures::known_embedding(0),
         fixtures::known_embedding(40),
@@ -960,33 +971,59 @@ fn listed_models(
 }
 
 /// #309: under `unit` binding a serial-less camera is refused before the
-/// first model write, so nothing is left in the store.
+/// first model write, so nothing is left in the store, and the camera the
+/// refusal was judged on is released with the refusal (a pre-flight
+/// rejection is never held warm, ADR 008 §8).
 #[test]
 fn unit_binding_refuses_serial_less_camera_before_any_model_write() {
     use facelock_core::types::DeviceMatchGranularity;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     let key_dir = tempfile::tempdir().unwrap();
     let mut config = test_config();
     config.security.device_match_granularity = DeviceMatchGranularity::Unit;
-    let mut handler = binding_handler(config, same_model_camera(None), key_dir.path());
+    let opens = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&opens);
+    let mut handler =
+        binding_handler_with_factory(config, same_model_camera(None), key_dir.path(), |caps| {
+            Box::new(move |_cfg| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                Ok(MockCamera::bright(640, 480, 64).with_caps(caps.clone()))
+            })
+        });
 
-    let resp = handler.handle(DaemonRequest::Enroll {
-        user: "u".into(),
-        label: "front".into(),
-    });
-    match resp {
-        DaemonResponse::Error { ref message } => assert!(
-            message.contains("security.device_match_granularity"),
-            "refusal must name the policy: {message}"
-        ),
-        other => panic!("serial-less unit enrollment must be refused, got: {other:?}"),
-    }
+    let refuse = |handler: &mut facelock_daemon::handler::Handler<MockCamera, MockFaceEngine>| {
+        let resp = handler.handle(DaemonRequest::Enroll {
+            user: "u".into(),
+            label: "front".into(),
+        });
+        match resp {
+            DaemonResponse::Error { ref message } => assert!(
+                message.contains("security.device_match_granularity"),
+                "refusal must name the policy: {message}"
+            ),
+            other => panic!("serial-less unit enrollment must be refused, got: {other:?}"),
+        }
+    };
+
+    refuse(&mut handler);
     assert!(
         listed_models(&mut handler).is_empty(),
         "a refused enrollment must leave no model behind"
     );
     let (sealed, unsealed) = handler.store.count_sealed().unwrap();
     assert_eq!((sealed, unsealed), (0, 0), "no embedding may be stored");
+
+    // The refusal closed the stream: a second request opens the camera
+    // again rather than reusing a warm one left behind by the rejection.
+    assert_eq!(opens.load(Ordering::SeqCst), 1);
+    refuse(&mut handler);
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        2,
+        "the camera must be released with the refusal, not held warm"
+    );
 }
 
 /// The same policy on a camera that does expose a serial enrolls, and the

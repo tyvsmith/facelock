@@ -94,7 +94,7 @@ Controls how the PAM module reaches the face engine.
 | `suppress_unknown` | bool | `false` | Suppress warnings for unknown users (users with no enrolled face). |
 | `min_auth_frames` | u32 | `3` | Minimum number of matching frames required before accepting. Only applies when `require_frame_variance` is true. |
 | `bind_templates_to_device` | bool | `true` | Couple each template to the camera that enrolled it. At auth, a template whose enrolling camera does not match the live one at `device_match_granularity` is skipped, so a swapped-in camera falls through to password. Advisory: VID:PID is forgeable by a programmable USB device. |
-| `device_match_granularity` | string | `"model"` | `"model"` compares VID:PID; `"unit"` also requires a matching serial. Enrollment at `"unit"` on a camera with no non-empty serial is refused before any template is written, whether or not `bind_templates_to_device` is on. |
+| `device_match_granularity` | string | `"model"` | `"model"` compares VID:PID; `"unit"` also requires a matching serial. Enrollment at `"unit"` on a camera with no non-empty serial, or with no full vendor:product identity, is refused before any template is written, whether or not `bind_templates_to_device` is on. |
 | `bind_legacy_templates` | bool | `true` | Let templates with no device id (pre-coupling rows, or cameras with no readable USB identity) authenticate, with a log line suggesting re-enrollment. `false` requires every template to carry a matching id. |
 | `bind_device_aad` | bool | `false` | Hard device binding: fold the enrolling camera's device id into the AES-GCM AAD so a template cannot be decrypted under another camera. Opt-in only; needs an active encryption method. See `docs/security.md`. |
 

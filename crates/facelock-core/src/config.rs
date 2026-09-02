@@ -343,17 +343,30 @@ impl SecurityConfig {
         &self,
         fp: &crate::types::DeviceFingerprint,
     ) -> Result<(), String> {
-        if self.device_match_granularity == crate::types::DeviceMatchGranularity::Unit
-            && !fp.has_serial()
-        {
-            return Err(format!(
-                "refusing to enroll: security.device_match_granularity = \"unit\" binds each \
-                 template to one camera unit by its USB serial, and this camera (identity \
-                 \"{}\") exposes none, so a template bound to it could never match. Set \
-                 security.device_match_granularity = \"model\" to bind by VID:PID, or enroll \
-                 on a camera that reports a stable serial.",
-                fp.canonical()
-            ));
+        if self.device_match_granularity == crate::types::DeviceMatchGranularity::Unit {
+            if !fp.has_serial() {
+                return Err(format!(
+                    "refusing to enroll: security.device_match_granularity = \"unit\" binds \
+                     each template to one camera unit by its USB serial, and this camera \
+                     (identity \"{}\") exposes none, so a template bound to it could never \
+                     match. Set security.device_match_granularity = \"model\" to bind by \
+                     VID:PID, or enroll on a camera that reports a stable serial.",
+                    fp.canonical()
+                ));
+            }
+            // A serial alone is not an identity: the row would be stored NULL
+            // and, under the legacy policy, bind to nothing at all. The
+            // strictest granularity must never produce that row.
+            if fp.canonical_for_storage().is_none() {
+                return Err(format!(
+                    "refusing to enroll: security.device_match_granularity = \"unit\" binds \
+                     each template to one camera unit, and this camera (identity \"{}\") \
+                     exposes no usable USB identity, so the template would bind to nothing. \
+                     Set security.device_match_granularity = \"model\", or enroll on a \
+                     camera that reports idVendor, idProduct, and a stable serial.",
+                    fp.canonical()
+                ));
+            }
         }
         Ok(())
     }
@@ -1526,6 +1539,29 @@ allow_plaintext = true
             unit.ensure_enrollment_binding_allowed(&crate::types::DeviceFingerprint::default())
                 .is_err()
         );
+    }
+
+    /// A serial on a camera missing its product id is the shape that slipped
+    /// past the serial check alone: it would be stored NULL and bind to
+    /// nothing under the strictest policy. Refused, naming the key and the
+    /// `"model"` way out.
+    #[test]
+    fn unit_binding_refuses_a_serial_without_a_full_identity() {
+        let unit = binding_at(crate::types::DeviceMatchGranularity::Unit);
+        let half = crate::types::DeviceFingerprint {
+            vid: Some("046d".into()),
+            pid: None,
+            serial: Some("SER".into()),
+            by_path: None,
+        };
+        assert_eq!(half.canonical_for_storage(), None, "the shape under test");
+        let err = unit.ensure_enrollment_binding_allowed(&half).unwrap_err();
+        assert!(
+            err.contains("security.device_match_granularity"),
+            "must name the key: {err}"
+        );
+        assert!(err.contains("\"model\""), "must name the remedy: {err}");
+        assert!(err.contains("no usable USB identity"), "{err}");
     }
 
     /// The precondition is about the id that gets persisted, not about
