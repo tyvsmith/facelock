@@ -266,6 +266,8 @@ def check_record(record: dict, head: str, expected: dict[str, str] | None) -> li
     def problem(message: str) -> None:
         problems.append(f"lane {name}: {message}")
 
+    if record.get("schema") != SCHEMA:
+        problem(f"schema is {record.get('schema')!r}, not {SCHEMA}")
     for field in ("name", "commit", "status", *LANE_FIELDS):
         if not isinstance(record.get(field), str) or not record[field]:
             problem(f"{field} is missing")
@@ -328,10 +330,8 @@ def check_marker(marker: object, head: str, matrix: dict) -> list[str]:
     declared = marker.get("required_lanes")
     if not isinstance(declared, list) or not all(isinstance(name, str) for name in declared):
         problems.append("required_lanes is not a list of lane names")
-    elif set(declared) != set(required):
-        problems.append(
-            f"required lane set {sorted(declared)} differs from the release matrix's {sorted(required)}"
-        )
+    elif declared != sorted(required):
+        problems.append(f"required lane set {declared} differs from the release matrix's {sorted(required)}")
     lanes = marker.get("lanes")
     if not isinstance(lanes, list) or not all(isinstance(lane, dict) for lane in lanes):
         problems.append("lanes is not a list of lane records")

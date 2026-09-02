@@ -2189,9 +2189,10 @@ is false (Rawhide) contributes nothing.
 The marker is refused, and the aggregate refuses to write it, unless all of
 the following hold: `schema` is 1; `commit` equals HEAD; `tree_clean` is true;
 `started_at` and `finished_at` are ISO 8601 timestamps with an offset, in
-order; `required_lanes` equals the derived set; every required lane has
-exactly one record and no record names a lane outside that set; and every record
-names HEAD, has `models_present` true, has `fail`, `skip`, `allowed_skip` and
+order; `required_lanes` equals the derived list exactly (sorted, no
+duplicates); every required lane has exactly one record and no record names a
+lane outside that set; and every record carries `schema` 1, names HEAD, has
+`models_present` true, has `fail`, `skip`, `allowed_skip` and
 `mandatory_skip` all 0, has `pass` of at least 1, has `status` `pass`, and
 carries the target, channel, build origin, runtime policy and depth the matrix
 requires of that lane. A partial run therefore never produces release

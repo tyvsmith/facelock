@@ -1545,6 +1545,12 @@ assert_evidence_refused "unknown schema" \
     'marker["schema"] = 2' "schema"
 assert_evidence_refused "skip count that does not add up" \
     'lanes["test-deb-trixie-pkg"]["skip"] = 2' "skip"
+assert_evidence_refused "record without a schema" \
+    'del lanes["test-arch-pkg"]["schema"]' "schema"
+assert_evidence_refused "record with another schema" \
+    'lanes["test-arch-pkg"]["schema"] = 2' "schema"
+assert_evidence_refused "required lane listed twice" \
+    'marker["required_lanes"].append("test-arch-pkg")' "required lane set"
 assert_evidence_refused "record for a lane the matrix does not require" \
     'marker["lanes"].append({**lanes["test-arch-pkg"], "name": "test-extra-lane"})' "not a lane the release matrix requires"
 assert_evidence_refused "finished before it started" \
