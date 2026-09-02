@@ -437,6 +437,23 @@ assert_matrix_mutation_rejected \
     ".github/workflows/packaging.yml" \
     's/^          include-hidden-files: true$//'
 assert_matrix_mutation_rejected \
+    "release preflight keeping the validate call in a trailing comment" \
+    "justfile" \
+    's@^    elif python3 test/packaging-evidence.py validate --commit "\$HEAD_SHA" .packaging-matrix-verified; then$@    elif true; then # python3 test/packaging-evidence.py validate --commit "$HEAD_SHA" .packaging-matrix-verified@'
+assert_matrix_mutation_rejected \
+    "packaging matrix echoing the commit into the marker beside the aggregate" \
+    "justfile" \
+    's@^        --evidence-dir .packaging-evidence --output .packaging-matrix-verified$@&\n    echo "$commit" > .packaging-matrix-verified@'
+# A marker write that exists only in a trailing comment is not a marker write:
+# the guard reads executable text, not the whole line.
+harmless_comment_root="$tmp_root/matrix-harmless-comment"
+cp -R "$matrix_root" "$harmless_comment_root"
+sed -i 's@^    echo "Recorded: packaging matrix evidence at $commit"$@&  # never: echo "$commit" > .packaging-matrix-verified@' "$harmless_comment_root/justfile"
+grep -q 'never: echo' "$harmless_comment_root/justfile" || fail "harmless-comment fixture did not change the justfile"
+RELEASE_MATRIX_VERSION=0.2.0 python3 "$harmless_comment_root/test/check-release-matrix.py" >/dev/null 2>&1 ||
+    fail "release matrix checker rejected a marker write that exists only in a trailing comment"
+echo "release matrix case: marker write in a trailing comment tolerated"
+assert_matrix_mutation_rejected \
     "release matrix granting evidence eligibility outside Rawhide" \
     "dist/release-matrix.json" \
     's/"id": "debian-13",/"id": "debian-13", "evidence_eligibility": {"lifecycle": false},/'

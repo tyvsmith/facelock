@@ -714,8 +714,9 @@ require(
 # records its jobs upload are. Every lane job uploads them and fails when its
 # lane recorded nothing, or `just release-preflight` has nothing to validate
 # and quietly falls back to the local marker. The checks read the upload steps
-# themselves and the recipe bodies, comments dropped, so text that survives
-# only in a comment or an unrelated step satisfies nothing.
+# themselves and the executable lines of the recipe bodies, full-line and
+# trailing comments dropped, so text that survives only in a comment or an
+# unrelated step satisfies nothing.
 
 
 def workflow_steps(workflow: str) -> list[str]:
@@ -740,12 +741,53 @@ def workflow_steps(workflow: str) -> list[str]:
 
 
 def just_recipe_body(source: str, name: str) -> str:
-    """The indented body of one justfile recipe, comment lines removed."""
+    """The indented body of one justfile recipe."""
     match = re.search(
         rf"(?m)^{re.escape(name)}(?=[\s:])[^\n]*:[^\n]*\n(?P<body>(?:[ \t]+[^\n]*\n|\n)*)", source
     )
     require(match is not None, f"justfile omits recipe {name}")
-    return "\n".join(line for line in match.group("body").splitlines() if not line.lstrip().startswith("#"))
+    return match.group("body")
+
+
+def shell_command_text(line: str) -> str:
+    """One recipe line with its trailing `#` comment removed, quotes respected."""
+    quote = None
+    for index, char in enumerate(line):
+        if quote:
+            if char == quote:
+                quote = None
+        elif char in ("'", '"'):
+            quote = char
+        elif char == "#" and (index == 0 or line[index - 1].isspace()):
+            return line[:index]
+    return line
+
+
+def recipe_commands(body: str) -> list[str]:
+    """The executable lines of a recipe body, each stripped of leading
+    whitespace, a `@`/`-` recipe prefix, and a leading shell keyword."""
+    commands: list[str] = []
+    for line in body.splitlines():
+        executable = shell_command_text(line).strip()
+        if not executable:
+            continue
+        executable = re.sub(r"^[@-]\s*", "", executable)
+        executable = re.sub(r"^(?:if|elif|while|until)\s+", "", executable)
+        commands.append(executable)
+    return commands
+
+
+def recipe_runs(commands: list[str], command: str) -> bool:
+    """Whether a recipe line starts with `command` as the thing it executes."""
+    return any(
+        line == command or line.startswith(command + " ") or line.startswith(command + ";")
+        for line in commands
+    )
+
+
+# A write into the marker by anything but the evidence script: `> file`,
+# `>> file`, or `tee file`.
+MARKER_WRITE = re.compile(r"""(?:>{1,2}\s*|\btee\s+(?:-[a-z]+\s+)*)["']?(?:\./)?\.packaging-matrix-verified\b""")
 
 
 evidence_uploads = [
@@ -783,19 +825,25 @@ for artifact in ("deb-${{ matrix.suite }}", "rpm-${{ matrix.release }}", "arch")
         re.search(r"(?m)^\s+include-hidden-files: true\s*$", matching[0]) is not None,
         f"the packaging-evidence-{artifact} upload must set include-hidden-files: true for the dot-prefixed directory",
     )
-preflight_body = just_recipe_body(justfile, "release-preflight")
+preflight_commands = recipe_commands(just_recipe_body(justfile, "release-preflight"))
 require(
-    'python3 test/packaging-evidence.py ci-run --commit "$HEAD_SHA" --run "$run_id"' in preflight_body
-    and 'python3 test/packaging-evidence.py validate --commit "$HEAD_SHA" .packaging-matrix-verified'
-    in preflight_body,
-    "release-preflight does not validate packaging evidence through test/packaging-evidence.py",
+    recipe_runs(preflight_commands, 'python3 test/packaging-evidence.py ci-run --commit "$HEAD_SHA" --run "$run_id"')
+    and recipe_runs(
+        preflight_commands,
+        'python3 test/packaging-evidence.py validate --commit "$HEAD_SHA" .packaging-matrix-verified',
+    ),
+    "release-preflight does not run test/packaging-evidence.py ci-run and validate as its own commands",
 )
-matrix_body = just_recipe_body(justfile, "test-packaging-matrix")
+matrix_commands = recipe_commands(just_recipe_body(justfile, "test-packaging-matrix"))
 require(
-    'python3 test/packaging-evidence.py aggregate --commit "$commit" --tree-clean' in matrix_body
-    and re.search(r"(?m)^\s+printf '%s\\n' \"\$commit\" > \.packaging-matrix-verified", matrix_body) is None,
-    "test-packaging-matrix must aggregate lane evidence, never write the commit alone",
+    recipe_runs(matrix_commands, 'python3 test/packaging-evidence.py aggregate --commit "$commit" --tree-clean'),
+    "test-packaging-matrix does not run test/packaging-evidence.py aggregate as its own command",
 )
+for command in matrix_commands + preflight_commands:
+    require(
+        "test/packaging-evidence.py" in command or MARKER_WRITE.search(command) is None,
+        f"only test/packaging-evidence.py may write .packaging-matrix-verified: {command!r}",
+    )
 require(
     "rawhide" not in packaging_workflow.lower(),
     "packaging workflow declares a Rawhide lane; Rawhide is experimental and never a gate",
