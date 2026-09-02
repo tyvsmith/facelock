@@ -359,7 +359,7 @@ unrun. `just test-packit-config` runs the same gate on its own.
 Preflight also holds the APT compatibility window: `main` and `legacy`
 compatibility suites present until 0.3.0, as `dist/release-matrix.json`
 declares, and absent from the first 0.3.0 tree on. `just test-apt-repo` proves
-the published shape end to end, as a clean APT client.
+the published shape when run, as a clean APT client; no workflow runs it.
 
 ### Package repository setup (one-time)
 

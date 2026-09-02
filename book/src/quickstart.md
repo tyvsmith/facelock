@@ -37,7 +37,13 @@ sudo apt install facelock
 
 Source entries written for v0.1.4 name the `main` or `legacy` suite. They
 keep working until 0.3.0: `main` serves the trixie package and `legacy`
-serves no package. Replace that suite with your host's codename before then.
+serves no package. On Debian 13 or Ubuntu 26.04, replace the suite with
+`trixie` or `resolute`. Bookworm, noble, and Ubuntu 25.x have no suite: 0.1.4
+was the last release for those hosts, so remove
+`/etc/apt/sources.list.d/facelock.list`. At 0.3.0 the old suites disappear
+and `apt update` fails until the entry is removed. Reinstalling or
+downloading 0.1.4 through APT stops working at 0.2.0, because the pool is
+rebuilt at each release.
 
 ### Fedora / RHEL (COPR)
 

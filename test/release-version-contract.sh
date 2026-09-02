@@ -696,6 +696,16 @@ assert_matrix_mutation_rejected \
     's/^\(Description: .*\)deprecated\(.*trixie.*\)$/\1renamed\2/' \
     "must name the deprecation and the codenamed replacement"
 assert_matrix_mutation_rejected \
+    "APT suite Origin changed" \
+    "dist/apt/conf/distributions" \
+    's/^Origin: tysmith$/Origin: facelock/' \
+    "Origin drifted"
+assert_matrix_mutation_rejected \
+    "APT suite Label changed" \
+    "dist/apt/conf/distributions" \
+    's/^Label: Ty Smith Packages$/Label: Facelock Packages/' \
+    "Label drifted"
+assert_matrix_mutation_rejected \
     "compatibility suite legacy left unsigned" \
     "dist/apt/conf/distributions" \
     '/^Codename: legacy$/,/^SignWith: default$/s/^SignWith: default$/SignWith: no/' \
@@ -731,6 +741,16 @@ assert_matrix_mutation_rejected \
     's/keep working until 0.3.0/keep working/' \
     "book/src/quickstart.md omits the APT compatibility window"
 assert_matrix_mutation_rejected \
+    "README 0.3.0 failure mode dropped" \
+    "README.md" \
+    's/fails until the entry is removed/fails/' \
+    "README.md omits the APT compatibility window"
+assert_matrix_mutation_rejected \
+    "website migration note dropped" \
+    "website/index.html" \
+    's/keep working until 0.3.0/keep working/' \
+    "website/index.html omits the APT compatibility window"
+assert_matrix_mutation_rejected \
     "release checklist line dropped" \
     "docs/releasing.md" \
     's/compatibility suites present until 0.3.0/compatibility suites present/' \
@@ -765,7 +785,8 @@ sed -i '/reprepro -b "${REPO_DIR}" includedeb main /d; /reprepro -b "${REPO_DIR}
 sed -i 's/`main` and `legacy` are compatibility suites/`main` and `legacy` were compatibility suites/; s/removed at 0.3.0/removed in 0.3.0/' \
     "$retired_root/docs/contracts.md"
 sed -i 's/compatibility suites present until 0.3.0/compatibility suites removed in 0.3.0/' "$retired_root/docs/releasing.md"
-sed -i 's/keep working until 0.3.0/stopped working in 0.3.0/' "$retired_root/README.md" "$retired_root/book/src/quickstart.md"
+sed -i 's/keep working until 0.3.0/stopped working in 0.3.0/' \
+    "$retired_root/README.md" "$retired_root/book/src/quickstart.md" "$retired_root/website/index.html"
 if ! checker_output=$(RELEASE_MATRIX_VERSION=0.3.0 python3 "$retired_root/test/check-release-matrix.py" 2>&1); then
     fail "release matrix checker rejected the retired compatibility-suite state at 0.3.0: $checker_output"
 fi
@@ -943,6 +964,15 @@ case "$apt_guard_output" in
     *"does not match stable APT suite"*) ;;
     *) fail "stable APT publisher did not reject the suite/version mismatch before signing setup: $apt_guard_output" ;;
 esac
+
+# The APT client lane replays a v0.1.4 client from this fixture; it must stay
+# byte-identical to what v0.1.4 published.
+if git -C "$repo_root" rev-parse -q --verify 'v0.1.4^{commit}' >/dev/null 2>&1; then
+    git -C "$repo_root" show v0.1.4:dist/apt/conf/distributions \
+        | cmp -s - "$repo_root/test/fixtures/apt-distributions-v0.1.4" \
+        || fail "test/fixtures/apt-distributions-v0.1.4 differs from v0.1.4:dist/apt/conf/distributions"
+    echo "APT fixture case: v0.1.4 distributions fixture matches the tag"
+fi
 
 # Run to completion under an ephemeral signing key, the publisher must fill
 # every suite the config declares: the codenamed pair, `main` with trixie's

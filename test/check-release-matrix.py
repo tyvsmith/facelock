@@ -302,7 +302,16 @@ require(
     f"APT config suites {sorted(declared_suites)} != {sorted(expected_suites | active_compat_suites)}",
 )
 for suite, fields in apt_stanzas.items():
-    for field, value in (("Architectures", "amd64"), ("Components", "facelock"), ("SignWith", "default")):
+    # Origin and Label are compared by every installed client: a change is an
+    # apt update failure, not a warning. Suite is not pinned; adding one where
+    # none existed passes apt.
+    for field, value in (
+        ("Origin", "tysmith"),
+        ("Label", "Ty Smith Packages"),
+        ("Architectures", "amd64"),
+        ("Components", "facelock"),
+        ("SignWith", "default"),
+    ):
         require(fields.get(field) == value, f"APT suite {suite} {field} drifted: {fields.get(field)!r}")
 for suite in active_compat_suites:
     description = apt_stanzas[suite].get("Description", "")
@@ -979,12 +988,29 @@ compat_window_claims = {
     ),
     "README.md": (
         re.sub(r"\s+", " ", readme),
-        ("`main` or `legacy`", f"keep working until {compat_retire_at}"),
+        (
+            "`main` or `legacy`",
+            f"keep working until {compat_retire_at}",
+            "`apt update` fails until the entry is removed",
+        ),
         f"keep working until {compat_retire_at}",
     ),
     "book/src/quickstart.md": (
         re.sub(r"\s+", " ", install_docs["book/src/quickstart.md"]),
-        ("`main` or `legacy`", f"keep working until {compat_retire_at}"),
+        (
+            "`main` or `legacy`",
+            f"keep working until {compat_retire_at}",
+            "`apt update` fails until the entry is removed",
+        ),
+        f"keep working until {compat_retire_at}",
+    ),
+    "website/index.html": (
+        re.sub(r"\s+", " ", install_docs["website/index.html"]),
+        (
+            "<code>main</code> or <code>legacy</code>",
+            f"keep working until {compat_retire_at}",
+            "<code>apt update</code> fails until the entry is removed",
+        ),
         f"keep working until {compat_retire_at}",
     ),
 }
