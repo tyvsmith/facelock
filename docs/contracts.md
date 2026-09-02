@@ -3017,10 +3017,12 @@ that commit the accepted embeddings exist only in memory, inside the wiping guar
 other exit (a cancellation, including one that lands on the final frame; the deadline
 passing with too few frames; a rejected set; a sealing error; a storage error; a daemon
 crash) leaves the store exactly as it was: no model, no embeddings, and a previous
-same-label template still in place and still authenticating. A model row that exists is
-therefore a complete template; `facelock list` and `Authenticate` can never observe an
-attempt that did not finish, and the store refuses to commit a model with no embeddings
-at all.
+same-label template still in place and still authenticating. A model row written by this
+version or later is therefore a complete template, and `facelock list` and `Authenticate`
+can never observe an attempt that did not finish; the store also refuses to commit a model
+with no embeddings at all. No migration inspects rows written by earlier versions: a
+partial model the old flow left behind stays until `facelock remove` or `facelock clear`
+deletes it.
 
 **Camera hold semantics (ADR 008).** `device.camera_release_secs` (default **3**) is the
 number of seconds the **daemon** keeps the camera streaming **after a failed
