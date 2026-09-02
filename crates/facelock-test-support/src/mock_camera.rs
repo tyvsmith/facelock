@@ -24,6 +24,10 @@ pub type MockCameraFactory = Box<
     dyn Fn(&facelock_core::config::Config) -> std::result::Result<MockCamera, String> + Send + Sync,
 >;
 
+/// Runs before each capture with that capture's 1-based ordinal. `Send` so a
+/// camera carrying one still satisfies the daemon's handler bounds.
+type CaptureHook = Box<dyn FnMut(usize) + Send>;
+
 /// A mock camera that replays pre-built frames.
 pub struct MockCamera {
     frames: Vec<Frame>,
@@ -31,6 +35,9 @@ pub struct MockCamera {
     #[allow(dead_code)]
     dark_threshold: f32,
     caps: CameraCaps,
+    capture_hook: Option<CaptureHook>,
+    /// Total captures served, across wrap-arounds.
+    served: usize,
 }
 
 impl MockCamera {
@@ -44,6 +51,8 @@ impl MockCamera {
             index: 0,
             dark_threshold: 0.4,
             caps: CameraCaps::default(),
+            capture_hook: None,
+            served: 0,
         }
     }
 
@@ -57,6 +66,8 @@ impl MockCamera {
             index: 0,
             dark_threshold: 0.4,
             caps: CameraCaps::default(),
+            capture_hook: None,
+            served: 0,
         }
     }
 
@@ -67,6 +78,8 @@ impl MockCamera {
             index: 0,
             dark_threshold: 0.4,
             caps: CameraCaps::default(),
+            capture_hook: None,
+            served: 0,
         }
     }
 
@@ -77,9 +90,17 @@ impl MockCamera {
         self
     }
 
+    /// Run `hook` before each capture with that capture's 1-based ordinal, so
+    /// a test can act in the middle of a capture loop — cancel the request
+    /// on the Nth frame, say — without a second camera type.
+    pub fn with_capture_hook(mut self, hook: impl FnMut(usize) + Send + 'static) -> Self {
+        self.capture_hook = Some(Box::new(hook));
+        self
+    }
+
     /// How many frames have been captured.
     pub fn captures(&self) -> usize {
-        self.index
+        self.served
     }
 
     /// Mock darkness check (fixed thresholds), kept as an inherent method now
@@ -100,6 +121,10 @@ impl CameraSource for MockCamera {
     }
 
     fn capture(&mut self) -> Result<Frame> {
+        self.served += 1;
+        if let Some(hook) = self.capture_hook.as_mut() {
+            hook(self.served);
+        }
         if self.index >= self.frames.len() {
             // Wrap around to allow repeated captures
             self.index = 0;
