@@ -368,6 +368,22 @@ impl SecurityConfig {
                 ));
             }
         }
+        // With coupling on and legacy rows barred, a camera with no usable
+        // identity would store a NULL row that can never authenticate.
+        if self.bind_templates_to_device
+            && !self.bind_legacy_templates
+            && fp.canonical_for_storage().is_none()
+        {
+            return Err(format!(
+                "refusing to enroll: this camera (identity \"{}\") exposes no usable USB \
+                 identity, so its template would be stored without a device id, and \
+                 security.bind_legacy_templates = false bars such templates from \
+                 authenticating. Set security.bind_legacy_templates = true to accept \
+                 templates with no device id, or enroll on a camera that reports idVendor \
+                 and idProduct.",
+                fp.canonical()
+            ));
+        }
         Ok(())
     }
 
@@ -1539,6 +1555,36 @@ allow_plaintext = true
         assert!(!model.bind_device_aad, "hard binding is off by default");
         assert_eq!(model.ensure_enrollment_binding_allowed(&unknown), Ok(()));
         assert_eq!(unknown.canonical_for_storage(), None);
+    }
+
+    /// #309 at `model`: with coupling on and legacy rows barred, a camera
+    /// with no usable identity would store a NULL row that can never
+    /// authenticate. Refused, naming the key that bars it. With coupling off
+    /// the legacy policy is never consulted, so the same camera enrolls.
+    #[test]
+    fn model_binding_refuses_an_unidentifiable_camera_when_legacy_rows_cannot_authenticate() {
+        let mut strict = binding_at(crate::types::DeviceMatchGranularity::Model);
+        strict.bind_legacy_templates = false;
+        let unknown = crate::types::DeviceFingerprint::default();
+        let err = strict
+            .ensure_enrollment_binding_allowed(&unknown)
+            .unwrap_err();
+        assert!(
+            err.contains("security.bind_legacy_templates"),
+            "must name the key: {err}"
+        );
+        assert!(
+            err.contains("bind_legacy_templates = true"),
+            "must name the remedy: {err}"
+        );
+        // An identified camera is unaffected.
+        assert_eq!(
+            strict.ensure_enrollment_binding_allowed(&camera_with_serial(None)),
+            Ok(())
+        );
+        // Coupling off: the legacy policy never applies, nothing to refuse.
+        strict.bind_templates_to_device = false;
+        assert_eq!(strict.ensure_enrollment_binding_allowed(&unknown), Ok(()));
     }
 
     /// A camera with no readable identity at all has no serial either. It

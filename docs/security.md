@@ -266,11 +266,14 @@ bind_legacy_templates    = true      # default; allow-with-warn for pre-V6 / NUL
   enrolled while coupling is off still matches once coupling is turned on.
 - **Legacy / unidentifiable cameras**: a pre-V6 template (NULL `device_id`) or one enrolled
   on a camera exposing no USB identity is stored NULL and governed by `bind_legacy_templates`.
-  A vendor id without a product id (or the reverse) is no identity: the matcher needs both,
-  so at `model` such a camera is stored NULL too rather than under an id that could never
-  match, and at `unit` it is refused.
+  A vendor id without a product id (or the reverse) is no identity: the matcher needs both.
+  At `model` such a camera is accepted as before, but what is stored changed (#309): NULL,
+  where it used to be an id that could never match. At `unit` it is refused.
   Default allow-with-warn so an upgrade never breaks existing enrollments; a one-line log
-  nudges re-enrollment. Set it `false` to require every template to carry a matching id.
+  nudges re-enrollment. Set it `false` to require every template to carry a matching id;
+  enrollment then refuses a camera with no usable identity (while coupling is on), since
+  the NULL row it would store could never authenticate. The error names
+  `bind_legacy_templates`.
 - **Enroll per camera**: enrolling the same user on a second camera creates a *second* template
   with its own `device_id` (the store already allows multiple models per user). Each template
   then authenticates only on its own camera. `facelock list` shows each template's camera.

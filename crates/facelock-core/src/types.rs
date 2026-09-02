@@ -1181,41 +1181,48 @@ mod tests {
         assert!(fp(Some("046d"), Some(""), None).is_unknown());
     }
 
-    /// The enrollment precondition and the authentication matcher agree:
-    /// every canonical id enrollment would persist for a camera matches that
-    /// same camera at the granularity it was accepted under, and under
-    /// `unit` there is always one: a NULL row would bind to nothing, so the
-    /// strictest policy never accepts a camera that stores one. Enumerates
-    /// every field shape the sysfs reader can hand back (#309).
+    /// The enrollment precondition and the authentication matcher agree, for
+    /// every field shape the sysfs reader can hand back (#309): a canonical
+    /// id enrollment would persist matches its own camera at the granularity
+    /// it was accepted under; and a NULL row is accepted only where it can
+    /// authenticate, never under `unit` (it would bind to nothing) and never
+    /// with legacy rows barred.
     #[test]
     fn accepted_enrollment_ids_match_their_own_camera() {
         use crate::config::SecurityConfig;
 
         let shapes = [None, Some(""), Some("x")];
         for granularity in [DeviceMatchGranularity::Model, DeviceMatchGranularity::Unit] {
-            let security = SecurityConfig {
-                device_match_granularity: granularity,
-                ..SecurityConfig::default()
-            };
-            for vid in shapes {
-                for pid in shapes {
-                    for serial in shapes {
-                        let live = fp(vid, pid, serial);
-                        if security.ensure_enrollment_binding_allowed(&live).is_err() {
-                            continue;
-                        }
-                        let stored = live.canonical_for_storage();
-                        if granularity == DeviceMatchGranularity::Unit {
-                            assert!(
-                                stored.is_some(),
-                                "{live:?} accepted at unit would be stored NULL and bind to nothing"
-                            );
-                        }
-                        if let Some(stored) = stored {
-                            assert!(
-                                device_ids_match(&stored, &live, granularity),
-                                "{stored:?} accepted at {granularity:?} cannot match its own camera"
-                            );
+            for allow_legacy in [true, false] {
+                let security = SecurityConfig {
+                    device_match_granularity: granularity,
+                    bind_legacy_templates: allow_legacy,
+                    ..SecurityConfig::default()
+                };
+                for vid in shapes {
+                    for pid in shapes {
+                        for serial in shapes {
+                            let live = fp(vid, pid, serial);
+                            if security.ensure_enrollment_binding_allowed(&live).is_err() {
+                                continue;
+                            }
+                            match live.canonical_for_storage() {
+                                Some(stored) => assert!(
+                                    device_ids_match(&stored, &live, granularity),
+                                    "{stored:?} accepted at {granularity:?} cannot match its own camera"
+                                ),
+                                None => {
+                                    assert_ne!(
+                                        granularity,
+                                        DeviceMatchGranularity::Unit,
+                                        "{live:?} accepted at unit would be stored NULL and bind to nothing"
+                                    );
+                                    assert!(
+                                        security.bind_legacy_templates,
+                                        "{live:?} accepted with legacy rows barred would store a NULL row that can never authenticate"
+                                    );
+                                }
+                            }
                         }
                     }
                 }
