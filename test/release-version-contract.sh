@@ -1403,10 +1403,15 @@ case "${1:-}" in
                 case "${2:-} ${3:-}" in
                     "-x /deb-package-lifecycle.sh") [ "$format" = deb ] ;;
                     "-x /rpm-service-pam-lifecycle.sh") [ "$format" = rpm ] ;;
-                    # Only the direct-RPM image carries the config-upgrade
-                    # stage; the COPR image has one mock build, so it has no
-                    # higher-versioned fixture to upgrade to.
-                    "-x /rpm-config-lifecycle.sh") case "$cid" in stub-facelock-rpm-pkg-*) ;; *) exit 1 ;; esac ;;
+                    # Both RPM images carry the config-upgrade stage. The
+                    # override drops it from the COPR image so the runner's
+                    # depth downgrade can be exercised.
+                    "-x /rpm-config-lifecycle.sh")
+                        case "$cid" in
+                            stub-facelock-copr-*)
+                                [ "${STUB_COPR_WITHOUT_CONFIG_LIFECYCLE:-0}" != 1 ] ;;
+                            *) [ "$format" = rpm ] ;;
+                        esac ;;
                     *) exit 1 ;;
                 esac ;;
             /pkg-validate.sh)
@@ -1563,6 +1568,28 @@ with open(sys.argv[1], encoding="utf-8") as handle:
     lane = json.load(handle)
 assert lane["status"] == "fail", lane
 PY
+
+# A lane whose image cannot run every stage its declared depth names records
+# what it actually ran. `partial` is a depth the release matrix requires of
+# nothing, so the aggregate refuses it rather than accepting a short lifecycle
+# as a full one (#230).
+if run_packaging_matrix STUB_COPR_WITHOUT_CONFIG_LIFECYCLE=1 >"$tmp_root/evidence-short-depth.log" 2>&1; then
+    fail "test-packaging-matrix recorded a COPR lane that skipped the config lifecycle"
+fi
+[ ! -e "$evidence_root/.packaging-matrix-verified" ] ||
+    fail "the short-depth run left a marker behind"
+grep -q 'rpm-config-lifecycle.sh' "$tmp_root/evidence-short-depth.log" ||
+    fail "the short-depth run did not name the stage it could not run: $(cat "$tmp_root/evidence-short-depth.log")"
+grep -q "depth is 'partial'" "$tmp_root/evidence-short-depth.log" ||
+    fail "the short-depth refusal did not name the depth: $(cat "$tmp_root/evidence-short-depth.log")"
+python3 - "$evidence_root/.packaging-evidence/test-copr-pkg-43.json" <<'DEPTH'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    lane = json.load(handle)
+assert lane["depth"] == "partial", lane
+DEPTH
 
 evidence_case_index=0
 assert_evidence_refused() {

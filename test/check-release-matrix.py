@@ -1159,6 +1159,24 @@ require(
     "onnxruntime" in copr_lifecycle_image,
     "COPR lifecycle image does not pin its system ONNX Runtime dependency",
 )
+# Full depth for an RPM lane is three stages. The upgrade candidate is a
+# re-versioned repack of the mock payload, not a second COPR build, so the
+# image has to carry both the stage script and the fixture it consumes.
+for stage in ("/rpm-service-pam-lifecycle.sh", "/rpm-config-lifecycle.sh"):
+    require(
+        f"COPY test{stage} {stage}" in copr_lifecycle_image,
+        f"COPR lifecycle image omits the {stage} stage its full depth claims",
+    )
+require(
+    "/facelock-test-upgrade.rpm" in copr_lifecycle_image
+    and "build-rpm-prebuilt.sh" in copr_lifecycle_image,
+    "COPR lifecycle image builds no higher-versioned upgrade candidate for rpm-config-lifecycle.sh",
+)
+require(
+    'lane_spec="${lane_spec/depth=full/depth=partial}"'
+    in (ROOT / "test/run-pkg-validate-systemd.sh").read_text(),
+    "the lifecycle runner records depth=full even when the image cannot run every stage",
+)
 require(
     "!target/copr-lane/facelock.rpm" in (ROOT / ".dockerignore").read_text(),
     ".dockerignore excludes the staged COPR RPM from the lifecycle image build context",

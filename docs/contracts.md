@@ -2236,14 +2236,23 @@ requires, a direct-RPM record offered as a COPR target's evidence is refused on
 `channel`, and a COPR record built from host binaries or run against a bundled
 runtime is refused on `build_origin` or `runtime_policy`.
 
-The COPR lane's `full` depth is the booted package lifecycle
-(`test/pkg-validate.sh` plus the RPM service/PAM lifecycle), not the
-`%config(noreplace)` upgrade halves: those need a second, higher-versioned
-package, and a second mock source rebuild per release is not what that
-assertion is worth. The direct-RPM lane runs them against the same
-`dist/facelock.spec`, so the file flags and scriptlets they pin are covered;
-what is not covered is a COPR-only upgrade difference, which is why this
-sentence exists.
+`full` depth for an RPM lane is three stages under booted systemd: the RPM
+service/PAM lifecycle, `test/pkg-validate.sh`, and the `%config(noreplace)`
+upgrade lifecycle. Each is optional by the presence of its script in the image,
+so `test/run-pkg-validate-systemd.sh` records `depth: partial` when a stage is
+missing. No lane in the release matrix requires `partial`, so the aggregate
+refuses such a record instead of accepting a short lifecycle as a full one.
+
+The third stage needs a second, higher-versioned package differing only in the
+config file. The COPR lane builds that upgrade candidate by repacking the
+payload mock just produced: binaries taken from the installed package,
+re-versioned to `<mock version>.1`, rebuilt through the same
+`dist/facelock.spec` with its cargo lines no-oped and `bundled_ort` still off,
+and re-checked with `validate-rpm.sh <rpm> copr`. It is the same trick the
+direct lane uses for its `0.0.0` to `0.0.1` pair. **It is a fixture, not a
+second COPR build**, and it is not byte-identical to one: what it pins is
+rpm's `%config(noreplace)` behaviour across an upgrade of a COPR-shaped
+package, not the reproducibility of a mock rebuild.
 
 The marker is refused, and the aggregate refuses to write it, unless all of
 the following hold: `schema` is 1; `commit` equals HEAD; `tree_clean` is true;

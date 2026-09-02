@@ -137,6 +137,22 @@ if podman exec "$cid" test -x /deb-package-lifecycle.sh; then
     podman exec "$cid" install -m 0644 /facelock-test.pam /etc/pam.d/facelock-test
 fi
 
+# An RPM image is one with no Debian lifecycle harness, and its full depth is
+# three stages: the service/PAM lifecycle, pkg-validate.sh, and the
+# %config(noreplace) upgrade lifecycle. A lane that runs fewer must not record
+# `depth=full`: the stages are optional-by-presence, which is exactly how a
+# lane could otherwise claim a complete lifecycle it never ran (#230). Missing
+# stages downgrade the recorded depth to `partial`, which the release matrix
+# requires of nothing and the aggregate therefore refuses.
+missing_stages=()
+if podman exec "$cid" test -x /deb-package-lifecycle.sh; then
+    :
+else
+    for stage in /rpm-service-pam-lifecycle.sh /rpm-config-lifecycle.sh; do
+        podman exec "$cid" test -x "$stage" || missing_stages+=("$stage")
+    done
+fi
+
 if podman exec "$cid" test -x /rpm-service-pam-lifecycle.sh; then
     podman exec "$cid" /rpm-service-pam-lifecycle.sh
 fi
@@ -160,7 +176,13 @@ fi
 
 # Recorded last, so the record's status covers every stage above it.
 if [ -n "${PACKAGING_LANE:-}" ]; then
-    python3 "$(dirname "$0")/packaging-evidence.py" record --lane "$PACKAGING_LANE" \
+    lane_spec="$PACKAGING_LANE"
+    if [ "${#missing_stages[@]}" -gt 0 ]; then
+        echo "WARNING: image carries no ${missing_stages[*]}; recording depth=partial," >&2
+        echo "         which no release-matrix lane accepts, instead of the declared depth." >&2
+        lane_spec="${lane_spec/depth=full/depth=partial}"
+    fi
+    python3 "$(dirname "$0")/packaging-evidence.py" record --lane "$lane_spec" \
         --results-log "$validate_log" --exit-status "$lane_status" "${runner_skips[@]}"
 fi
 exit "$lane_status"

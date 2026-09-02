@@ -44,10 +44,11 @@ COPY .github/workflows/scripts/validate-rpm.sh /validate-rpm.sh
 COPY test/pkg-validate.sh /pkg-validate.sh
 COPY test/polkit-agent-validate.sh /polkit-agent-validate.sh
 COPY test/rpm-service-pam-lifecycle.sh /rpm-service-pam-lifecycle.sh
+COPY test/rpm-config-lifecycle.sh /rpm-config-lifecycle.sh
 COPY test/rpm-runtime-smoke.sh /rpm-runtime-smoke.sh
 COPY test/pam.d/facelock-test /etc/pam.d/facelock-test
 RUN chmod +x /validate-rpm.sh /pkg-validate.sh /polkit-agent-validate.sh \
-    /rpm-service-pam-lifecycle.sh /rpm-runtime-smoke.sh
+    /rpm-service-pam-lifecycle.sh /rpm-config-lifecycle.sh /rpm-runtime-smoke.sh
 
 # The exact artifact under test, mock built from source by the stage before
 # this one. Installing it here rather than mounting it at run time is what lets
@@ -59,5 +60,46 @@ RUN /validate-rpm.sh /facelock-test-package.rpm copr \
     && rpm -q facelock onnxruntime \
     && ! rpm -q onnxruntime-devel \
     && dnf clean all
+
+# The %config(noreplace) upgrade lifecycle needs a second, higher-versioned
+# package whose only payload difference is the config file. A second mock
+# source rebuild would cost another full workspace compile for an assertion
+# about rpm's file flags, so this is a re-versioned repack of the payload mock
+# just built: the binaries come out of the installed package, the spec is the
+# same dist/facelock.spec (only its cargo lines no-oped, which the direct lane
+# already does for 0.0.0 -> 0.0.1), and the bundled_ort bcond stays off so the
+# artifact keeps the COPR shape. It is a fixture, not a second COPR build, and
+# it is not byte-identical to one.
+WORKDIR /build
+COPY Cargo.toml Cargo.lock LICENSE-MIT LICENSE-APACHE /build/
+COPY config/ /build/config/
+COPY systemd/ /build/systemd/
+COPY dbus/ /build/dbus/
+COPY dist/ /build/dist/
+COPY po/ /build/po/
+COPY scripts/install-locale-catalogs.sh /build/scripts/install-locale-catalogs.sh
+COPY test/build-rpm-prebuilt.sh /build/test/build-rpm-prebuilt.sh
+COPY .github/workflows/scripts/run-networkless.sh /run-networkless.sh
+RUN dnf -y install rpm-build && dnf clean all && \
+    chmod +x /build/test/build-rpm-prebuilt.sh /run-networkless.sh && \
+    mkdir -p /build/target/release && \
+    cp /usr/bin/facelock /build/target/release/facelock && \
+    cp /usr/bin/facelock-polkit-agent /build/target/release/facelock-polkit-agent && \
+    cp "$(rpm -ql facelock | grep security/pam_facelock.so)" \
+        /build/target/release/libpam_facelock.so && \
+    baseline="$(rpm -qp --queryformat '%{VERSION}' /facelock-test-package.rpm)" && \
+    cp /build/config/facelock.toml /tmp/facelock.toml.baseline && \
+    printf '\n# packaged-only-in-facelock-upgrade-rpm\n' >> /build/config/facelock.toml && \
+    /run-networkless.sh bash /build/test/build-rpm-prebuilt.sh "${baseline}.1" copr && \
+    RPM_FILE="$(find . -maxdepth 1 -name '*.rpm' -print -quit)" && \
+    cp "$RPM_FILE" /facelock-test-upgrade.rpm && \
+    /validate-rpm.sh /facelock-test-upgrade.rpm copr && \
+    cp /tmp/facelock.toml.baseline /build/config/facelock.toml && \
+    rm -rf ~/rpmbuild ./*.rpm /tmp/facelock.toml.baseline /build/target && \
+    cmp /build/config/facelock.toml /etc/facelock/config.toml
+
+# rpm-config-lifecycle.sh proves the version ordering by outcome: it upgrades
+# to this package and asserts the new packaged bytes landed, which cannot
+# happen unless `<baseline>.1` outranks `<baseline>`.
 
 CMD ["/pkg-validate.sh"]

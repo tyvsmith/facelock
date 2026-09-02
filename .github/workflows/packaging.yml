@@ -275,6 +275,7 @@ jobs:
         with:
           name: packaging-evidence-copr-${{ matrix.release }}
           path: .packaging-evidence/
+          include-hidden-files: true
           if-no-files-found: error
           overwrite: true
 
