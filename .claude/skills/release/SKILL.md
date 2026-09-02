@@ -27,11 +27,21 @@ It checks local tools (`git`, `cargo`, `just`, `podman`), the packaging files,
 and release secrets. Fix every `MISSING` before continuing.
 
 It also needs complete packaging evidence at this commit: the
-`packaging-evidence-*` artifacts of a successful `packaging.yml` run
-(`gh workflow run packaging.yml --ref main`, then wait for it), or a local
-`just test-packaging-matrix` (30-60+ minutes, needs the ONNX models). A
-`FACELOCK_ALLOW_MISSING_MODELS=1` run never counts, and a run whose lanes were
-path-filtered away has no artifacts and is refused.
+`packaging-evidence-*` artifacts of a successful `packaging.yml` run, or a
+local `just test-packaging-matrix` (30-60+ minutes, needs the ONNX models).
+Dispatch the workflow only from the exact commit preflight will validate, with
+nothing uncommitted:
+
+```bash
+[ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] && [ -z "$(git status --porcelain)" ] \
+  && gh workflow run packaging.yml --ref main
+```
+
+`--ref main` builds whatever `main` is when the run starts, and preflight
+refuses artifacts from any other commit, so a `main` that moved after the
+dispatch means a fresh dispatch. A `FACELOCK_ALLOW_MISSING_MODELS=1` run never
+counts, and a run whose lanes were path-filtered away has no artifacts and is
+refused.
 
 For Debian-family artifacts, the active release set is exactly Trixie and
 Resolute. Run both `just test-deb-trixie-pkg` and

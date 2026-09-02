@@ -44,7 +44,7 @@ schedules:
 |---|---|---|
 | Pull request | every lane | only when the diff reaches a package |
 | Nightly (07:00 UTC) | every lane | none |
-| `just release-preflight` | lane evidence uploaded by a green run at HEAD | none |
+| `just release-preflight` | lane evidence uploaded by a green run at HEAD, or the marker a local `just test-packaging-matrix` wrote at HEAD | none |
 
 The pull-request filter is a `changes` job running
 `.github/workflows/scripts/classify-changes.sh`, plain bash over a merge-base
