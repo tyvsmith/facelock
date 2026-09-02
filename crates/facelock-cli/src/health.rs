@@ -390,6 +390,10 @@ pub struct EnrollmentHealth {
 pub struct ModelSummary {
     pub id: u32,
     pub label: String,
+    /// Under hard device binding (`security.bind_device_aad`), this template
+    /// carries no device id: it still authenticates, and only a re-enrollment
+    /// binds it (#312). Always false with hard binding off.
+    pub unbound: bool,
 }
 
 /// Does the `is-enrolled` marker agree with the database?
@@ -448,6 +452,10 @@ fn probe_enrolled(config: &Config, user: &str) -> Fact<EnrollmentHealth> {
                     .into_iter()
                     .map(|m| ModelSummary {
                         id: m.id,
+                        unbound: config
+                            .security
+                            .classify_device_binding(m.device_id.as_deref())
+                            == facelock_core::types::DeviceBinding::LegacyUnbound,
                         label: m.label,
                     })
                     .collect(),
@@ -683,7 +691,22 @@ mod tests {
         let enrolled = fact.known().expect("readable store is a known answer");
         assert_eq!(enrolled.models.len(), 2);
         assert_eq!(enrolled.models[0].label, "front");
+        assert!(
+            !enrolled.models[0].unbound,
+            "hard binding is off, so no row is unbound"
+        );
         assert_eq!(enrolled.marker, MarkerDiagnostic::Consistent);
+
+        // #312: the same id-less rows under hard binding are reported as
+        // unbound, and still listed (they authenticate).
+        let hard = config_with(&format!(
+            "[storage]\ndb_path = \"{}\"\n[security]\nbind_device_aad = true\n",
+            db_path.display()
+        ));
+        let fact = probe_enrolled(&hard, "alice");
+        let enrolled = fact.known().unwrap();
+        assert_eq!(enrolled.models.len(), 2);
+        assert!(enrolled.models.iter().all(|m| m.unbound));
 
         // A user with no rows: known-empty, and their absent marker agrees.
         let fact = probe_enrolled(&config, "bob");

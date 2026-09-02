@@ -410,18 +410,54 @@ impl SecurityConfig {
                 identity: identity(),
             });
         }
-        Ok(())
+        self.require_device_aad(fp.canonical_for_storage().as_deref())
+            .map(|_| ())
     }
 
-    /// AAD bytes to bind an encrypted template to its enrolling camera, when
-    /// opt-in hard device binding (`bind_device_aad`) is enabled. Returns `None`
-    /// when disabled, or when no device id is available — so an unstable/absent
-    /// id degrades to unbound encryption rather than an un-decryptable template.
+    /// The AAD an enrollment must seal under, or why it must not proceed.
+    ///
+    /// The enrollment-path counterpart of [`Self::device_aad`]: with hard
+    /// binding on, a missing device id is a refusal here rather than the
+    /// unbound template `device_aad` would quietly produce (#312). `Ok(None)`
+    /// when hard binding is off: ordinary encryption, no AAD.
+    pub fn require_device_aad(&self, device_id: Option<&str>) -> Result<Option<Vec<u8>>, String> {
+        if !self.bind_device_aad {
+            return Ok(None);
+        }
+        crate::types::device_binding_aad(device_id)
+            .map(Some)
+            .ok_or_else(|| {
+                "refusing to enroll: security.bind_device_aad = true seals each template \
+                 under its enrolling camera's device id, and this camera exposes no usable \
+                 USB identity, so the template could not be bound. Set \
+                 security.bind_device_aad = false to enroll without hard binding, or enroll \
+                 on a camera that reports both idVendor and idProduct."
+                    .into()
+            })
+    }
+
+    /// AAD bytes to decrypt a stored template under opt-in hard device
+    /// binding (`bind_device_aad`), from the id its row records. `None` when
+    /// disabled, and `None` for a row with no device id: such a row was sealed
+    /// without AAD (a legacy unbound row, see [`Self::classify_device_binding`])
+    /// and still decrypts, so enabling hard binding never locks anyone out.
+    /// This is the authentication path; enrollment uses
+    /// [`Self::require_device_aad`], which refuses instead.
     pub fn device_aad(&self, device_id: Option<&str>) -> Option<Vec<u8>> {
         if self.bind_device_aad {
             crate::types::device_binding_aad(device_id)
         } else {
             None
+        }
+    }
+
+    /// How a stored template stands under the hard-binding policy, from the
+    /// device id its row records.
+    pub fn classify_device_binding(&self, device_id: Option<&str>) -> crate::types::DeviceBinding {
+        if self.bind_device_aad && crate::types::device_binding_aad(device_id).is_none() {
+            crate::types::DeviceBinding::LegacyUnbound
+        } else {
+            crate::types::DeviceBinding::Bound
         }
     }
 }
@@ -1500,6 +1536,10 @@ allow_plaintext = true
         assert!(config.ensure_enroll_encryption_allowed().is_ok());
     }
 
+    /// The authentication-side derivation: off by default, and under opt-in
+    /// a row with no device id decrypts without AAD. That `None` is what
+    /// keeps a legacy unbound row authenticating after hard binding is
+    /// enabled; it is not a licence to enroll one (see `require_device_aad`).
     #[test]
     fn device_aad_gated_by_opt_in() {
         let mut config = Config::parse("[device]\npath = \"/dev/video0\"\n").unwrap();
@@ -1511,8 +1551,87 @@ allow_plaintext = true
             config.security.device_aad(Some("046d:085e:X")),
             crate::types::device_binding_aad(Some("046d:085e:X"))
         );
-        // Opt-in but no device id → still None (degrade, never un-decryptable).
+        // Opt-in, legacy row with no device id → decrypts unbound.
         assert_eq!(config.security.device_aad(None), None);
+        assert_eq!(
+            config.security.classify_device_binding(None),
+            crate::types::DeviceBinding::LegacyUnbound
+        );
+    }
+
+    fn hard_binding() -> SecurityConfig {
+        SecurityConfig {
+            bind_device_aad: true,
+            ..SecurityConfig::default()
+        }
+    }
+
+    /// #312: the enrollment-side derivation fails closed. With hard binding
+    /// on, a missing or empty device id is a refusal naming the key, never an
+    /// unbound template.
+    #[test]
+    fn require_device_aad_refuses_without_a_device_id() {
+        for device_id in [None, Some("")] {
+            let err = hard_binding().require_device_aad(device_id).unwrap_err();
+            assert!(
+                err.contains("security.bind_device_aad"),
+                "must name the key: {err}"
+            );
+            assert!(
+                err.contains("bind_device_aad = false"),
+                "must name the remedy: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn require_device_aad_binds_a_stable_id() {
+        assert_eq!(
+            hard_binding().require_device_aad(Some("046d:085e:X")),
+            Ok(crate::types::device_binding_aad(Some("046d:085e:X")))
+        );
+    }
+
+    /// Ordinary encryption: hard binding off means no AAD, id or not.
+    #[test]
+    fn require_device_aad_is_absent_when_hard_binding_is_off() {
+        let ordinary = SecurityConfig::default();
+        assert_eq!(ordinary.require_device_aad(None), Ok(None));
+        assert_eq!(ordinary.require_device_aad(Some("046d:085e:X")), Ok(None));
+    }
+
+    /// The enrollment precondition carries the same rule, keyed on the live
+    /// fingerprint: no usable identity under hard binding is refused before
+    /// any model write; an identified camera passes.
+    #[test]
+    fn hard_binding_refuses_enrollment_of_an_unidentifiable_camera() {
+        let policy = hard_binding();
+        for fp in [
+            crate::types::DeviceFingerprint::default(),
+            crate::types::DeviceFingerprint {
+                vid: Some("046d".into()),
+                ..Default::default()
+            },
+        ] {
+            let err = policy.ensure_enrollment_binding_allowed(&fp).unwrap_err();
+            assert!(err.contains("security.bind_device_aad"), "{err}");
+        }
+        assert_eq!(
+            policy.ensure_enrollment_binding_allowed(&camera_with_serial(None)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn classify_device_binding_reports_only_id_less_rows_under_hard_binding() {
+        use crate::types::DeviceBinding::{Bound, LegacyUnbound};
+        let policy = hard_binding();
+        assert_eq!(policy.classify_device_binding(None), LegacyUnbound);
+        assert_eq!(policy.classify_device_binding(Some("")), LegacyUnbound);
+        assert_eq!(policy.classify_device_binding(Some("046d:085e:")), Bound);
+        // With hard binding off nothing is asked of any row.
+        let ordinary = SecurityConfig::default();
+        assert_eq!(ordinary.classify_device_binding(None), Bound);
     }
 
     /// A same-model camera fingerprint with the given serial field.

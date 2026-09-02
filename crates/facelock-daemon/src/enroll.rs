@@ -137,9 +137,18 @@ pub fn enroll<C: CameraSource, E: FaceProcessor>(
     cancel: &CancelToken,
 ) -> EnrollOutcome {
     // Opt-in hard device binding (Plan 04): when enabled, fold this camera's
-    // device id into the AES-GCM AAD so the template can only be decrypted under
-    // the same camera. `None` when disabled or when no device id is available.
-    let device_aad = config.security.device_aad(device_id);
+    // device id into the AES-GCM AAD so the template can only be decrypted
+    // under the same camera. With no device id there is nothing to bind to,
+    // and that is a refusal (#312), made before the store is touched so a
+    // re-enrollment under the same label keeps its previous template. The
+    // callers judge the live fingerprint first; this holds for every caller.
+    let device_aad = match config.security.require_device_aad(device_id) {
+        Ok(aad) => aad,
+        Err(message) => {
+            warn!(user, label, "enroll refused: {message}");
+            return EnrollOutcome::Error { message };
+        }
+    };
 
     // Shared deadline formula (see Config::enroll_timeout_secs): the CLI's
     // D-Bus Enroll timeout is derived from the same value plus margin.
@@ -980,5 +989,49 @@ mod tests {
             previous_rows,
             "the previous model's embeddings are untouched"
         );
+    }
+
+    /// #312, inside the loop itself: with hard binding on and no device id,
+    /// enrollment is refused before a frame is captured or the store is
+    /// touched, so a same-label re-enrollment keeps the template it had.
+    #[test]
+    fn hard_binding_without_a_device_id_refuses_before_touching_the_store() {
+        use facelock_core::traits::CameraSource;
+        use facelock_test_support::{MockCamera, MockFaceEngine, fixtures};
+
+        let store = FaceStore::open_memory().unwrap();
+        let kept = store
+            .add_model("alice", "front", &fixtures::known_embedding(1), "")
+            .unwrap();
+        let config = Config::parse("[security]\nbind_device_aad = true\n").unwrap();
+        let mut camera = MockCamera::bright(640, 480, 3);
+        let mut engine = MockFaceEngine::one_face(fixtures::known_embedding(0));
+
+        let response = enroll(
+            &mut camera,
+            &mut engine,
+            &store,
+            &config,
+            "alice",
+            "front",
+            None,
+            None,
+            &CancelToken::new(),
+        );
+
+        match &response {
+            EnrollOutcome::Error { message } => {
+                assert!(
+                    message.contains("security.bind_device_aad"),
+                    "got: {message}"
+                )
+            }
+            other => panic!("expected a hard-binding refusal, got: {other:?}"),
+        }
+        assert_eq!(camera.captures(), 0, "refused before any capture");
+        let models = store.list_models("alice").unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, kept, "the previous template must survive");
+        assert_eq!(camera.capabilities().fingerprint.canonical(), "::");
     }
 }

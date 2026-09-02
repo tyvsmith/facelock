@@ -3053,7 +3053,20 @@ request.
 **Hard device binding (opt-in).** `security.bind_device_aad = true` folds the enrolling
 camera's `device_id` into the AES-GCM AAD, so a template cannot be decrypted under a
 different camera. Default false (fails closed on unstable ids). Complements the advisory
-device coupling of Plan 02.
+device coupling of Plan 02. The contract (#312):
+
+- Enrollment with the flag on and no non-empty canonical `device_id` is refused before the
+  first model write, in the daemon `Enroll` path and the direct path (through
+  `SecurityConfig::ensure_enrollment_binding_allowed`), and again inside the enrollment
+  loop (`SecurityConfig::require_device_aad`). The error names the key and the remedy.
+- Authentication derives the AAD from each row's own `device_id` (`SecurityConfig::device_aad`).
+  A row with a NULL or empty `device_id` decrypts with no AAD and is classified
+  `LegacyUnbound`; it authenticates as before. The daemon logs a warning naming such model ids
+  at each compare-set load; `facelock list` renders `unbound (re-enroll to bind)` in the Camera
+  column; `facelock status` renders `#N: label, unbound (re-enroll to bind)`. The `--json`
+  payloads are unchanged (`device_id` is `""` for such a row).
+- With the flag off, templates are sealed with no AAD. An absent AAD and an empty AAD are the
+  same to the cipher; that equivalence is the ordinary-encryption contract.
 
 **TPM sealed-key format & unseal semantics (Plan 04).** The sealed-key blob is versioned:
 `0x01` = no PCR policy; `0x03` = PCR-bound, and self-describes its PCR index list. A

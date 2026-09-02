@@ -292,8 +292,11 @@ the AAD bytes for folding `device_id` into the AES-GCM Additional Authenticated 
 wires this through enroll and the decrypt path behind `security.bind_device_aad` (default
 false): when enabled, each encrypted template is bound to its enrolling camera's id and cannot
 be decrypted under a different one. It stays **opt-in** because hard binding fails closed on
-the unstable/absent ids described above — enabling it on such hardware would degrade every
-auth to password. Default-off keeps the never-lockout guarantee for everyone else.
+the unstable/absent ids described above: enrollment on a camera with no usable identity is
+refused outright (#312), and an id that changes between enrollment and authentication fails
+decryption, so on such hardware every auth would fall through to password. Default-off keeps
+the never-lockout guarantee for everyone else. What enabling it does to an existing store is
+in §3.C Encryption at Rest below.
 
 ### 2. Model Tampering
 
@@ -593,6 +596,26 @@ camera's `device_id` is folded into the AES-GCM Additional Authenticated Data, s
 sealed under one camera cannot be decrypted under another — the cryptographic complement to
 the advisory device coupling in §1.D. Default off: hard binding fails closed on unstable or
 absent device ids, so it is opt-in only.
+
+*Fail closed at enrollment (#312).* With the flag on, enrollment on a camera with no usable
+USB identity (no non-empty canonical `device_id`) is refused before any model or embedding is
+written, in the daemon and the direct path alike; the error names `security.bind_device_aad`
+and the way out (disable it, or use a camera that reports `idVendor` and `idProduct`). The
+enrollment loop checks again on its own (`SecurityConfig::require_device_aad`), so no caller
+can seal an unbound template under the flag. Without the flag, templates are sealed with no
+AAD, which the cipher treats as an empty AAD: that equivalence is the ordinary-encryption
+contract and is pinned by a test in `facelock-tpm`.
+
+*Legacy unbound rows, never a lockout.* A row with a NULL or empty `device_id` (enrolled
+before the flag, or before device coupling existed) was sealed with no AAD, and decrypts with
+none: it keeps authenticating after the flag is turned on. It is classified `LegacyUnbound`
+rather than passed off as bound, and reported in three places: the daemon logs a warning
+naming the model ids at each compare-set load, `facelock list` shows `unbound (re-enroll to
+bind)` in the Camera column, and `facelock status` lists it as `#N: label, unbound (re-enroll
+to bind)`. Re-enroll the user on the camera to bind the template. A row that *does* carry a
+`device_id` but was sealed before the flag was enabled has no AAD to match the one now derived
+from its id, so it fails to decrypt; the error says so and names the re-enrollment that fixes
+it. Enabling the flag over an existing store therefore means re-enrolling every user on it.
 
 **TPM PCR binding is implemented and enforced when enabled; it is opt-in by default
 (`tpm.pcr_binding`, finding #5).** With `tpm.pcr_binding = true`, the sealed key object is

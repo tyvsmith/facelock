@@ -1214,6 +1214,7 @@ mod tests {
             models: vec![ModelSummary {
                 id: 1,
                 label: "front".into(),
+                unbound: false,
             }],
             marker: MarkerDiagnostic::Unreadable {
                 why: "malformed marker".into(),

@@ -453,19 +453,33 @@ pub fn device_allowed_model_ids(
         .collect()
 }
 
-/// AAD seam for Plan 04 (opt-in *hard* device binding).
+/// AAD bytes for opt-in *hard* device binding (Plan 04).
 ///
 /// Plan 02 binds templates advisorily (skip-on-mismatch in the compare loop).
-/// Plan 04 may additionally fold the enrolling camera's identity into the
-/// AES-GCM Additional Authenticated Data so a sealed embedding cannot even be
-/// decrypted under a different device id. This helper defines the canonical AAD
-/// bytes for that future wiring; it is intentionally not yet consumed by the
-/// seal/unseal path (doing so now would fail *hard* on unstable ids, which
-/// Plan 02 must not).
+/// Behind `security.bind_device_aad`, enrollment additionally folds the
+/// enrolling camera's identity into the AES-GCM Additional Authenticated Data
+/// so a sealed embedding cannot even be decrypted under a different device
+/// id. `None` for a missing or empty id: at authentication that is how a
+/// legacy unbound row decrypts; at enrollment it is a refusal
+/// (`SecurityConfig::require_device_aad`).
 pub fn device_binding_aad(device_id: Option<&str>) -> Option<Vec<u8>> {
     device_id
         .filter(|s| !s.is_empty())
         .map(|s| format!("facelock-device:{s}").into_bytes())
+}
+
+/// A stored template's standing under opt-in hard device binding
+/// (`security.bind_device_aad`), as `SecurityConfig::classify_device_binding`
+/// reads it off the row's `device_id`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceBinding {
+    /// The row carries a device id, so under hard binding it was sealed under
+    /// that camera's AAD; with hard binding off nothing is asked of it.
+    Bound,
+    /// Hard binding is on but the row has no device id: it was sealed with no
+    /// AAD, before binding was enabled or on a camera with no identity. It
+    /// still authenticates (never a lockout); re-enroll to bind it.
+    LegacyUnbound,
 }
 
 /// Why an authentication attempt that saw matching frames still failed.

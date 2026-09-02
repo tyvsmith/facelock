@@ -20,7 +20,8 @@
 //! machine-facing (they cross D-Bus and land in logs) and must not localize.
 
 use facelock_core::config::Config;
-use facelock_core::types::{FaceEmbedding, Wiped};
+use facelock_core::types::{DeviceBinding, FaceEmbedding, Wiped};
+use tracing::warn;
 
 /// How the decrypt loop reaches a TPM sealer when a TPM-sealed row appears.
 ///
@@ -79,6 +80,10 @@ pub fn needs_raw_rows(config: &Config, software_sealer_active: bool) -> bool {
 /// blobs unseal through `tpm`; plaintext rows are size-checked and cast. The
 /// first failing row fails the whole load — a partial compare set would
 /// silently narrow authentication.
+///
+/// Under hard device binding, rows with no device id are legacy unbound:
+/// they decrypt (never a lockout) and are reported once per load so the
+/// operator knows which templates to re-enroll (#312).
 pub fn decrypt_user_embeddings(
     raw_rows: &[(u32, Vec<u8>, bool, Option<String>)],
     config: &Config,
@@ -87,7 +92,36 @@ pub fn decrypt_user_embeddings(
 ) -> Result<Vec<(u32, FaceEmbedding)>, String> {
     let mut results = Vec::with_capacity(raw_rows.len());
     decrypt_rows_into(raw_rows, config, software_sealer, tpm, &mut results)?;
+    let unbound = unbound_model_ids(raw_rows, config);
+    if !unbound.is_empty() {
+        warn!(
+            models = ?unbound,
+            "hard device binding: templates with no device id authenticate as unbound (re-enroll to bind)"
+        );
+    }
     Ok(results)
+}
+
+/// The models among `raw_rows` that stand as [`DeviceBinding::LegacyUnbound`]
+/// under the configured policy, each listed once. Empty unless
+/// `security.bind_device_aad` is on.
+pub fn unbound_model_ids(
+    raw_rows: &[(u32, Vec<u8>, bool, Option<String>)],
+    config: &Config,
+) -> Vec<u32> {
+    let mut unbound: Vec<u32> = raw_rows
+        .iter()
+        .filter(|(_, _, _, device_id)| {
+            config
+                .security
+                .classify_device_binding(device_id.as_deref())
+                == DeviceBinding::LegacyUnbound
+        })
+        .map(|(id, ..)| *id)
+        .collect();
+    unbound.sort_unstable();
+    unbound.dedup();
+    unbound
 }
 
 /// The decrypt loop, accumulating into `out` through [`Wiped`]'s borrowed
@@ -114,7 +148,21 @@ fn decrypt_rows_into(
             let aad = config.security.device_aad(device_id.as_deref());
             sealer
                 .unseal_embedding_with_aad(blob, aad.as_deref())
-                .map_err(|e| format!("software decryption failed for embedding {id}: {e}"))?
+                .map_err(|e| {
+                    let mut message = format!("software decryption failed for embedding {id}: {e}");
+                    // A row that records a device id but was sealed before
+                    // hard binding was enabled carries no AAD, so it cannot
+                    // open under the one derived now. Say so: the fix is a
+                    // re-enrollment, not a key hunt.
+                    if aad.is_some() {
+                        message.push_str(
+                            "; under security.bind_device_aad a template sealed before hard \
+                             binding was enabled cannot open under its device AAD, re-enroll \
+                             to bind it",
+                        );
+                    }
+                    message
+                })?
         } else if *sealed {
             // TPM-sealed (version byte 0x01/0x03)
             tpm.sealer()?
@@ -314,6 +362,69 @@ mod tests {
                 "row {id} must be zeroized on the AAD-mismatch path"
             );
         }
+    }
+
+    /// #312: enabling hard binding over an existing store. The row sealed
+    /// without AAD (before the flag) still decrypts with the `None` its
+    /// missing device id derives, so authentication goes on; and it is
+    /// classified as unbound rather than passed off as satisfying the policy.
+    #[test]
+    fn legacy_unbound_row_still_authenticates_and_is_classified_unbound() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("facelock.key");
+        facelock_tpm::SoftwareSealer::generate_key_file(&key_path).unwrap();
+        let sealer = facelock_tpm::SoftwareSealer::from_key_file(&key_path).unwrap();
+
+        let hard = Config::parse("[security]\nbind_device_aad = true\n").unwrap();
+        let bound_id = "046d:085e:";
+        let bound_emb: FaceEmbedding = [0.25; 512];
+        let bound_blob = sealer
+            .seal_embedding_with_aad(
+                &bound_emb,
+                hard.security.device_aad(Some(bound_id)).as_deref(),
+            )
+            .unwrap();
+        let legacy_emb: FaceEmbedding = [0.75; 512];
+        let legacy_blob = sealer.seal_embedding_with_aad(&legacy_emb, None).unwrap();
+        let rows = vec![
+            (1u32, bound_blob, true, Some(bound_id.to_string())),
+            (2u32, legacy_blob.clone(), true, None),
+            (2u32, legacy_blob, true, Some(String::new())),
+        ];
+
+        let out = decrypt_user_embeddings(&rows, &hard, Some(&sealer), TpmAccess::Held(None))
+            .expect("a legacy unbound row must never fail the load");
+        assert_eq!(out.len(), 3, "every row authenticates");
+        assert_eq!(out[1], (2, legacy_emb));
+
+        assert_eq!(unbound_model_ids(&rows, &hard), vec![2]);
+        // Ordinary encryption asks nothing of any row.
+        let ordinary = Config::parse("").unwrap();
+        assert!(unbound_model_ids(&rows, &ordinary).is_empty());
+    }
+
+    /// A row that records a device id but predates hard binding cannot open
+    /// under the AAD derived now; the error says which re-enrollment fixes it.
+    #[test]
+    fn aad_mismatch_under_hard_binding_suggests_re_enrollment() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("facelock.key");
+        facelock_tpm::SoftwareSealer::generate_key_file(&key_path).unwrap();
+        let sealer = facelock_tpm::SoftwareSealer::from_key_file(&key_path).unwrap();
+
+        let emb: FaceEmbedding = [0.5; 512];
+        let unbound_blob = sealer.seal_embedding_with_aad(&emb, None).unwrap();
+        let rows = vec![(9u32, unbound_blob, true, Some("046d:085e:".to_string()))];
+
+        let hard = Config::parse("[security]\nbind_device_aad = true\n").unwrap();
+        let err = decrypt_user_embeddings(&rows, &hard, Some(&sealer), TpmAccess::Held(None))
+            .unwrap_err();
+        assert!(
+            err.contains("software decryption failed for embedding 9"),
+            "{err}"
+        );
+        assert!(err.contains("re-enroll to bind"), "{err}");
+        assert!(err.contains("security.bind_device_aad"), "{err}");
     }
 
     /// `needs_raw_rows` forces the slow path whenever sealed rows may exist,

@@ -271,8 +271,12 @@
 # AES-GCM Additional Authenticated Data, so an encrypted template CANNOT be
 # decrypted under a different camera — a cryptographic complement to the advisory
 # skip-on-mismatch coupling above. Default FALSE: hard binding fails closed on
-# unstable/absent device ids (which would otherwise degrade to password on every
-# auth), so enable it only on hardware with a stable USB identity.
+# unstable/absent device ids, so enable it only on hardware with a stable USB
+# identity. With it on, enrollment on a camera with no usable identity is
+# refused before any template is written. Templates enrolled earlier with no
+# device id still authenticate and are listed as "unbound (re-enroll to bind)";
+# templates that carry a device id but predate the flag fail to decrypt until
+# re-enrolled. Plan on re-enrolling every user after enabling this.
 # bind_device_aad = false
 
 # Allow storing plaintext (unencrypted) face templates. Only honored when

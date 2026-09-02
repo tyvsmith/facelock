@@ -85,6 +85,11 @@ pub enum StatusMessage {
     StatusModelCount {
         count: usize,
     },
+    /// A template with no device id under hard device binding: it still
+    /// authenticates, and only a re-enrollment binds it (#312).
+    StatusModelUnbound {
+        label: String,
+    },
     StatusMarkerMismatch {
         marker: u32,
         store: u32,
@@ -217,6 +222,10 @@ impl Message for StatusMessage {
                 translate("{count} model(s)"),
                 &[("count", count.to_string())],
             ),
+            StatusModelUnbound { label } => fill(
+                translate("{label}, unbound (re-enroll to bind)"),
+                &[("label", label.clone())],
+            ),
             StatusMarkerMismatch { marker, store } => fill(
                 translate(
                     "out of date (marker says {marker}, database has {store}) — run 'sudo facelock setup' to reconcile",
@@ -272,7 +281,7 @@ impl Message for StatusMessage {
 /// above: no wildcard arm, so a variant that renders nothing does not build.
 #[cfg(test)]
 impl super::Samples for StatusMessage {
-    const VARIANT_COUNT: usize = 59;
+    const VARIANT_COUNT: usize = 60;
 
     fn samples() -> Vec<Self> {
         use StatusMessage::*;
@@ -319,6 +328,7 @@ impl super::Samples for StatusMessage {
             StatusPlaintextEmbeddings,
             StatusNoFacesEnrolled,
             StatusModelCount { count: 2 },
+            StatusModelUnbound { label: s("front") },
             StatusMarkerMismatch {
                 marker: 3,
                 store: 2,
