@@ -516,6 +516,76 @@ impl FaceStore {
         Ok(model_id)
     }
 
+    /// Replace whatever model `user` has under `label` with a new one holding
+    /// every blob in `embeddings`, as one transaction. Returns the new model
+    /// ID.
+    ///
+    /// This is enrollment's only write (#308): the template a later
+    /// authentication can load either has all of its embeddings or does not
+    /// exist. `UNIQUE(user, label)` is why the old model is deleted inside the
+    /// same transaction rather than beforehand — a failure anywhere after the
+    /// delete rolls the old model back into place, so a re-enrollment that
+    /// fails keeps the template it was replacing.
+    ///
+    /// `sealed` applies to every blob: an enrollment is encrypted or plain,
+    /// never mixed. An empty `embeddings` is refused — a model with nothing to
+    /// compare against must never exist, whatever the caller's gates said.
+    #[allow(clippy::too_many_arguments)] // mirrors add_model_raw_with_device plus the blob set
+    pub fn replace_model_with_embeddings(
+        &self,
+        user: &str,
+        label: &str,
+        embeddings: &[&[u8]],
+        sealed: bool,
+        embedder_model: &str,
+        device_id: Option<&str>,
+    ) -> Result<u32> {
+        if embeddings.is_empty() {
+            return Err(StoreError::Query {
+                path: self.path.clone(),
+                detail: format!("refusing to store a model for {user}/{label} with no embeddings"),
+            });
+        }
+
+        let tx = self.conn.unchecked_transaction().map_err(|e| self.err(e))?;
+
+        // Cascades to the old model's embeddings (`ON DELETE CASCADE`, with
+        // foreign keys on for every connection this crate opens).
+        tx.execute(
+            "DELETE FROM face_models WHERE user = ?1 AND label = ?2",
+            params![user, label],
+        )
+        .map_err(|e| self.err(e))?;
+
+        // Stored as INTEGER (i64) in SQLite. Cast keeps the code portable
+        // across rusqlite versions (0.39+ no longer impls ToSql/FromSql for u64
+        // because SQLite INTEGER is signed 64-bit).
+        let created_at: i64 = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        tx.execute(
+            "INSERT INTO face_models (user, label, created_at, embedder_model, device_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![user, label, created_at, embedder_model, device_id],
+        )
+        .map_err(|e| self.err(e))?;
+
+        let model_id = tx.last_insert_rowid() as u32;
+        let sealed_int: i64 = if sealed { 1 } else { 0 };
+
+        for data in embeddings {
+            tx.execute(
+                "INSERT INTO face_embeddings (model_id, embedding, sealed) VALUES (?1, ?2, ?3)",
+                params![model_id, data, sealed_int],
+            )
+            .map_err(|e| self.err(e))?;
+        }
+
+        tx.commit().map_err(|e| self.err(e))?;
+        Ok(model_id)
+    }
+
     /// Update an existing embedding's data and sealed flag in-place.
     pub fn update_embedding_sealed(
         &self,
@@ -1206,6 +1276,155 @@ mod tests {
             .unwrap();
         let models = store.list_models("bob").unwrap();
         assert_eq!(models[0].device_id.as_deref(), Some("1234:5678:"));
+    }
+
+    /// Distinct raw blobs standing in for one enrollment's embeddings.
+    fn blobs(count: u8) -> Vec<Vec<u8>> {
+        (0..count).map(|i| vec![i; 8]).collect()
+    }
+
+    #[test]
+    fn replace_model_stores_every_embedding_under_one_model() {
+        let store = FaceStore::open_memory().unwrap();
+        let blobs = blobs(3);
+        let refs: Vec<&[u8]> = blobs.iter().map(Vec::as_slice).collect();
+
+        let id = store
+            .replace_model_with_embeddings(
+                "alice",
+                "front",
+                &refs,
+                true,
+                "w600k",
+                Some("046d:085e:S"),
+            )
+            .unwrap();
+
+        let models = store.list_models("alice").unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, id);
+        assert_eq!(models[0].label, "front");
+        assert_eq!(models[0].embedder_model, "w600k");
+        assert_eq!(models[0].device_id.as_deref(), Some("046d:085e:S"));
+
+        let mut rows = store.get_user_embeddings_raw("alice").unwrap();
+        rows.sort_by(|a, b| a.1.cmp(&b.1));
+        assert_eq!(rows.len(), 3, "every blob lands under the one model");
+        for (row, blob) in rows.iter().zip(&blobs) {
+            assert_eq!(row.0, id);
+            assert_eq!(&row.1, blob);
+            assert!(row.2, "sealed flag applies to every row");
+        }
+    }
+
+    #[test]
+    fn replace_model_replaces_only_the_same_user_and_label() {
+        let store = FaceStore::open_memory().unwrap();
+        let emb = test_embedding();
+        let old_front = store.add_model("alice", "front", &emb, "").unwrap();
+        let alice_side = store.add_model("alice", "side", &emb, "").unwrap();
+        let bob_front = store.add_model("bob", "front", &emb, "").unwrap();
+
+        let blobs = blobs(2);
+        let refs: Vec<&[u8]> = blobs.iter().map(Vec::as_slice).collect();
+        let new_front = store
+            .replace_model_with_embeddings("alice", "front", &refs, false, "", None)
+            .unwrap();
+
+        assert_ne!(new_front, old_front, "the replacement is a new row");
+        let mut alice: Vec<(u32, String)> = store
+            .list_models("alice")
+            .unwrap()
+            .into_iter()
+            .map(|m| (m.id, m.label))
+            .collect();
+        alice.sort();
+        assert_eq!(
+            alice,
+            vec![
+                (alice_side, "side".to_string()),
+                (new_front, "front".to_string())
+            ]
+        );
+        assert_eq!(store.list_models("bob").unwrap()[0].id, bob_front);
+
+        // The old model's embedding went with it; only the new blobs remain
+        // under "front".
+        let front_rows: Vec<_> = store
+            .get_user_embeddings_raw("alice")
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.0 == new_front)
+            .collect();
+        assert_eq!(front_rows.len(), 2);
+        let orphaned: u32 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM face_embeddings WHERE model_id = ?1",
+                params![old_front],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphaned, 0, "cascade removed the old model's embeddings");
+    }
+
+    #[test]
+    fn replace_model_rolls_back_to_the_old_model_when_an_insert_fails() {
+        let store = FaceStore::open_memory().unwrap();
+        let emb = test_embedding();
+        let old_id = store.add_model("alice", "front", &emb, "").unwrap();
+
+        // Fault: the second embedding row of any model refuses to insert. The
+        // delete and the model insert have already run inside the transaction
+        // by the time this fires, so a non-transactional implementation would
+        // leave the old model gone and a one-embedding replacement behind.
+        store
+            .conn
+            .execute_batch(
+                "CREATE TRIGGER fail_second_embedding BEFORE INSERT ON face_embeddings
+                 WHEN (SELECT COUNT(*) FROM face_embeddings WHERE model_id = NEW.model_id) >= 1
+                 BEGIN SELECT RAISE(ABORT, 'injected insert failure'); END;",
+            )
+            .unwrap();
+
+        let blobs = blobs(3);
+        let refs: Vec<&[u8]> = blobs.iter().map(Vec::as_slice).collect();
+        let err = store
+            .replace_model_with_embeddings("alice", "front", &refs, false, "", None)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("injected insert failure"),
+            "the injected failure must surface, got: {err}"
+        );
+
+        let models = store.list_models("alice").unwrap();
+        assert_eq!(models.len(), 1, "exactly the old model remains: {models:?}");
+        assert_eq!(models[0].id, old_id, "the old model row survived untouched");
+        let rows = store.get_user_embeddings("alice").unwrap();
+        assert_eq!(rows.len(), 1, "the old model keeps its embedding");
+        assert_eq!(rows[0].0, old_id);
+        assert_eq!(rows[0].1[0], emb[0]);
+    }
+
+    #[test]
+    fn replace_model_refuses_an_empty_embedding_set() {
+        let store = FaceStore::open_memory().unwrap();
+        let emb = test_embedding();
+        let old_id = store.add_model("alice", "front", &emb, "").unwrap();
+
+        let err = store
+            .replace_model_with_embeddings("alice", "front", &[], false, "", None)
+            .unwrap_err();
+        assert!(
+            matches!(err, StoreError::Query { .. }),
+            "an empty set is a caller bug reported as a query error, got: {err:?}"
+        );
+        let models = store.list_models("alice").unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(
+            models[0].id, old_id,
+            "a refused replacement changes nothing"
+        );
     }
 
     #[test]
