@@ -161,7 +161,25 @@ mkdir -p /run/dbus
 dbus-uuidgen --ensure=/etc/machine-id >/dev/null 2>&1 || true
 dbus-daemon --system --fork --nopidfile
 
+# The setup block below shadows /usr/bin/systemctl with a recording shim.
+# Restoring it is registered here, in the one EXIT path, so a failure under
+# `set -e` between the swap and the block's own restore cannot leave the
+# container without a real systemctl for whatever runs next. Idempotent:
+# the block calls it too.
+REAL_SYSTEMCTL=""
+SYSTEMCTL_SHIMMED=0
+restore_systemctl() {
+    if [ "$SYSTEMCTL_SHIMMED" -eq 1 ]; then
+        rm -f /usr/bin/systemctl
+        if [ -n "$REAL_SYSTEMCTL" ]; then
+            mv "$REAL_SYSTEMCTL" /usr/bin/systemctl
+        fi
+        SYSTEMCTL_SHIMMED=0
+    fi
+}
+
 cleanup() {
+    restore_systemctl
     if [ -n "${DAEMON_PID:-}" ]; then
         kill "$DAEMON_PID" 2>/dev/null || true
         wait "$DAEMON_PID" 2>/dev/null || true
@@ -429,7 +447,7 @@ EOF
     # what this run would have printed instead.
     cp "$CONFIG" /tmp/facelock-override-enroll.toml
     run_test "Enroll under --config bypasses the running daemon" \
-        "facelock --config /tmp/facelock-override-enroll.toml enroll --user testuser --skip-setup-check < /dev/null > /tmp/enroll-override.out 2>&1; test \$? -ne 0 && grep -q 'Note: --config names a file other than /etc/facelock/config.toml' /tmp/enroll-override.out && ! grep -q 'D-Bus Enroll call failed' /tmp/enroll-override.out && ! grep -q 'enrollment timed out client-side' /tmp/enroll-override.out"
+        "facelock --config /tmp/facelock-override-enroll.toml enroll --user testuser --skip-setup-check < /dev/null > /tmp/enroll-override.out 2>&1; test \$? -ne 0 && grep -q 'Note: a non-default configuration is active; the facelock daemon reads only /etc/facelock/config.toml' /tmp/enroll-override.out && ! grep -q 'D-Bus Enroll call failed' /tmp/enroll-override.out && ! grep -q 'enrollment timed out client-side' /tmp/enroll-override.out"
     rm -f /tmp/facelock-override-enroll.toml
 
     # The daemon is done: the one-shot block below must answer with no daemon
@@ -460,11 +478,11 @@ OVERRIDE_CONFIG="/tmp/facelock-override-setup.toml"
 cp "$CONFIG" "$OVERRIDE_CONFIG"
 SYSTEMCTL_CALLS="/tmp/facelock-systemctl-calls"
 rm -f "$SYSTEMCTL_CALLS"
-REAL_SYSTEMCTL=""
 if [ -e /usr/bin/systemctl ]; then
     REAL_SYSTEMCTL="/tmp/facelock-systemctl.real"
     mv /usr/bin/systemctl "$REAL_SYSTEMCTL"
 fi
+SYSTEMCTL_SHIMMED=1
 printf '#!/bin/sh\necho "$*" >> %s\nexit 1\n' "$SYSTEMCTL_CALLS" > /usr/bin/systemctl
 chmod 0755 /usr/bin/systemctl
 rm -f /etc/facelock/.setup-complete
@@ -500,10 +518,7 @@ run_test "setup --systemd under --config /etc/facelock/../facelock/config.toml i
     "facelock --config /etc/facelock/../facelock/config.toml setup --systemd > /tmp/setup-default-spelling.out 2>&1; ! grep -q -- '--systemd is not supported' /tmp/setup-default-spelling.out && grep -q 'Validating installed' /tmp/setup-default-spelling.out"
 rmdir /run/systemd/system 2>/dev/null || true
 
-rm -f /usr/bin/systemctl
-if [ -n "$REAL_SYSTEMCTL" ]; then
-    mv "$REAL_SYSTEMCTL" /usr/bin/systemctl
-fi
+restore_systemctl
 rm -f "$OVERRIDE_CONFIG" "$SYSTEMCTL_CALLS"
 
 # ============================================================================

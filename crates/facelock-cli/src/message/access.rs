@@ -64,8 +64,12 @@ impl Message for AccessMessage {
             // Not a warning: the operator chose the file, and the daemon on
             // the bus is doing nothing wrong by reading the default one. The
             // default path is spelled out because it is the whole reason.
+            // Neither note names `--config`: an unprivileged process reaches
+            // the same selection through `FACELOCK_CONFIG`, and "direct
+            // access" rather than "direct camera access" because the store
+            // reads (`list`, `remove`) select the same way.
             DirectByConfigOverride => translate(
-                "Note: --config names a file other than /etc/facelock/config.toml, the only file the facelock daemon reads.\nUsing direct camera access under the selected configuration.",
+                "Note: a non-default configuration is active; the facelock daemon reads only /etc/facelock/config.toml.\nUsing direct access under the selected configuration.",
             ),
             // The flag is `--json` since #169; `--text-only` is a hidden
             // alias that `preview --help` no longer lists, so naming it here
@@ -79,7 +83,7 @@ impl Message for AccessMessage {
                 "Graphical preview requires the daemon, which is configured but not reachable.\nFalling back to text-only mode. Start the facelock-daemon service to use it.\n",
             ),
             PreviewGraphicalDaemonConfigOverride => translate(
-                "Graphical preview requires the daemon, which reads only /etc/facelock/config.toml and is not used under --config.\nFalling back to text-only mode.\n",
+                "Graphical preview requires the daemon, which reads only /etc/facelock/config.toml and is not used under a non-default configuration.\nFalling back to text-only mode.\n",
             ),
         }
     }
@@ -129,10 +133,12 @@ mod tests {
 
         let note = DirectByConfigOverride.localized();
         assert!(note.contains(default), "{note}");
-        assert!(note.contains("direct camera access"), "{note}");
+        assert!(note.contains("direct access"), "{note}");
+        assert!(!note.contains("--config"), "{note}");
 
         let preview = PreviewGraphicalDaemonConfigOverride.localized();
         assert!(preview.contains(default), "{preview}");
         assert!(preview.contains("text-only"), "{preview}");
+        assert!(!preview.contains("--config"), "{preview}");
     }
 }

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: facelock\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-01 23:29-0700\n"
+"POT-Creation-Date: 2026-09-02 09:51-0700\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -54,27 +54,27 @@ msgid ""
 "Start the facelock-daemon service to use it."
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:68
+#: crates/facelock-cli/src/message/access.rs:72
 msgid ""
-"Note: --config names a file other than /etc/facelock/config.toml, the only file the facelock daemon reads.\n"
-"Using direct camera access under the selected configuration."
+"Note: a non-default configuration is active; the facelock daemon reads only /etc/facelock/config.toml.\n"
+"Using direct access under the selected configuration."
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:76
+#: crates/facelock-cli/src/message/access.rs:80
 msgid ""
 "Graphical preview requires the daemon. In oneshot mode, use --json.\n"
 "Falling back to text-only mode.\n"
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:79
+#: crates/facelock-cli/src/message/access.rs:83
 msgid ""
 "Graphical preview requires the daemon, which is configured but not reachable.\n"
 "Falling back to text-only mode. Start the facelock-daemon service to use it.\n"
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:82
+#: crates/facelock-cli/src/message/access.rs:86
 msgid ""
-"Graphical preview requires the daemon, which reads only /etc/facelock/config.toml and is not used under --config.\n"
+"Graphical preview requires the daemon, which reads only /etc/facelock/config.toml and is not used under a non-default configuration.\n"
 "Falling back to text-only mode.\n"
 msgstr ""
 
