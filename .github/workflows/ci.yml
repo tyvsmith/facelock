@@ -213,6 +213,9 @@ jobs:
       - name: Verify Debian source contract
         run: just test-deb-source-contract
 
+      - name: Verify the Arch lane picks the package it means to install
+        run: just test-arch-package-select
+
       - name: Verify release target declarations
         run: python3 test/check-release-matrix.py
 

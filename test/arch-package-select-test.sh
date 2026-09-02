@@ -60,24 +60,26 @@ expect_reject() {
     fi
 }
 
-main=facelock-0.1.4-1-x86_64.pkg.tar.zst
-debug=facelock-debug-0.1.4-1-x86_64.pkg.tar.zst
+# Not `main`: select_main_package declares `local -a main`, and a global of the
+# same name would shadow-warn (SC2178) and read as the function's array.
+main_pkg=facelock-0.1.4-1-x86_64.pkg.tar.zst
+debug_pkg=facelock-debug-0.1.4-1-x86_64.pkg.tar.zst
 
 echo "select_main_package -- a debug split beside the package"
-expect_pick "main written first" "$main" \
-    "$(fixture main-first "$main" "$debug")"
-expect_pick "debug written first" "$main" \
-    "$(fixture debug-first "$debug" "$main")"
-expect_pick "no debug split" "$main" \
-    "$(fixture solo "$main")"
+expect_pick "main written first" "$main_pkg" \
+    "$(fixture main-first "$main_pkg" "$debug_pkg")"
+expect_pick "debug written first" "$main_pkg" \
+    "$(fixture debug-first "$debug_pkg" "$main_pkg")"
+expect_pick "no debug split" "$main_pkg" \
+    "$(fixture solo "$main_pkg")"
 
 echo "select_main_package -- nothing to install"
 expect_reject "empty directory" "$(fixture empty)"
-expect_reject "only the debug split" "$(fixture debug-only "$debug")"
+expect_reject "only the debug split" "$(fixture debug-only "$debug_pkg")"
 
 echo "select_main_package -- more than one candidate"
 expect_reject "two versions of the package" \
-    "$(fixture two-mains "$main" facelock-0.1.5-1-x86_64.pkg.tar.zst)"
+    "$(fixture two-mains "$main_pkg" facelock-0.1.5-1-x86_64.pkg.tar.zst)"
 
 if [ "$failures" -ne 0 ]; then
     echo "$failures package selection case(s) failed" >&2

@@ -14,13 +14,19 @@ runuser -u testuser -- bash -c \
 # beside this one, and taking the first match `find` returns would install
 # whichever the directory happened to list first. This image does not carry that
 # script, so the rule is spelled out again here.
-mapfile -d '' -t packages < <(
-    find "$build_dir" -maxdepth 1 -type f \
-        -name 'facelock-[0-9]*.pkg.tar.zst' ! -name 'facelock-debug-*' -print0 |
-        sort -z
-)
+packages=()
+present=()
+while IFS= read -r -d '' path; do
+    present+=("${path##*/}")
+    case "${path##*/}" in
+        facelock-debug-*) ;;
+        facelock-[0-9]*) packages+=("$path") ;;
+    esac
+done < <(find "$build_dir" -maxdepth 1 -type f -name '*.pkg.tar.zst' -print0 | sort -z)
+
 if [ "${#packages[@]}" -ne 1 ]; then
-    echo "expected exactly one facelock package in $build_dir, found ${#packages[@]}" >&2
+    echo "expected exactly one facelock package in $build_dir," \
+        "found ${#packages[@]} (built: ${present[*]:-none})" >&2
     exit 1
 fi
 pacman -U --noconfirm --overwrite '*' "${packages[0]}"
