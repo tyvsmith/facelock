@@ -2203,7 +2203,10 @@ format. Preflight reads evidence from two places, in order: the
 `packaging-evidence-*` artifacts a successful `packaging.yml` run at HEAD
 uploaded (`packaging-evidence-deb-<suite>`, `packaging-evidence-rpm-<release>`
 and `packaging-evidence-arch`, fetched with `gh run download` and aggregated
-the same way), then the local marker. A run without those artifacts is not
+the same way), then the local marker. `.packaging-evidence/` is dot-prefixed,
+so every upload step sets `include-hidden-files: true`; without it
+`actions/upload-artifact` finds no files and `if-no-files-found: error` fails
+the job. A run without those artifacts is not
 evidence, whatever its conclusion; neither is a pull-request run, which builds
 the merge commit, nor a run of any other workflow. The marker and the
 artifacts are maintainer-trust records: preflight checks their shape and their

@@ -777,6 +777,12 @@ for artifact in ("deb-${{ matrix.suite }}", "rpm-${{ matrix.release }}", "arch")
         re.search(r"(?m)^\s+if-no-files-found: error\s*$", matching[0]) is not None,
         f"the packaging-evidence-{artifact} upload must fail the job when its lane recorded nothing",
     )
+    # .packaging-evidence/ is dot-prefixed; upload-artifact skips hidden paths
+    # unless told otherwise, and then "no files" fails the job.
+    require(
+        re.search(r"(?m)^\s+include-hidden-files: true\s*$", matching[0]) is not None,
+        f"the packaging-evidence-{artifact} upload must set include-hidden-files: true for the dot-prefixed directory",
+    )
 preflight_body = just_recipe_body(justfile, "release-preflight")
 require(
     'python3 test/packaging-evidence.py ci-run --commit "$HEAD_SHA" --run "$run_id"' in preflight_body

@@ -99,6 +99,9 @@ jobs:
           path: .packaging-evidence/
           if-no-files-found: error
           overwrite: true
+          # The directory is dot-prefixed; without this the action finds no
+          # files and if-no-files-found fails the job.
+          include-hidden-files: true
 
   # The Fedora lanes stage host-built binaries into the image rather than
   # compiling in it, and `just build-release` cannot run on the runner: its TPM
@@ -206,6 +209,9 @@ jobs:
           path: .packaging-evidence/
           if-no-files-found: error
           overwrite: true
+          # The directory is dot-prefixed; without this the action finds no
+          # files and if-no-files-found fails the job.
+          include-hidden-files: true
 
   arch:
     name: Arch Package From dist/PKGBUILD
@@ -238,6 +244,9 @@ jobs:
           path: .packaging-evidence/
           if-no-files-found: error
           overwrite: true
+          # The directory is dot-prefixed; without this the action finds no
+          # files and if-no-files-found fails the job.
+          include-hidden-files: true
 
   release-matrix:
     name: Release Version Ordering Matrix

@@ -433,6 +433,10 @@ assert_matrix_mutation_rejected \
     '/^          name: packaging-evidence-arch$/,/^          overwrite: true$/{/^          overwrite: true$/a\      - name: Upload extra evidence\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a\n        with:\n          name: packaging-evidence-extra\n          path: .packaging-evidence/\n          if-no-files-found: error\n          overwrite: true
 }'
 assert_matrix_mutation_rejected \
+    "packaging workflow uploading the hidden evidence directory without opting in" \
+    ".github/workflows/packaging.yml" \
+    's/^          include-hidden-files: true$//'
+assert_matrix_mutation_rejected \
     "release matrix granting evidence eligibility outside Rawhide" \
     "dist/release-matrix.json" \
     's/"id": "debian-13",/"id": "debian-13", "evidence_eligibility": {"lifecycle": false},/'
