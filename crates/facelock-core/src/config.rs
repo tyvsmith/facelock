@@ -1529,6 +1529,18 @@ allow_plaintext = true
         }
     }
 
+    /// The documented `model` default for a camera with no readable identity:
+    /// enrollment proceeds and stores NULL, governed by the legacy policy.
+    /// Pinned so the `Model` arm cannot silently start refusing.
+    #[test]
+    fn model_binding_allows_an_unidentifiable_camera_as_legacy() {
+        let model = binding_at(crate::types::DeviceMatchGranularity::Model);
+        let unknown = crate::types::DeviceFingerprint::default();
+        assert!(!model.bind_device_aad, "hard binding is off by default");
+        assert_eq!(model.ensure_enrollment_binding_allowed(&unknown), Ok(()));
+        assert_eq!(unknown.canonical_for_storage(), None);
+    }
+
     /// A camera with no readable identity at all has no serial either. It
     /// would be stored NULL and authenticate on any camera under the legacy
     /// policy, the opposite of what `unit` asks for.

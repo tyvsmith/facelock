@@ -252,7 +252,7 @@ impl DeviceFingerprint {
     }
 
     /// Canonical id to persist at enrollment, or `None` when the camera exposes
-    /// no usable identity (no vid **and** no pid). A `None` here is stored as a
+    /// no usable identity (vid **or** pid missing). A `None` here is stored as a
     /// NULL `device_id` and governed by the legacy-template policy, so coupling
     /// never turns an unidentifiable camera into a hard lockout.
     pub fn canonical_for_storage(&self) -> Option<String> {
