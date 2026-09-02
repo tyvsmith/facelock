@@ -101,9 +101,10 @@ for index in "${!DEBS[@]}"; do
   DEB="${DEBS[index]}"
   echo "Adding ${DEB} to ${SUITE}"
   reprepro -b "${REPO_DIR}" includedeb "$SUITE" "$DEB"
-  if [ "$SUITE" = trixie ]; then
-    # Clients set up from the v0.1.4 README ask for the `main` suite. They keep
-    # receiving the trixie package under that name until 0.3.0 (#310).
+  # Clients set up from the v0.1.4 README ask for the `main` suite. They keep
+  # receiving the trixie package under that name until 0.3.0 (#310). The step
+  # follows its stanza, so retiring the suite is deleting the stanza.
+  if [ "$SUITE" = trixie ] && grep -qx 'Codename: main' "${REPO_DIR}/conf/distributions"; then
     echo "Adding ${DEB} to main (compatibility suite for v0.1.4 source entries)"
     reprepro -b "${REPO_DIR}" includedeb main "$DEB"
   fi
@@ -111,7 +112,9 @@ done
 
 # `legacy` was the non-TPM suite and nothing is built for it any more. Signed
 # empty indexes keep `apt update` succeeding on those clients until 0.3.0.
-reprepro -b "${REPO_DIR}" export legacy
+if grep -qx 'Codename: legacy' "${REPO_DIR}/conf/distributions"; then
+  reprepro -b "${REPO_DIR}" export legacy
+fi
 
 # Export only the signing key (not the entire keyring)
 gpg --export "${KEY_FPR}" > "${REPO_DIR}/tysmith-archive-keyring.gpg"

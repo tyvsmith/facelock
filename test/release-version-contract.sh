@@ -774,14 +774,12 @@ done
 RELEASE_MATRIX_VERSION=0.2.9 python3 "$matrix_root/test/check-release-matrix.py" >/dev/null
 echo "release matrix expiry case: compatibility suites accepted at 0.2.9"
 
-# The terminal state is reachable: with the stanzas, the publisher steps and
-# the window claims gone, 0.3.0 passes.
+# The terminal state is reachable: with the stanzas and the window claims
+# gone, and the publisher untouched, 0.3.0 passes.
 retired_root="$tmp_root/matrix-retired"
 cp -R "$matrix_root" "$retired_root"
 awk 'BEGIN { RS = ""; ORS = "\n\n" } !/Codename: (main|legacy)\n/' \
     "$matrix_root/dist/apt/conf/distributions" > "$retired_root/dist/apt/conf/distributions"
-sed -i '/reprepro -b "${REPO_DIR}" includedeb main /d; /reprepro -b "${REPO_DIR}" export legacy/d' \
-    "$retired_root/.github/workflows/scripts/publish-apt.sh"
 sed -i 's/`main` and `legacy` are compatibility suites/`main` and `legacy` were compatibility suites/; s/removed at 0.3.0/removed in 0.3.0/' \
     "$retired_root/docs/contracts.md"
 sed -i 's/compatibility suites present until 0.3.0/compatibility suites removed in 0.3.0/' "$retired_root/docs/releasing.md"
@@ -1058,6 +1056,35 @@ case "$apt_tree_output" in
     *) fail "stable APT publisher did not print the compatibility suite Release files" ;;
 esac
 echo "stable APT publisher case: codenamed and compatibility suites published"
+
+# With the stanzas deleted and the publisher untouched, the compatibility
+# steps must not run: an undeclared codename would make reprepro fail the
+# release under set -e (#320).
+apt_retired_publisher_root="$tmp_root/apt-retired-publisher"
+apt_retired_tree_root="$tmp_root/apt-retired-tree"
+mkdir -p "$apt_retired_publisher_root/.github/workflows/scripts" "$apt_retired_publisher_root/scripts" "$apt_retired_publisher_root/dist/apt/conf"
+cp "$repo_root/.github/workflows/scripts/publish-apt.sh" "$apt_retired_publisher_root/.github/workflows/scripts/"
+cp "$repo_root/scripts/release-versions.sh" "$apt_retired_publisher_root/scripts/"
+cp "$retired_root/dist/apt/conf/distributions" "$apt_retired_publisher_root/dist/apt/conf/"
+if ! apt_tree_output=$(
+    cd "$apt_retired_publisher_root" && \
+        GNUPGHOME="$apt_publisher_gnupg" APT_GPG_PRIVATE_KEY="$apt_private_key" APT_GPG_PASSPHRASE=contract-passphrase \
+        PATH="$tmp_root/bin:$PATH" \
+        bash .github/workflows/scripts/publish-apt.sh "$apt_retired_tree_root" \
+        "trixie=$apt_tree_debs/trixie.deb" "resolute=$apt_tree_debs/resolute.deb" 2>&1
+); then
+    printf '%s\n' "$apt_tree_output"
+    fail "stable APT publisher failed once the compatibility stanzas were retired"
+fi
+for suite in trixie resolute; do
+    [ -f "$apt_retired_tree_root/dists/$suite/Release" ] || fail "retired-stanza publisher left dists/$suite/Release unpublished"
+done
+for suite in main legacy; do
+    ! grep -q -- " $suite" "$apt_retired_tree_root/reprepro-calls" \
+        || fail "retired-stanza publisher still ran reprepro for $suite"
+    [ ! -e "$apt_retired_tree_root/dists/$suite" ] || fail "retired-stanza publisher still published dists/$suite"
+done
+echo "stable APT publisher case: retired stanzas leave the compatibility steps unrun"
 
 assert_rejected bash "$repo_root/.github/workflows/scripts/publish-aur.sh" 0.2.0-alpha.1 unused
 # A stable version with an implausible source digest must be refused before any

@@ -488,13 +488,14 @@ require(
 )
 for suffix in ("~deb13u1", "~ubuntu26.04.1"):
     require(suffix not in apt_publisher, f"APT publisher duplicates the central suite suffix {suffix}")
-for suite, source in expected_compat_suites.items():
-    step = f"includedeb {suite}" if source != "none" else f"export {suite}"
-    publication = re.search(rf'(?m)^\s*reprepro -b "\$\{{REPO_DIR\}}" {re.escape(step)}\b', apt_publisher)
-    if suite in active_compat_suites:
-        require(publication is not None, f"APT publisher does not populate compatibility suite {suite} ({step})")
-    else:
-        require(publication is None, f"APT publisher still publishes compatibility suite {suite} after retire_at {compat_retire_at}")
+# The publisher's compatibility steps run only when their stanza is declared,
+# so retirement is the stanza deletion and the steps may stay.
+for suite in active_compat_suites:
+    step = f"includedeb {suite}" if expected_compat_suites[suite] != "none" else f"export {suite}"
+    require(
+        re.search(rf'(?m)^\s*reprepro -b "\$\{{REPO_DIR\}}" {re.escape(step)}\b', apt_publisher) is not None,
+        f"APT publisher does not populate compatibility suite {suite} ({step})",
+    )
 require(
     "dists pool tysmith-archive-keyring.gpg" in workflow,
     "APT repo artifact must carry the whole dists tree, every published suite included",
@@ -957,7 +958,7 @@ debian_support_phrase = (
 )
 debian_source_phrases = (
     "Trixie package builds use the official Trixie Backports `cargo` and `rustc`",
-    "Both suites ship one binary package named `facelock` with TPM support enabled.",
+    "Both codenamed suites ship one binary package named `facelock` with TPM support enabled.",
     "No `rustup` toolchain participates in Debian source builds.",
     "deterministic Cargo-vendor component",
     "network denied and empty Cargo/Rustup caches",
