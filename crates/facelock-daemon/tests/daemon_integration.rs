@@ -91,6 +91,27 @@ fn mock_camera_wraps_around() {
     assert_eq!(frame.width, 64);
 }
 
+#[test]
+fn mock_camera_capture_hook_sees_each_capture_in_order() {
+    use facelock_core::traits::CameraSource;
+    use std::sync::{Arc, Mutex};
+
+    // The hook is what lets a test act mid-loop (cancel a request on the
+    // Nth frame): it must run once per capture, before the frame is served,
+    // with the capture's 1-based ordinal.
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    let mut cam =
+        MockCamera::bright(64, 64, 2).with_capture_hook(move |n| sink.lock().unwrap().push(n));
+
+    let _ = cam.capture().unwrap();
+    let _ = cam.capture_rgb_only().unwrap();
+    let _ = cam.capture().unwrap();
+
+    assert_eq!(*seen.lock().unwrap(), vec![1, 2, 3]);
+    assert_eq!(cam.captures(), 3);
+}
+
 /// D8 compile-time pin: `CameraSource` is object-safe. The old trait carried
 /// `fn is_dark(..) where Self: Sized`, which made `dyn CameraSource`
 /// unusable; darkness is a free function now and capabilities live on the
@@ -682,6 +703,198 @@ fn keyfile_sealer_init_failure_fails_enroll_closed_no_plaintext() {
     assert_eq!(sealed, 0, "no embedding should have been stored at all");
 
     cleanup_db(&blocker);
+}
+
+/// A handler on an in-memory store with keyfile encryption on, as in
+/// production, so every row an enrollment writes is sealed. The camera
+/// factory hands out bright frames and runs `on_open` with the 1-based open
+/// count, so a test can shape one particular open (a camera that cancels a
+/// token mid-loop, say). Warmup is zero, so capture ordinals are the
+/// request's own.
+fn enroll_handler(
+    key_path: &Path,
+    on_open: impl Fn(usize, MockCamera) -> MockCamera + Send + Sync + 'static,
+) -> facelock_daemon::handler::Handler<MockCamera, MockFaceEngine> {
+    use facelock_core::config::EncryptionMethod;
+    use facelock_daemon::handler::Handler;
+    use facelock_daemon::rate_limit::RateLimiter;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let mut config = test_config();
+    config.encryption.method = EncryptionMethod::Keyfile;
+    config.encryption.key_path = key_path.to_string_lossy().into_owned();
+
+    let opens = AtomicUsize::new(0);
+    let factory: MockCameraFactory = Box::new(move |_cfg| {
+        let open = opens.fetch_add(1, Ordering::SeqCst) + 1;
+        Ok(on_open(open, MockCamera::bright(640, 480, 40)))
+    });
+    let engine = MockFaceEngine::cycling(vec![
+        fixtures::known_embedding(0),
+        fixtures::known_embedding(40),
+        fixtures::known_embedding(80),
+        fixtures::known_embedding(120),
+    ]);
+    let rate_limiter = RateLimiter::new(
+        config.security.rate_limit.max_attempts,
+        config.security.rate_limit.window_secs,
+    );
+    Handler::new(
+        config,
+        engine,
+        FaceStore::open_memory().unwrap(),
+        rate_limiter,
+        CameraCaps::default(),
+        Some(factory),
+        Some(0),
+    )
+    .expect("handler builds with a generated keyfile")
+}
+
+/// #308: a cancelled enrollment must be invisible afterwards — nothing to
+/// list, nothing to authenticate against — even when the cancellation lands
+/// after a frame was accepted, which used to leave a one-embedding template
+/// behind.
+#[test]
+fn a_cancelled_enroll_is_invisible_to_listing_and_authentication() {
+    let key_path = temp_db_path("cancelled-enroll-key");
+    let cancel = CancelToken::new();
+    let token = cancel.clone();
+    // The first capture is accepted; the second cancels the request.
+    let mut handler = enroll_handler(&key_path, move |_open, camera| {
+        let token = token.clone();
+        camera.with_capture_hook(move |n| {
+            if n == 2 {
+                token.cancel();
+            }
+        })
+    });
+
+    let resp = handler.handle_with_cancel(
+        DaemonRequest::Enroll {
+            user: "u".into(),
+            label: "front".into(),
+        },
+        &cancel,
+    );
+    match resp {
+        DaemonResponse::Error { ref message } => assert_eq!(message, "cancelled"),
+        other => panic!("expected a cancellation, got {other:?}"),
+    }
+
+    // Nothing to list, and no embedding row of any kind.
+    match handler.handle(DaemonRequest::ListModels { user: "u".into() }) {
+        DaemonResponse::Models(models) => assert!(models.is_empty(), "got: {models:?}"),
+        other => panic!("expected a model list, got {other:?}"),
+    }
+    assert_eq!(handler.store.count_sealed().unwrap(), (0, 0));
+
+    // Nothing to authenticate against: the not-enrolled gate answers before
+    // any camera opens, so no face can have been seen.
+    let resp =
+        handler.handle_authenticate("u".into(), AuthIntent::Authenticate, &CancelToken::new());
+    match resp {
+        DaemonResponse::AuthResult(MatchResult {
+            matched,
+            face_detected,
+            model_id,
+            ..
+        }) => {
+            assert!(!matched, "a cancelled attempt must not authenticate");
+            assert!(!face_detected, "no camera opened, no face seen");
+            assert_eq!(model_id, None);
+        }
+        other => panic!("expected a no-match, got {other:?}"),
+    }
+
+    let _ = std::fs::remove_file(&key_path);
+}
+
+/// #308: re-enrolling under an existing label and abandoning the attempt
+/// keeps the previous template, row for row, and it still authenticates.
+/// The old preamble deleted the previous model before the first frame.
+#[test]
+fn a_cancelled_re_enrollment_keeps_the_previous_template_authenticating() {
+    let key_path = temp_db_path("re-enroll-key");
+    let cancel = CancelToken::new();
+    let token = cancel.clone();
+    // Open 1 enrolls cleanly. Open 2 is the re-enrollment, cancelled after
+    // two accepted frames. Open 3 authenticates.
+    let mut handler = enroll_handler(&key_path, move |open, camera| {
+        if open != 2 {
+            return camera;
+        }
+        let token = token.clone();
+        camera.with_capture_hook(move |n| {
+            if n == 3 {
+                token.cancel();
+            }
+        })
+    });
+
+    let enrolled_id = match handler.handle(DaemonRequest::Enroll {
+        user: "u".into(),
+        label: "front".into(),
+    }) {
+        DaemonResponse::Enrolled {
+            model_id,
+            embedding_count,
+        } => {
+            assert_eq!(embedding_count, 10, "a full set was stored");
+            model_id
+        }
+        other => panic!("the first enrollment must succeed, got {other:?}"),
+    };
+    let before = handler.store.get_user_embeddings_raw("u").unwrap();
+    assert_eq!(before.len(), 10);
+
+    let resp = handler.handle_with_cancel(
+        DaemonRequest::Enroll {
+            user: "u".into(),
+            label: "front".into(),
+        },
+        &cancel,
+    );
+    match resp {
+        DaemonResponse::Error { ref message } => assert_eq!(message, "cancelled"),
+        other => panic!("expected a cancellation, got {other:?}"),
+    }
+
+    match handler.handle(DaemonRequest::ListModels { user: "u".into() }) {
+        DaemonResponse::Models(models) => {
+            assert_eq!(models.len(), 1, "got: {models:?}");
+            assert_eq!(models[0].id, enrolled_id, "the previous model survived");
+        }
+        other => panic!("expected a model list, got {other:?}"),
+    }
+    assert_eq!(
+        handler.store.get_user_embeddings_raw("u").unwrap(),
+        before,
+        "the previous template is untouched, row for row"
+    );
+
+    // And it still authenticates: the engine keeps presenting the enrolled
+    // faces, with enough frame-to-frame variance for the liveness gate.
+    let resp =
+        handler.handle_authenticate("u".into(), AuthIntent::Authenticate, &CancelToken::new());
+    match resp {
+        DaemonResponse::AuthResult(MatchResult {
+            matched,
+            model_id,
+            similarity,
+            failure_reason,
+            ..
+        }) => {
+            assert!(
+                matched,
+                "the previous template must still authenticate, got similarity {similarity} reason {failure_reason:?}"
+            );
+            assert_eq!(model_id, Some(enrolled_id));
+        }
+        other => panic!("expected a match, got {other:?}"),
+    }
+
+    let _ = std::fs::remove_file(&key_path);
 }
 
 #[test]

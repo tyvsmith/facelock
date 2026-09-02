@@ -3009,6 +3009,19 @@ on first use if absent. `method = "none"` (plaintext) is **refused at enrollment
 `security.allow_plaintext = true`. Auth always degrades to password on a decrypt failure —
 never a lockout.
 
+**Enrollment atomicity (#308).** An enrollment writes to the store exactly once, at the
+end: after every accepted embedding has passed the minimum-capture and angle-diversity
+gates and, with encryption on, been sealed, one transaction removes the previous model
+under the same user and label and inserts the new model with all of its embeddings. Until
+that commit the accepted embeddings exist only in memory, inside the wiping guard. Every
+other exit (a cancellation, including one that lands on the final frame; the deadline
+passing with too few frames; a rejected set; a sealing error; a storage error; a daemon
+crash) leaves the store exactly as it was: no model, no embeddings, and a previous
+same-label template still in place and still authenticating. A model row that exists is
+therefore a complete template; `facelock list` and `Authenticate` can never observe an
+attempt that did not finish, and the store refuses to commit a model with no embeddings
+at all.
+
 **Camera hold semantics (ADR 008).** `device.camera_release_secs` (default **3**) is the
 number of seconds the **daemon** keeps the camera streaming **after a failed
 authentication** — the one ending a retry plausibly follows — so that retry skips the
