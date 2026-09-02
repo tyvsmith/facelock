@@ -140,3 +140,43 @@ impl CameraSource for MockCamera {
         Ok(frame)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn capture_hook_runs_before_each_capture_with_its_ordinal() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        let mut cam =
+            MockCamera::bright(8, 8, 2).with_capture_hook(move |n| sink.lock().unwrap().push(n));
+
+        cam.capture().unwrap();
+        cam.capture_rgb_only().unwrap();
+        cam.capture().unwrap();
+
+        // 1-based, one per capture, the RGB-only path included.
+        assert_eq!(*seen.lock().unwrap(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn captures_counts_across_wrap_arounds() {
+        let mut cam = MockCamera::bright(8, 8, 2);
+        for _ in 0..5 {
+            cam.capture().unwrap();
+        }
+        // Five frames served from a two-frame replay: the count is the
+        // number served, not the replay index (which has wrapped to 1).
+        assert_eq!(cam.captures(), 5);
+    }
+
+    #[test]
+    fn a_camera_without_a_hook_still_counts() {
+        let mut cam = MockCamera::bright(8, 8, 1);
+        assert_eq!(cam.captures(), 0);
+        cam.capture().unwrap();
+        assert_eq!(cam.captures(), 1);
+    }
+}
