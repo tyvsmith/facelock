@@ -79,13 +79,15 @@ that once.
 `--systemd` is not supported under a non-default `--config`. The unit runs
 bare `facelock daemon`, which reads only `/etc/facelock/config.toml`, so the
 daemon it enables would not use the file setup just configured. `facelock
---config /tmp/x.toml setup --systemd --enroll` exits non-zero before it writes
-anything or calls `systemctl`, and says what to do instead: copy the file to
-`/etc/facelock/config.toml` and re-run without `--config`, or re-run without
-`--systemd` to enroll with direct camera access under `/tmp/x.toml`. The
+--config /etc/facelock/scratch.toml setup --systemd --enroll` exits non-zero
+before it writes anything or calls `systemctl`, and says what to do instead:
+copy the file to `/etc/facelock/config.toml` and re-run without `--config`, or
+re-run without
+`--systemd` to enroll with direct camera access under `/etc/facelock/scratch.toml`. The
 wizard skips the daemon question under such a `--config` and says why.
-`--systemd --disable` is unaffected; a symlink or `..` spelling of the default
-path counts as the default.
+`--systemd --disable` still runs, with a note that the unit it stops reads the
+default file; a symlink or `..` spelling of the default path counts as the
+default.
 
 ```bash
 facelock setup                          # interactive wizard
@@ -297,8 +299,9 @@ Captures 3-10 frames over ~15 seconds. Requires exactly one face per frame. Re-e
 
 Under a non-default `--config`, enrollment uses direct camera access under that
 file and never the running daemon, which reads only `/etc/facelock/config.toml`;
-a note on stderr says so. The same holds for `test`, `list`, `remove`,
-`clear`, `devices` and `preview` (which then has only its text preview).
+when `daemon.mode = "daemon"` a note on stderr says so. The same holds for
+`test`, `list`, `remove`, `clear`, `devices` and `preview` (which then has only
+its text preview).
 
 Without `--skip-setup-check`, an install whose setup-complete marker is missing
 is offered `facelock setup` first and enrolls through it, since setup enrolls a

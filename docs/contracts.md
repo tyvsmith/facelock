@@ -287,7 +287,8 @@ directory, downloads a model or mints a key, and before any `systemctl` call;
 the message names the two ways out, copying the file to the default path or
 running setup without `--systemd`. The wizard, which would otherwise ask,
 prints why it is skipping the daemon step instead. `--systemd --disable`
-reads no config file and is unaffected. "Non-default" is decided on the
+reads no config file and still runs, with a note that the unit it stops reads
+the default file. "Non-default" is decided on the
 filesystem: a symlink or `..` spelling of the default file is the default.
 Under such an override, enrollment and the recognition test use direct
 camera access under that file and never the daemon on the bus, whatever
@@ -1938,8 +1939,10 @@ auth would — surfacing an existing lockout instead of masking it.
 
 The CLI silently falls back to direct mode when the daemon is not available on D-Bus, regardless of config mode.
 
-Under a non-default `--config`, daemon mode selects direct access without
-asking the bus, and says so once on stderr. The packaged daemon reads only
+Under a non-default `--config` in daemon mode, backend selection for
+`enroll`, `test` and the other backend-using commands does not ask the bus and
+selects direct access, saying so once on stderr (`status`'s own daemon probe
+still runs). The packaged daemon reads only
 `/etc/facelock/config.toml`, so whatever owns the bus name is configured by a
 file the command is not reading; its answers would be about another store,
 camera, model set and security policy. This is a selection the operator made,

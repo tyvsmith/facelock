@@ -3921,6 +3921,14 @@ pub fn run_systemd(disable: bool) -> anyhow::Result<()> {
     check_systemd()?;
 
     if disable {
+        // Allowed under a non-default `--config`: stopping reads no config
+        // file. Said out loud, because the unit being stopped is the one
+        // that reads the default file, not the one the operator named.
+        if let Some(path) = facelock_core::paths::non_default_config_override() {
+            Terminal.error(&SystemMessage::SystemdDisableConfigOverride {
+                path: path.display().to_string(),
+            });
+        }
         Terminal.info(&SystemMessage::DisablingSystemdUnits);
         run_cmd("systemctl", &["disable", "--now", "facelock-daemon"])?;
         Terminal.info(&SystemMessage::SystemdUnitsDisabled);
@@ -6419,10 +6427,15 @@ mod action_tests {
 
         // With no process override the effective path is whatever
         // `FACELOCK_CONFIG` says when the test runs unprivileged, so it is
-        // cleared too, as paths.rs's own tests do.
+        // cleared for the check and put back after, under the same lock.
+        let previous = std::env::var_os("FACELOCK_CONFIG");
         unsafe { std::env::remove_var("FACELOCK_CONFIG") };
         facelock_core::paths::clear_process_config_override();
-        check_unit_reads_this_config().unwrap();
+        let verdict = check_unit_reads_this_config();
+        if let Some(value) = previous {
+            unsafe { std::env::set_var("FACELOCK_CONFIG", value) };
+        }
+        verdict.unwrap();
     }
 
     /// Where the check sits is the property: ahead of both base flows in
@@ -6458,6 +6471,12 @@ mod action_tests {
         assert!(check > position(install, "check_root()"));
         assert!(check < position(install, "validate_and_migrate_system_assets("));
         assert!(check < position(install, "daemon-reload"));
+
+        // The disable path is allowed under an override and says so before
+        // it stops anything.
+        let note = position(install, "SystemdDisableConfigOverride");
+        assert!(note > position(install, "check_root()"));
+        assert!(note < position(install, "\"disable\", \"--now\""));
     }
 
     /// A daemon-less install enrolls exactly as it did before the reorder.

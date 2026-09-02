@@ -20,6 +20,7 @@ pub enum SystemMessage {
     // -- a non-default `--config` (#314): the unit reads only the default --
     SystemdSkippedConfigOverride { path: String },
     SystemdRefusedConfigOverride { path: String },
+    SystemdDisableConfigOverride { path: String },
 
     // -- bringing the daemon up --
     DaemonRestarted,
@@ -68,6 +69,14 @@ impl Message for SystemMessage {
             SystemdRefusedConfigOverride { path } => fill(
                 translate(
                     "--systemd is not supported with --config {path}: the facelock-daemon unit runs `facelock daemon`,\n  which reads only /etc/facelock/config.toml, so the daemon it enables would not use this configuration.\n  Either copy {path} to /etc/facelock/config.toml and re-run without --config,\n  or re-run without --systemd to enroll with direct camera access under {path}.",
+                ),
+                &[("path", path.clone())],
+            ),
+            // Disabling reads no config file and goes ahead; the note says
+            // which daemon that is, since the named file is not its.
+            SystemdDisableConfigOverride { path } => fill(
+                translate(
+                    "Note: --config {path} names another file; this stops the unit that reads /etc/facelock/config.toml.",
                 ),
                 &[("path", path.clone())],
             ),
@@ -120,7 +129,7 @@ impl Message for SystemMessage {
 /// above: no wildcard arm, so a variant that renders nothing does not build.
 #[cfg(test)]
 impl super::Samples for SystemMessage {
-    const VARIANT_COUNT: usize = 20;
+    const VARIANT_COUNT: usize = 21;
 
     fn samples() -> Vec<Self> {
         use SystemMessage::*;
@@ -132,6 +141,7 @@ impl super::Samples for SystemMessage {
             SystemdFromCommandLine,
             SystemdSkippedConfigOverride { path: s("/p") },
             SystemdRefusedConfigOverride { path: s("/p") },
+            SystemdDisableConfigOverride { path: s("/p") },
             DaemonRestarted,
             DaemonRunning,
             DaemonNotReady { seconds: 20 },
@@ -233,5 +243,13 @@ mod tests {
         assert!(refused.contains("copy /tmp/x.toml to"), "{refused}");
         assert!(refused.contains("without --config"), "{refused}");
         assert!(refused.contains("without --systemd"), "{refused}");
+
+        let disabling = SystemdDisableConfigOverride {
+            path: "/tmp/x.toml".into(),
+        }
+        .localized();
+        assert!(disabling.contains(default), "{disabling}");
+        assert!(disabling.contains("--config /tmp/x.toml"), "{disabling}");
+        assert!(disabling.contains("stops the unit"), "{disabling}");
     }
 }
