@@ -412,6 +412,10 @@ assert_matrix_mutation_rejected \
     "justfile" \
     's@packaging-evidence.py ci-run --commit@packaging-evidence.py ci-run-disabled --commit@'
 assert_matrix_mutation_rejected \
+    "release matrix granting evidence eligibility outside Rawhide" \
+    "dist/release-matrix.json" \
+    's/"id": "debian-13",/"id": "debian-13", "evidence_eligibility": {"lifecycle": false},/'
+assert_matrix_mutation_rejected \
     "packaging matrix recording without aggregating lane evidence" \
     "justfile" \
     's@packaging-evidence.py aggregate --commit@packaging-evidence.py aggregate-disabled --commit@'

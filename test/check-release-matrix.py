@@ -244,6 +244,14 @@ require(
     rawhide.get("promotion_requires") == "separately reviewed amendment and full Fedora gates",
     "Rawhide promotion contract drifted",
 )
+# Only Rawhide may carry evidence_eligibility: test/packaging-evidence.py drops
+# a row whose lifecycle eligibility is false from the required lane set, so the
+# key on any other row would quietly shrink the release gate.
+for row in matrix.get("platforms", []):
+    require(
+        row.get("id") == "fedora-rawhide" or "evidence_eligibility" not in row,
+        f"{row.get('id')} declares evidence_eligibility; only the Rawhide row may",
+    )
 for suite, expected in expected_suite_contracts.items():
     details = suite_map[suite]
     for field, value in expected.items():
@@ -712,6 +720,8 @@ for artifact in ("deb-${{ matrix.suite }}", "rpm-${{ matrix.release }}", "arch")
         f"packaging workflow does not upload the packaging-evidence-{artifact} artifact",
     )
 require(
+    # One upload step per lane job: deb, rpm, arch. The two matrix jobs run the
+    # same step once per entry, so the step count stays three.
     packaging_workflow.count("path: .packaging-evidence/") == 3
     and packaging_workflow.count("if-no-files-found: error") == 3,
     "packaging workflow evidence uploads must fail the job when a lane recorded nothing",
