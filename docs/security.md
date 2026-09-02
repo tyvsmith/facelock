@@ -296,7 +296,10 @@ the unstable/absent ids described above: enrollment on a camera with no usable i
 refused outright (#312), and an id that changes between enrollment and authentication fails
 decryption, so on such hardware every auth would fall through to password. Default-off keeps
 the never-lockout guarantee for everyone else. What enabling it does to an existing store is
-in §3.C Encryption at Rest below.
+in §3.C Encryption at Rest below. Integrated MIPI/CSI cameras (Intel IPU6/IPU7, the Windows
+Hello class) expose no USB vendor or product identity at all, so neither
+`device_match_granularity = "unit"` nor `bind_device_aad` can be used with them; `model` with
+`bind_legacy_templates = true` is the only coupling setting that enrolls there.
 
 ### 2. Model Tampering
 
@@ -601,14 +604,20 @@ absent device ids, so it is opt-in only.
 USB identity (no non-empty canonical `device_id`) is refused before any model or embedding is
 written, in the daemon and the direct path alike; the error names `security.bind_device_aad`
 and the way out (disable it, or use a camera that reports `idVendor` and `idProduct`). The
-enrollment loop checks again on its own (`SecurityConfig::require_device_aad`), so no caller
-can seal an unbound template under the flag. Without the flag, templates are sealed with no
-AAD, which the cipher treats as an empty AAD: that equivalence is the ordinary-encryption
-contract and is pinned by a test in `facelock-tpm`.
+enrollment loop checks again on its own (`Config::require_device_aad`), so no caller can
+seal an unbound template under the flag. Without the flag, templates are sealed with no AAD,
+which the cipher treats as an empty AAD: that equivalence is the ordinary-encryption contract
+and is pinned by a test in `facelock-tpm`. The flag needs an encryption method to act on:
+under `encryption.method = "none"` it is inert (no refusal, no classification). The gate
+checks that a device id exists, not that it is unique: a non-empty serial is not necessarily
+unit-unique (§1.D), so hard binding is only as strong as the identity the camera reports.
+Integrated MIPI/CSI cameras (IPU6/IPU7) report none, so enrollment under the flag is refused
+on them.
 
 *Legacy unbound rows, never a lockout.* A row with a NULL or empty `device_id` (enrolled
 before the flag, or before device coupling existed) was sealed with no AAD, and decrypts with
-none: it keeps authenticating after the flag is turned on. It is classified `LegacyUnbound`
+none: it keeps authenticating after the flag is turned on, as long as every other row in the
+user's store still decrypts (see *Mixed stores*). It is classified `LegacyUnbound`
 rather than passed off as bound, and reported in three places: the daemon logs a warning
 naming the model ids at each compare-set load, `facelock list` shows `unbound (re-enroll to
 bind)` in the Camera column, and `facelock status` lists it as `#N: label, unbound (re-enroll
@@ -616,6 +625,21 @@ to bind)`. Re-enroll the user on the camera to bind the template. A row that *do
 `device_id` but was sealed before the flag was enabled has no AAD to match the one now derived
 from its id, so it fails to decrypt; the error says so and names the re-enrollment that fixes
 it. Enabling the flag over an existing store therefore means re-enrolling every user on it.
+
+*Mixed stores.* The first failing row fails the whole load (a partial compare set would
+silently narrow authentication), so a user whose store mixes NULL rows with id-bearing rows
+sealed before the flag loses both kinds until the id-bearing rows are re-enrolled. The unbound
+diagnostic is logged before decryption, so that failed load still names the NULL rows.
+
+*Turning it off.* Setting `bind_device_aad = false` (or switching `encryption.method` to
+`"none"`) over a store sealed under the flag is the mirror image: every hard-bound template
+stops decrypting, because the AAD it was sealed under is no longer supplied. `facelock list`
+and `facelock status` keep reporting those rows as bound (they carry a device id), and
+`facelock tpm decrypt` fails on the first of them. The decrypt error names the way back:
+re-enable the flag, or re-enroll. The refusal message's `= false` remedy says the same, since
+it changes new enrollments only. `facelock tpm encrypt` refuses to run while the flag is on:
+it re-seals rows from a query that carries no device id and would manufacture id-bearing rows
+with no AAD.
 
 **TPM PCR binding is implemented and enforced when enabled; it is opt-in by default
 (`tpm.pcr_binding`, finding #5).** With `tpm.pcr_binding = true`, the sealed key object is

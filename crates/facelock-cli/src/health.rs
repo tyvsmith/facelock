@@ -453,9 +453,7 @@ fn probe_enrolled(config: &Config, user: &str) -> Fact<EnrollmentHealth> {
                     .into_iter()
                     .map(|m| ModelSummary {
                         id: m.id,
-                        unbound: config
-                            .security
-                            .classify_device_binding(m.device_id.as_deref())
+                        unbound: config.classify_device_binding(m.device_id.as_deref())
                             == DeviceBinding::LegacyUnbound,
                         label: m.label,
                     })

@@ -3057,16 +3057,26 @@ device coupling of Plan 02. The contract (#312):
 
 - Enrollment with the flag on and no non-empty canonical `device_id` is refused before the
   first model write, in the daemon `Enroll` path and the direct path (through
-  `SecurityConfig::ensure_enrollment_binding_allowed`), and again inside the enrollment
-  loop (`SecurityConfig::require_device_aad`). The error names the key and the remedy.
+  `Config::ensure_enrollment_binding_allowed`), and again inside the enrollment loop
+  (`Config::require_device_aad`). The error names the key and the remedy. The flag is inert
+  under `encryption.method = "none"`: no refusal, no classification.
 - Authentication derives the AAD from each row's own `device_id` (`SecurityConfig::device_aad`).
   A row with a NULL or empty `device_id` decrypts with no AAD and is classified
-  `LegacyUnbound`; it authenticates as before. The daemon logs a warning naming such model ids
+  `LegacyUnbound`; it authenticates as before, provided every other row in the user's store
+  decrypts (the first failing row fails the whole load; the unbound diagnostic is logged
+  before decryption). The daemon logs a warning naming such model ids
   at each compare-set load; `facelock list` renders `unbound (re-enroll to bind)` in the Camera
   column; `facelock status` renders `#N: label, unbound (re-enroll to bind)`. The `--json`
-  payloads are unchanged (`device_id` is `""` for such a row).
+  payloads are unchanged (`device_id` is `""` for such a row): a consumer cannot tell an
+  unbound row from a pre-coupling one without consulting the flag itself. A dedicated field
+  is a follow-up, not part of this contract.
 - With the flag off, templates are sealed with no AAD. An absent AAD and an empty AAD are the
   same to the cipher; that equivalence is the ordinary-encryption contract.
+- Turning the flag off (or disabling encryption) over a store sealed under it makes every
+  hard-bound template fail to decrypt; `list`/`status` still report them bound and
+  `facelock tpm decrypt` fails on the first such row. The decrypt error names the way back
+  (re-enable, or re-enroll). `facelock tpm encrypt` refuses to run while the flag is on, since
+  it re-seals rows without their device ids.
 
 **TPM sealed-key format & unseal semantics (Plan 04).** The sealed-key blob is versioned:
 `0x01` = no PCR policy; `0x03` = PCR-bound, and self-describes its PCR index list. A

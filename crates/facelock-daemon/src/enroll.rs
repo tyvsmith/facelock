@@ -142,7 +142,7 @@ pub fn enroll<C: CameraSource, E: FaceProcessor>(
     // and that is a refusal (#312), made before the store is touched so a
     // re-enrollment under the same label keeps its previous template. The
     // callers judge the live fingerprint first; this holds for every caller.
-    let device_aad = match config.security.require_device_aad(device_id) {
+    let device_aad = match config.require_device_aad(device_id) {
         Ok(aad) => aad,
         Err(message) => {
             warn!(user, label, "enroll refused: {message}");

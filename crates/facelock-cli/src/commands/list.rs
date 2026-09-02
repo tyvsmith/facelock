@@ -1,7 +1,6 @@
 use chrono::{Local, TimeZone};
 
 use facelock_core::Config;
-use facelock_core::config::SecurityConfig;
 use facelock_core::types::{DeviceBinding, FaceModelInfo};
 
 use crate::backend::Backend;
@@ -24,7 +23,7 @@ pub fn run(config: &Config, user: Option<String>, json: bool) -> anyhow::Result<
     if json {
         print_json(&models);
     } else {
-        print_table(&user, &models, &config.security);
+        print_table(&user, &models, config);
     }
 
     Ok(())
@@ -34,9 +33,8 @@ pub fn run(config: &Config, user: Option<String>, json: bool) -> anyhow::Result<
 /// legacy or uncoupled template that authenticates on any camera; and, under
 /// hard device binding, an id-less template named as unbound so the operator
 /// knows it still authenticates and which re-enrollment binds it (#312).
-fn camera_column(model: &FaceModelInfo, security: &SecurityConfig) -> String {
-    if security.classify_device_binding(model.device_id.as_deref()) == DeviceBinding::LegacyUnbound
-    {
+fn camera_column(model: &FaceModelInfo, config: &Config) -> String {
+    if config.classify_device_binding(model.device_id.as_deref()) == DeviceBinding::LegacyUnbound {
         return "unbound (re-enroll to bind)".to_string();
     }
     match model.device_id.as_deref() {
@@ -45,7 +43,7 @@ fn camera_column(model: &FaceModelInfo, security: &SecurityConfig) -> String {
     }
 }
 
-fn print_table(user: &str, models: &[FaceModelInfo], security: &SecurityConfig) {
+fn print_table(user: &str, models: &[FaceModelInfo], config: &Config) {
     if models.is_empty() {
         println!("No face models enrolled for user '{user}'.");
         return;
@@ -65,7 +63,7 @@ fn print_table(user: &str, models: &[FaceModelInfo], security: &SecurityConfig) 
         } else {
             model.embedder_model.clone()
         };
-        let camera = camera_column(model, security);
+        let camera = camera_column(model, config);
         println!(
             "  {:<6} {:<20} {:<24} {:<22} {}",
             model.id, model.label, created, model_name, camera
@@ -191,10 +189,8 @@ mod tests {
     /// and a coupled template shows its camera either way.
     #[test]
     fn camera_column_names_an_unbound_template_under_hard_binding() {
-        let hard = SecurityConfig {
-            bind_device_aad: true,
-            ..SecurityConfig::default()
-        };
+        let mut hard = Config::default();
+        hard.security.bind_device_aad = true;
         assert_eq!(
             camera_column(&model("front", None), &hard),
             "unbound (re-enroll to bind)"
@@ -208,7 +204,7 @@ mod tests {
             "046d:085e:"
         );
 
-        let ordinary = SecurityConfig::default();
+        let ordinary = Config::default();
         assert_eq!(camera_column(&model("front", None), &ordinary), "(any)");
         assert_eq!(
             camera_column(&model("front", Some("046d:085e:")), &ordinary),
