@@ -105,7 +105,7 @@ pub fn decrypt_user_embeddings(
 /// The models among `raw_rows` that stand as [`DeviceBinding::LegacyUnbound`]
 /// under the configured policy, each listed once. Empty unless
 /// `security.bind_device_aad` is on.
-pub fn unbound_model_ids(
+fn unbound_model_ids(
     raw_rows: &[(u32, Vec<u8>, bool, Option<String>)],
     config: &Config,
 ) -> Vec<u32> {
@@ -150,14 +150,14 @@ fn decrypt_rows_into(
                 .unseal_embedding_with_aad(blob, aad.as_deref())
                 .map_err(|e| {
                     let mut message = format!("software decryption failed for embedding {id}: {e}");
-                    // A row that records a device id but was sealed before
-                    // hard binding was enabled carries no AAD, so it cannot
-                    // open under the one derived now. Say so: the fix is a
-                    // re-enrollment, not a key hunt.
+                    // One cause the cipher cannot tell from a wrong key or a
+                    // corrupt blob: a row that records a device id but was
+                    // sealed before hard binding was enabled carries no AAD,
+                    // so it cannot open under the one derived now. Name that
+                    // possibility and its fix without asserting it.
                     if aad.is_some() {
                         message.push_str(
-                            "; under security.bind_device_aad a template sealed before hard \
-                             binding was enabled cannot open under its device AAD, re-enroll \
+                            "; if this template predates security.bind_device_aad, re-enroll \
                              to bind it",
                         );
                     }

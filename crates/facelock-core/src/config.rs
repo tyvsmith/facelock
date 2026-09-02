@@ -1541,7 +1541,7 @@ allow_plaintext = true
     /// keeps a legacy unbound row authenticating after hard binding is
     /// enabled; it is not a licence to enroll one (see `require_device_aad`).
     #[test]
-    fn device_aad_gated_by_opt_in() {
+    fn device_aad_follows_opt_in_and_leaves_legacy_rows_unbound() {
         let mut config = Config::parse("[device]\npath = \"/dev/video0\"\n").unwrap();
         // Off by default → no AAD even with a device id.
         assert_eq!(config.security.device_aad(Some("046d:085e:X")), None);

@@ -473,8 +473,9 @@ pub fn device_binding_aad(device_id: Option<&str>) -> Option<Vec<u8>> {
 /// reads it off the row's `device_id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceBinding {
-    /// The row carries a device id, so under hard binding it was sealed under
-    /// that camera's AAD; with hard binding off nothing is asked of it.
+    /// Nothing to report: hard binding is off, or the row carries a non-empty
+    /// device id. Whether the blob really opens under that id's AAD is not
+    /// decided here; a mismatch surfaces when the row is decrypted.
     Bound,
     /// Hard binding is on but the row has no device id: it was sealed with no
     /// AAD, before binding was enabled or on a camera with no identity. It

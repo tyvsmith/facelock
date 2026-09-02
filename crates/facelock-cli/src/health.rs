@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 
 use facelock_core::Config;
 use facelock_core::config::{EncryptionMethod, NotificationMode};
+use facelock_core::types::DeviceBinding;
 use facelock_store::{FaceStore, StoreError};
 
 use crate::backend::{self, DaemonPing};
@@ -455,7 +456,7 @@ fn probe_enrolled(config: &Config, user: &str) -> Fact<EnrollmentHealth> {
                         unbound: config
                             .security
                             .classify_device_binding(m.device_id.as_deref())
-                            == facelock_core::types::DeviceBinding::LegacyUnbound,
+                            == DeviceBinding::LegacyUnbound,
                         label: m.label,
                     })
                     .collect(),
