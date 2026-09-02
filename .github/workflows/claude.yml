@@ -24,9 +24,10 @@ jobs:
     #     collaborators; the action still requires write access. MEMBER is
     #     left out: it never occurs on a user-owned repository and would admit
     #     every organisation member after a transfer.
-    #   - the two review events also refuse fork heads. `issue_comment` cannot:
-    #     its payload has no head repository, so a maintainer's `@claude` on a
-    #     fork PR does run here and checks out the fork head.
+    #   - the two review events also refuse fork heads here. `issue_comment`
+    #     payloads carry no head repository, so a guard step below reads the
+    #     PR with the read-only github.token and fails before the action step
+    #     when the head is a fork.
     #   - the gate decides who starts the job, not what reaches the model: a
     #     stranger's issue body is still the prompt once a maintainer answers.
     # Never switch this workflow to `pull_request_target`.
@@ -65,6 +66,24 @@ jobs:
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
     steps:
+      # issue_comment payloads carry no head repository, so the job-level `if:`
+      # above cannot see a fork PR. This step can, with the read-only
+      # github.token; when it fails the action step never runs, so neither the
+      # OAuth token nor the App-token exchange reaches a fork head.
+      # test/check-workflow-policy.py pins this step's position and `if:`.
+      - name: Refuse fork heads on pull request conversation comments
+        if: github.event_name == 'issue_comment' && github.event.issue.pull_request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          head="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.head.repo.full_name')"
+          if [ -z "$head" ] || [ "$head" != "$REPO" ]; then
+            echo "refusing: pull request head is '${head:-unknown}', not $REPO" >&2
+            exit 1
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

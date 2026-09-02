@@ -17,7 +17,10 @@ satisfy, for each of the workflow's `on:` events:
      (MEMBER never occurs on a user-owned repository and would admit every
      organisation member after a transfer);
   3. the pull-request-shaped events also require the head repository to be
-     this repository;
+     this repository; `issue_comment` payloads carry no head repository, so
+     a job on that event that runs the action must first run a guard step
+     (pinned `if:`, placed before the action step) that reads the PR with
+     `github.token` and exits non-zero unless the head is this repository;
   4. `issues:` subscribes to exactly `[opened, assigned]`, so relabelling or
      reopening an old `@claude` issue cannot re-fire it;
   5. the job's `permissions:` (the scope of `github.token`) grant nothing but
@@ -37,9 +40,10 @@ six-space `- `, block-form `with:`) fails closed.
 No workflow may use `pull_request_target`.
 
 The YAML is read by indentation, not a YAML library: this runs in a bare
-archlinux container with the standard library only. The supported shape is the
-one this repository writes: `on:` and `jobs:` as mappings, both at two-space
-indentation. A workflow whose text names one of the actor events but yields no
+archlinux container with the standard library only. A `|` or `>` value pins a
+block scalar whose body (deeper-indented lines) is content: never a comment
+to strip, never a key to scan. The supported shape is the one this repository
+writes: `on:` and `jobs:` as mappings, both at two-space indentation. A workflow whose text names one of the actor events but yields no
 events or no jobs under that reading fails closed as unparseable. A
 workflow-level `env:` that references `secrets` (dotted, indexed or through
 `toJSON(secrets)`, in any letter case) makes every job in the workflow
@@ -71,6 +75,8 @@ SAME_REPO = "github.event.pull_request.head.repo.full_name == github.repository"
 
 ACTION = "anthropics/claude-code-action"
 BYPASS_INPUTS = ("allowed_non_write_users", "allowed_bots", "github_token")
+FORK_GUARD_IF = "github.event_name == 'issue_comment' && github.event.issue.pull_request"
+FORK_GUARD_RUN = ("gh api", "/pulls/", ".head.repo.full_name", "exit 1")
 
 EVENT_CLAUSE = re.compile(r"^github\.event_name == '([a-z_]+)'$")
 GATE_CLAUSE = re.compile(
@@ -80,6 +86,7 @@ GATE_CLAUSE = re.compile(
 SECRET_REF = re.compile(r"\bsecrets\s*[.:\[]|toJSON\s*\(\s*secrets\b", re.IGNORECASE)
 ACTION_USE = re.compile(rf"^\s*(?:- )?uses:\s*{re.escape(ACTION)}@(\S+)")
 STEP_KEY = re.compile(r"^\s+([A-Za-z_][A-Za-z0-9_-]*)\s*:")
+BLOCK_SCALAR = re.compile(r"^(\s*)(?:- )?[^\s#][^:#]*:\s*[|>][-+]?[0-9]*\s*(?:#.*)?$")
 
 failures: list[str] = []
 
@@ -95,9 +102,36 @@ def indent_of(line: str) -> int:
     return len(line) - len(line.lstrip(" "))
 
 
+class ScalarLine(str):
+    """A line inside a `|` or `>` block scalar: content, never structure."""
+
+
 def content_lines(text: str) -> list[str]:
-    """Drop blank lines and full-line comments; keep everything else verbatim."""
-    return [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    """Drop blank lines and full-line comments outside block scalars.
+
+    Lines inside a block scalar come back verbatim as `ScalarLine`, so a
+    `#` there is not a comment and a `key:` there is not a key."""
+    out: list[str] = []
+    scalar_indent: int | None = None
+    for line in text.splitlines():
+        if scalar_indent is not None:
+            if not line.strip():
+                continue
+            if indent_of(line) > scalar_indent:
+                out.append(ScalarLine(line))
+                continue
+            scalar_indent = None
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        out.append(line)
+        opened = BLOCK_SCALAR.match(line)
+        if opened:
+            scalar_indent = len(opened.group(1))
+    return out
+
+
+def structural(lines: list[str]) -> list[str]:
+    return [line for line in lines if not isinstance(line, ScalarLine)]
 
 
 def mapping(lines: list[str], key: str, indent: int) -> tuple[str | None, list[str]]:
@@ -106,7 +140,7 @@ def mapping(lines: list[str], key: str, indent: int) -> tuple[str | None, list[s
     Returns (None, []) when the key is absent."""
     head = re.compile(rf"^{' ' * indent}{re.escape(key)}:(.*)$")
     for i, line in enumerate(lines):
-        m = head.match(line)
+        m = None if isinstance(line, ScalarLine) else head.match(line)
         if not m:
             continue
         body: list[str] = []
@@ -120,7 +154,7 @@ def mapping(lines: list[str], key: str, indent: int) -> tuple[str | None, list[s
 
 def keys_at(lines: list[str], indent: int) -> list[str]:
     pattern = re.compile(rf"^{' ' * indent}([A-Za-z_][A-Za-z0-9_-]*):")
-    return [m.group(1) for line in lines if (m := pattern.match(line))]
+    return [m.group(1) for line in structural(lines) if (m := pattern.match(line))]
 
 
 def scalar(value: str) -> str:
@@ -176,7 +210,7 @@ def steps_of(job: list[str]) -> list[list[str]]:
     _, body = mapping(job, "steps", 4)
     steps: list[list[str]] = []
     for line in body:
-        if re.match(r"^      - ", line):
+        if not isinstance(line, ScalarLine) and re.match(r"^      - ", line):
             steps.append([line])
         elif steps:
             steps[-1].append(line)
@@ -313,7 +347,7 @@ def check_permissions(context: str, job: list[str]) -> None:
             return  # no scopes at all: the most restrictive form
         fail(context, f"permissions must be in block form, not {inline!r}")
         return
-    for line in body:
+    for line in structural(body):
         if indent_of(line) != 6 or ":" not in line:
             continue
         scope, _, value = line.strip().partition(":")
@@ -331,14 +365,13 @@ def check_action_steps(context: str, job: list[str]) -> None:
     A job that names the action outside a readable step fails closed."""
     matched = 0
     for step in steps_of(job):
-        use = next((m for line in step if (m := ACTION_USE.match(line))), None)
-        if use is None:
+        if not uses_action(step):
             continue
         matched += 1
-        ref = use.group(1)
+        ref = uses_action(step)
         if not re.fullmatch(r"[0-9a-f]{40}", ref):
             fail(context, f"{ACTION} must be pinned to a 40-hex commit, not {ref!r}")
-        for line in step:
+        for line in structural(step):
             key = STEP_KEY.match(line)
             if not key:
                 continue
@@ -346,8 +379,36 @@ def check_action_steps(context: str, job: list[str]) -> None:
                 fail(context, f"input {key.group(1)!r} bypasses the action's own write-access check")
             if key.group(1) == "with" and "{" in line:
                 fail(context, "`with:` must be in block form; a flow mapping hides its inputs from this check")
-    if not matched and ACTION in "\n".join(job):
+    if not matched and ACTION in "\n".join(structural(job)):
         fail(context, f"steps shape not readable: {ACTION} occurs in the job but no step at six-space `- ` uses it")
+
+
+def uses_action(step: list[str]) -> str | None:
+    """The ref this step pins `ACTION` to, or None when it is another step."""
+    return next((m.group(1) for line in structural(step) if (m := ACTION_USE.match(line))), None)
+
+
+def is_fork_guard(step: list[str]) -> bool:
+    inline, body = mapping(step, "if", 8)
+    if (inline is None and not body) or normalize(block_text(inline, body)) != normalize(FORK_GUARD_IF):
+        return False
+    run_inline, run_body = mapping(step, "run", 8)
+    run = block_text(run_inline, run_body)
+    return all(needle in run for needle in FORK_GUARD_RUN)
+
+
+def check_fork_guard(context: str, job: list[str]) -> None:
+    """On `issue_comment` the payload has no head repository: a job that runs the
+    action must first refuse fork heads through the API, before the action step."""
+    steps = steps_of(job)
+    action_at = next((i for i, step in enumerate(steps) if uses_action(step)), None)
+    if action_at is None:
+        return
+    guard_at = next((i for i, step in enumerate(steps) if is_fork_guard(step)), None)
+    if guard_at is None:
+        fail(context, f"issue_comment job runs {ACTION} without a fork-head guard step (`if: {FORK_GUARD_IF}`, `gh api .../pulls/<n> --jq .head.repo.full_name`, `exit 1` on a fork)")
+    elif guard_at > action_at:
+        fail(context, "the fork-head guard step must run before the action step")
 
 
 def check_actor_job(context: str, job: list[str], events: set[str]) -> None:
@@ -414,6 +475,8 @@ def check_workflow(path: Path) -> int:
         secret = workflow_secret or bool(SECRET_REF.search("\n".join(job)))
         if actor:
             check_actor_job(context, job, events)
+            if "issue_comment" in events:
+                check_fork_guard(context, job)
             checked += 1
         elif "pull_request" in events and secret:
             check_pull_request_job(context, job)

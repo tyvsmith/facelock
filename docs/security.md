@@ -1574,12 +1574,15 @@ the action strips hidden markdown, but read the raw text first.
 The two review events (`pull_request_review`, `pull_request_review_comment`)
 also require the head repository to be this one, defense in depth on the two
 payloads that carry it. `issue_comment` carries no head repository, only the
-issue number, so the same guard cannot be written for it: a trusted `@claude`
-on a fork PR does start the job, and the action fetches `refs/pull/<n>/head`,
-the fork's code, into a job holding the OAuth token and a write-capable App
-token. The action refuses actors without write access on its own, but only
-after the job has started with the secret in its environment; the workflow
-gate keeps the job from being scheduled at all.
+issue number, so the job-level `if:` cannot see a fork PR there. A guard step
+ahead of the action step closes that: when the comment is on a pull request,
+it reads the PR with the job's read-only `github.token` and exits non-zero
+unless the head repository is this one. The action step, and with it the
+OAuth token and the App-token exchange, never runs for a fork; the job that
+does start holds nothing but `github.token`. The action refuses actors
+without write access on its own, but only after the job has started with the
+secret in its environment; the workflow gate keeps the job from being
+scheduled at all.
 
 The job's `permissions:` scope `github.token` only: `contents`,
 `pull-requests`, `issues` and `actions` as `read`, plus `id-token: write`.
@@ -1597,8 +1600,9 @@ for every `.yml` and `.yaml` workflow: the per-event author gate and the
 read-only `github.token` ceiling on every job of a workflow that subscribes to
 an actor-authored event, the accepted set, `issues: types` as exactly
 `[opened, assigned]`, the same-repo guard on the two review events, the
-same-repo guard and the same ceiling on every secret-bearing `pull_request`
-job, a 40-hex pin on
+fork-head guard step (its position before the action step and its `if:`) in
+every `issue_comment` job that runs the action, the same-repo guard and the
+same ceiling on every secret-bearing `pull_request` job, a 40-hex pin on
 `anthropics/claude-code-action` with its bypass inputs
 (`allowed_non_write_users`, `allowed_bots`, `github_token`) refused, and the
 `pull_request_target` ban. It runs in `just check` and in CI.
