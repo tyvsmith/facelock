@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use facelock_camera::capture::is_dark_with_config;
 use facelock_core::config::Config;
 use facelock_core::traits::{CameraSource, FaceProcessor};
-use facelock_core::types::{FaceEmbedding, Wiped};
+use facelock_core::types::FaceEmbedding;
 use facelock_store::FaceStore;
 use facelock_tpm::SoftwareSealer;
 use tracing::{debug, info, warn};
@@ -25,8 +25,8 @@ pub enum EnrollOutcome {
     },
     /// The caller went away, the system is suspending, or the process was
     /// signalled. Same rule as [`crate::auth::AuthOutcome::Cancelled`]: the
-    /// enrollment was abandoned, not refused, the camera closes at once
-    /// (ADR 008 §5), and the store is exactly as it was (#308).
+    /// enrollment was abandoned, not refused, and the camera closes at once
+    /// (ADR 008 §5).
     Cancelled,
 }
 
@@ -122,29 +122,6 @@ impl RejectionStats {
     }
 }
 
-/// What enrollment asks of a sealer: one embedding in, its ciphertext out.
-///
-/// [`SoftwareSealer`] is the only implementation outside tests. The seam
-/// exists because AES-GCM under a valid key never fails, and the promise that
-/// a sealing failure writes nothing needs a sealer that can.
-trait EmbeddingSealer {
-    fn seal_embedding_with_aad(
-        &self,
-        embedding: &FaceEmbedding,
-        aad: Option<&[u8]>,
-    ) -> facelock_core::error::Result<Vec<u8>>;
-}
-
-impl EmbeddingSealer for SoftwareSealer {
-    fn seal_embedding_with_aad(
-        &self,
-        embedding: &FaceEmbedding,
-        aad: Option<&[u8]>,
-    ) -> facelock_core::error::Result<Vec<u8>> {
-        SoftwareSealer::seal_embedding_with_aad(self, embedding, aad)
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn enroll<C: CameraSource, E: FaceProcessor>(
     camera: &mut C,
@@ -171,7 +148,8 @@ pub fn enroll<C: CameraSource, E: FaceProcessor>(
     // Accepted embeddings wait here until the whole set has passed the gates;
     // nothing reaches the store before then (#308). The guard wipes them on
     // every exit path, unwind included.
-    let mut accepted: Wiped<Vec<FaceEmbedding>, FaceEmbedding> = Wiped::with_capacity(MAX_CAPTURES);
+    let mut accepted: facelock_core::types::Wiped<Vec<FaceEmbedding>, FaceEmbedding> =
+        facelock_core::types::Wiped::with_capacity(MAX_CAPTURES);
     let mut rejections = RejectionStats::default();
 
     while Instant::now() < deadline && accepted.len() < MAX_CAPTURES {
@@ -333,6 +311,29 @@ pub fn enroll<C: CameraSource, E: FaceProcessor>(
     )
 }
 
+/// What enrollment asks of a sealer: one embedding in, its ciphertext out.
+///
+/// [`SoftwareSealer`] is the only implementation outside tests. The seam
+/// exists because AES-GCM under a valid key never fails, and the promise that
+/// a sealing failure writes nothing needs a sealer that can.
+trait EmbeddingSealer {
+    fn seal_embedding_with_aad(
+        &self,
+        embedding: &FaceEmbedding,
+        aad: Option<&[u8]>,
+    ) -> facelock_core::error::Result<Vec<u8>>;
+}
+
+impl EmbeddingSealer for SoftwareSealer {
+    fn seal_embedding_with_aad(
+        &self,
+        embedding: &FaceEmbedding,
+        aad: Option<&[u8]>,
+    ) -> facelock_core::error::Result<Vec<u8>> {
+        SoftwareSealer::seal_embedding_with_aad(self, embedding, aad)
+    }
+}
+
 /// Enrollment's one write: seal every accepted embedding, then replace the
 /// user's same-label model in a single store transaction.
 ///
@@ -411,6 +412,7 @@ fn persist_enrollment<S: EmbeddingSealer>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use facelock_test_support::{MockCamera, MockFaceEngine, fixtures};
 
     #[test]
     fn summary_empty_when_no_rejections() {
@@ -530,7 +532,6 @@ mod tests {
 
     #[test]
     fn angle_diversity_failure_leaves_no_model_behind() {
-        use facelock_test_support::{MockCamera, MockFaceEngine, fixtures};
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let unique = SystemTime::now()
@@ -581,8 +582,6 @@ mod tests {
     }
 
     // ---- persistence atomicity (#308) --------------------------------------
-
-    use facelock_test_support::{MockCamera, MockFaceEngine, fixtures};
 
     /// Four embeddings far enough apart that every frame is accepted and the
     /// angle-diversity gate passes.
