@@ -91,7 +91,7 @@ The `.github/workflows/release.yml` workflow:
 4. Builds the direct `.rpm` package in the pinned Fedora 44 container and validates contents
 5. Validates Nix flake evaluation
 6. Publishes stable releases to AUR — `facelock`, `facelock-bin`, and `facelock-git` — if `AUR_SSH_KEY` is configured
-7. Publishes stable releases to the signed, codenamed APT suites if the APT signing secrets are configured
+7. Publishes stable releases to the signed, codenamed APT suites, and to the `main` and `legacy` compatibility suites until 0.3.0, if the APT signing secrets are configured
 8. Triggers GitHub Pages rebuild to include updated APT repo
 
 Validated prerelease tags set the GitHub Release `prerelease` output and upload

@@ -721,6 +721,11 @@ assert_matrix_mutation_rejected \
     's/keep working until 0.3.0/keep working/' \
     "README.md omits the APT compatibility window"
 assert_matrix_mutation_rejected \
+    "README install instruction configures the main suite" \
+    "README.md" \
+    's/apt ${APT_SUITE} facelock/apt main facelock/' \
+    "README.md still configures a retired APT suite"
+assert_matrix_mutation_rejected \
     "quickstart migration note dropped" \
     "book/src/quickstart.md" \
     's/keep working until 0.3.0/keep working/' \
@@ -1120,75 +1125,11 @@ for suite in trixie resolute; do
     printf '%s\n' "${artifacts[@]}" > "$manifest"
     apt_recipe_manifests+=("artifacts/$suite/${binary_basename}.manifest")
 done
-cat > "$tmp_root/bin/dpkg-deb" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-case "${1:-}" in
-    --field|-f)
-        case "${3:-}" in
-            Package) printf '%s\n' facelock ;;
-            Depends) printf '%s\n' 'dbus, libpam-runtime, libc6 (>= 2.36), libtss2-esys-3.0.2-0t64, libtss2-mu-4.0.1-0t64, libtss2-tctildr0t64' ;;
-            Provides|Conflicts|Replaces) printf '\n' ;;
-            Version)
-                version="${2##*/}"
-                version="${version#facelock_}"
-                printf '%s\n' "${version%_amd64.deb}"
-                ;;
-            Architecture) printf '%s\n' amd64 ;;
-            *) exit 2 ;;
-        esac
-        ;;
-    --control)
-        mkdir -p "${3:?}"
-        cat >"$3/postinst" <<'SCRIPT'
-#!/bin/sh
-if [ -d /run/systemd/system ] && \
-           systemctl is-active --quiet facelock-daemon.service; then
-            systemctl try-restart facelock-daemon.service 2>/dev/null || true
-fi
-systemd-tmpfiles ${DPKG_ROOT:+--root="$DPKG_ROOT"} --create facelock.conf || true
-SCRIPT
-        cat >"$3/prerm" <<'SCRIPT'
-#!/bin/sh
-facelock pam shared-profile-status
-facelock pam remove --all --dry-run
-facelock pam remove --all
-if [ -z "$DPKG_ROOT" ] && [ "$1" = remove ] && [ -d /run/systemd/system ]; then
-    deb-systemd-invoke stop 'facelock-daemon.service' >/dev/null || true
-fi
-SCRIPT
-        sed -e '/^#DEBHELPER#$/r debian/generated-postrm-helper' \
-            -e '/^#DEBHELPER#$/d' debian/postrm >"$3/postrm"
-        printf '%s\n' '/etc/facelock/config.toml' >"$3/conffiles"
-        ;;
-    *) exit 2 ;;
-esac
-SH
-cat > "$tmp_root/bin/reprepro" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-[ "${1:-}" = -b ] || exit 2
-repo_dir="${2:-}"
-case "${3:-}" in
-    check) exit 0 ;;
-    includedeb)
-        suite="${4:-}"
-        package="${5:-}"
-        mkdir -p \
-            "$repo_dir/dists/$suite/facelock/binary-amd64" \
-            "$repo_dir/pool/facelock"
-        : > "$repo_dir/dists/$suite/Release"
-        : > "$repo_dir/dists/$suite/facelock/binary-amd64/Packages"
-        cp -- "$package" "$repo_dir/pool/facelock/"
-        ;;
-    *) exit 2 ;;
-esac
-SH
 cat > "$tmp_root/bin/podman" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${FACELOCK_TEST_PODMAN_LOG:?}"
 SH
-chmod +x "$tmp_root/bin/dpkg-deb" "$tmp_root/bin/reprepro" "$tmp_root/bin/podman"
+chmod +x "$tmp_root/bin/podman"
 apt_recipe_podman_log="$tmp_root/apt-recipe-podman.log"
 if ! (
     cd "$apt_recipe_root"

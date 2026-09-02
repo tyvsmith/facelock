@@ -178,11 +178,11 @@ for row in matrix.get("platforms", []):
             f"{row['id']} image is not digest-pinned: {image!r}",
         )
 
+release_identity = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?")
 release_version = os.environ.get("RELEASE_MATRIX_VERSION")
 if release_version is not None:
     require(
-        re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?", release_version)
-        is not None,
+        release_identity.fullmatch(release_version) is not None,
         f"invalid RELEASE_MATRIX_VERSION: {release_version!r}",
     )
 
@@ -190,7 +190,9 @@ if release_version is not None:
 def workspace_version() -> str:
     match = re.search(r'(?m)^version = "([^"]+)"', (ROOT / "Cargo.toml").read_text())
     require(match is not None, "Cargo.toml must declare the workspace version")
-    return match.group(1)
+    version = match.group(1)
+    require(release_identity.fullmatch(version) is not None, f"invalid Cargo.toml workspace version: {version!r}")
+    return version
 
 
 def version_triple(version: str) -> tuple[int, int, int]:
@@ -290,7 +292,7 @@ for stanza in re.split(r"\n\s*\n", apt_config.strip()):
     require(fields["Codename"] not in apt_stanzas, f"duplicate APT config stanza {fields['Codename']}")
     apt_stanzas[fields["Codename"]] = fields
 declared_suites = set(apt_stanzas)
-for suite in set(expected_compat_suites) - active_compat_suites:
+for suite in sorted(set(expected_compat_suites) - active_compat_suites):
     require(
         suite not in declared_suites,
         f"compatibility APT suite {suite} reached retire_at {compat_retire_at}; remove its stanza from dist/apt/conf/distributions",
