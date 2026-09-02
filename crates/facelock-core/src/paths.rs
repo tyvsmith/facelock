@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::RwLock;
 
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/facelock/config.toml";
@@ -105,23 +105,42 @@ fn non_default_override_of(effective: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Whether two spellings name different files, decided on the filesystem
-/// where it can be and on the spelling where it cannot. A missing file is
-/// resolved through its directory, because setup runs before the config file
-/// exists; two spellings that resolve nowhere compare as written, so an
-/// unresolvable spelling fails closed as "different".
+/// Whether two spellings name different files, decided on the filesystem as
+/// far as it exists and on the spelling past that. Setup runs before the
+/// config file, and on a from-source install before its directory, exists;
+/// what is still unresolvable after both fails closed as "different".
 fn names_a_different_file(a: &Path, b: &Path) -> bool {
     resolved_identity(a) != resolved_identity(b)
 }
 
+/// The deepest existing ancestor, resolved on the filesystem, with the
+/// remaining components applied lexically. A component that does not exist
+/// cannot be a symlink, so folding its `.` and `..` is exactly what the
+/// kernel will do once it exists; `..` out of the resolved part goes to the
+/// real parent, as it does through a symlinked directory, and `..` at the
+/// root stays at the root, as the kernel resolves it. Only a spelling with no
+/// existing ancestor at all, a relative path whose first component is
+/// missing, is returned as spelled, which compares unequal to anything
+/// resolved: the fail-closed default for what cannot be answered.
 fn resolved_identity(path: &Path) -> PathBuf {
-    if let Ok(real) = path.canonicalize() {
+    let components: Vec<Component<'_>> = path.components().collect();
+    for split in (1..=components.len()).rev() {
+        let prefix: PathBuf = components[..split].iter().collect();
+        let Ok(mut real) = prefix.canonicalize() else {
+            continue;
+        };
+        for component in &components[split..] {
+            match component {
+                Component::Normal(name) => real.push(name),
+                Component::CurDir => {}
+                // `pop` is false only at the root, where `..` stays put.
+                Component::ParentDir => {
+                    real.pop();
+                }
+                Component::RootDir | Component::Prefix(_) => return path.to_path_buf(),
+            }
+        }
         return real;
-    }
-    if let (Some(parent), Some(name)) = (path.parent(), path.file_name())
-        && let Ok(dir) = parent.canonicalize()
-    {
-        return dir.join(name);
     }
     path.to_path_buf()
 }
@@ -272,18 +291,80 @@ mod tests {
         assert!(!names_a_different_file(&dotted, &default));
         assert!(names_a_different_file(&etc.join("other.toml"), &default));
 
-        // Neither directory exists: only the spelling can decide, and a
-        // different spelling fails closed as "different".
         let ghost = dir.path().join("ghost").join("config.toml");
         assert!(!names_a_different_file(&ghost, &ghost));
-        assert!(names_a_different_file(
-            &dir.path()
-                .join("ghost")
-                .join("..")
-                .join("ghost")
-                .join("config.toml"),
-            &ghost
+        assert!(names_a_different_file(&ghost, &default));
+    }
+
+    /// A from-source install runs the identity check before the base flow
+    /// creates the config directory. With no `/etc/facelock` to resolve, the
+    /// `..` spelling of the default must still be the default: the deepest
+    /// existing ancestor is resolved on the filesystem and the rest of the
+    /// spelling is normalized lexically, which is safe because a component
+    /// that does not exist cannot be a symlink.
+    #[test]
+    fn dotted_spelling_is_the_default_even_before_the_config_dir_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let etc = dir.path().join("etc");
+        assert!(!etc.exists());
+        let default = etc.join("config.toml");
+
+        let dotted = etc.join("..").join("etc").join("config.toml");
+        assert!(!names_a_different_file(&dotted, &default));
+        let cur = etc.join(".").join("config.toml");
+        assert!(!names_a_different_file(&cur, &default));
+        // Through a missing sibling: `ghost/../etc` is `etc`, since `ghost`
+        // cannot be a symlink to anywhere.
+        let via_ghost = dir
+            .path()
+            .join("ghost")
+            .join("..")
+            .join("etc")
+            .join("config.toml");
+        assert!(!names_a_different_file(&via_ghost, &default));
+        assert!(names_a_different_file(&etc.join("other.toml"), &default));
+
+        // `..` out of a resolved directory goes to that directory's real
+        // parent, as the kernel would: through a symlinked directory that
+        // exists, `link/../etc` lands beside the link's target.
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, dir.path().join("link")).unwrap();
+        let via_link = dir
+            .path()
+            .join("link")
+            .join("..")
+            .join("etc")
+            .join("config.toml");
+        assert!(!names_a_different_file(&via_link, &default));
+    }
+
+    /// `..` at the root stays at the root, as the kernel resolves `/..`, so
+    /// climbing past a missing top-level directory lands where the kernel
+    /// would once it exists.
+    #[test]
+    fn dot_dot_at_the_root_stays_at_the_root() {
+        let plain = Path::new("/facelock-no-such-root/config.toml");
+        assert!(!names_a_different_file(
+            Path::new("/../facelock-no-such-root/config.toml"),
+            plain
         ));
+        assert!(!names_a_different_file(
+            Path::new("/facelock-no-such-root/../../facelock-no-such-root/config.toml"),
+            plain
+        ));
+    }
+
+    /// What has no existing ancestor to resolve from fails closed: a relative
+    /// spelling whose first component is missing is compared as written, so
+    /// two lexically equal spellings of it still count as different.
+    #[test]
+    fn a_spelling_with_no_existing_ancestor_fails_closed() {
+        let plain = Path::new("facelock-no-such-dir/config.toml");
+        let dotted = Path::new("facelock-no-such-dir/../facelock-no-such-dir/config.toml");
+        assert!(!plain.exists() && !Path::new("facelock-no-such-dir").exists());
+        assert!(names_a_different_file(dotted, plain));
+        assert!(!names_a_different_file(plain, plain));
     }
 
     /// An unprivileged process reads `FACELOCK_CONFIG`, so that is an override
