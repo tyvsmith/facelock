@@ -21,6 +21,9 @@ satisfy, for each of the workflow's `on:` events:
      a job on that event that runs the action must first run a guard step
      (pinned `if:`, placed before the action step) that reads the PR with
      `github.token` and exits non-zero unless the head is this repository;
+     the API call, the comparison and the `exit 1` must be shell statements,
+     not comments, and the step must bind `GH_TOKEN`, the repository and the
+     PR number from the `github` context;
   4. `issues:` subscribes to exactly `[opened, assigned]`, so relabelling or
      reopening an old `@claude` issue cannot re-fire it;
   5. the job's `permissions:` (the scope of `github.token`) grant nothing but
@@ -76,7 +79,9 @@ SAME_REPO = "github.event.pull_request.head.repo.full_name == github.repository"
 ACTION = "anthropics/claude-code-action"
 BYPASS_INPUTS = ("allowed_non_write_users", "allowed_bots", "github_token")
 FORK_GUARD_IF = "github.event_name == 'issue_comment' && github.event.issue.pull_request"
-FORK_GUARD_RUN = ("gh api", "/pulls/", ".head.repo.full_name", "exit 1")
+FORK_GUARD_TOKEN = ("GH_TOKEN", "${{ github.token }}")
+FORK_GUARD_REPO = "${{ github.repository }}"
+FORK_GUARD_PR = "${{ github.event.issue.number }}"
 
 EVENT_CLAUSE = re.compile(r"^github\.event_name == '([a-z_]+)'$")
 GATE_CLAUSE = re.compile(
@@ -388,13 +393,70 @@ def uses_action(step: list[str]) -> str | None:
     return next((m.group(1) for line in structural(step) if (m := ACTION_USE.match(line))), None)
 
 
-def is_fork_guard(step: list[str]) -> bool:
+def has_fork_guard_if(step: list[str]) -> bool:
     inline, body = mapping(step, "if", 8)
-    if (inline is None and not body) or normalize(block_text(inline, body)) != normalize(FORK_GUARD_IF):
-        return False
-    run_inline, run_body = mapping(step, "run", 8)
-    run = block_text(run_inline, run_body)
-    return all(needle in run for needle in FORK_GUARD_RUN)
+    return bool(inline is not None or body) and normalize(block_text(inline, body)) == normalize(FORK_GUARD_IF)
+
+
+def step_env(step: list[str]) -> dict[str, str]:
+    _, body = mapping(step, "env", 8)
+    env: dict[str, str] = {}
+    for line in structural(body):
+        key, _, value = line.strip().partition(":")
+        env[key.strip()] = value.strip()
+    return env
+
+
+def shell_statements(step: list[str]) -> list[str]:
+    """The `run:` block as statements with shell comments removed, quotes respected."""
+    inline, body = mapping(step, "run", 8)
+    lines = body if inline in (None, "|", ">", "|-", ">-") else [inline]
+    statements: list[str] = []
+    for line in lines:
+        kept: list[str] = []
+        quote: str | None = None
+        for i, c in enumerate(line):
+            if quote:
+                if c == quote:
+                    quote = None
+            elif c in "'\"":
+                quote = c
+            elif c == "#" and (i == 0 or line[i - 1] in " \t;("):
+                break
+            kept.append(c)
+        statement = "".join(kept).strip()
+        if statement:
+            statements.append(statement)
+    return statements
+
+
+def shell_var(name: str) -> str:
+    return rf"\$(?:\{{{re.escape(name)}\}}|{re.escape(name)})"
+
+
+def fork_guard_defects(step: list[str]) -> list[str]:
+    """What a step with the guard's `if:` still lacks to be the guard."""
+    defects: list[str] = []
+    env = step_env(step)
+    if env.get(FORK_GUARD_TOKEN[0]) != FORK_GUARD_TOKEN[1]:
+        defects.append(f"env `{FORK_GUARD_TOKEN[0]}: {FORK_GUARD_TOKEN[1]}`")
+    repo = next((k for k, v in env.items() if v == FORK_GUARD_REPO), None)
+    pr = next((k for k, v in env.items() if v == FORK_GUARD_PR), None)
+    if repo is None:
+        defects.append(f"an env binding of `{FORK_GUARD_REPO}`")
+    if pr is None:
+        defects.append(f"an env binding of `{FORK_GUARD_PR}`")
+    statements = shell_statements(step)
+    if repo is not None and pr is not None:
+        api = re.compile(rf"gh api \"?repos/{shell_var(repo)}/pulls/{shell_var(pr)}\"?\s.*--jq\s+'?\.head\.repo\.full_name'?")
+        if not any(api.search(s) for s in statements):
+            defects.append(f"a statement `gh api \"repos/${repo}/pulls/${pr}\" --jq '.head.repo.full_name'` outside comments")
+        compare = re.compile(rf"!=\s*\"?{shell_var(repo)}\"?")
+        if not any(compare.search(s) for s in statements):
+            defects.append(f"a comparison `!= \"${repo}\"` outside comments")
+    if not any(re.search(r"(^|[;&|(]\s*)exit 1\b", s) for s in statements):
+        defects.append("an `exit 1` statement outside comments")
+    return defects
 
 
 def check_fork_guard(context: str, job: list[str]) -> None:
@@ -404,10 +466,13 @@ def check_fork_guard(context: str, job: list[str]) -> None:
     action_at = next((i for i, step in enumerate(steps) if uses_action(step)), None)
     if action_at is None:
         return
-    guard_at = next((i for i, step in enumerate(steps) if is_fork_guard(step)), None)
+    guard_at = next((i for i, step in enumerate(steps) if has_fork_guard_if(step)), None)
     if guard_at is None:
-        fail(context, f"issue_comment job runs {ACTION} without a fork-head guard step (`if: {FORK_GUARD_IF}`, `gh api .../pulls/<n> --jq .head.repo.full_name`, `exit 1` on a fork)")
-    elif guard_at > action_at:
+        fail(context, f"issue_comment job runs {ACTION} without a fork-head guard step (`if: {FORK_GUARD_IF}`)")
+        return
+    for defect in fork_guard_defects(steps[guard_at]):
+        fail(context, f"fork-head guard step lacks {defect}")
+    if guard_at > action_at:
         fail(context, "the fork-head guard step must run before the action step")
 
 
