@@ -2171,8 +2171,9 @@ Lane claims use a fixed vocabulary. `channel`: `apt`, `direct-rpm`, `aur`
 assembler and `.dsc` rebuild), `host-binaries` (release binaries staged from
 `target/release`), `makepkg-source-build` (#230 adds `mock-source-rebuild`).
 `runtime_policy`: `bundled-ort`, `system-ort`. `depth`: `full`, `smoke`.
-`status`: `pass`; `partial` for an exit 0 with a skip or without models;
-`fail`. The counters are assertion counts by class, and `skip` equals
+`status`: `pass`; `partial` for an exit 0 with an allowed skip or without
+models; `fail` for a non-zero exit, a failed assertion, or a mandatory skip.
+The counters are assertion counts by class, and `skip` equals
 `allowed_skip` (the `FACELOCK_ALLOW_MISSING_MODELS=1` opt-out) plus
 `mandatory_skip`. `models_present` says whether the ONNX models were on hand
 for every assertion that needs them; a lane with no such assertion
@@ -2187,8 +2188,9 @@ is false (Rawhide) contributes nothing.
 
 The marker is refused, and the aggregate refuses to write it, unless all of
 the following hold: `schema` is 1; `commit` equals HEAD; `tree_clean` is true;
-`started_at` and `finished_at` are present; `required_lanes` equals the
-derived set; every required lane has exactly one record; and every record
+`started_at` and `finished_at` are ISO 8601 timestamps with an offset, in
+order; `required_lanes` equals the derived set; every required lane has
+exactly one record and no record names a lane outside that set; and every record
 names HEAD, has `models_present` true, has `fail`, `skip`, `allowed_skip` and
 `mandatory_skip` all 0, has `pass` of at least 1, has `status` `pass`, and
 carries the target, channel, build origin, runtime policy and depth the matrix
@@ -2201,7 +2203,11 @@ format. Preflight reads evidence from two places, in order: the
 uploaded (`packaging-evidence-deb-<suite>`, `packaging-evidence-rpm-<release>`
 and `packaging-evidence-arch`, fetched with `gh run download` and aggregated
 the same way), then the local marker. A run without those artifacts is not
-evidence, whatever its conclusion.
+evidence, whatever its conclusion; neither is a pull-request run, which builds
+the merge commit, nor a run of any other workflow. The marker and the
+artifacts are maintainer-trust records: preflight checks their shape and their
+binding to HEAD and the matrix, not that a real lane produced them. A forged
+record is a deliberate act, not the slip this gate exists to catch.
 
 ### Debian source and binary package contract
 

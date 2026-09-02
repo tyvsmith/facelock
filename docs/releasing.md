@@ -344,7 +344,9 @@ successful `packaging.yml` run at that exact commit uploaded, fetched with
 `gh run download`, or from `.packaging-matrix-verified`, which
 `just test-packaging-matrix` writes after running every lane locally. A run's
 green conclusion alone is not evidence: a path-filtered pull-request run skips
-every lane and still concludes "success". A `FACELOCK_ALLOW_MISSING_MODELS=1`
+every lane and still concludes "success". A pull-request run cannot satisfy it
+either: it builds the merge commit, not the commit being released. A
+`FACELOCK_ALLOW_MISSING_MODELS=1`
 run is a diagnostic and never records. The one-line commit marker from before
 0.2.0 is refused with a message naming the new format. A nightly run does not
 satisfy it either: nightly builds whatever `main` was at 07:00 UTC, and a

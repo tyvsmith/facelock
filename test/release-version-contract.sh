@@ -1247,8 +1247,9 @@ fi
 # images or run this very contract are stubbed to succeed. The stub keys the
 # model-dependent branch off what the runner mounted, as the real images do.
 evidence_root="$tmp_root/evidence-root"
-mkdir -p "$evidence_root/dist" "$evidence_root/test" "$evidence_root/models" "$evidence_root/target/release"
+mkdir -p "$evidence_root/dist" "$evidence_root/test" "$evidence_root/models" "$evidence_root/target/release" "$evidence_root/.github/workflows"
 cp "$repo_root/justfile" "$evidence_root/"
+cp "$repo_root/.github/workflows/packaging.yml" "$evidence_root/.github/workflows/"
 cp "$repo_root/dist/release-matrix.json" "$evidence_root/dist/"
 cp "$repo_root/test/packaging-evidence.py" \
     "$repo_root/test/run-pkg-validate-systemd.sh" \
@@ -1379,8 +1380,12 @@ run_packaging_matrix >"$tmp_root/evidence-complete.log" 2>&1 ||
     fail "test-packaging-matrix refused a complete run: $(cat "$tmp_root/evidence-complete.log")"
 [ ! -e "$evidence_root/.packaging-evidence/stale-lane.json" ] ||
     fail "test-packaging-matrix kept a lane record from before the run"
-evidence_validate "$evidence_root/.packaging-matrix-verified" ||
-    fail "release preflight refused the marker a complete matrix run wrote"
+validate_output=$(evidence_validate "$evidence_root/.packaging-matrix-verified" 2>&1) ||
+    fail "release preflight refused the marker a complete matrix run wrote: $validate_output"
+case "$validate_output" in
+    *"6 lanes"*) ;;
+    *) fail "validate accepted the marker without summarising it: $validate_output" ;;
+esac
 python3 - "$evidence_root/.packaging-matrix-verified" "$evidence_head" <<'PY'
 import json
 import sys
@@ -1536,6 +1541,29 @@ assert_evidence_refused "unknown schema" \
     'marker["schema"] = 2' "schema"
 assert_evidence_refused "skip count that does not add up" \
     'lanes["test-deb-trixie-pkg"]["skip"] = 2' "skip"
+assert_evidence_refused "record for a lane the matrix does not require" \
+    'marker["lanes"].append({**lanes["test-arch-pkg"], "name": "test-extra-lane"})' "not a lane the release matrix requires"
+assert_evidence_refused "finished before it started" \
+    'marker["finished_at"] = "2020-01-01T00:00:00Z"' "before started_at"
+assert_evidence_refused "timestamp that is not ISO 8601" \
+    'marker["started_at"] = "yesterday"' "ISO 8601"
+assert_evidence_refused "timestamp without an offset" \
+    'marker["started_at"] = marker["started_at"].rstrip("Z")' "UTC offset"
+
+# Outside a git checkout, HEAD cannot be resolved; that is a refusal, not a
+# traceback.
+nogit_root="$tmp_root/nogit"
+mkdir -p "$nogit_root/test" "$nogit_root/dist"
+cp "$repo_root/test/packaging-evidence.py" "$nogit_root/test/"
+cp "$repo_root/dist/release-matrix.json" "$nogit_root/dist/"
+if output=$(cd / && python3 "$nogit_root/test/packaging-evidence.py" validate "$tmp_root/evidence-good.json" 2>&1); then
+    fail "packaging evidence resolved HEAD outside a git checkout"
+fi
+case "$output" in
+    *Traceback*) fail "packaging evidence crashed outside a git checkout: $output" ;;
+    *"cannot resolve HEAD"*) ;;
+    *) fail "packaging evidence did not say HEAD is unresolvable: $output" ;;
+esac
 
 if output=$(evidence_validate "$tmp_root/evidence-missing.json" 2>&1); then
     fail "packaging evidence accepted a missing marker"
@@ -1586,6 +1614,7 @@ case "$1 $2" in
     "run view")
         printf '%s\n' "${STUB_GH_RUN_VIEW:?}" ;;
     "run download")
+        [ "${STUB_GH_DOWNLOAD_FAIL:-0}" != 1 ] || { echo "HTTP 401: Bad credentials (https://api.github.com/repos/x/y/actions/runs/1/artifacts)" >&2; exit 1; }
         [ -n "${STUB_GH_ARTIFACTS:-}" ] || { echo "no artifacts match any of the names or patterns provided" >&2; exit 1; }
         dir=""
         while [ $# -gt 0 ]; do
@@ -1600,7 +1629,7 @@ case "$1 $2" in
 esac
 SH
 chmod +x "$tmp_root/bin/gh"
-ci_run_view="{\"conclusion\":\"success\",\"headSha\":\"$evidence_head\",\"createdAt\":\"2026-09-01T07:00:00Z\",\"updatedAt\":\"2026-09-01T08:00:00Z\"}"
+ci_run_view="{\"conclusion\":\"success\",\"event\":\"workflow_dispatch\",\"workflowName\":\"Packaging\",\"headSha\":\"$evidence_head\",\"createdAt\":\"2026-09-01T07:00:00Z\",\"updatedAt\":\"2026-09-01T08:00:00Z\"}"
 PATH="$tmp_root/bin:$PATH" STUB_GH_RUN_VIEW="$ci_run_view" STUB_GH_ARTIFACTS="$tmp_root/evidence-good-records" \
     python3 "$evidence_root/test/packaging-evidence.py" ci-run --commit "$evidence_head" --run 12345 ||
     fail "release preflight refused a packaging.yml run carrying complete evidence"
@@ -1624,6 +1653,30 @@ if PATH="$tmp_root/bin:$PATH" STUB_GH_RUN_VIEW="${ci_run_view/$evidence_head/$(p
         python3 "$evidence_root/test/packaging-evidence.py" ci-run --commit "$evidence_head" --run 12345 >/dev/null 2>&1; then
     fail "release preflight accepted a packaging.yml run at another commit"
 fi
+if output=$(PATH="$tmp_root/bin:$PATH" STUB_GH_RUN_VIEW="${ci_run_view/workflow_dispatch/pull_request}" STUB_GH_ARTIFACTS="$tmp_root/evidence-good-records" \
+        python3 "$evidence_root/test/packaging-evidence.py" ci-run --commit "$evidence_head" --run 12345 2>&1); then
+    fail "release preflight accepted a pull-request packaging.yml run"
+fi
+case "$output" in
+    *"pull-request runs build the merge commit"*) ;;
+    *) fail "pull-request run refusal did not explain the merge commit: $output" ;;
+esac
+if output=$(PATH="$tmp_root/bin:$PATH" STUB_GH_RUN_VIEW="${ci_run_view/Packaging/CI}" STUB_GH_ARTIFACTS="$tmp_root/evidence-good-records" \
+        python3 "$evidence_root/test/packaging-evidence.py" ci-run --commit "$evidence_head" --run 12345 2>&1); then
+    fail "release preflight accepted a run of another workflow as packaging evidence"
+fi
+case "$output" in
+    *"workflow is 'CI'"*) ;;
+    *) fail "other-workflow refusal did not name the workflow: $output" ;;
+esac
+if output=$(PATH="$tmp_root/bin:$PATH" STUB_GH_RUN_VIEW="$ci_run_view" STUB_GH_DOWNLOAD_FAIL=1 \
+        python3 "$evidence_root/test/packaging-evidence.py" ci-run --commit "$evidence_head" --run 12345 2>&1); then
+    fail "release preflight accepted a run whose artifacts could not be downloaded"
+fi
+case "$output" in
+    *"gh run download failed"*"Bad credentials"*) ;;
+    *) fail "download failure was not distinguished from a missing artifact: $output" ;;
+esac
 echo "packaging evidence: recipe, marker, and workflow-run cases OK"
 
 cp "$repo_root/justfile" "$repo_root/Cargo.toml" "$repo_root/Cargo.lock" "$release_repo/"

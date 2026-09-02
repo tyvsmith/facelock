@@ -61,12 +61,26 @@ def now_utc() -> str:
 
 
 def head_commit() -> str:
-    return subprocess.run(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        detail = (getattr(error, "stderr", "") or str(error)).strip()
+        raise EvidenceError(f"cannot resolve HEAD in {ROOT}: {detail}") from error
+    return completed.stdout.strip()
+
+
+def parse_timestamp(value: str) -> datetime | None:
+    """An ISO 8601 timestamp that carries its UTC offset; None for anything else."""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
 
 
 def load_matrix() -> dict:
@@ -297,9 +311,19 @@ def check_marker(marker: object, head: str, matrix: dict) -> list[str]:
         problems.append(f"commit {marker.get('commit')!r} is not HEAD {head}")
     if marker.get("tree_clean") is not True:
         problems.append("tree_clean is not true: the lanes did not run on a committed tree")
+    stamps: dict[str, datetime] = {}
     for stamp in ("started_at", "finished_at"):
-        if not isinstance(marker.get(stamp), str) or not marker[stamp]:
+        value = marker.get(stamp)
+        if not isinstance(value, str) or not value:
             problems.append(f"{stamp} is missing" + (": the run did not finish" if stamp == "finished_at" else ""))
+            continue
+        parsed = parse_timestamp(value)
+        if parsed is None:
+            problems.append(f"{stamp} {value!r} is not an ISO 8601 timestamp with a UTC offset")
+        else:
+            stamps[stamp] = parsed
+    if len(stamps) == 2 and stamps["finished_at"] < stamps["started_at"]:
+        problems.append(f"finished_at {marker['finished_at']} is before started_at {marker['started_at']}")
     required = required_lanes(matrix)
     declared = marker.get("required_lanes")
     if not isinstance(declared, list) or not all(isinstance(name, str) for name in declared):
@@ -317,6 +341,8 @@ def check_marker(marker: object, head: str, matrix: dict) -> list[str]:
         name = lane.get("name")
         if isinstance(name, str):
             seen[name] = seen.get(name, 0) + 1
+            if name not in required:
+                problems.append(f"lane {name} is not a lane the release matrix requires")
         problems.extend(check_record(lane, head, required.get(name) if isinstance(name, str) else None))
     for name, count in sorted(seen.items()):
         if count > 1:
@@ -347,6 +373,14 @@ def read_marker(path: Path) -> object:
         raise EvidenceError(f"{path} is not JSON: {error}") from error
 
 
+def summary(marker: dict, what: str) -> str:
+    passed = sum(lane["pass"] for lane in marker["lanes"])
+    return (
+        f"packaging evidence: {what} carries {len(marker['lanes'])} lanes, "
+        f"{passed} assertions passed, no skips, at {marker['commit']}"
+    )
+
+
 def refuse(what: str, problems: list[str]) -> int:
     print(f"packaging evidence: REFUSED {what}", file=sys.stderr)
     for problem in problems:
@@ -361,6 +395,7 @@ def validate(args: argparse.Namespace) -> int:
     problems = check_marker(marker, head, load_matrix())
     if problems:
         return refuse(str(path), problems)
+    print(summary(marker, str(path)))
     return 0
 
 
@@ -414,11 +449,7 @@ def aggregate(args: argparse.Namespace) -> int:
         return refuse(f"the lane records in {args.evidence_dir}", problems)
     output = Path(args.output)
     output.write_text(json.dumps(marker, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    passed = sum(lane["pass"] for lane in marker["lanes"])
-    print(
-        f"packaging evidence: {len(marker['lanes'])} lanes, {passed} assertions passed, "
-        f"no skips, at {head} -> {output}"
-    )
+    print(summary(marker, str(output)))
     return 0
 
 
@@ -429,15 +460,41 @@ def gh(*args: str) -> str:
     return completed.stdout
 
 
+NO_ARTIFACTS = ("no artifacts match", "no valid artifacts")
+
+
+def packaging_workflow_name() -> str:
+    """The `name:` of .github/workflows/packaging.yml, which gh reports as workflowName."""
+    path = ROOT / ".github" / "workflows" / "packaging.yml"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise EvidenceError(f"cannot read {path}: {error}") from error
+    match = re.search(r"(?m)^name:\s*(\S.*?)\s*$", text)
+    if match is None:
+        raise EvidenceError(f"{path} declares no workflow name")
+    return match.group(1)
+
+
 def ci_run(args: argparse.Namespace) -> int:
     """A packaging.yml run is evidence only through the artifacts its lanes uploaded."""
     head = args.commit or head_commit()
     what = f"packaging workflow run {args.run}"
     try:
-        view = json.loads(gh("run", "view", args.run, "--json", "conclusion,headSha,createdAt,updatedAt"))
+        view = json.loads(
+            gh("run", "view", args.run, "--json", "conclusion,event,headSha,workflowName,createdAt,updatedAt")
+        )
     except json.JSONDecodeError as error:
         raise EvidenceError(f"gh run view returned no JSON: {error}") from error
     problems: list[str] = []
+    workflow = packaging_workflow_name()
+    if view.get("workflowName") != workflow:
+        problems.append(f"workflow is {view.get('workflowName')!r}, not {workflow!r}")
+    if view.get("event") == "pull_request":
+        problems.append(
+            "pull-request runs build the merge commit, not this one; use a workflow_dispatch "
+            "or scheduled run on this commit"
+        )
     if view.get("conclusion") != "success":
         problems.append(f"conclusion is {view.get('conclusion')!r}, not 'success'")
     if view.get("headSha") != head:
@@ -451,13 +508,16 @@ def ci_run(args: argparse.Namespace) -> int:
             text=True,
         )
         if completed.returncode != 0:
-            return refuse(
-                what,
-                [
-                    "the run uploaded no packaging evidence artifact; a path-filtered or "
-                    "pre-evidence run is not evidence: " + (completed.stderr.strip() or completed.stdout.strip())
-                ],
-            )
+            detail = completed.stderr.strip() or completed.stdout.strip()
+            if any(phrase in detail.lower() for phrase in NO_ARTIFACTS):
+                return refuse(
+                    what,
+                    [
+                        "the run uploaded no packaging evidence artifact; a path-filtered or "
+                        f"pre-evidence run is not evidence: {detail}"
+                    ],
+                )
+            return refuse(what, [f"gh run download failed, so the run's evidence could not be read: {detail}"])
         # A workflow run checks out the commit it names, so there is no dirty
         # tree to record; the lane records still have to name that commit.
         marker, problems = build_marker(
@@ -470,8 +530,7 @@ def ci_run(args: argparse.Namespace) -> int:
         )
     if problems:
         return refuse(what, problems)
-    passed = sum(lane["pass"] for lane in marker["lanes"])
-    print(f"packaging evidence: {what} carries {len(marker['lanes'])} lanes, {passed} assertions passed, no skips")
+    print(summary(marker, what))
     return 0
 
 
