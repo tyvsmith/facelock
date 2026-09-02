@@ -318,6 +318,47 @@ pub struct SecurityConfig {
     pub rate_limit: RateLimitConfig,
 }
 
+/// Why the device-binding policy refused an enrollment (#309).
+///
+/// Every variant is a refusal the operator can act on: the message names the
+/// key that caused it and the way out. Enrollment is the only place these
+/// fire; an existing template is never re-judged, so none of them is ever a
+/// lockout. `identity` is the camera's canonical `vid:pid:serial` form with
+/// missing fields rendered empty, as the operator will see it in `facelock
+/// devices`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EnrollmentBindingError {
+    /// `device_match_granularity = "unit"` on a camera with no non-empty serial.
+    #[error(
+        "refusing to enroll: security.device_match_granularity = \"unit\" binds each template \
+         to one camera unit by its USB serial, and this camera (identity \"{identity}\") \
+         exposes none, so a template bound to it could never match. Set \
+         security.device_match_granularity = \"model\" to bind by VID:PID, or enroll on a \
+         camera that reports a stable serial."
+    )]
+    UnitNeedsSerial { identity: String },
+    /// `unit` on a camera whose canonical id would be NULL: a serial alone is
+    /// not an identity, and the row would bind to nothing.
+    #[error(
+        "refusing to enroll: security.device_match_granularity = \"unit\" binds each template \
+         to one camera unit, and this camera (identity \"{identity}\") exposes no usable USB \
+         identity, so the template would bind to nothing. Set \
+         security.device_match_granularity = \"model\", or enroll on a camera that reports \
+         idVendor, idProduct, and a stable serial."
+    )]
+    UnitNeedsIdentity { identity: String },
+    /// Coupling on, legacy rows barred, and no usable identity: the NULL row
+    /// it would store could never authenticate.
+    #[error(
+        "refusing to enroll: this camera (identity \"{identity}\") exposes no usable USB \
+         identity, so its template would be stored without a device id, and \
+         security.bind_legacy_templates = false bars such templates from authenticating. Set \
+         security.bind_legacy_templates = true to accept templates with no device id, or \
+         enroll on a camera that reports idVendor and idProduct."
+    )]
+    LegacyBarredNeedsIdentity { identity: String },
+}
+
 impl SecurityConfig {
     /// Resolve the device-binding policy consumed by the auth compare path.
     pub fn device_binding_policy(&self) -> crate::types::DeviceBindingPolicy {
@@ -337,35 +378,26 @@ impl SecurityConfig {
     /// today: `bind_templates_to_device` can be turned on later and the stored
     /// id must match then. Enrollment is the only place this fails closed; an
     /// existing template is never re-judged, so a policy change can refuse a
-    /// new enrollment but never lock an authentication out. Returns the reason
-    /// on refusal, naming the key and the way out.
+    /// new enrollment but never lock an authentication out. The error says
+    /// which rule refused, and its message names the key and the way out.
     pub fn ensure_enrollment_binding_allowed(
         &self,
         fp: &crate::types::DeviceFingerprint,
-    ) -> Result<(), String> {
+    ) -> Result<(), EnrollmentBindingError> {
+        let identity = || fp.canonical();
         if self.device_match_granularity == crate::types::DeviceMatchGranularity::Unit {
             if !fp.has_serial() {
-                return Err(format!(
-                    "refusing to enroll: security.device_match_granularity = \"unit\" binds \
-                     each template to one camera unit by its USB serial, and this camera \
-                     (identity \"{}\") exposes none, so a template bound to it could never \
-                     match. Set security.device_match_granularity = \"model\" to bind by \
-                     VID:PID, or enroll on a camera that reports a stable serial.",
-                    fp.canonical()
-                ));
+                return Err(EnrollmentBindingError::UnitNeedsSerial {
+                    identity: identity(),
+                });
             }
             // A serial alone is not an identity: the row would be stored NULL
             // and, under the legacy policy, bind to nothing at all. The
             // strictest granularity must never produce that row.
             if fp.canonical_for_storage().is_none() {
-                return Err(format!(
-                    "refusing to enroll: security.device_match_granularity = \"unit\" binds \
-                     each template to one camera unit, and this camera (identity \"{}\") \
-                     exposes no usable USB identity, so the template would bind to nothing. \
-                     Set security.device_match_granularity = \"model\", or enroll on a \
-                     camera that reports idVendor, idProduct, and a stable serial.",
-                    fp.canonical()
-                ));
+                return Err(EnrollmentBindingError::UnitNeedsIdentity {
+                    identity: identity(),
+                });
             }
         }
         // With coupling on and legacy rows barred, a camera with no usable
@@ -374,15 +406,9 @@ impl SecurityConfig {
             && !self.bind_legacy_templates
             && fp.canonical_for_storage().is_none()
         {
-            return Err(format!(
-                "refusing to enroll: this camera (identity \"{}\") exposes no usable USB \
-                 identity, so its template would be stored without a device id, and \
-                 security.bind_legacy_templates = false bars such templates from \
-                 authenticating. Set security.bind_legacy_templates = true to accept \
-                 templates with no device id, or enroll on a camera that reports idVendor \
-                 and idProduct.",
-                fp.canonical()
-            ));
+            return Err(EnrollmentBindingError::LegacyBarredNeedsIdentity {
+                identity: identity(),
+            });
         }
         Ok(())
     }
@@ -1516,12 +1542,21 @@ allow_plaintext = true
             let err = unit
                 .ensure_enrollment_binding_allowed(&camera_with_serial(serial))
                 .unwrap_err();
-            assert!(
-                err.contains("security.device_match_granularity"),
-                "must name the key: {err}"
+            assert_eq!(
+                err,
+                EnrollmentBindingError::UnitNeedsSerial {
+                    identity: "046d:085e:".into()
+                }
             );
-            assert!(err.contains("\"model\""), "must name the remedy: {err}");
         }
+        let text = EnrollmentBindingError::UnitNeedsSerial {
+            identity: "046d:085e:".into(),
+        }
+        .to_string();
+        assert!(
+            text.contains("security.device_match_granularity = \"model\""),
+            "must name the key and the remedy: {text}"
+        );
     }
 
     #[test]
@@ -1569,13 +1604,16 @@ allow_plaintext = true
         let err = strict
             .ensure_enrollment_binding_allowed(&unknown)
             .unwrap_err();
-        assert!(
-            err.contains("security.bind_legacy_templates"),
-            "must name the key: {err}"
+        assert_eq!(
+            err,
+            EnrollmentBindingError::LegacyBarredNeedsIdentity {
+                identity: "::".into()
+            }
         );
         assert!(
-            err.contains("bind_legacy_templates = true"),
-            "must name the remedy: {err}"
+            err.to_string()
+                .contains("security.bind_legacy_templates = true"),
+            "must name the key and the remedy: {err}"
         );
         // An identified camera is unaffected.
         assert_eq!(
@@ -1593,9 +1631,11 @@ allow_plaintext = true
     #[test]
     fn unit_binding_refuses_an_unidentifiable_camera() {
         let unit = binding_at(crate::types::DeviceMatchGranularity::Unit);
-        assert!(
-            unit.ensure_enrollment_binding_allowed(&crate::types::DeviceFingerprint::default())
-                .is_err()
+        assert_eq!(
+            unit.ensure_enrollment_binding_allowed(&crate::types::DeviceFingerprint::default()),
+            Err(EnrollmentBindingError::UnitNeedsSerial {
+                identity: "::".into()
+            })
         );
     }
 
@@ -1614,12 +1654,17 @@ allow_plaintext = true
         };
         assert_eq!(half.canonical_for_storage(), None, "the shape under test");
         let err = unit.ensure_enrollment_binding_allowed(&half).unwrap_err();
-        assert!(
-            err.contains("security.device_match_granularity"),
-            "must name the key: {err}"
+        assert_eq!(
+            err,
+            EnrollmentBindingError::UnitNeedsIdentity {
+                identity: "046d::SER".into()
+            }
         );
-        assert!(err.contains("\"model\""), "must name the remedy: {err}");
-        assert!(err.contains("no usable USB identity"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("security.device_match_granularity = \"model\""),
+            "must name the key and the remedy: {err}"
+        );
     }
 
     /// The precondition is about the id that gets persisted, not about
@@ -1630,10 +1675,10 @@ allow_plaintext = true
     fn unit_binding_precondition_holds_while_coupling_is_off() {
         let mut unit = binding_at(crate::types::DeviceMatchGranularity::Unit);
         unit.bind_templates_to_device = false;
-        assert!(
-            unit.ensure_enrollment_binding_allowed(&camera_with_serial(None))
-                .is_err()
-        );
+        assert!(matches!(
+            unit.ensure_enrollment_binding_allowed(&camera_with_serial(None)),
+            Err(EnrollmentBindingError::UnitNeedsSerial { .. })
+        ));
     }
 
     #[test]

@@ -319,8 +319,7 @@ pub fn enroll(config: &Config, user: &str, label: &str) -> anyhow::Result<(u32, 
     let fingerprint = &camera.capabilities().fingerprint;
     config
         .security
-        .ensure_enrollment_binding_allowed(fingerprint)
-        .map_err(|m| anyhow::anyhow!(m))?;
+        .ensure_enrollment_binding_allowed(fingerprint)?;
     let device_id = fingerprint.canonical_for_storage();
     let mut engine = load_engine(config)?;
 

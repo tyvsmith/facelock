@@ -857,11 +857,12 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                 // Judged against the binding policy here, before the first
                 // model write, so a refusal leaves no template behind (#309).
                 let fingerprint = &camera.capabilities().fingerprint;
-                if let Err(message) = self
+                if let Err(refusal) = self
                     .config
                     .security
                     .ensure_enrollment_binding_allowed(fingerprint)
                 {
+                    let message = refusal.to_string();
                     warn!(user, "enroll refused: {message}");
                     // A pre-flight rejection: the stream is not held warm.
                     self.lease.finish(Outcome::Error, &self.config);
