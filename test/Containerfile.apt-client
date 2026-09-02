@@ -1,0 +1,11 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# The stable publisher's own tools (reprepro, signing through gpg-agent) on top
+# of the suite's apt, plus gpgv to verify what apt will be handed. The lane
+# script runs from the repository mount, so a change to it needs no rebuild.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends reprepro gnupg gpgv && \
+    rm -rf /var/lib/apt/lists/*

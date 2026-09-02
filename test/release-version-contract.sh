@@ -296,6 +296,7 @@ cp "$repo_root/.github/workflows/packaging.yml" "$matrix_root/.github/workflows/
 cp "$repo_root/test/copr-build.sh" "$matrix_root/test/"
 cp "$repo_root/test/packit-config-validate.sh" "$matrix_root/test/"
 cp "$repo_root/test/Containerfile.packit" "$matrix_root/test/"
+cp "$repo_root/test/Containerfile.apt-client" "$matrix_root/test/"
 cp "$repo_root/test/run-pkg-validate-systemd.sh" "$matrix_root/test/"
 
 apt_publisher_root="$tmp_root/apt-publisher-root"
@@ -1043,10 +1044,13 @@ if [ "$1" = "purge" ]; then
 fi
 SCRIPT
 cp "$repo_root/dist/apt/conf/distributions" "$apt_recipe_root/dist/apt/conf/"
+cp "$repo_root/dist/release-matrix.json" "$apt_recipe_root/dist/"
 cp "$repo_root/scripts/release-versions.sh" "$apt_recipe_root/scripts/"
 cp "$repo_root/test/deb-package-contract.sh" \
     "$repo_root/test/deb-maintscript-contract.sh" \
     "$repo_root/test/publish-directory-atomic.py" \
+    "$repo_root/test/Containerfile.apt-client" \
+    "$repo_root/test/apt-client-lane.sh" \
     "$apt_recipe_root/test/"
 declare -A apt_recipe_suffix=(
     [trixie]='~deb13u1'
@@ -1180,25 +1184,43 @@ case "${3:-}" in
     *) exit 2 ;;
 esac
 SH
-chmod +x "$tmp_root/bin/dpkg-deb" "$tmp_root/bin/reprepro"
+cat > "$tmp_root/bin/podman" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FACELOCK_TEST_PODMAN_LOG:?}"
+SH
+chmod +x "$tmp_root/bin/dpkg-deb" "$tmp_root/bin/reprepro" "$tmp_root/bin/podman"
+apt_recipe_podman_log="$tmp_root/apt-recipe-podman.log"
 if ! (
     cd "$apt_recipe_root"
-    PATH="$tmp_root/bin:$PATH" just test-apt-repo >/dev/null 2>&1
+    FACELOCK_TEST_PODMAN_LOG="$apt_recipe_podman_log" PATH="$tmp_root/bin:$PATH" just test-apt-repo >/dev/null 2>&1
 ); then
     fail "test-apt-repo rejected config-only validation without a manifest"
 fi
+grep -q -- '^build .*-t facelock-apt-client ' "$apt_recipe_podman_log" \
+    || fail "test-apt-repo did not build the APT client lane image"
+grep -q -- '^run .*--network=none .*facelock-apt-client ' "$apt_recipe_podman_log" \
+    || fail "test-apt-repo did not run the APT client lane offline"
+! grep -q -- '/manifests/' "$apt_recipe_podman_log" \
+    || fail "test-apt-repo mounted a manifest it was not given"
+rm -f "$apt_recipe_podman_log"
 if ! (
     cd "$apt_recipe_root"
-    PATH="$tmp_root/bin:$PATH" just test-apt-repo "${apt_recipe_manifests[@]}" >/dev/null 2>&1
+    FACELOCK_TEST_PODMAN_LOG="$apt_recipe_podman_log" PATH="$tmp_root/bin:$PATH" just test-apt-repo "${apt_recipe_manifests[@]}" >/dev/null 2>&1
 ); then
     fail "test-apt-repo rejected the complete set of two exact generated manifests"
 fi
+for suite in trixie resolute; do
+    grep -q -- "^run .*:/manifests/$suite:ro.* --manifest $suite=/manifests/$suite/facelock_0.2.0-1${apt_recipe_suffix[$suite]}_amd64.manifest" "$apt_recipe_podman_log" \
+        || fail "test-apt-repo did not hand the exact $suite manifest to the APT client lane"
+done
+rm -f "$apt_recipe_podman_log"
 if (
     cd "$apt_recipe_root"
-    PATH="$tmp_root/bin:$PATH" just test-apt-repo "${apt_recipe_manifests[0]}" >/dev/null 2>&1
+    FACELOCK_TEST_PODMAN_LOG="$apt_recipe_podman_log" PATH="$tmp_root/bin:$PATH" just test-apt-repo "${apt_recipe_manifests[0]}" >/dev/null 2>&1
 ); then
     fail "test-apt-repo accepted an incomplete generated-manifest set"
 fi
+[ ! -e "$apt_recipe_podman_log" ] || fail "test-apt-repo reached the container with an incomplete manifest set"
 
 cp "$repo_root/justfile" "$repo_root/Cargo.toml" "$repo_root/Cargo.lock" "$release_repo/"
 cp "$repo_root/dist/PKGBUILD" "$repo_root/dist/PKGBUILD-bin" "$repo_root/dist/PKGBUILD-git" "$repo_root/dist/facelock.spec" "$release_repo/dist/"

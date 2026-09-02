@@ -607,6 +607,15 @@ for relative_path in (
         "registry.fedoraproject.org/fedora:" not in fedora_containerfile,
         f"{relative_path} pins a Fedora image outside the release matrix",
     )
+apt_client_containerfile = (ROOT / "test/Containerfile.apt-client").read_text()
+require(
+    re.search(r"(?m)^ARG BASE_IMAGE\s*$\n^FROM \$\{BASE_IMAGE\}\s*$", apt_client_containerfile) is not None,
+    "test/Containerfile.apt-client does not take its base image from the release matrix",
+)
+require(
+    "docker.io/library/debian:" not in apt_client_containerfile,
+    "test/Containerfile.apt-client pins a Debian image outside the release matrix",
+)
 lane_resolver = (ROOT / "test/fedora-lane-image.sh").read_text()
 for phrase in ("RELEASE_MATRIX_TODAY", "_eol_gate", "staging_copr_targets"):
     require(phrase in lane_resolver, f"Fedora lane resolver omits matrix authority: {phrase}")
