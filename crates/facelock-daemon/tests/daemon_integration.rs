@@ -897,6 +897,154 @@ fn a_cancelled_re_enrollment_keeps_the_previous_template_authenticating() {
     let _ = std::fs::remove_file(&key_path);
 }
 
+/// A handler whose camera reports `fingerprint`, with an engine whose faces
+/// are diverse enough to enroll and an in-memory store to inspect afterwards.
+/// The keyfile lives under `key_dir` so the default encryption really seals.
+fn binding_handler(
+    mut config: Config,
+    fingerprint: facelock_core::types::DeviceFingerprint,
+    key_dir: &Path,
+) -> facelock_daemon::handler::Handler<MockCamera, MockFaceEngine> {
+    use facelock_daemon::handler::Handler;
+    use facelock_daemon::rate_limit::RateLimiter;
+
+    config.encryption.key_path = key_dir.join("facelock.key").to_string_lossy().into_owned();
+    // Isolate device binding from the liveness gates.
+    config.security.require_frame_variance = false;
+    config.security.require_landmark_liveness = false;
+    let rate_limiter = RateLimiter::new(
+        config.security.rate_limit.max_attempts,
+        config.security.rate_limit.window_secs,
+    );
+    let caps = CameraCaps {
+        fingerprint,
+        ..Default::default()
+    };
+    let camera_caps = caps.clone();
+    let factory: MockCameraFactory =
+        Box::new(move |_cfg| Ok(MockCamera::bright(640, 480, 64).with_caps(camera_caps.clone())));
+    let engine = MockFaceEngine::cycling(vec![
+        fixtures::known_embedding(0),
+        fixtures::known_embedding(40),
+        fixtures::known_embedding(80),
+        fixtures::known_embedding(120),
+    ]);
+    Handler::new(
+        config,
+        engine,
+        FaceStore::open_memory().unwrap(),
+        rate_limiter,
+        caps,
+        Some(factory),
+        None,
+    )
+    .unwrap()
+}
+
+fn same_model_camera(serial: Option<&str>) -> facelock_core::types::DeviceFingerprint {
+    facelock_core::types::DeviceFingerprint {
+        vid: Some("046d".into()),
+        pid: Some("085e".into()),
+        serial: serial.map(String::from),
+        by_path: None,
+    }
+}
+
+fn listed_models(
+    handler: &mut facelock_daemon::handler::Handler<MockCamera, MockFaceEngine>,
+) -> Vec<facelock_core::types::FaceModelInfo> {
+    match handler.handle(DaemonRequest::ListModels { user: "u".into() }) {
+        DaemonResponse::Models(models) => models,
+        other => panic!("expected a model list, got: {other:?}"),
+    }
+}
+
+/// #309: under `unit` binding a serial-less camera is refused before the
+/// first model write, so nothing is left in the store.
+#[test]
+fn unit_binding_refuses_serial_less_camera_before_any_model_write() {
+    use facelock_core::types::DeviceMatchGranularity;
+
+    let key_dir = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.security.device_match_granularity = DeviceMatchGranularity::Unit;
+    let mut handler = binding_handler(config, same_model_camera(None), key_dir.path());
+
+    let resp = handler.handle(DaemonRequest::Enroll {
+        user: "u".into(),
+        label: "front".into(),
+    });
+    match resp {
+        DaemonResponse::Error { ref message } => assert!(
+            message.contains("security.device_match_granularity"),
+            "refusal must name the policy: {message}"
+        ),
+        other => panic!("serial-less unit enrollment must be refused, got: {other:?}"),
+    }
+    assert!(
+        listed_models(&mut handler).is_empty(),
+        "a refused enrollment must leave no model behind"
+    );
+    let (sealed, unsealed) = handler.store.count_sealed().unwrap();
+    assert_eq!((sealed, unsealed), (0, 0), "no embedding may be stored");
+}
+
+/// The same policy on a camera that does expose a serial enrolls, and the
+/// template then authenticates on that camera.
+#[test]
+fn unit_binding_enrolls_and_authenticates_a_serial_bearing_camera() {
+    use facelock_core::types::DeviceMatchGranularity;
+
+    let key_dir = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.security.device_match_granularity = DeviceMatchGranularity::Unit;
+    let mut handler = binding_handler(config, same_model_camera(Some("SER-1")), key_dir.path());
+
+    let resp = handler.handle(DaemonRequest::Enroll {
+        user: "u".into(),
+        label: "front".into(),
+    });
+    assert!(
+        matches!(resp, DaemonResponse::Enrolled { .. }),
+        "serial-bearing unit enrollment must succeed, got: {resp:?}"
+    );
+    let models = listed_models(&mut handler);
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].device_id.as_deref(), Some("046d:085e:SER-1"));
+
+    let auth = handler.handle(DaemonRequest::Authenticate { user: "u".into() });
+    match auth {
+        DaemonResponse::AuthResult(MatchResult { matched, .. }) => {
+            assert!(
+                matched,
+                "the enrolling camera must authenticate its own template"
+            )
+        }
+        other => panic!("expected an auth result, got: {other:?}"),
+    }
+}
+
+/// `model` binding never needed a serial: a serial-less camera still
+/// enrolls, and its id is the VID:PID form the model matcher compares.
+#[test]
+fn model_binding_still_enrolls_a_serial_less_camera() {
+    let key_dir = tempfile::tempdir().unwrap();
+    let config = test_config();
+    let mut handler = binding_handler(config, same_model_camera(None), key_dir.path());
+
+    let resp = handler.handle(DaemonRequest::Enroll {
+        user: "u".into(),
+        label: "front".into(),
+    });
+    assert!(
+        matches!(resp, DaemonResponse::Enrolled { .. }),
+        "model-granularity enrollment must not need a serial, got: {resp:?}"
+    );
+    let models = listed_models(&mut handler);
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].device_id.as_deref(), Some("046d:085e:"));
+}
+
 #[test]
 fn failed_auth_rate_limit_persists_across_handler_restart() {
     use facelock_daemon::handler::Handler;

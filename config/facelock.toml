@@ -254,7 +254,9 @@
 #
 # Match granularity: "model" (VID:PID, default — blocks a cross-model swap) or
 # "unit" (VID:PID:serial — also blocks a same-model swap, but requires a camera
-# that exposes a stable serial; enrollment at "unit" is refused otherwise).
+# that exposes a stable serial; enrollment at "unit" on a camera without one is
+# refused before any template is written, whether or not
+# bind_templates_to_device is on).
 # device_match_granularity = "model"
 #
 # Allow legacy templates (enrolled before device coupling, or on a camera with

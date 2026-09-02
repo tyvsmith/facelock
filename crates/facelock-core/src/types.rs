@@ -263,10 +263,13 @@ impl DeviceFingerprint {
         }
     }
 
-    /// True when neither vendor nor product id could be read — the device has no
-    /// identity we can enforce against.
+    /// True when the vendor or product id could not be read — the device has
+    /// no identity we can enforce against. [`device_ids_match`] needs both to
+    /// match at any granularity, so half an identity is stored as NULL rather
+    /// than as an id that could never match its own camera (#309).
     pub fn is_unknown(&self) -> bool {
-        self.vid.is_none() && self.pid.is_none()
+        let present = |field: &Option<String>| field.as_deref().is_some_and(|s| !s.is_empty());
+        !(present(&self.vid) && present(&self.pid))
     }
 
     /// True when a unit-unique serial is available.
@@ -1162,6 +1165,53 @@ mod tests {
             fp(Some("046d"), Some("085e"), None).canonical_for_storage(),
             Some("046d:085e:".to_string())
         );
+    }
+
+    /// Half an identity is no identity: the matcher needs both a vendor and
+    /// a product id, so a fingerprint missing either is stored NULL rather
+    /// than as an id that could never match (#309).
+    #[test]
+    fn fingerprint_canonical_for_storage_is_none_with_partial_identity() {
+        assert_eq!(fp(Some("046d"), None, None).canonical_for_storage(), None);
+        assert_eq!(fp(None, Some("085e"), None).canonical_for_storage(), None);
+        assert_eq!(
+            fp(Some(""), Some("085e"), Some("SER")).canonical_for_storage(),
+            None
+        );
+        assert!(fp(Some("046d"), Some(""), None).is_unknown());
+    }
+
+    /// The enrollment precondition and the authentication matcher agree:
+    /// every canonical id enrollment would persist for a camera matches that
+    /// same camera at the granularity it was accepted under. Enumerates every
+    /// field shape the sysfs reader can hand back (#309).
+    #[test]
+    fn accepted_enrollment_ids_match_their_own_camera() {
+        use crate::config::SecurityConfig;
+
+        let shapes = [None, Some(""), Some("x")];
+        for granularity in [DeviceMatchGranularity::Model, DeviceMatchGranularity::Unit] {
+            let security = SecurityConfig {
+                device_match_granularity: granularity,
+                ..SecurityConfig::default()
+            };
+            for vid in shapes {
+                for pid in shapes {
+                    for serial in shapes {
+                        let live = fp(vid, pid, serial);
+                        if security.ensure_enrollment_binding_allowed(&live).is_err() {
+                            continue;
+                        }
+                        if let Some(stored) = live.canonical_for_storage() {
+                            assert!(
+                                device_ids_match(&stored, &live, granularity),
+                                "{stored:?} accepted at {granularity:?} cannot match its own camera"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
