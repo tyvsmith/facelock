@@ -412,6 +412,27 @@ assert_matrix_mutation_rejected \
     "justfile" \
     's@packaging-evidence.py ci-run --commit@packaging-evidence.py ci-run-disabled --commit@'
 assert_matrix_mutation_rejected \
+    "packaging workflow keeping the evidence artifact name only in a comment" \
+    ".github/workflows/packaging.yml" \
+    's/^          name: packaging-evidence-arch$/          # name: packaging-evidence-arch\n          name: packaging-evidence-arch-moved/'
+assert_matrix_mutation_rejected \
+    "release preflight keeping the validate call only in a comment" \
+    "justfile" \
+    's@^    elif python3 test/packaging-evidence.py validate --commit "\$HEAD_SHA" .packaging-matrix-verified; then$@    # python3 test/packaging-evidence.py validate --commit "$HEAD_SHA" .packaging-matrix-verified\n    elif true; then@'
+assert_matrix_mutation_rejected \
+    "packaging matrix keeping the aggregate call only in a comment" \
+    "justfile" \
+    's@^    python3 test/packaging-evidence.py aggregate --commit "\$commit" --tree-clean \\$@    # python3 test/packaging-evidence.py aggregate --commit "$commit" --tree-clean\n    true \\@'
+assert_matrix_mutation_rejected \
+    "packaging workflow with every evidence upload step commented out" \
+    ".github/workflows/packaging.yml" \
+    '/^      - name: Upload packaging evidence$/,/^          overwrite: true$/s/^\( *\)/\1# /'
+assert_matrix_mutation_rejected \
+    "packaging workflow adding a lane upload without bumping the step count" \
+    ".github/workflows/packaging.yml" \
+    '/^          name: packaging-evidence-arch$/,/^          overwrite: true$/{/^          overwrite: true$/a\      - name: Upload extra evidence\n        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a\n        with:\n          name: packaging-evidence-extra\n          path: .packaging-evidence/\n          if-no-files-found: error\n          overwrite: true
+}'
+assert_matrix_mutation_rejected \
     "release matrix granting evidence eligibility outside Rawhide" \
     "dist/release-matrix.json" \
     's/"id": "debian-13",/"id": "debian-13", "evidence_eligibility": {"lifecycle": false},/'

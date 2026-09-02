@@ -713,30 +713,81 @@ require(
 # #313: a green packaging.yml conclusion is not release evidence; the lane
 # records its jobs upload are. Every lane job uploads them and fails when its
 # lane recorded nothing, or `just release-preflight` has nothing to validate
-# and quietly falls back to the local marker.
-for artifact in ("deb-${{ matrix.suite }}", "rpm-${{ matrix.release }}", "arch"):
-    require(
-        f"name: packaging-evidence-{artifact}" in packaging_workflow,
-        f"packaging workflow does not upload the packaging-evidence-{artifact} artifact",
+# and quietly falls back to the local marker. The checks read the upload steps
+# themselves and the recipe bodies, comments dropped, so text that survives
+# only in a comment or an unrelated step satisfies nothing.
+
+
+def workflow_steps(workflow: str) -> list[str]:
+    """Each `- name:`/`- uses:` step of a workflow, comment lines removed."""
+    steps: list[list[str]] = []
+    current: list[str] | None = None
+    step_indent = 0
+    for line in workflow.splitlines():
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(stripped)
+        if re.match(r"- (?:name|uses): ", stripped):
+            current = [line]
+            step_indent = indent
+            steps.append(current)
+        elif current is not None and indent > step_indent:
+            current.append(line)
+        else:
+            current = None
+    return ["\n".join(step) for step in steps]
+
+
+def just_recipe_body(source: str, name: str) -> str:
+    """The indented body of one justfile recipe, comment lines removed."""
+    match = re.search(
+        rf"(?m)^{re.escape(name)}(?=[\s:])[^\n]*:[^\n]*\n(?P<body>(?:[ \t]+[^\n]*\n|\n)*)", source
     )
+    require(match is not None, f"justfile omits recipe {name}")
+    return "\n".join(line for line in match.group("body").splitlines() if not line.lstrip().startswith("#"))
+
+
+evidence_uploads = [
+    step
+    for step in workflow_steps(packaging_workflow)
+    if re.search(r"(?m)^\s+uses: actions/upload-artifact@", step)
+    and re.search(r"(?m)^\s+path: \.packaging-evidence/\s*$", step)
+]
 # One upload step per lane job: deb, rpm, arch. The two matrix jobs run the
 # same step once per entry, so the step count stays three. A new lane job (the
 # copr job #230 adds) brings its own upload step and bumps this count.
 EVIDENCE_UPLOAD_STEPS = 3
 require(
-    packaging_workflow.count("path: .packaging-evidence/") == EVIDENCE_UPLOAD_STEPS
-    and packaging_workflow.count("if-no-files-found: error") == EVIDENCE_UPLOAD_STEPS,
-    f"packaging workflow must carry exactly {EVIDENCE_UPLOAD_STEPS} evidence upload steps, each failing "
-    "the job when its lane recorded nothing; a new lane job adds one and bumps the count",
+    len(evidence_uploads) == EVIDENCE_UPLOAD_STEPS,
+    f"packaging workflow must carry exactly {EVIDENCE_UPLOAD_STEPS} evidence upload steps "
+    f"(found {len(evidence_uploads)}); a new lane job adds one and bumps the count",
 )
+for artifact in ("deb-${{ matrix.suite }}", "rpm-${{ matrix.release }}", "arch"):
+    matching = [
+        step
+        for step in evidence_uploads
+        if re.search(rf"(?m)^\s+name: packaging-evidence-{re.escape(artifact)}\s*$", step)
+    ]
+    require(
+        len(matching) == 1,
+        f"packaging workflow must upload the packaging-evidence-{artifact} artifact from exactly one step",
+    )
+    require(
+        re.search(r"(?m)^\s+if-no-files-found: error\s*$", matching[0]) is not None,
+        f"the packaging-evidence-{artifact} upload must fail the job when its lane recorded nothing",
+    )
+preflight_body = just_recipe_body(justfile, "release-preflight")
 require(
-    'python3 test/packaging-evidence.py ci-run --commit "$HEAD_SHA" --run "$run_id"' in justfile
-    and 'python3 test/packaging-evidence.py validate --commit "$HEAD_SHA" .packaging-matrix-verified' in justfile,
+    'python3 test/packaging-evidence.py ci-run --commit "$HEAD_SHA" --run "$run_id"' in preflight_body
+    and 'python3 test/packaging-evidence.py validate --commit "$HEAD_SHA" .packaging-matrix-verified'
+    in preflight_body,
     "release-preflight does not validate packaging evidence through test/packaging-evidence.py",
 )
+matrix_body = just_recipe_body(justfile, "test-packaging-matrix")
 require(
-    'python3 test/packaging-evidence.py aggregate --commit "$commit" --tree-clean' in justfile
-    and re.search(r"(?m)^\s+printf '%s\\n' \"\$commit\" > \.packaging-matrix-verified", justfile) is None,
+    'python3 test/packaging-evidence.py aggregate --commit "$commit" --tree-clean' in matrix_body
+    and re.search(r"(?m)^\s+printf '%s\\n' \"\$commit\" > \.packaging-matrix-verified", matrix_body) is None,
     "test-packaging-matrix must aggregate lane evidence, never write the commit alone",
 )
 require(
