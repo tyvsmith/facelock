@@ -54,7 +54,7 @@ follow it.
 | Command | Purpose |
 |---------|---------|
 | `facelock setup` | Interactive setup wizard (camera, models, inference device, encryption, daemon, enrollment, PAM — the daemon before enrollment, so enrollment and the recognition test run on the transport later authentications use); removes a leftover `facelock` group from an older install, best-effort (ADR 010) |
-| `facelock setup --systemd` | Validate installed systemd/D-Bus assets, retire exact known legacy copies, reload, verify resolution, and enable the daemon unit |
+| `facelock setup --systemd` | Validate installed systemd/D-Bus assets, retire exact known legacy copies, reload, verify resolution, and enable the daemon unit. Refused under a non-default `--config`, before anything is written: the unit runs bare `facelock daemon` and reads only `/etc/facelock/config.toml` (see "facelock setup Flag Composition") |
 | `facelock setup --pam` | Alias onto `facelock pam add\|remove` (see "facelock pam" below). Kept, and kept parsing, for every wrapper written against it |
 | `facelock setup --pam --allow-sensitive` | Explicitly authorize an add to a sensitive PAM service. Does not suppress confirmation and conflicts with `--remove` |
 | `facelock pam add` | Add the facelock line to one or more `/etc/pam.d/<service>` files. Root |
@@ -273,6 +273,23 @@ Consequently `setup --systemd --pam` now runs both (it previously dropped
 (it previously dropped `--non-interactive`). Both were silent flag drops.
 `--remove` and `--service` require `--pam`, and `--disable` requires `--systemd`,
 so a dropped flag is now a parse error rather than silence.
+
+**`--systemd` is unsupported under a non-default `--config`**, in a base flow
+and on its own. The unit it enables runs bare `facelock daemon` (ADR 009 §4),
+which reads only `/etc/facelock/config.toml`: `FACELOCK_CONFIG` is ignored by a
+privileged process and the unit passes no `--config`. A daemon enabled from a
+setup run under any other file would authenticate with a store, camera, model
+set and encryption policy that setup never configured. So `facelock --config
+<other> setup --systemd ...` exits non-zero before the base flow creates a
+directory, downloads a model or mints a key, and before any `systemctl` call;
+the message names the two ways out, copying the file to the default path or
+running setup without `--systemd`. The wizard, which would otherwise ask,
+prints why it is skipping the daemon step instead. `--systemd --disable`
+reads no config file and is unaffected. "Non-default" is decided on the
+filesystem: a symlink or `..` spelling of the default file is the default.
+Under such an override, enrollment and the recognition test use direct
+camera access under that file and never the daemon on the bus, whatever
+owns the name (see "Operating Modes").
 
 `--if-present` requires `--pam` and applies to the add side as well as
 `--remove`. "Configure hyprlock if this machine has hyprlock" is the same
@@ -1919,6 +1936,14 @@ auth would — surfacing an existing lockout instead of masking it.
 
 The CLI silently falls back to direct mode when the daemon is not available on D-Bus, regardless of config mode.
 
+Under a non-default `--config`, daemon mode selects direct access without
+asking the bus, and says so once on stderr. The packaged daemon reads only
+`/etc/facelock/config.toml`, so whatever owns the bus name is configured by a
+file the command is not reading; its answers would be about another store,
+camera, model set and security policy. This is a selection the operator made,
+not a degraded state, so it is not the fallback warning. Oneshot mode is
+unchanged: direct access is already its configuration.
+
 ### facelock is-enrolled Exit Codes
 
 The exit code **is** the contract — `is-enrolled` is designed to drop into a
@@ -3013,7 +3038,10 @@ mistake. `FACELOCK_CONFIG` is ignored in a privileged process, so the
 environment cannot redirect where a root `pam add` writes; the global
 `--config` flag is a process override and *is* honoured under `sudo`, which is
 root naming a different file on purpose rather than the environment doing it
-behind root's back. See "facelock pam
+behind root's back. The one process it cannot reach is the packaged daemon,
+whose unit passes no `--config`; that is why `setup --systemd` refuses under a
+non-default value and why `enroll` and `test` go direct there (see "facelock
+setup Flag Composition"). See "facelock pam
 Semantics" above for the resolution rules themselves.
 
 **Encryption defaults (Plan 04).** `encryption.method` defaults to `keyfile`: face
