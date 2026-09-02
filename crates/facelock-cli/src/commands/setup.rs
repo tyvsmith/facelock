@@ -344,6 +344,32 @@ pub fn needs_root_precheck(plan: &SetupPlan) -> bool {
     plan.base.is_some()
 }
 
+/// Whether `plan` enables the daemon unit: `--systemd`, in a base flow or on
+/// its own. `--systemd --disable` stops the unit, which reads no config file
+/// and needs no identity check; `Ask` is answered at step 6, where the wizard
+/// asks [`check_unit_reads_this_config`]'s question before it asks the user.
+fn enables_daemon_unit(plan: &SetupPlan) -> bool {
+    matches!(plan.systemd, SystemdPref::Install)
+}
+
+/// The unit setup enables runs bare `facelock daemon` (ADR 009 §4), which
+/// reads only the default config file: `FACELOCK_CONFIG` is ignored by a
+/// privileged process and the unit passes no `--config`. Under any other
+/// file, the daemon this would enable is configured by a file setup never
+/// touched, so its store, camera, models and encryption policy cannot be
+/// proven to match what enrollment writes (#314). Refused, with the two ways
+/// out named. No unit drop-in and no transient daemon: setup's own
+/// `validate_systemd_unit_resolution` rejects drop-ins, and a daemon that
+/// outlives setup must be the packaged one.
+fn check_unit_reads_this_config() -> anyhow::Result<()> {
+    match facelock_core::paths::non_default_config_override() {
+        Some(path) => Err(fail(SystemMessage::SystemdRefusedConfigOverride {
+            path: path.display().to_string(),
+        })),
+        None => Ok(()),
+    }
+}
+
 /// The writer's two independent knobs, named.
 ///
 /// A pair of `bool`s in a tuple is how `install_for_setup(services,
@@ -395,6 +421,14 @@ fn pam_request(action: PamAction, service: &str, knobs: PamKnobs, if_present: bo
 pub fn run_with_plan(plan: SetupPlan) -> anyhow::Result<()> {
     if needs_root_precheck(&plan) {
         crate::ipc_client::require_root("sudo facelock setup")?;
+        // Ahead of the base flow, which writes from its first step: a
+        // `--systemd` answer the unit cannot honour is refused before a
+        // directory is created or a model downloaded (#314). The standalone
+        // form has no base flow and no precheck; `run_systemd` asks the same
+        // question itself, after its own root check.
+        if enables_daemon_unit(&plan) {
+            check_unit_reads_this_config()?;
+        }
     }
 
     // Whether the interactive wizard ran, and therefore already asked about PAM.
@@ -583,14 +617,24 @@ fn run_wizard(plan: &SetupPlan) -> anyhow::Result<()> {
     Terminal.info(&SetupMessage::SetupStepDaemon);
     let systemd_step = systemd_step_for(plan);
     let systemd_enabled = match systemd_step {
-        SystemdStep::Ask => match wizard_systemd_setup(&theme, plan.yes) {
-            Ok(enabled) => enabled,
-            Err(e) => {
-                Terminal.info(&SetupMessage::SystemdStepFailed {
-                    error: e.to_string(),
+        // The unit would not read the file this wizard is configuring, so
+        // the question has one honest answer (#314): given, not asked.
+        SystemdStep::Ask => match facelock_core::paths::non_default_config_override() {
+            Some(path) => {
+                Terminal.info(&SystemMessage::SystemdSkippedConfigOverride {
+                    path: path.display().to_string(),
                 });
                 false
             }
+            None => match wizard_systemd_setup(&theme, plan.yes) {
+                Ok(enabled) => enabled,
+                Err(e) => {
+                    Terminal.info(&SetupMessage::SystemdStepFailed {
+                        error: e.to_string(),
+                    });
+                    false
+                }
+            },
         },
         // Answered on the command line. Applied here rather than after the
         // whole base flow, for the ordering reason above; the error it can
@@ -3881,6 +3925,11 @@ pub fn run_systemd(disable: bool) -> anyhow::Result<()> {
         run_cmd("systemctl", &["disable", "--now", "facelock-daemon"])?;
         Terminal.info(&SystemMessage::SystemdUnitsDisabled);
     } else {
+        // Before the legacy-asset migration below removes anything: the
+        // base flows refused earlier, this is the standalone form's turn
+        // and every other caller's backstop (#314).
+        check_unit_reads_this_config()?;
+
         Terminal.info(&SystemMessage::ValidatingSystemAssets);
         let migrated = validate_and_migrate_system_assets(&SystemAssetLayout::production())?;
         for path in migrated {
@@ -6306,6 +6355,105 @@ mod action_tests {
             assert_eq!(plan.systemd, SystemdPref::Install);
             assert_eq!(systemd_step_for(&plan), SystemdStep::Install);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // #314: `--systemd` under a non-default `--config`. The packaged unit
+    // runs bare `facelock daemon` and reads only the default file, so the
+    // daemon setup would enable is not the one it is configuring. Refused,
+    // before anything is written.
+    // -----------------------------------------------------------------------
+
+    /// Only `--systemd` enables the unit. `--systemd --disable` stops it,
+    /// which depends on no config file, and `Ask`/`Skip` enable nothing here.
+    #[test]
+    fn only_an_install_answer_enables_the_daemon_unit() {
+        for (pref, expected) in [
+            (SystemdPref::Install, true),
+            (SystemdPref::Disable, false),
+            (SystemdPref::Ask, false),
+            (SystemdPref::Skip, false),
+        ] {
+            let plan = SetupPlan {
+                systemd: pref,
+                ..SetupPlan::default()
+            };
+            assert_eq!(enables_daemon_unit(&plan), expected, "{pref:?}");
+        }
+    }
+
+    /// The identity check itself, through the process override the global
+    /// `--config` installs: another file refuses with the two ways out, the
+    /// default file (however spelled) and no override at all pass.
+    #[test]
+    fn unit_check_refuses_another_file_and_passes_the_default() {
+        let _lock = super::CONFIG_OVERRIDE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        struct OverrideGuard;
+        impl Drop for OverrideGuard {
+            fn drop(&mut self) {
+                facelock_core::paths::clear_process_config_override();
+            }
+        }
+        let _guard = OverrideGuard;
+
+        let dir = tempfile::tempdir().unwrap();
+        let other = dir.path().join("config.toml");
+        facelock_core::paths::set_process_config_override(other.clone());
+        let err = check_unit_reads_this_config().unwrap_err().to_string();
+        assert!(err.contains("--systemd"), "{err}");
+        assert!(err.contains(&other.display().to_string()), "{err}");
+        assert!(
+            err.contains(facelock_core::paths::DEFAULT_CONFIG_PATH),
+            "{err}"
+        );
+        assert!(err.contains("without --config"), "{err}");
+        assert!(err.contains("without --systemd"), "{err}");
+
+        facelock_core::paths::set_process_config_override(PathBuf::from(
+            facelock_core::paths::DEFAULT_CONFIG_PATH,
+        ));
+        check_unit_reads_this_config().unwrap();
+
+        facelock_core::paths::clear_process_config_override();
+        check_unit_reads_this_config().unwrap();
+    }
+
+    /// Where the check sits is the property: ahead of both base flows in
+    /// `run_with_plan`, so a refused `--systemd --enroll` has created no
+    /// directory, downloaded no model and minted no key; and ahead of the
+    /// legacy-asset migration in `run_systemd`, the first thing that path
+    /// removes. Pinned on the source because `run_with_plan` cannot be
+    /// driven past its root gate from a test.
+    #[test]
+    fn unit_check_precedes_every_mutation_it_guards() {
+        let source = include_str!("setup.rs");
+        let body_of = |name: &str| {
+            let start = source
+                .find(&format!("fn {name}("))
+                .unwrap_or_else(|| panic!("{name} exists"));
+            let rest = &source[start..];
+            let end = rest.find("\n}\n").expect("function body ends");
+            &rest[..end]
+        };
+        let position = |body: &str, needle: &str| {
+            body.find(needle)
+                .unwrap_or_else(|| panic!("{needle:?} appears in the body"))
+        };
+
+        let plan = body_of("run_with_plan");
+        let check = position(plan, "check_unit_reads_this_config()");
+        assert!(check < position(plan, "run_non_interactive(&plan)"));
+        assert!(check < position(plan, "run_wizard(&plan)"));
+        assert!(check < position(plan, "run_systemd("));
+
+        let install = body_of("run_systemd");
+        let check = position(install, "check_unit_reads_this_config()");
+        assert!(check > position(install, "check_root()"));
+        assert!(check < position(install, "validate_and_migrate_system_assets("));
+        assert!(check < position(install, "daemon-reload"));
     }
 
     /// A daemon-less install enrolls exactly as it did before the reorder.

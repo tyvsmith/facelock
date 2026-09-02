@@ -17,6 +17,10 @@ pub enum SystemMessage {
     SystemdSkippedFlag,
     SystemdFromCommandLine,
 
+    // -- a non-default `--config` (#314): the unit reads only the default --
+    SystemdSkippedConfigOverride { path: String },
+    SystemdRefusedConfigOverride { path: String },
+
     // -- bringing the daemon up --
     DaemonRestarted,
     DaemonRunning,
@@ -52,6 +56,21 @@ impl Message for SystemMessage {
                 "  Skipping daemon configuration (--no-systemd).\n  No unit files are written and systemctl is not invoked.",
             ),
             SystemdFromCommandLine => translate("  Answered on the command line."),
+            // The default path is spelled out in both: it is the whole reason,
+            // and the refusal's two ways out are named so the operator does
+            // not have to work them out from the diagnosis.
+            SystemdSkippedConfigOverride { path } => fill(
+                translate(
+                    "  Skipping daemon configuration: --config {path} is not /etc/facelock/config.toml,\n  the only file the facelock-daemon unit reads.\n  Enrollment and the recognition test use direct camera access under {path}.",
+                ),
+                &[("path", path.clone())],
+            ),
+            SystemdRefusedConfigOverride { path } => fill(
+                translate(
+                    "--systemd is not supported with --config {path}: the facelock-daemon unit runs `facelock daemon`,\n  which reads only /etc/facelock/config.toml, so the daemon it enables would not use this configuration.\n  Either copy {path} to /etc/facelock/config.toml and re-run without --config,\n  or re-run without --systemd to enroll with direct camera access under {path}.",
+                ),
+                &[("path", path.clone())],
+            ),
             DaemonRestarted => translate(
                 "  facelock-daemon was already running; restarted so enrollment uses\n  the new configuration.",
             ),
@@ -101,7 +120,7 @@ impl Message for SystemMessage {
 /// above: no wildcard arm, so a variant that renders nothing does not build.
 #[cfg(test)]
 impl super::Samples for SystemMessage {
-    const VARIANT_COUNT: usize = 18;
+    const VARIANT_COUNT: usize = 20;
 
     fn samples() -> Vec<Self> {
         use SystemMessage::*;
@@ -111,6 +130,8 @@ impl super::Samples for SystemMessage {
             SystemdDeclined,
             SystemdSkippedFlag,
             SystemdFromCommandLine,
+            SystemdSkippedConfigOverride { path: s("/p") },
+            SystemdRefusedConfigOverride { path: s("/p") },
             DaemonRestarted,
             DaemonRunning,
             DaemonNotReady { seconds: 20 },
@@ -186,5 +207,31 @@ mod tests {
             DbusActivationEnabled.localized(),
             "\nfacelock-daemon D-Bus activation is now enabled."
         );
+    }
+
+    /// The two `--config` lines (#314) spell the default path out because it
+    /// is the whole reason; a moved default must move them too.
+    #[test]
+    fn config_override_lines_name_the_default_path() {
+        use SystemMessage::*;
+        let default = facelock_core::paths::DEFAULT_CONFIG_PATH;
+
+        let skipped = SystemdSkippedConfigOverride {
+            path: "/tmp/x.toml".into(),
+        }
+        .localized();
+        assert!(skipped.contains(default), "{skipped}");
+        assert!(skipped.contains("--config /tmp/x.toml"), "{skipped}");
+        assert!(skipped.contains("under /tmp/x.toml"), "{skipped}");
+
+        let refused = SystemdRefusedConfigOverride {
+            path: "/tmp/x.toml".into(),
+        }
+        .localized();
+        assert!(refused.contains(default), "{refused}");
+        assert!(refused.contains("--config /tmp/x.toml"), "{refused}");
+        assert!(refused.contains("copy /tmp/x.toml to"), "{refused}");
+        assert!(refused.contains("without --config"), "{refused}");
+        assert!(refused.contains("without --systemd"), "{refused}");
     }
 }

@@ -421,12 +421,81 @@ EOF
 
     sqlite3 -cmd ".timeout 8000" "$DB" "DELETE FROM face_models WHERE label = 'rate-limit-fixture';" || true
 
+    # #314: with a daemon owning the bus, a command under a non-default
+    # `--config` still never enrolls through it. The daemon reads only the
+    # default file, so the CLI selects direct access and says so, before it
+    # tries the (absent) camera itself. The daemon transport's own failure
+    # shapes are forbidden: had the request reached the bus, one of them is
+    # what this run would have printed instead.
+    cp "$CONFIG" /tmp/facelock-override-enroll.toml
+    run_test "Enroll under --config bypasses the running daemon" \
+        "facelock --config /tmp/facelock-override-enroll.toml enroll --user testuser --skip-setup-check < /dev/null > /tmp/enroll-override.out 2>&1; test \$? -ne 0 && grep -q 'Note: --config names a file other than /etc/facelock/config.toml' /tmp/enroll-override.out && ! grep -q 'D-Bus Enroll call failed' /tmp/enroll-override.out && ! grep -q 'enrollment timed out client-side' /tmp/enroll-override.out"
+    rm -f /tmp/facelock-override-enroll.toml
+
     # The daemon is done: the one-shot block below must answer with no daemon
     # on the bus, exactly as it does on the hardware tier.
     kill "$DAEMON_PID" 2>/dev/null || true
     wait "$DAEMON_PID" 2>/dev/null || true
     DAEMON_PID=""
 fi
+
+# ============================================================================
+# Setup under a config override (#314) — needs neither the models nor a
+# camera, and runs as root, which is what makes the refusal reachable: the
+# root gate answers first for anyone else (cli_smoke.rs pins that ordering).
+#
+# The packaged unit runs bare `facelock daemon` and reads only the default
+# config file, so `--systemd` under any other `--config` would enable a
+# daemon configured by a file setup never touched. Refused before the base
+# flow writes anything and before any `systemctl` verb. `systemctl` is
+# shadowed on the fixed PATH setup execs privileged commands from with a
+# recording shim, so "never invoked" is a file that does not exist rather
+# than a verb that happened to fail.
+# ============================================================================
+
+echo ""
+echo "--- setup: --systemd under --config ---"
+
+OVERRIDE_CONFIG="/tmp/facelock-override-setup.toml"
+cp "$CONFIG" "$OVERRIDE_CONFIG"
+SYSTEMCTL_CALLS="/tmp/facelock-systemctl-calls"
+rm -f "$SYSTEMCTL_CALLS"
+REAL_SYSTEMCTL=""
+if [ -e /usr/bin/systemctl ]; then
+    REAL_SYSTEMCTL="/tmp/facelock-systemctl.real"
+    mv /usr/bin/systemctl "$REAL_SYSTEMCTL"
+fi
+printf '#!/bin/sh\necho "$*" >> %s\nexit 1\n' "$SYSTEMCTL_CALLS" > /usr/bin/systemctl
+chmod 0755 /usr/bin/systemctl
+rm -f /etc/facelock/.setup-complete
+
+# The base flow: refused ahead of its first line ("preparing system"), so
+# no directory, model, key or marker is written.
+run_test "setup --systemd --non-interactive under --config is refused before any mutation" \
+    "facelock --config $OVERRIDE_CONFIG setup --systemd --non-interactive > /tmp/setup-override.out 2>&1; test \$? -ne 0 && grep -q -- '--systemd is not supported with --config $OVERRIDE_CONFIG' /tmp/setup-override.out && grep -q 're-run without --systemd' /tmp/setup-override.out && ! grep -q 'preparing system' /tmp/setup-override.out && ! test -e $SYSTEMCTL_CALLS && ! test -e /etc/facelock/.setup-complete"
+
+# The standalone form has no base flow: `run_systemd` asks the same question
+# itself, after its own root and systemd checks and before the legacy-asset
+# migration. This container has no systemd, so the directory that check
+# looks for is created for the one row and removed again.
+mkdir -p /run/systemd/system
+run_test "setup --systemd (standalone) under --config is refused before systemctl" \
+    "facelock --config $OVERRIDE_CONFIG setup --systemd > /tmp/setup-override-standalone.out 2>&1; test \$? -ne 0 && grep -q -- '--systemd is not supported with --config $OVERRIDE_CONFIG' /tmp/setup-override-standalone.out && ! grep -q 'Validating installed' /tmp/setup-override-standalone.out && ! test -e $SYSTEMCTL_CALLS"
+
+# The default path is not an override, however it is spelled: the same
+# standalone invocation naming the real file through a `..` component gets
+# past the identity check and on to the asset validation, which is where
+# this container (no installed unit, a shim for systemctl) stops it. The
+# row asserts the refusal did not fire and the validation was reached.
+run_test "setup --systemd under --config /etc/facelock/../facelock/config.toml is not refused" \
+    "facelock --config /etc/facelock/../facelock/config.toml setup --systemd > /tmp/setup-default-spelling.out 2>&1; ! grep -q -- '--systemd is not supported' /tmp/setup-default-spelling.out && grep -q 'Validating installed' /tmp/setup-default-spelling.out"
+rmdir /run/systemd/system 2>/dev/null || true
+
+rm -f /usr/bin/systemctl
+if [ -n "$REAL_SYSTEMCTL" ]; then
+    mv "$REAL_SYSTEMCTL" /usr/bin/systemctl
+fi
+rm -f "$OVERRIDE_CONFIG" "$SYSTEMCTL_CALLS"
 
 # ============================================================================
 # One-shot block — needs neither the models nor a camera.

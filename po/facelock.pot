@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: facelock\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-01 22:47-0700\n"
+"POT-Creation-Date: 2026-09-01 22:37-0700\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,38 +17,38 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: crates/facelock-cli/src/message/access.rs:38
+#: crates/facelock-cli/src/message/access.rs:40
 #, python-brace-format
 msgid "no config file at {path} — run 'sudo facelock setup' to create one"
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:42
+#: crates/facelock-cli/src/message/access.rs:44
 #, python-brace-format
 msgid "invalid config at {path}: {error}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:46
+#: crates/facelock-cli/src/message/access.rs:48
 #, python-brace-format
 msgid ""
 "Root required.\n"
 "  Run: {hint}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:52
+#: crates/facelock-cli/src/message/access.rs:54
 msgid "Root required. Re-run with sudo?"
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:54
+#: crates/facelock-cli/src/message/access.rs:56
 msgid ""
 "Access denied: this operation requires root.\n"
 "  Re-run with sudo, or as root."
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:57
+#: crates/facelock-cli/src/message/access.rs:59
 msgid "enrollment timed out client-side; the daemon may have completed it — run `facelock list` before retrying"
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:60
+#: crates/facelock-cli/src/message/access.rs:62
 msgid ""
 "Warning: daemon.mode = \"daemon\" but the facelock daemon is unreachable — falling back to direct camera access.\n"
 "Start the facelock-daemon service to use it."
@@ -56,14 +56,26 @@ msgstr ""
 
 #: crates/facelock-cli/src/message/access.rs:68
 msgid ""
+"Note: --config names a file other than /etc/facelock/config.toml, the only file the facelock daemon reads.\n"
+"Using direct camera access under the selected configuration."
+msgstr ""
+
+#: crates/facelock-cli/src/message/access.rs:76
+msgid ""
 "Graphical preview requires the daemon. In oneshot mode, use --json.\n"
 "Falling back to text-only mode.\n"
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:71
+#: crates/facelock-cli/src/message/access.rs:79
 msgid ""
 "Graphical preview requires the daemon, which is configured but not reachable.\n"
 "Falling back to text-only mode. Start the facelock-daemon service to use it.\n"
+msgstr ""
+
+#: crates/facelock-cli/src/message/access.rs:82
+msgid ""
+"Graphical preview requires the daemon, which reads only /etc/facelock/config.toml and is not used under --config.\n"
+"Falling back to text-only mode.\n"
 msgstr ""
 
 #: crates/facelock-cli/src/message/device.rs:54
@@ -1191,344 +1203,356 @@ msgstr ""
 msgid "  hyprlock integration applied for {user}."
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:142
+#: crates/facelock-cli/src/message/status.rs:137
 msgid "facelock system status"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:143
+#: crates/facelock-cli/src/message/status.rs:138
 msgid "Config file"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:144
+#: crates/facelock-cli/src/message/status.rs:139
 msgid "Daemon"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:145
+#: crates/facelock-cli/src/message/status.rs:140
 msgid "Oneshot fallback"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:146
+#: crates/facelock-cli/src/message/status.rs:141
 msgid "Camera device"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:147
+#: crates/facelock-cli/src/message/status.rs:142
 msgid "Model directory"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:148
+#: crates/facelock-cli/src/message/status.rs:143
 msgid "Execution provider"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:149
+#: crates/facelock-cli/src/message/status.rs:144
 msgid "Encryption"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:150
+#: crates/facelock-cli/src/message/status.rs:145
 msgid "Enrolled faces"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:151
+#: crates/facelock-cli/src/message/status.rs:146
 msgid "Security"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:152
+#: crates/facelock-cli/src/message/status.rs:147
 msgid "Notifications"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:153
+#: crates/facelock-cli/src/message/status.rs:148
 msgid "PAM module"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:155
+#: crates/facelock-cli/src/message/status.rs:150
 #, python-brace-format
 msgid "cannot determine: {why}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:158
+#: crates/facelock-cli/src/message/status.rs:153
 msgid "config not available"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:159
+#: crates/facelock-cli/src/message/status.rs:154
 msgid "valid"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:160
+#: crates/facelock-cli/src/message/status.rs:155
 msgid "not found"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:162
+#: crates/facelock-cli/src/message/status.rs:157
 #, python-brace-format
 msgid "invalid: {error}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:164
+#: crates/facelock-cli/src/message/status.rs:159
 msgid "oneshot mode (no daemon)"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:165
+#: crates/facelock-cli/src/message/status.rs:160
 msgid "responding"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:167
+#: crates/facelock-cli/src/message/status.rs:162
 #, python-brace-format
 msgid "not responding: {error}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:171
+#: crates/facelock-cli/src/message/status.rs:166
 msgid "prerequisites present (binary, models and database in place for daemon-less auth)"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:174
+#: crates/facelock-cli/src/message/status.rs:169
 msgid "prerequisites missing (PAM would fall through to the next auth method if the daemon is unreachable)"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:176
+#: crates/facelock-cli/src/message/status.rs:171
 msgid "device exists"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:177
+#: crates/facelock-cli/src/message/status.rs:172
 msgid "device not found"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:178
+#: crates/facelock-cli/src/message/status.rs:173
 msgid "auto-detect enabled"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:179
+#: crates/facelock-cli/src/message/status.rs:174
 msgid "directory not found"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:180
+#: crates/facelock-cli/src/message/status.rs:175
 msgid "all configured models present"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:181
+#: crates/facelock-cli/src/message/status.rs:176
 msgid "some models missing (run 'facelock setup')"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:182
+#: crates/facelock-cli/src/message/status.rs:177
 msgid "present"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:183
+#: crates/facelock-cli/src/message/status.rs:178
 msgid "MISSING"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:184
+#: crates/facelock-cli/src/message/status.rs:179
 msgid "supported by the installed ONNX Runtime"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:186
+#: crates/facelock-cli/src/message/status.rs:181
 msgid "not built into the installed ONNX Runtime — inference will fall back to CPU"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:193
+#: crates/facelock-cli/src/message/status.rs:188
 msgid "unknown execution provider (valid: cpu, cuda, rocm, openvino)"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:196
+#: crates/facelock-cli/src/message/status.rs:191
 #, python-brace-format
 msgid "ONNX Runtime not loadable: {error}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:200
+#: crates/facelock-cli/src/message/status.rs:195
 #, python-brace-format
 msgid "sealed key: {path}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:203
+#: crates/facelock-cli/src/message/status.rs:198
 #, python-brace-format
 msgid "sealed key missing: {path}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:207
+#: crates/facelock-cli/src/message/status.rs:202
 #, python-brace-format
 msgid "TPM device missing: {path}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:211
+#: crates/facelock-cli/src/message/status.rs:206
 #, python-brace-format
 msgid "key file: {path}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:214
+#: crates/facelock-cli/src/message/status.rs:209
 #, python-brace-format
 msgid "key file missing: {path}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:218
+#: crates/facelock-cli/src/message/status.rs:213
 msgid "embeddings stored as plaintext (run 'facelock setup' to enable encryption)"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:220
+#: crates/facelock-cli/src/message/status.rs:215
 msgid "no faces enrolled (run 'facelock enroll')"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:222
+#: crates/facelock-cli/src/message/status.rs:217
 #, python-brace-format
 msgid "{count} model(s)"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:226
-#, python-brace-format
-msgid "{label}, unbound (re-enroll to bind)"
-msgstr ""
-
-#: crates/facelock-cli/src/message/status.rs:231
+#: crates/facelock-cli/src/message/status.rs:222
 #, python-brace-format
 msgid "out of date (marker says {marker}, database has {store}) — run 'sudo facelock setup' to reconcile"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:236
+#: crates/facelock-cli/src/message/status.rs:227
 #, python-brace-format
 msgid "unreadable: {why}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:238
+#: crates/facelock-cli/src/message/status.rs:229
 msgid "ALL SECURITY CHECKS DISABLED"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:239
+#: crates/facelock-cli/src/message/status.rs:230
 msgid "yes"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:240
+#: crates/facelock-cli/src/message/status.rs:231
 msgid "no"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:241
+#: crates/facelock-cli/src/message/status.rs:232
 msgid "off"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:242
+#: crates/facelock-cli/src/message/status.rs:233
 msgid "terminal"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:243
+#: crates/facelock-cli/src/message/status.rs:234
 msgid "desktop"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:244
+#: crates/facelock-cli/src/message/status.rs:235
 msgid "terminal + desktop"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:245
+#: crates/facelock-cli/src/message/status.rs:236
 msgid "installed"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:247
+#: crates/facelock-cli/src/message/status.rs:238
 #, python-brace-format
 msgid "installed at {path}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:249
+#: crates/facelock-cli/src/message/status.rs:240
 msgid "not installed"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:251
+#: crates/facelock-cli/src/message/status.rs:242
 #, python-brace-format
 msgid "{services} ({count} configured)"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:259
+#: crates/facelock-cli/src/message/status.rs:250
 #, python-brace-format
 msgid "{services} ({count} configured, {overrides} shadowing a vendor file)"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:266
+#: crates/facelock-cli/src/message/status.rs:257
 msgid "none configured"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:267
+#: crates/facelock-cli/src/message/status.rs:258
 msgid "not checked"
 msgstr ""
 
-#: crates/facelock-cli/src/message/status.rs:269
+#: crates/facelock-cli/src/message/status.rs:260
 #, python-brace-format
 msgid "{path} ({error})"
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:44
+#: crates/facelock-cli/src/message/system.rs:48
 msgid "Enable daemon mode with D-Bus activation?"
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:46
+#: crates/facelock-cli/src/message/system.rs:50
 msgid ""
 "  systemd not detected. Skipping daemon configuration.\n"
 "  Facelock will use oneshot mode for authentication."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:49
+#: crates/facelock-cli/src/message/system.rs:53
 msgid "  Skipping systemd setup. Facelock will use oneshot mode."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:52
+#: crates/facelock-cli/src/message/system.rs:56
 msgid ""
 "  Skipping daemon configuration (--no-systemd).\n"
 "  No unit files are written and systemctl is not invoked."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:54
+#: crates/facelock-cli/src/message/system.rs:58
 msgid "  Answered on the command line."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:56
+#: crates/facelock-cli/src/message/system.rs:64
+#, python-brace-format
+msgid ""
+"  Skipping daemon configuration: --config {path} is not /etc/facelock/config.toml,\n"
+"  the only file the facelock-daemon unit reads.\n"
+"  Enrollment and the recognition test use direct camera access under {path}."
+msgstr ""
+
+#: crates/facelock-cli/src/message/system.rs:70
+#, python-brace-format
+msgid ""
+"--systemd is not supported with --config {path}: the facelock-daemon unit runs `facelock daemon`,\n"
+"  which reads only /etc/facelock/config.toml, so the daemon it enables would not use this configuration.\n"
+"  Either copy {path} to /etc/facelock/config.toml and re-run without --config,\n"
+"  or re-run without --systemd to enroll with direct camera access under {path}."
+msgstr ""
+
+#: crates/facelock-cli/src/message/system.rs:75
 msgid ""
 "  facelock-daemon was already running; restarted so enrollment uses\n"
 "  the new configuration."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:58
+#: crates/facelock-cli/src/message/system.rs:77
 msgid "  facelock-daemon is running."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:61
+#: crates/facelock-cli/src/message/system.rs:80
 #, python-brace-format
 msgid ""
 "  facelock-daemon did not answer within {seconds}s.\n"
 "  Continuing with direct camera access; check: systemctl status facelock-daemon"
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:66
+#: crates/facelock-cli/src/message/system.rs:85
 msgid "  Removed the legacy 'facelock' group; face unlock no longer uses it."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:68
+#: crates/facelock-cli/src/message/system.rs:87
 msgid "Disabling facelock-daemon systemd units..."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:69
+#: crates/facelock-cli/src/message/system.rs:88
 msgid "facelock-daemon service disabled and stopped."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:71
+#: crates/facelock-cli/src/message/system.rs:90
 msgid "Validating installed facelock-daemon systemd and D-Bus assets..."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:74
+#: crates/facelock-cli/src/message/system.rs:93
 #, python-brace-format
 msgid "  Removed exact known legacy {path}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:79
+#: crates/facelock-cli/src/message/system.rs:98
 #, python-brace-format
 msgid "  Preserved merged local D-Bus policy {path}; review it if Facelock bus authorization is unexpected."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:83
+#: crates/facelock-cli/src/message/system.rs:102
 msgid "  Installed systemd and D-Bus assets validated."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:84
+#: crates/facelock-cli/src/message/system.rs:103
 msgid "  systemctl daemon-reload done."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:86
+#: crates/facelock-cli/src/message/system.rs:105
 #, python-brace-format
 msgid "  systemctl enable {unit} done."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:90
+#: crates/facelock-cli/src/message/system.rs:109
 msgid ""
 "\n"
 "facelock-daemon D-Bus activation is now enabled."
