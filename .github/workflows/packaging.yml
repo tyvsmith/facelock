@@ -213,6 +213,71 @@ jobs:
           # files and if-no-files-found fails the job.
           include-hidden-files: true
 
+  # #230: the rpm job above proves the direct .rpm -- host binaries, bundled
+  # ONNX Runtime -- which is not the delivery path dist/release-matrix.json
+  # declares for Fedora. This one rebuilds the package from source in mock, the
+  # way COPR does, and boots what it built against Fedora's system ONNX Runtime.
+  #
+  # Not on pull requests. Each lane compiles the whole workspace inside a mock
+  # chroot, and mock needs a privileged container, which no pull request has
+  # been shown to get on a rootless-podman runner. Making it a required PR check
+  # before that is proven would block every packaging merge on an unproven
+  # capability. The nightly and the dispatch `just release-preflight` reads are
+  # unfiltered, so release evidence still comes from here -- and the residual
+  # risk, a COPR-only break that survives its own pull request, is written down
+  # in docs/releasing.md next to the one the path filter already buys.
+  copr:
+    name: Fedora ${{ matrix.release }} COPR ${{ matrix.depth }}
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true' && github.event_name != 'pull_request'
+    # Twice the rpm job's budget: mock compiles the workspace and runs the
+    # spec's %check inside the chroot before the lifecycle half starts.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      # One lane per Packit release target, at the lifecycle depth the matrix
+      # declares -- `just test-copr-lanes` is the same set, run sequentially.
+      # test/check-release-matrix.py fails if this list and the matrix ever
+      # disagree.
+      matrix:
+        include:
+          - release: "43"
+            depth: Package Lifecycle
+            recipe: test-copr-pkg 43
+          - release: "44"
+            depth: Package Lifecycle
+            recipe: test-copr-pkg 44
+          - release: "45"
+            depth: Runtime Smoke
+            recipe: test-copr-smoke 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Reclaim runner disk space
+        run: .github/workflows/scripts/reclaim-runner-disk.sh
+
+      - name: Install packaging test dependencies
+        run: .github/workflows/scripts/install-packaging-test-deps.sh
+
+      # No release binaries: the whole point is that mock builds them from the
+      # source the SRPM carries. Models are still needed -- the lifecycle half
+      # starts the daemon under the hardened unit.
+      - name: Fetch required ONNX models
+        uses: ./.github/actions/fetch-models
+
+      - name: Run the Fedora ${{ matrix.release }} COPR gate
+        run: just ${{ matrix.recipe }}
+
+      # See the Debian lane's upload step.
+      - name: Upload packaging evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: packaging-evidence-copr-${{ matrix.release }}
+          path: .packaging-evidence/
+          if-no-files-found: error
+          overwrite: true
+
   arch:
     name: Arch Package From dist/PKGBUILD
     runs-on: ubuntu-latest

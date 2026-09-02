@@ -1,0 +1,63 @@
+# COPR lifecycle image — install the RPM mock built from source and boot it.
+#
+# test/Containerfile.copr builds the package the way COPR does: Packit SRPM,
+# mock rebuild in a clean chroot, no bundled ONNX Runtime. That container is
+# privileged and disposable, so the lane exports the built RPM to
+# target/copr-lane/facelock.rpm and this image installs it for the same booted
+# lifecycle validation the direct-RPM lanes run.
+#
+# The difference from test/Containerfile.rpm-e2e is the whole point of the lane:
+# nothing here is built from host binaries and nothing bundles ONNX Runtime.
+# `dnf install` resolves the package's own `Requires: onnxruntime`, so what the
+# validation exercises is Fedora's system runtime, which is what the release
+# matrix declares for every Packit/COPR target.
+#
+# Base image comes from dist/release-matrix.json via
+# test/fedora-lane-image.sh, which is where the digest pin and the Fedora
+# EOL gate live. No default: a build without --build-arg must fail, not
+# silently pick a release.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# The same runtime and harness dependencies test/Containerfile.rpm-e2e installs:
+# dbus-daemon for the D-Bus and polkit boundary checks, binutils for the PAM
+# symbol assertions, gettext for the packaged catalogs, strace for the
+# pamtester diagnostics in rpm-service-pam-lifecycle.sh.
+RUN dnf -y install pam authselect dbus dbus-daemon rpm systemd binutils gettext \
+        glibc libxkbcommon tpm2-tss ca-certificates openssl-libs python3 util-linux strace \
+    && dnf clean all
+
+# Build pamtester from source (not in Fedora repos)
+COPY test/install-pamtester.sh /tmp/install-pamtester.sh
+RUN dnf -y install gcc gcc-c++ pam-devel make curl && \
+    sh /tmp/install-pamtester.sh && \
+    rm -f /tmp/install-pamtester.sh && \
+    dnf -y remove gcc gcc-c++ pam-devel make && dnf clean all
+
+# Test user for the PAM assertions. The 0400 shadow mode is the same container
+# fixture accommodation test/Containerfile.rpm-e2e documents: pam_unix 1.7+
+# verifies through setuid unix_chkpwd, which cannot read a mode-0000 shadow
+# under rootless podman.
+RUN useradd -m testuser && echo "testuser:test" | chpasswd && chmod 0400 /etc/shadow
+
+COPY .github/workflows/scripts/validate-rpm.sh /validate-rpm.sh
+COPY test/pkg-validate.sh /pkg-validate.sh
+COPY test/polkit-agent-validate.sh /polkit-agent-validate.sh
+COPY test/rpm-service-pam-lifecycle.sh /rpm-service-pam-lifecycle.sh
+COPY test/rpm-runtime-smoke.sh /rpm-runtime-smoke.sh
+COPY test/pam.d/facelock-test /etc/pam.d/facelock-test
+RUN chmod +x /validate-rpm.sh /pkg-validate.sh /polkit-agent-validate.sh \
+    /rpm-service-pam-lifecycle.sh /rpm-runtime-smoke.sh
+
+# The exact artifact under test, mock built from source by the stage before
+# this one. Installing it here rather than mounting it at run time is what lets
+# pkg-validate.sh see an installed package the moment systemd has booted, and
+# what leaves /facelock-test-package.rpm on disk for its reinstall assertions.
+COPY target/copr-lane/facelock.rpm /facelock-test-package.rpm
+RUN /validate-rpm.sh /facelock-test-package.rpm copr \
+    && dnf install -y /facelock-test-package.rpm \
+    && rpm -q facelock onnxruntime \
+    && ! rpm -q onnxruntime-devel \
+    && dnf clean all
+
+CMD ["/pkg-validate.sh"]

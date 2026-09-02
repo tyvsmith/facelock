@@ -615,6 +615,7 @@ for relative_path in (
     "test/Containerfile.rpm-e2e",
     "test/Containerfile.rpm-authselect",
     "test/Containerfile.copr",
+    "test/Containerfile.copr-e2e",
     "test/Containerfile.fedora",
 ):
     fedora_containerfile = (ROOT / relative_path).read_text()
@@ -643,50 +644,96 @@ require(
     "bash test/fedora-lane-image.sh" in justfile,
     "justfile Fedora lanes do not resolve their image through the matrix",
 )
-lanes_recipe = re.search(r"(?m)^test-rpm-lanes:(?P<dependencies>[^\n]*)$", justfile)
-require(lanes_recipe is not None, "justfile omits the aggregate Fedora lifecycle lane target")
-lane_invocations = re.findall(
-    r'\((test-rpm-[a-z-]+)\s+"([^"]+)"\)', lanes_recipe.group("dependencies")
+def fedora_lane_bindings(aggregate, prefix, declared_targets, authority, recipe_by_depth):
+    """The {release: recipe} a `just <aggregate>` line declares, bound to the matrix.
+
+    The matrix declares how deeply each release is tested, so the gate has to
+    require that exact recipe. Accepting either one lets a full lifecycle lane
+    be downgraded to a smoke lane without anything noticing, which is the
+    regression these lanes exist to prevent.
+    """
+    aggregate_line = re.search(rf"(?m)^{aggregate}:(?P<dependencies>[^\n]*)$", justfile)
+    require(aggregate_line is not None, f"justfile omits the aggregate Fedora lane target {aggregate}")
+    invocations = re.findall(
+        rf'\(({prefix}[a-z-]+)\s+"([^"]+)"\)', aggregate_line.group("dependencies")
+    )
+    by_release = {release: recipe for recipe, release in invocations}
+    require(
+        len(invocations) == len(by_release),
+        f"just {aggregate} invokes a Fedora release more than once",
+    )
+    releases = {target.split("-")[1] for target in declared_targets}
+    require(
+        set(by_release) == releases,
+        f"just {aggregate} covers {sorted(by_release)}, "
+        f"not the declared {authority} {sorted(releases)}",
+    )
+    for fedora_release in sorted(releases):
+        lane_depths = {
+            row["lifecycle_depth"]
+            for row in matrix.get("platforms", [])
+            if row.get("release_target") is True
+            and re.fullmatch(rf"Fedora {fedora_release}(?: .*)?", row.get("platform", ""))
+        }
+        require(lane_depths, f"release matrix declares no Fedora {fedora_release} platform row")
+        require(
+            len(lane_depths) == 1,
+            f"Fedora {fedora_release} platform rows disagree on lifecycle depth: {sorted(lane_depths)}",
+        )
+        lane_depth = lane_depths.pop()
+        require(
+            lane_depth in recipe_by_depth,
+            f"Fedora {fedora_release} lifecycle depth {lane_depth!r} has no mapped {aggregate} recipe",
+        )
+        require(
+            by_release[fedora_release] == recipe_by_depth[lane_depth],
+            f"just {aggregate} runs Fedora {fedora_release} through "
+            f"{by_release[fedora_release]}, but its declared lifecycle depth "
+            f"{lane_depth!r} requires {recipe_by_depth[lane_depth]}",
+        )
+    return by_release
+
+
+lanes_by_release = fedora_lane_bindings(
+    "test-rpm-lanes",
+    "test-rpm-",
+    expected_copr_targets,
+    "release targets",
+    {"full": "test-rpm-pkg", "build/runtime smoke": "test-rpm-smoke"},
 )
-lanes_by_release = {release: recipe for recipe, release in lane_invocations}
+# #230: the direct-RPM lanes above build from host binaries and ship a bundled
+# ONNX Runtime, which is not the delivery path the matrix declares for Fedora.
+# Every Packit/COPR release target gets a second lane that rebuilds the package
+# from source in mock and validates it against Fedora's system ONNX Runtime, at
+# the same declared depth. Binding this set to packit_release_targets, not to
+# the staging chroots, is what stops a declared COPR target from having only
+# direct-RPM evidence behind it.
+copr_lanes_by_release = fedora_lane_bindings(
+    "test-copr-lanes",
+    "test-copr-",
+    packit_release_targets,
+    "Packit release targets",
+    {"full": "test-copr-pkg", "build/runtime smoke": "test-copr-smoke"},
+)
 require(
-    len(lane_invocations) == len(lanes_by_release),
-    "just test-rpm-lanes invokes a Fedora release more than once",
+    set(copr_lanes_by_release) == set(lanes_by_release),
+    f"just test-copr-lanes covers {sorted(copr_lanes_by_release)}, but the direct-RPM "
+    f"lanes cover {sorted(lanes_by_release)}; each Fedora target needs both channels",
 )
-# The matrix declares how deeply each release is tested, so the gate has to
-# require that exact recipe. Accepting either one lets a full lifecycle lane be
-# downgraded to a smoke lane without anything noticing, which is the regression
-# these lanes exist to prevent.
-lane_recipe_by_depth = {"full": "test-rpm-pkg", "build/runtime smoke": "test-rpm-smoke"}
-declared_fedora_releases = {target.split("-")[1] for target in expected_copr_targets}
+for fedora_release in sorted(copr_lanes_by_release):
+    require(
+        any(
+            row.get("runtime") == "system ORT"
+            for row in matrix.get("platforms", [])
+            if row.get("release_target") is True
+            and re.fullmatch(rf"Fedora {fedora_release}(?: .*)?", row.get("platform", ""))
+        ),
+        f"release matrix declares no system-ORT Fedora {fedora_release} row for its COPR lane",
+    )
 require(
-    set(lanes_by_release) == declared_fedora_releases,
-    f"just test-rpm-lanes covers {sorted(lanes_by_release)}, "
-    f"not the declared release targets {sorted(declared_fedora_releases)}",
+    "test-copr-lanes" in re.search(r"(?m)^test-packaging-matrix:[^\n]*$", justfile).group(0),
+    "just test-packaging-matrix does not run the COPR lifecycle lanes",
 )
-for fedora_release in sorted(declared_fedora_releases):
-    lane_depths = {
-        row["lifecycle_depth"]
-        for row in matrix.get("platforms", [])
-        if row.get("release_target") is True
-        and re.fullmatch(rf"Fedora {fedora_release}(?: .*)?", row.get("platform", ""))
-    }
-    require(lane_depths, f"release matrix declares no Fedora {fedora_release} platform row")
-    require(
-        len(lane_depths) == 1,
-        f"Fedora {fedora_release} platform rows disagree on lifecycle depth: {sorted(lane_depths)}",
-    )
-    lane_depth = lane_depths.pop()
-    require(
-        lane_depth in lane_recipe_by_depth,
-        f"Fedora {fedora_release} lifecycle depth {lane_depth!r} has no mapped lane recipe",
-    )
-    require(
-        lanes_by_release[fedora_release] == lane_recipe_by_depth[lane_depth],
-        f"just test-rpm-lanes runs Fedora {fedora_release} through "
-        f"{lanes_by_release[fedora_release]}, but its declared lifecycle depth "
-        f"{lane_depth!r} requires {lane_recipe_by_depth[lane_depth]}",
-    )
 # The packaging workflow runs the same Fedora lanes as `just test-rpm-lanes`,
 # one job each so they run in parallel rather than end to end. That parallelism
 # is the only reason CI restates the list, so it has to restate it exactly --
@@ -703,6 +750,17 @@ require(
     workflow_fedora_lanes == lanes_by_release,
     f"packaging workflow Fedora lanes {workflow_fedora_lanes} differ from "
     f"just test-rpm-lanes {lanes_by_release}",
+)
+workflow_copr_lanes = {
+    release: recipe
+    for recipe, release in re.findall(
+        r"(?m)^\s+recipe: (test-copr-[a-z-]+) (\d+)\s*$", packaging_workflow
+    )
+}
+require(
+    workflow_copr_lanes == copr_lanes_by_release,
+    f"packaging workflow COPR lanes {workflow_copr_lanes} differ from "
+    f"just test-copr-lanes {copr_lanes_by_release}",
 )
 workflow_deb_lanes = set(re.findall(r"(?m)^\s+recipe: test-deb-([a-z]+)-pkg\s*$", packaging_workflow))
 require(
@@ -806,16 +864,21 @@ evidence_uploads = [
     if re.search(r"(?m)^\s+uses: actions/upload-artifact@", step)
     and re.search(r"(?m)^\s+path: \.packaging-evidence/\s*$", step)
 ]
-# One upload step per lane job: deb, rpm, arch. The two matrix jobs run the
-# same step once per entry, so the step count stays three. A new lane job (the
-# copr job #230 adds) brings its own upload step and bumps this count.
-EVIDENCE_UPLOAD_STEPS = 3
+# One upload step per lane job: deb, rpm, copr, arch. The three matrix jobs run
+# the same step once per entry, so the step count stays one per job. A new lane
+# job brings its own upload step and bumps this count.
+EVIDENCE_UPLOAD_STEPS = 4
 require(
     len(evidence_uploads) == EVIDENCE_UPLOAD_STEPS,
     f"packaging workflow must carry exactly {EVIDENCE_UPLOAD_STEPS} evidence upload steps "
     f"(found {len(evidence_uploads)}); a new lane job adds one and bumps the count",
 )
-for artifact in ("deb-${{ matrix.suite }}", "rpm-${{ matrix.release }}", "arch"):
+for artifact in (
+    "deb-${{ matrix.suite }}",
+    "rpm-${{ matrix.release }}",
+    "copr-${{ matrix.release }}",
+    "arch",
+):
     matching = [
         step
         for step in evidence_uploads
@@ -1070,6 +1133,35 @@ require(
 require(
     "staging_copr_targets" in copr_build_test,
     "COPR-equivalent gate does not check its chroot against the declared staging targets",
+)
+# The COPR lifecycle lanes are the mock build plus the booted validation of what
+# it produced. Both halves have to stay in the source rebuild: the copr-mode
+# artifact check is what proves no bundled ONNX Runtime rode along, and the /out
+# export is the only way the built RPM reaches the lifecycle image.
+require(
+    '.github/workflows/scripts/validate-rpm.sh "$BIN_RPM" copr' in copr_build_test,
+    "COPR-equivalent gate does not validate its artifact against the COPR channel rules",
+)
+require(
+    "/out" in copr_build_test,
+    "COPR-equivalent gate does not export its mock-built RPM for the lifecycle lanes",
+)
+copr_lifecycle_image = (ROOT / "test/Containerfile.copr-e2e").read_text()
+require(
+    "COPY target/copr-lane/facelock.rpm" in copr_lifecycle_image,
+    "COPR lifecycle image does not install the mock-built RPM the lane exported",
+)
+require(
+    "/validate-rpm.sh /facelock-test-package.rpm copr" in copr_lifecycle_image,
+    "COPR lifecycle image does not re-check the exported RPM against the COPR channel rules",
+)
+require(
+    "onnxruntime" in copr_lifecycle_image,
+    "COPR lifecycle image does not pin its system ONNX Runtime dependency",
+)
+require(
+    "!target/copr-lane/facelock.rpm" in (ROOT / ".dockerignore").read_text(),
+    ".dockerignore excludes the staged COPR RPM from the lifecycle image build context",
 )
 
 install_docs = {

@@ -119,14 +119,37 @@ def lane_depth(row: dict) -> str:
     return DEPTH_BY_LIFECYCLE[depth]
 
 
+def fedora_rows(rows: list[dict], release: str) -> list[dict]:
+    """Every eligible platform row for one Fedora release.
+
+    A release has more than one: Fedora 44 carries a system-ORT row for the
+    COPR path and a bundled-ORT row for the direct .rpm, and both describe the
+    same release at the same depth.
+    """
+    return [row for row in rows if re.fullmatch(rf"Fedora {release}(?: .*)?", row.get("platform", ""))]
+
+
+def fedora_depth(rows: list[dict], release: str) -> str:
+    depths = {lane_depth(row) for row in fedora_rows(rows, release)}
+    if len(depths) != 1:
+        raise EvidenceError(
+            f"Fedora {release} platform rows declare {sorted(depths) or 'no'} lifecycle depth"
+        )
+    return depths.pop()
+
+
 def required_lanes(matrix: dict) -> dict[str, dict[str, str]]:
     """The lanes the release gate requires, and what each must claim.
 
     Derived from the release-target platform rows so a new target cannot be
-    declared without a lane to prove it. The Fedora lanes are one direct-RPM
-    lane per Packit release target at the depth its platform rows declare,
-    which is what `just test-rpm-lanes` runs today; #230 adds a COPR lane per
-    target beside it, with its own channel, build origin and runtime policy.
+    declared without a lane to prove it. Each Packit release target needs two
+    Fedora lanes, because the matrix declares two delivery paths for it and one
+    cannot stand in for the other: the direct .rpm built from host binaries
+    around a bundled ONNX Runtime (`just test-rpm-lanes`), and the package
+    COPR itself would publish -- rebuilt from source in mock, resolving
+    Fedora's system ONNX Runtime (`just test-copr-lanes`, #230). The lane
+    attributes are what keep them apart: a direct-RPM record offered for a COPR
+    target is refused on `channel` before anything else is read.
     """
     lanes: dict[str, dict[str, str]] = {}
     rows = [row for row in matrix.get("platforms", []) if eligible(row)]
@@ -164,22 +187,31 @@ def required_lanes(matrix: dict) -> dict[str, dict[str, str]]:
             raise EvidenceError(f"platform {platform_id} is a release target with no lane to prove it")
     for target in matrix.get("fedora", {}).get("packit_release_targets", []):
         release = target.split("-")[1]
-        depths = {
-            lane_depth(row)
-            for row in rows
-            if re.fullmatch(rf"Fedora {release}(?: .*)?", row.get("platform", ""))
-        }
-        if len(depths) != 1:
-            raise EvidenceError(
-                f"Fedora {release} platform rows declare {sorted(depths) or 'no'} lifecycle depth"
-            )
-        depth = depths.pop()
-        recipe = "test-rpm-pkg" if depth == "full" else "test-rpm-smoke"
-        lanes[f"{recipe}-{release}"] = {
+        depth = fedora_depth(rows, release)
+        direct = "test-rpm-pkg" if depth == "full" else "test-rpm-smoke"
+        lanes[f"{direct}-{release}"] = {
             "target": f"fedora-{release}",
             "channel": "direct-rpm",
             "build_origin": "host-binaries",
             "runtime_policy": "bundled-ort",
+            "depth": depth,
+        }
+        # The COPR lane's runtime policy is read off the matrix rather than
+        # asserted here: if no row for this release declares system ORT, the
+        # release matrix no longer describes a COPR delivery path and the lane
+        # would be proving something nothing asked for.
+        if "system-ort" not in {
+            runtime_policy(row.get("runtime", "")) for row in fedora_rows(rows, release)
+        }:
+            raise EvidenceError(
+                f"Fedora {release} is a Packit release target with no system-ORT platform row"
+            )
+        copr = "test-copr-pkg" if depth == "full" else "test-copr-smoke"
+        lanes[f"{copr}-{release}"] = {
+            "target": f"fedora-{release}",
+            "channel": "copr",
+            "build_origin": "mock-source-rebuild",
+            "runtime_policy": "system-ort",
             "depth": depth,
         }
     return lanes
