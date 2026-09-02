@@ -26,8 +26,10 @@ pub enum AccessMessage {
 
     // -- backend selection (D1) --
     DaemonUnreachableFallback,
+    DirectByConfigOverride,
     PreviewGraphicalNeedsDaemonOneshot,
     PreviewGraphicalDaemonUnreachable,
+    PreviewGraphicalDaemonConfigOverride,
 }
 
 impl Message for AccessMessage {
@@ -59,6 +61,12 @@ impl Message for AccessMessage {
             DaemonUnreachableFallback => translate(
                 "Warning: daemon.mode = \"daemon\" but the facelock daemon is unreachable — falling back to direct camera access.\nStart the facelock-daemon service to use it.",
             ),
+            // Not a warning: the operator chose the file, and the daemon on
+            // the bus is doing nothing wrong by reading the default one. The
+            // default path is spelled out because it is the whole reason.
+            DirectByConfigOverride => translate(
+                "Note: --config names a file other than /etc/facelock/config.toml, the only file the facelock daemon reads.\nUsing direct camera access under the selected configuration.",
+            ),
             // The flag is `--json` since #169; `--text-only` is a hidden
             // alias that `preview --help` no longer lists, so naming it here
             // taught a spelling the program had stopped showing. "text-only
@@ -69,6 +77,9 @@ impl Message for AccessMessage {
             ),
             PreviewGraphicalDaemonUnreachable => translate(
                 "Graphical preview requires the daemon, which is configured but not reachable.\nFalling back to text-only mode. Start the facelock-daemon service to use it.\n",
+            ),
+            PreviewGraphicalDaemonConfigOverride => translate(
+                "Graphical preview requires the daemon, which reads only /etc/facelock/config.toml and is not used under --config.\nFalling back to text-only mode.\n",
             ),
         }
     }
@@ -82,7 +93,7 @@ impl Message for AccessMessage {
 /// above: no wildcard arm, so a variant that renders nothing does not build.
 #[cfg(test)]
 impl super::Samples for AccessMessage {
-    const VARIANT_COUNT: usize = 9;
+    const VARIANT_COUNT: usize = 11;
 
     fn samples() -> Vec<Self> {
         use AccessMessage::*;
@@ -97,8 +108,10 @@ impl super::Samples for AccessMessage {
             AccessDeniedRootHint,
             EnrollTimedOutClientSide,
             DaemonUnreachableFallback,
+            DirectByConfigOverride,
             PreviewGraphicalNeedsDaemonOneshot,
             PreviewGraphicalDaemonUnreachable,
+            PreviewGraphicalDaemonConfigOverride,
         ]
     }
 }

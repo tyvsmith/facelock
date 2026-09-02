@@ -12,7 +12,7 @@
 //! Now selection is made **once per invocation**, at the top of each
 //! backend-using command, with **at most one** deliberate, non-activating bus
 //! probe. The outcome is a [`BackendKind`], not a boolean, because "direct"
-//! means two different things that deserve different messages and log levels;
+//! means three different things that deserve different messages and log levels;
 //! and every operation that used to fork per call site forks in exactly one
 //! method here.
 //!
@@ -56,13 +56,21 @@ pub enum BackendKind {
     /// `daemon.mode = "daemon"` but the bus name has no owner — degraded.
     /// WARNed once, at selection.
     DirectByFallback,
+    /// `daemon.mode = "daemon"` under a non-default `--config` (#314). The
+    /// packaged unit runs bare `facelock daemon` and reads only the default
+    /// file, so whatever owns the bus is configured by a file this process is
+    /// not reading: its store, camera, models and security policy cannot be
+    /// proven to match. Expected, told once at INFO; the bus is never asked.
+    DirectByOverride,
 }
 
 impl BackendKind {
     pub fn is_direct(self) -> bool {
         match self {
             BackendKind::Daemon => false,
-            BackendKind::DirectByConfig | BackendKind::DirectByFallback => true,
+            BackendKind::DirectByConfig
+            | BackendKind::DirectByFallback
+            | BackendKind::DirectByOverride => true,
         }
     }
 }
@@ -74,7 +82,8 @@ impl BackendKind {
 /// report wants and a human does not need at selection time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaemonReachability {
-    /// `mode = "oneshot"`: the bus is deliberately never asked.
+    /// `mode = "oneshot"`, or a non-default `--config`: the bus is
+    /// deliberately never asked.
     NotProbed,
     Reachable,
     Unreachable,
@@ -114,7 +123,12 @@ impl<'a> Backend<'a> {
     /// each backend-using command; probes the bus at most once (never for
     /// `mode = "oneshot"`), non-activating by construction.
     pub fn select(config: &'a Config) -> Backend<'a> {
-        let (kind, reachability) = classify(&config.daemon.mode, daemon_bus_reachable);
+        let config_override = facelock_core::paths::non_default_config_override();
+        let (kind, reachability) = classify(
+            &config.daemon.mode,
+            config_override.is_some(),
+            daemon_bus_reachable,
+        );
         let (level, notice) = announcement(kind);
         // The one machine-facing record of the selection and the probed
         // reachability fact. `tracing::event!` needs a const level, hence the
@@ -124,12 +138,21 @@ impl<'a> Backend<'a> {
                 target: "facelock::backend",
                 ?kind,
                 ?reachability,
+                ?config_override,
+                "backend selected"
+            ),
+            tracing::Level::INFO => tracing::info!(
+                target: "facelock::backend",
+                ?kind,
+                ?reachability,
+                ?config_override,
                 "backend selected"
             ),
             _ => tracing::debug!(
                 target: "facelock::backend",
                 ?kind,
                 ?reachability,
+                ?config_override,
                 "backend selected"
             ),
         }
@@ -149,7 +172,9 @@ impl<'a> Backend<'a> {
                 graphical_preview: true,
                 device_formats: false,
             },
-            BackendKind::DirectByConfig | BackendKind::DirectByFallback => BackendCaps {
+            BackendKind::DirectByConfig
+            | BackendKind::DirectByFallback
+            | BackendKind::DirectByOverride => BackendCaps {
                 graphical_preview: false,
                 device_formats: true,
             },
@@ -160,13 +185,13 @@ impl<'a> Backend<'a> {
     pub fn has_models(&self, user: &str) -> anyhow::Result<bool> {
         match self.kind {
             BackendKind::Daemon => Ok(!self.daemon_list_models(user)?.is_empty()),
-            BackendKind::DirectByConfig | BackendKind::DirectByFallback => {
-                self.direct_read(false, |store| {
-                    store
-                        .has_models(user)
-                        .map_err(|e| anyhow::anyhow!("storage error: {e}"))
-                })
-            }
+            BackendKind::DirectByConfig
+            | BackendKind::DirectByFallback
+            | BackendKind::DirectByOverride => self.direct_read(false, |store| {
+                store
+                    .has_models(user)
+                    .map_err(|e| anyhow::anyhow!("storage error: {e}"))
+            }),
         }
     }
 
@@ -177,13 +202,13 @@ impl<'a> Backend<'a> {
                 .daemon_list_models(user)?
                 .iter()
                 .any(|model| model.embedder_model == embedder)),
-            BackendKind::DirectByConfig | BackendKind::DirectByFallback => {
-                self.direct_read(false, |store| {
-                    store
-                        .has_models_for_embedder(user, embedder)
-                        .map_err(|e| anyhow::anyhow!("storage error: {e}"))
-                })
-            }
+            BackendKind::DirectByConfig
+            | BackendKind::DirectByFallback
+            | BackendKind::DirectByOverride => self.direct_read(false, |store| {
+                store
+                    .has_models_for_embedder(user, embedder)
+                    .map_err(|e| anyhow::anyhow!("storage error: {e}"))
+            }),
         }
     }
 
@@ -191,13 +216,13 @@ impl<'a> Backend<'a> {
     pub fn list_models(&self, user: &str) -> anyhow::Result<Vec<FaceModelInfo>> {
         match self.kind {
             BackendKind::Daemon => self.daemon_list_models(user),
-            BackendKind::DirectByConfig | BackendKind::DirectByFallback => {
-                self.direct_read(Vec::new(), |store| {
-                    store
-                        .list_models(user)
-                        .map_err(|e| anyhow::anyhow!("storage error: {e}"))
-                })
-            }
+            BackendKind::DirectByConfig
+            | BackendKind::DirectByFallback
+            | BackendKind::DirectByOverride => self.direct_read(Vec::new(), |store| {
+                store
+                    .list_models(user)
+                    .map_err(|e| anyhow::anyhow!("storage error: {e}"))
+            }),
         }
     }
 
@@ -213,14 +238,14 @@ impl<'a> Backend<'a> {
             // An absent store provably holds nothing to remove: report "not
             // found" without materializing a database (the per-site version
             // used the creating opener here).
-            BackendKind::DirectByConfig | BackendKind::DirectByFallback => {
-                self.direct_read(Some(false), |store| {
-                    store
-                        .remove_model(user, model_id)
-                        .map(Some)
-                        .map_err(|e| anyhow::anyhow!("{e}"))
-                })
-            }
+            BackendKind::DirectByConfig
+            | BackendKind::DirectByFallback
+            | BackendKind::DirectByOverride => self.direct_read(Some(false), |store| {
+                store
+                    .remove_model(user, model_id)
+                    .map(Some)
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+            }),
         }
     }
 
@@ -239,14 +264,14 @@ impl<'a> Backend<'a> {
             // database (C7). This used to error on the grounds that callers
             // check `has_models` first, which made the answer depend on call
             // ordering the type could not express.
-            BackendKind::DirectByConfig | BackendKind::DirectByFallback => {
-                self.direct_read(Some(0), |store| {
-                    store
-                        .clear_user(user)
-                        .map(|count| Some(count as usize))
-                        .map_err(|e| anyhow::anyhow!("{e}"))
-                })
-            }
+            BackendKind::DirectByConfig
+            | BackendKind::DirectByFallback
+            | BackendKind::DirectByOverride => self.direct_read(Some(0), |store| {
+                store
+                    .clear_user(user)
+                    .map(|count| Some(count as usize))
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+            }),
         }
     }
 
@@ -256,9 +281,9 @@ impl<'a> Backend<'a> {
     pub fn enroll(&self, user: &str, label: &str) -> anyhow::Result<(u32, u32)> {
         match self.kind {
             BackendKind::Daemon => ipc_client::send_enroll(user, label, self.config),
-            BackendKind::DirectByConfig | BackendKind::DirectByFallback => {
-                direct::enroll(self.config, user, label)
-            }
+            BackendKind::DirectByConfig
+            | BackendKind::DirectByFallback
+            | BackendKind::DirectByOverride => direct::enroll(self.config, user, label),
         }
     }
 
@@ -290,9 +315,9 @@ impl<'a> Backend<'a> {
                 AuthOutcome::Error { message, .. } => bail!("daemon error: {message}"),
                 AuthOutcome::Cancelled => bail!("authentication cancelled"),
             },
-            BackendKind::DirectByConfig | BackendKind::DirectByFallback => {
-                direct::authenticate(self.config, user)
-            }
+            BackendKind::DirectByConfig
+            | BackendKind::DirectByFallback
+            | BackendKind::DirectByOverride => direct::authenticate(self.config, user),
         }
     }
 
@@ -312,9 +337,9 @@ impl<'a> Backend<'a> {
                     }
                 })
             }
-            BackendKind::DirectByConfig | BackendKind::DirectByFallback => {
-                direct::list_devices_info()
-            }
+            BackendKind::DirectByConfig
+            | BackendKind::DirectByFallback
+            | BackendKind::DirectByOverride => direct::list_devices_info(),
         }
     }
 
@@ -386,10 +411,23 @@ fn probe_daemon_with(
 }
 
 /// The selection rule, split from the probe so it is testable without a bus.
+///
+/// `config_override` is [`facelock_core::paths::non_default_config_override`]'s
+/// verdict. It outranks the bus in daemon mode: a daemon that answers is
+/// reading the default file, and an answer from it would be an answer about
+/// a configuration this invocation did not select. The bus is not probed on
+/// that path, so no reachability fact is claimed that was never observed.
 fn classify(
     mode: &DaemonMode,
+    config_override: bool,
     probe: impl FnOnce() -> bool,
 ) -> (BackendKind, Fact<DaemonReachability>) {
+    if config_override && matches!(mode, DaemonMode::Daemon) {
+        return (
+            BackendKind::DirectByOverride,
+            Fact::claimed(DaemonReachability::NotProbed),
+        );
+    }
     match mode {
         DaemonMode::Oneshot => (
             BackendKind::DirectByConfig,
@@ -412,8 +450,10 @@ fn classify(
 }
 
 /// What selection says, per kind: the log level for the machine line, and
-/// the user-facing stderr message, if any. Three kinds, three treatments —
-/// an expected configuration is silent, a degraded fallback warns once.
+/// the user-facing stderr message, if any. Four kinds, three treatments —
+/// an expected configuration is silent, a degraded fallback warns once, and
+/// an override is explained once without a warning, because the operator
+/// chose it and the daemon it bypasses is not at fault.
 fn announcement(kind: BackendKind) -> (tracing::Level, Option<AccessMessage>) {
     match kind {
         BackendKind::Daemon => (tracing::Level::DEBUG, None),
@@ -421,6 +461,10 @@ fn announcement(kind: BackendKind) -> (tracing::Level, Option<AccessMessage>) {
         BackendKind::DirectByFallback => (
             tracing::Level::WARN,
             Some(AccessMessage::DaemonUnreachableFallback),
+        ),
+        BackendKind::DirectByOverride => (
+            tracing::Level::INFO,
+            Some(AccessMessage::DirectByConfigOverride),
         ),
     }
 }
@@ -455,7 +499,7 @@ mod tests {
 
     #[test]
     fn oneshot_config_selects_direct_without_probing() {
-        let (kind, fact) = classify(&DaemonMode::Oneshot, || {
+        let (kind, fact) = classify(&DaemonMode::Oneshot, false, || {
             panic!("oneshot must never probe the bus")
         });
         assert_eq!(kind, BackendKind::DirectByConfig);
@@ -464,16 +508,42 @@ mod tests {
 
     #[test]
     fn daemon_mode_with_owner_selects_daemon() {
-        let (kind, fact) = classify(&DaemonMode::Daemon, || true);
+        let (kind, fact) = classify(&DaemonMode::Daemon, false, || true);
         assert_eq!(kind, BackendKind::Daemon);
         assert_eq!(fact, Fact::probed(DaemonReachability::Reachable));
     }
 
     #[test]
     fn daemon_mode_without_owner_is_fallback_not_config() {
-        let (kind, fact) = classify(&DaemonMode::Daemon, || false);
+        let (kind, fact) = classify(&DaemonMode::Daemon, false, || false);
         assert_eq!(kind, BackendKind::DirectByFallback);
         assert_eq!(fact, Fact::probed(DaemonReachability::Unreachable));
+    }
+
+    /// #314: under a non-default `--config` the daemon on the bus reads a
+    /// different file, so daemon mode never selects it, whatever the bus
+    /// says. The bus is not even asked: its answer could not change the
+    /// selection, and a probe would be a fact `status` might then misreport.
+    #[test]
+    fn config_override_selects_direct_without_probing_whoever_owns_the_bus() {
+        let (kind, fact) = classify(&DaemonMode::Daemon, true, || {
+            panic!("a config override must never probe the bus")
+        });
+        assert_eq!(kind, BackendKind::DirectByOverride);
+        assert_eq!(fact, Fact::claimed(DaemonReachability::NotProbed));
+        assert!(kind.is_direct());
+    }
+
+    /// The override changes nothing for oneshot: direct access is already
+    /// the configuration, and there is no daemon whose identity is in doubt,
+    /// so the override note would explain a choice nothing made.
+    #[test]
+    fn config_override_leaves_oneshot_as_direct_by_config() {
+        let (kind, fact) = classify(&DaemonMode::Oneshot, true, || {
+            panic!("oneshot must never probe the bus")
+        });
+        assert_eq!(kind, BackendKind::DirectByConfig);
+        assert_eq!(fact, Fact::claimed(DaemonReachability::NotProbed));
     }
 
     // -----------------------------------------------------------------------
@@ -523,6 +593,12 @@ mod tests {
         let (level, msg) = announcement(BackendKind::DirectByFallback);
         assert_eq!(level, tracing::Level::WARN);
         assert_eq!(msg, Some(AccessMessage::DaemonUnreachableFallback));
+
+        // An override is a choice the operator made, not a degraded state:
+        // told once, at INFO, never with the fallback's warning.
+        let (level, msg) = announcement(BackendKind::DirectByOverride);
+        assert_eq!(level, tracing::Level::INFO);
+        assert_eq!(msg, Some(AccessMessage::DirectByConfigOverride));
     }
 
     #[test]
