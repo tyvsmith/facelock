@@ -603,6 +603,64 @@ pub struct Handler<C: CameraSource, E: FaceProcessor> {
     preview_embeddings: Option<PreviewEmbeddings>,
 }
 
+/// Decide whether the encrypt-by-default key may be created, given that the
+/// configured key artifact is missing.
+///
+/// Returns `None` when creation went ahead (or was won by a concurrent
+/// creator), and `Some(refusal)` naming why no key was written.
+///
+/// Two facts have to be kept apart here. A fresh keyfile system has no key and
+/// no encrypted row, and wants one made for it — that is the encrypt-by-default
+/// finding this auto-generation exists for. A system whose key artifact went
+/// missing *does* have encrypted rows, and writing a fresh key there replaces
+/// the only thing that could ever have read them: the rows stay unreadable
+/// either way, but a later restore of the real key no longer matches what the
+/// daemon has since written. So the second case writes nothing and says so.
+///
+/// A store that cannot answer is treated as the second case. "No encrypted
+/// rows" and "the store could not be asked" are different facts, and conflating
+/// them is what makes a destructive path fail open.
+pub fn missing_key_replacement_refusal(
+    store: &FaceStore,
+    key_path: &std::path::Path,
+) -> Option<String> {
+    match store.count_sealed() {
+        Ok((0, _)) => match facelock_tpm::SoftwareSealer::create_key_file_exclusive(key_path) {
+            Ok(true) => {
+                info!(
+                    "generated encryption key at {} (encrypt-by-default)",
+                    key_path.display()
+                );
+                None
+            }
+            // Another process created it between the existence check and the
+            // create. Nothing is wrong; the read-back below is authoritative.
+            Ok(false) => None,
+            // Not necessarily fatal on its own — the read-back may still find a
+            // usable key — so this only warns and lets that check decide.
+            Err(e) => {
+                warn!(
+                    "failed to auto-generate encryption key at {}: {e}",
+                    key_path.display()
+                );
+                None
+            }
+        },
+        Ok((encrypted, _)) => Some(format!(
+            "{} is missing while {encrypted} encrypted template row(s) exist: refusing to \
+             write a replacement key, which would make those rows permanently unrecoverable. \
+             Restore the original key file, or clear the encrypted enrollments with \
+             `facelock clear` before enrolling again.",
+            key_path.display()
+        )),
+        Err(e) => Some(format!(
+            "{} is missing and the store could not be asked whether encrypted rows exist \
+             ({e}): refusing to write a replacement key.",
+            key_path.display()
+        )),
+    }
+}
+
 impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -639,45 +697,42 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
             EncryptionMethod::Keyfile => {
                 let key_path = std::path::Path::new(&config.encryption.key_path);
                 // Encrypt-by-default (finding #8): auto-generate the key on first
-                // use so a keyfile default actually encrypts. Safe — if a key was
-                // lost, any prior encrypted rows were already unreadable, and a new
-                // key only affects future writes; plaintext rows stay readable.
-                if !key_path.exists() {
-                    match facelock_tpm::SoftwareSealer::generate_key_file(key_path) {
-                        Ok(()) => info!(
-                            "generated encryption key at {} (encrypt-by-default)",
-                            key_path.display()
-                        ),
-                        // Not necessarily fatal on its own; the read-back below is
-                        // the authoritative check for whether encryption works.
-                        Err(e) => warn!(
-                            "failed to auto-generate encryption key at {}: {e}",
-                            key_path.display()
-                        ),
-                    }
+                // use so a keyfile default actually encrypts. Only ever for a
+                // database that holds no encrypted row — see
+                // `missing_key_replacement_refusal` for why a replacement over
+                // encrypted state is refused instead (#231, Track K task 7/8).
+                if !key_path.exists()
+                    && let Some(refusal) = missing_key_replacement_refusal(&store, key_path)
+                {
+                    warn!("{refusal}");
+                    sealer_init_error = Some(refusal);
                 }
-                match facelock_tpm::SoftwareSealer::from_key_file(key_path) {
-                    Ok(sealer) => {
-                        info!(
-                            "software encryption sealer initialized from {}",
-                            key_path.display()
-                        );
-                        Some(sealer)
-                    }
-                    Err(e) => {
-                        // Fail CLOSED on enroll: record the cause so `handle`
-                        // refuses to enroll rather than silently storing the
-                        // biometric template as plaintext (finding: silent
-                        // plaintext downgrade).
-                        let msg = format!(
-                            "{} keyfile could not be created/read: {e}",
-                            key_path.display()
-                        );
-                        warn!(
-                            "software encryption sealer unavailable — enroll will be refused: {msg}"
-                        );
-                        sealer_init_error = Some(msg);
-                        None
+                if sealer_init_error.is_some() {
+                    None
+                } else {
+                    match facelock_tpm::SoftwareSealer::from_key_file(key_path) {
+                        Ok(sealer) => {
+                            info!(
+                                "software encryption sealer initialized from {}",
+                                key_path.display()
+                            );
+                            Some(sealer)
+                        }
+                        Err(e) => {
+                            // Fail CLOSED on enroll: record the cause so `handle`
+                            // refuses to enroll rather than silently storing the
+                            // biometric template as plaintext (finding: silent
+                            // plaintext downgrade).
+                            let msg = format!(
+                                "{} keyfile could not be created/read: {e}",
+                                key_path.display()
+                            );
+                            warn!(
+                                "software encryption sealer unavailable — enroll will be refused: {msg}"
+                            );
+                            sealer_init_error = Some(msg);
+                            None
+                        }
                     }
                 }
             }

@@ -881,6 +881,69 @@ impl SoftwareSealer {
         write_result
     }
 
+    /// Create the default encryption key, refusing to replace one that exists.
+    ///
+    /// This is the auto-generation primitive: the one called when nobody asked
+    /// for a key and the code is about to make one anyway. `generate_key_file`
+    /// truncates, which is correct when an operator explicitly asked to
+    /// regenerate and wrong here — two daemons starting at once would each
+    /// write a key over the other's, and the rows one of them then encrypts
+    /// become unreadable to the key that survives. Creation is `O_CREAT |
+    /// O_EXCL | O_NOFOLLOW`, and both the file and its parent directory are
+    /// flushed before the caller is told the key exists.
+    ///
+    /// Returns `Ok(true)` if this call created the key and `Ok(false)` if
+    /// another creator won the race, in which case the existing file is left
+    /// exactly as it is and the caller should read it.
+    pub fn create_key_file_exclusive(path: &std::path::Path) -> Result<bool> {
+        use rand::Rng;
+        use std::io::Write;
+        use zeroize::Zeroize;
+
+        let mut key = [0u8; AES_KEY_SIZE];
+        rand::rng().fill_bytes(&mut key);
+
+        let write_result = (|| -> Result<bool> {
+            let created =
+                facelock_core::fs_security::create_new_file(path, 0o600).map_err(|e| {
+                    FacelockError::Encryption(format!(
+                        "failed to create key file {}: {e}",
+                        path.display()
+                    ))
+                })?;
+            let Some(mut file) = created else {
+                // `O_EXCL` reports a symlink as an existing file, so "someone
+                // else won the race" and "a symlink is planted at the key
+                // path" arrive identically. They are not the same fact: the
+                // second means the key the caller is about to read lives
+                // wherever the link points. Name it rather than follow it.
+                if path
+                    .symlink_metadata()
+                    .is_ok_and(|m| m.file_type().is_symlink())
+                {
+                    return Err(FacelockError::Encryption(format!(
+                        "refusing to use a symlink as the encryption key: {}",
+                        path.display()
+                    )));
+                }
+                return Ok(false);
+            };
+            file.write_all(&key)
+                .and_then(|()| file.sync_all())
+                .and_then(|()| facelock_core::fs_security::sync_parent_dir(path))
+                .map_err(|e| {
+                    FacelockError::Encryption(format!(
+                        "failed to write key file {}: {e}",
+                        path.display()
+                    ))
+                })?;
+            Ok(true)
+        })();
+
+        key.zeroize();
+        write_result
+    }
+
     /// Encrypt an embedding using AES-256-GCM.
     ///
     /// Returns: `0x02 | 12-byte nonce | ciphertext | 16-byte tag`
@@ -1622,6 +1685,52 @@ mod tests {
         assert_eq!(idx, Some(vec![0, 7]));
         assert_eq!(pubb, &[0xDE, 0xAD]);
         assert_eq!(privb, &[0xBE, 0xEF, 0x00]);
+    }
+
+    // --- Exclusive default-key creation (#231, Track K task 8) ---
+
+    #[test]
+    fn create_key_file_exclusive_creates_a_root_only_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+
+        assert!(SoftwareSealer::create_key_file_exclusive(&key_path).unwrap());
+
+        let metadata = std::fs::metadata(&key_path).unwrap();
+        assert_eq!(metadata.len(), AES_KEY_SIZE as u64);
+        assert_eq!(
+            std::os::unix::fs::PermissionsExt::mode(&metadata.permissions()) & 0o777,
+            0o600
+        );
+        SoftwareSealer::from_key_file(&key_path).unwrap();
+    }
+
+    #[test]
+    fn create_key_file_exclusive_never_replaces_an_existing_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        SoftwareSealer::generate_key_file(&key_path).unwrap();
+        let original = std::fs::read(&key_path).unwrap();
+
+        // The loser of a creation race is told so, and the winner's bytes are
+        // still the bytes on disk: an O_TRUNC create here would hand one of the
+        // two processes a key nobody's rows were written under.
+        assert!(!SoftwareSealer::create_key_file_exclusive(&key_path).unwrap());
+        assert_eq!(std::fs::read(&key_path).unwrap(), original);
+    }
+
+    #[test]
+    fn create_key_file_exclusive_refuses_a_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("elsewhere.key");
+        std::fs::write(&target, b"not a key").unwrap();
+        let key_path = dir.path().join("encryption.key");
+        std::os::unix::fs::symlink(&target, &key_path).unwrap();
+
+        // O_NOFOLLOW: a symlink planted at the key path must not become a
+        // write primitive pointed at whatever it names.
+        assert!(SoftwareSealer::create_key_file_exclusive(&key_path).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"not a key");
     }
 
     #[test]

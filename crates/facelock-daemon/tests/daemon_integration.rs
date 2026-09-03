@@ -1995,3 +1995,108 @@ fn a_failed_compare_set_load_is_not_cached() {
         "the frame after the store is repaired must reload, not serve a cached failure"
     );
 }
+
+// --- #231 Track K task 7: a missing key over encrypted rows is never replaced ---
+
+/// The encrypt-by-default auto-generation exists so a keyfile default actually
+/// encrypts on a fresh system. On an upgraded system whose key artifact went
+/// missing it was doing something else entirely: writing a *replacement* key
+/// over a database full of rows encrypted under the old one. Those rows were
+/// already unreadable, but the new key made the loss permanent and silent — a
+/// later backup restore of the real key would no longer match what the daemon
+/// had since written.
+#[test]
+fn missing_key_over_encrypted_rows_is_never_replaced() {
+    use facelock_daemon::handler::Handler;
+    use facelock_daemon::rate_limit::RateLimiter;
+
+    let dir = tempfile::tempdir().unwrap();
+    let key_path = dir.path().join("encryption.key");
+    let db_path = temp_db_path("missing-key-encrypted-rows");
+    let mut config = test_config();
+    config.encryption.method = facelock_core::config::EncryptionMethod::Keyfile;
+    config.encryption.key_path = key_path.display().to_string();
+    config.storage.db_path = db_path.display().to_string();
+
+    // A row that was encrypted under a key this system no longer has.
+    let store = FaceStore::create(&db_path).unwrap();
+    store
+        .add_model_raw("alice", "front", &[0x02u8; 96], true, "embedder")
+        .unwrap();
+
+    let factory: MockCameraFactory = Box::new(move |_cfg| Ok(MockCamera::bright(64, 64, 5)));
+    let mut handler = Handler::new(
+        config,
+        MockFaceEngine::no_faces(),
+        store,
+        RateLimiter::new(5, 60),
+        CameraCaps::default(),
+        Some(factory),
+        None,
+    )
+    .unwrap();
+
+    assert!(
+        !key_path.exists(),
+        "a replacement key was written over encrypted rows: {}",
+        key_path.display()
+    );
+
+    // Enroll still fails closed, and the message has to name the missing key
+    // rather than a generic keyfile error, or the operator cannot tell a lost
+    // key from a permissions problem.
+    match handler.handle(DaemonRequest::Enroll {
+        user: "alice".to_string(),
+        label: "second".to_string(),
+    }) {
+        DaemonResponse::Error { message } => assert!(
+            message.contains("encrypted") && message.contains("key"),
+            "refusal must name the missing key over encrypted rows: {message}"
+        ),
+        other => panic!("enroll must be refused while the key is missing, got: {other:?}"),
+    }
+
+    cleanup_db(&db_path);
+}
+
+/// The other half: a genuinely fresh keyfile system still gets its key made
+/// for it. Removing the auto-generation altogether would silently stop
+/// encrypting new enrollments, which is the finding it was added for.
+#[test]
+fn missing_key_over_plaintext_only_rows_is_still_created() {
+    use facelock_daemon::handler::Handler;
+    use facelock_daemon::rate_limit::RateLimiter;
+
+    let dir = tempfile::tempdir().unwrap();
+    let key_path = dir.path().join("encryption.key");
+    let db_path = temp_db_path("missing-key-plaintext-rows");
+    let mut config = test_config();
+    config.encryption.method = facelock_core::config::EncryptionMethod::Keyfile;
+    config.encryption.key_path = key_path.display().to_string();
+    config.storage.db_path = db_path.display().to_string();
+
+    let store = FaceStore::create(&db_path).unwrap();
+    store
+        .add_model_raw("alice", "front", &[0u8; 2048], false, "embedder")
+        .unwrap();
+
+    let factory: MockCameraFactory = Box::new(move |_cfg| Ok(MockCamera::bright(64, 64, 5)));
+    let _handler = Handler::new(
+        config,
+        MockFaceEngine::no_faces(),
+        store,
+        RateLimiter::new(5, 60),
+        CameraCaps::default(),
+        Some(factory),
+        None,
+    )
+    .unwrap();
+
+    assert!(
+        key_path.exists(),
+        "a plaintext-only legacy database must still get its default key"
+    );
+    assert_eq!(std::fs::metadata(&key_path).unwrap().len(), 32);
+
+    cleanup_db(&db_path);
+}

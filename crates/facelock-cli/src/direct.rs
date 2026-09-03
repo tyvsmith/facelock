@@ -226,16 +226,22 @@ pub fn authenticate(config: &Config, user: &str) -> anyhow::Result<MatchResult> 
 
 /// Initialize a software sealer based on encryption config.
 /// Returns `None` if encryption is disabled.
-fn init_software_sealer(config: &Config) -> anyhow::Result<Option<facelock_tpm::SoftwareSealer>> {
+fn init_software_sealer(
+    config: &Config,
+    store: &FaceStore,
+) -> anyhow::Result<Option<facelock_tpm::SoftwareSealer>> {
     match config.encryption.method {
         EncryptionMethod::Keyfile => {
             let key_path = Path::new(&config.encryption.key_path);
             // Encrypt-by-default (finding #8): generate the key on first use so
-            // the keyfile default actually encrypts new templates.
-            if !key_path.exists() {
-                facelock_tpm::SoftwareSealer::generate_key_file(key_path)
-                    .context("failed to auto-generate encryption key")?;
-                debug!("generated encryption key at {}", key_path.display());
+            // the keyfile default actually encrypts new templates. Shared with
+            // the daemon so the two paths cannot drift on when a replacement
+            // key may be written (#231, Track K task 7/8).
+            if !key_path.exists()
+                && let Some(refusal) =
+                    facelock_daemon::handler::missing_key_replacement_refusal(store, key_path)
+            {
+                anyhow::bail!(refusal);
             }
             Ok(Some(
                 facelock_tpm::SoftwareSealer::from_key_file(key_path)
@@ -275,7 +281,7 @@ pub fn load_user_embeddings(
     config: &Config,
     user: &str,
 ) -> anyhow::Result<Vec<(u32, facelock_core::types::FaceEmbedding)>> {
-    let software_sealer = init_software_sealer(config)?;
+    let software_sealer = init_software_sealer(config, store)?;
 
     // Fast path: nothing is configured that could have written encrypted rows.
     // `seal_database` forces the raw path even without a software sealer, so a
@@ -322,7 +328,7 @@ pub fn enroll(config: &Config, user: &str, label: &str) -> anyhow::Result<(u32, 
     let mut engine = load_engine(config)?;
 
     // Initialize sealer if encryption is configured
-    let software_sealer = init_software_sealer(config)?;
+    let software_sealer = init_software_sealer(config, &store)?;
 
     // Shared with daemon mode (facelock-daemon/src/enroll.rs): same quality
     // gate, angle-diversity check, rejection breakdown, and deadline. A local
@@ -554,5 +560,63 @@ warmup_frames = 9
         let loaded = load_user_embeddings(&store, &config, "alice").unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].1, emb);
+    }
+}
+
+#[cfg(test)]
+mod missing_key_tests {
+    use super::*;
+
+    // --- #231 Track K task 7: the oneshot path makes the same refusal ---
+
+    /// The daemon and the oneshot path both auto-generate the encrypt-by-default
+    /// key, so a refusal implemented in only one of them is no refusal at all:
+    /// `facelock auth` runs when the daemon is not there, which is exactly the
+    /// situation an operator hits after a failed upgrade.
+    #[test]
+    fn oneshot_refuses_to_replace_a_missing_key_over_encrypted_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        let config = Config::parse(&format!(
+            "[encryption]\nmethod = \"keyfile\"\nkey_path = \"{}\"\n",
+            key_path.display()
+        ))
+        .unwrap();
+
+        let store = FaceStore::open_memory().unwrap();
+        store
+            .add_model_raw("alice", "front", &[0x02u8; 96], true, "embedder")
+            .unwrap();
+
+        let error = init_software_sealer(&config, &store)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("encrypted") && error.contains("key"),
+            "refusal must name the missing key over encrypted rows: {error}"
+        );
+        assert!(
+            !key_path.exists(),
+            "a replacement key was written over encrypted rows"
+        );
+    }
+
+    #[test]
+    fn oneshot_still_creates_the_key_for_a_plaintext_only_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        let config = Config::parse(&format!(
+            "[encryption]\nmethod = \"keyfile\"\nkey_path = \"{}\"\n",
+            key_path.display()
+        ))
+        .unwrap();
+
+        let store = FaceStore::open_memory().unwrap();
+        store
+            .add_model_raw("alice", "front", &[0u8; 2048], false, "embedder")
+            .unwrap();
+
+        assert!(init_software_sealer(&config, &store).unwrap().is_some());
+        assert_eq!(std::fs::metadata(&key_path).unwrap().len(), 32);
     }
 }

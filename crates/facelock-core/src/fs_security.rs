@@ -64,6 +64,53 @@ pub fn create_truncate_file(path: &Path, mode: u32) -> io::Result<File> {
     Ok(file)
 }
 
+/// Create `path` exclusively, never following a symlink and never truncating
+/// an existing file.
+///
+/// `create_truncate_file` is the right primitive for a file this process owns
+/// outright. It is the wrong one for a secret two processes may reach for at
+/// the same instant: `O_TRUNC` lets the second writer empty the first writer's
+/// file, and whichever process reads it in between gets a key nobody's rows
+/// were written under. `O_EXCL` makes the race resolve in the kernel — exactly
+/// one caller creates the file, the rest are told `AlreadyExists` and can read
+/// what the winner wrote. `O_NOFOLLOW` keeps a planted symlink from turning
+/// the creation into a write primitive aimed somewhere else.
+///
+/// Returns `Ok(None)` when the path already exists, which is a normal outcome
+/// for a concurrent creator rather than an error.
+pub fn create_new_file(path: &Path, mode: u32) -> io::Result<Option<File>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+
+    #[cfg(unix)]
+    {
+        options.mode(mode);
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+
+    match options.open(path) {
+        Ok(file) => Ok(Some(file)),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// Flush `path`'s directory entry so a file created in it survives a crash.
+///
+/// `sync_all` on the file itself only promises the data; the name that reaches
+/// it lives in the parent directory and needs its own fsync.
+pub fn sync_parent_dir(path: &Path) -> io::Result<()> {
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
+    let Some(parent) = parent else {
+        return Ok(());
+    };
+    File::open(parent)?.sync_all()
+}
+
 pub fn open_append_file(path: &Path, mode: u32) -> io::Result<File> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
