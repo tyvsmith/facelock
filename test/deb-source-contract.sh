@@ -870,6 +870,17 @@ grep -Fq 'prepare-deb-test-context.sh' test/build-deb-package-image.sh ||
 grep -Fq 'tar -C "$context" -cf "$context/facelock-git-metadata.tar" .git' \
     test/build-deb-package-image.sh ||
     fail "Debian image builder must transport the isolated context Git metadata explicitly"
+# That transport reads .git directly, so nothing may rewrite it concurrently.
+# Git detaches `git maintenance run --auto` after `git commit`, which repacks and
+# prunes objects out from under the read; the prepared context must disable it.
+# shellcheck disable=SC2016
+grep -Fq 'git -C "$destination" config maintenance.auto false' \
+    test/prepare-deb-test-context.sh ||
+    fail "prepared context must disable detached auto maintenance before .git is transported"
+# shellcheck disable=SC2016
+grep -Fq 'git -C "$destination" config gc.auto 0' \
+    test/prepare-deb-test-context.sh ||
+    fail "prepared context must disable automatic gc before .git is transported"
 for containerfile in "${debian_builders[@]}"; do
     grep -Fq 'tar -xf /build/facelock-git-metadata.tar -C /build' "$containerfile" ||
         fail "$containerfile must restore the exact tagged Git metadata before source packaging"
