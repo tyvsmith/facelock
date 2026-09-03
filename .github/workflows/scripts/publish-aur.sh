@@ -40,18 +40,32 @@ chmod 600 ~/.ssh/aur
 } >> ~/.ssh/config
 ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
 
-# Per-binary checksums for facelock-bin come from the Release SHA256SUMS file.
+# Per-binary checksums for facelock-bin come from the release manifest the
+# publish job generates over every published asset (#235). This job runs after
+# publication, so the manifest is the released, validated digest of each binary.
 # GITHUB_REPOSITORY is set by GitHub Actions; fall back to the canonical repo for local runs.
 REPO="${GITHUB_REPOSITORY:-tyvsmith/facelock}"
-SHA_FILE="$(mktemp)"
-trap 'rm -f "$SHA_FILE"' EXIT
-curl -fsSL "https://github.com/${REPO}/releases/download/v${VERSION}/SHA256SUMS" -o "$SHA_FILE"
-SHA_FACELOCK=$(awk '/[[:space:]]facelock-x86_64-linux-gnu$/{print $1}' "$SHA_FILE")
-SHA_PAM=$(awk '/[[:space:]]pam_facelock\.so$/{print $1}' "$SHA_FILE")
-SHA_POLKIT=$(awk '/[[:space:]]facelock-polkit-agent-x86_64-linux-gnu$/{print $1}' "$SHA_FILE")
-: "${SHA_FACELOCK:?missing facelock binary checksum in Release SHA256SUMS}"
-: "${SHA_PAM:?missing pam_facelock.so checksum in Release SHA256SUMS}"
-: "${SHA_POLKIT:?missing polkit agent checksum in Release SHA256SUMS}"
+MANIFEST_FILE="$(mktemp)"
+trap 'rm -f "$MANIFEST_FILE"' EXIT
+curl -fsSL "https://github.com/${REPO}/releases/download/v${VERSION}/MANIFEST.json" -o "$MANIFEST_FILE"
+manifest_sha256() {
+  python3 - "$MANIFEST_FILE" "$1" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+for asset in manifest.get("assets", []):
+    if asset.get("name") == sys.argv[2]:
+        print(asset["sha256"])
+        break
+PY
+}
+SHA_FACELOCK="$(manifest_sha256 facelock-x86_64-linux-gnu)"
+SHA_PAM="$(manifest_sha256 pam_facelock.so)"
+SHA_POLKIT="$(manifest_sha256 facelock-polkit-agent-x86_64-linux-gnu)"
+: "${SHA_FACELOCK:?missing facelock binary checksum in the release MANIFEST.json}"
+: "${SHA_PAM:?missing pam_facelock.so checksum in the release MANIFEST.json}"
+: "${SHA_POLKIT:?missing polkit agent checksum in the release MANIFEST.json}"
 
 RUNNER_UID="$(id -u)"
 RUNNER_GID="$(id -g)"

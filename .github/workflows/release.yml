@@ -4,14 +4,16 @@ on:
   push:
     tags: ['v*']
 
-permissions:
-  contents: write
-  actions: write
+# Deny-all floor: every job asks for exactly the scopes it needs, and only the
+# publish job may write to the release (#235).
+permissions: {}
 
 jobs:
   metadata:
     name: Validate Release Identity
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       cargo-version: ${{ steps.release.outputs.cargo-version }}
       prerelease: ${{ steps.release.outputs.prerelease }}
@@ -37,6 +39,8 @@ jobs:
     name: Build Release Binaries
     runs-on: ubuntu-latest
     needs: metadata
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -57,10 +61,7 @@ jobs:
           mkdir -p release
           cp target/release/facelock release/facelock-x86_64-linux-gnu
           cp target/release/libpam_facelock.so release/pam_facelock.so
-          if [ -f target/release/facelock-polkit-agent ]; then
-            cp target/release/facelock-polkit-agent release/facelock-polkit-agent-x86_64-linux-gnu
-          fi
-          cd release && sha256sum * > SHA256SUMS
+          cp target/release/facelock-polkit-agent release/facelock-polkit-agent-x86_64-linux-gnu
 
       - name: Upload binary artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -68,20 +69,31 @@ jobs:
           name: release-binaries
           path: release/
 
-      - name: Create GitHub Release
+      - name: Attest built binary digests
+        run: .github/workflows/scripts/attest-digests.sh build digests release/*
+
+      - name: Upload binary digest attestation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-digests-build
+          path: digests/
+
+      - name: Create the draft GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
-          # Publish the release with a PAT, not the default GITHUB_TOKEN.
-          # Releases created by GITHUB_TOKEN do not trigger downstream
-          # automation, so Packit's release trigger never fires and COPR
-          # is never built. An empty/missing RELEASE_PAT falls back to
-          # GITHUB_TOKEN, so this is safe before the secret is set.
+          # Write the release with a PAT, not the default GITHUB_TOKEN. Every
+          # builder holds contents: read, and a release published by
+          # GITHUB_TOKEN triggers no downstream automation, so Packit's release
+          # trigger never fires and COPR is never built.
           token: ${{ secrets.RELEASE_PAT }}
+          # Draft until the publish job has validated the whole asset set. A
+          # draft is invisible to Packit, to the AUR recipes and to anyone
+          # following the release feed.
+          draft: true
           files: |
             release/facelock-x86_64-linux-gnu
             release/pam_facelock.so
             release/facelock-polkit-agent-x86_64-linux-gnu
-            release/SHA256SUMS
           generate_release_notes: true
           prerelease: ${{ needs.metadata.outputs.prerelease }}
 
@@ -89,6 +101,8 @@ jobs:
     name: Download ONNX Runtime
     runs-on: ubuntu-latest
     needs: metadata
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -100,6 +114,18 @@ jobs:
           scripts/prepare-ort-bundle.sh prepare ort.tgz onnxruntime
           scripts/prepare-ort-bundle.sh component-tar onnxruntime onnxruntime-bundle.tar.xz
 
+      - name: Attest the reviewed ORT component
+        run: |
+          .github/workflows/scripts/attest-digests.sh download-ort digests \
+            --component onnxruntime=onnxruntime/manifest.json \
+            --component-archive onnxruntime=onnxruntime-bundle.tar.xz
+
+      - name: Upload ORT digest attestation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-digests-onnxruntime
+          path: digests/
+
       - name: Upload ORT artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -110,6 +136,8 @@ jobs:
     name: Prepare Cargo Vendor Component
     runs-on: ubuntu-latest
     needs: metadata
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -125,6 +153,17 @@ jobs:
           scripts/prepare-cargo-vendor.sh prepare cargo-vendor
           scripts/prepare-cargo-vendor.sh component-tar cargo-vendor cargo-vendor-bundle.tar.xz
 
+      - name: Attest the exact Cargo vendor component
+        run: |
+          .github/workflows/scripts/attest-digests.sh prepare-cargo-vendor digests \
+            --component-archive cargo-vendor=cargo-vendor-bundle.tar.xz
+
+      - name: Upload Cargo vendor digest attestation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-digests-cargo-vendor
+          path: digests/
+
       - name: Upload Cargo vendor artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -135,6 +174,9 @@ jobs:
     name: Build ${{ matrix.suite }} Debian Package
     runs-on: ubuntu-latest
     needs: [metadata, download-ort, prepare-cargo-vendor]
+    permissions:
+      contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -277,17 +319,37 @@ jobs:
           name: release-deb-${{ matrix.suite }}
           path: debian-upload/
 
-      - name: Upload .deb to release
+      - name: Attest the built Debian package digest
+        run: |
+          .github/workflows/scripts/attest-digests.sh build-deb digests \
+            --suite '${{ matrix.suite }}' --image '${{ matrix.image }}' \
+            debian-upload/*.deb
+
+      - name: Upload Debian digest attestation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-digests-deb-${{ matrix.suite }}
+          path: digests/
+
+      - name: Upload .deb to the draft release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
+          token: ${{ secrets.RELEASE_PAT }}
           files: debian-upload/*.deb
 
   build-rpm:
     name: Build RPM Package
     runs-on: ubuntu-latest
     needs: [metadata, build, download-ort]
+    permissions:
+      contents: read
+      actions: read
     container:
       image: registry.fedoraproject.org/fedora:44@sha256:fc3ec3da3ce49de0da0bab5a33223e90866c488d5d04fc6612284169e20a1bdb
+    env:
+      # `container.image` cannot read an env context, so the pinned digest is
+      # written twice. test/release-artifacts-contract.sh holds the two equal.
+      BUILD_IMAGE: registry.fedoraproject.org/fedora:44@sha256:fc3ec3da3ce49de0da0bab5a33223e90866c488d5d04fc6612284169e20a1bdb
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -325,18 +387,47 @@ jobs:
       - name: Copy RPM to workspace
         run: cp ~/rpmbuild/RPMS/x86_64/*.rpm ./ 2>/dev/null || cp ~/rpmbuild/RPMS/**/*.rpm ./ 2>/dev/null || true
 
-      - name: Validate .rpm contents
-        run: .github/workflows/scripts/validate-rpm.sh "$(ls *.rpm | head -1)" direct
+      - name: Select the package the validated metadata names
+        id: rpm
+        run: |
+          set -euo pipefail
+          source scripts/release-versions.sh
+          evr="$(release_rpm_evr \
+            '${{ needs.metadata.outputs.cargo-version }}' \
+            '${{ needs.metadata.outputs.rpm-counter }}')"
+          # Debug packages are built beside the payload and no validator reads
+          # them; the release carries exactly the package that was inspected.
+          mapfile -t candidates < <(find . -maxdepth 1 -type f \
+            -name "facelock-${evr}.fc*.x86_64.rpm" -printf '%P\n' | LC_ALL=C sort)
+          test "${#candidates[@]}" -eq 1
+          echo "rpm=${candidates[0]}" >> "$GITHUB_OUTPUT"
 
-      - name: Upload .rpm to release
+      - name: Validate .rpm contents
+        run: .github/workflows/scripts/validate-rpm.sh '${{ steps.rpm.outputs.rpm }}' direct
+
+      - name: Attest the validated RPM digest
+        run: |
+          .github/workflows/scripts/attest-digests.sh build-rpm digests \
+            --image "$BUILD_IMAGE" '${{ steps.rpm.outputs.rpm }}'
+
+      - name: Upload RPM digest attestation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-digests-rpm
+          path: digests/
+
+      - name: Upload .rpm to the draft release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
-          files: "*.rpm"
+          token: ${{ secrets.RELEASE_PAT }}
+          files: ${{ steps.rpm.outputs.rpm }}
 
   build-nix:
     name: Validate Nix Build
     runs-on: ubuntu-latest
     needs: metadata
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -359,8 +450,13 @@ jobs:
   publish-aur:
     name: Publish to AUR
     runs-on: ubuntu-latest
-    needs: [metadata, build, build-deb, build-rpm]
+    # facelock-bin pins the published binaries by digest and points users at
+    # release download URLs, so it can only be written once the release is
+    # public.
+    needs: [metadata, publish]
     if: ${{ needs.metadata.outputs.prerelease == 'false' }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -381,6 +477,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [metadata, build-deb]
     if: ${{ needs.metadata.outputs.prerelease == 'false' }}
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -434,15 +533,108 @@ jobs:
             dists pool tysmith-archive-keyring.gpg
           echo "APT repo tarball: $(du -h apt-repo.tar.gz | cut -f1)"
 
-      - name: Upload APT repo to release
+      - name: Attest the APT repository digest
+        run: .github/workflows/scripts/attest-digests.sh publish-apt digests apt-repo.tar.gz
+
+      - name: Upload APT digest attestation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-digests-apt
+          path: digests/
+
+      - name: Upload APT repo to the draft release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
+          token: ${{ secrets.RELEASE_PAT }}
           files: apt-repo.tar.gz
+
+  publish:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    # Every builder and every validator, so nothing is published that was not
+    # built and inspected first. publish-apt is stable-only: the guard lets a
+    # skipped publisher through and stops on any failure or cancellation.
+    needs: [metadata, build, download-ort, prepare-cargo-vendor, build-deb, build-rpm, build-nix, publish-apt]
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    permissions:
+      contents: write
+      actions: read
+    env:
+      # The publication credential, so the published event reaches Packit.
+      GH_TOKEN: ${{ secrets.RELEASE_PAT || github.token }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.metadata.outputs.cargo-version }}
+      PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
+      DEBIAN_REVISION: ${{ needs.metadata.outputs.debian-revision }}
+      RPM_COUNTER: ${{ needs.metadata.outputs.rpm-counter }}
+      HELPER: .github/workflows/scripts/release-assets.sh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The tag object itself, so a signature can be verified.
+          fetch-depth: 0
+
+      - name: Verify the maintainer tag
+        run: $HELPER verify-tag "$TAG" "$VERSION" "$GITHUB_SHA"
+
+      - name: Validate the draft asset set
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" >releases.json
+          $HELPER verify-draft "$TAG" "$PRERELEASE" releases.json
+          $HELPER names releases.json "$TAG" >actual-assets
+          $HELPER expected "$VERSION" "$DEBIAN_REVISION" "$RPM_COUNTER" "$PRERELEASE" builders \
+            >expected-assets
+          $HELPER verify expected-assets actual-assets
+
+      - name: Download the draft assets
+        run: gh release download "$TAG" --dir assets
+
+      - name: Download builder digest attestations
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-digests-*
+          path: digests
+
+      - name: Verify every asset against its builder attestation
+        run: $HELPER verify-digests digests assets actual-assets
+
+      - name: Generate MANIFEST.json
+        run: |
+          set -euo pipefail
+          source_sha256="$(curl --proto '=https' --tlsv1.2 -fsSL \
+            "https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/$TAG.tar.gz" |
+            sha256sum | cut -d' ' -f1)"
+          $HELPER manifest "$TAG" "$VERSION" "$GITHUB_SHA" "$PRERELEASE" \
+            "$GITHUB_REPOSITORY" "$source_sha256" digests assets actual-assets MANIFEST.json
+          cat MANIFEST.json
+
+      - name: Attach MANIFEST.json to the draft
+        run: gh release upload "$TAG" MANIFEST.json --clobber
+
+      - name: Publish the validated draft exactly once
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" >releases.json
+          $HELPER verify-draft "$TAG" "$PRERELEASE" releases.json
+          $HELPER names releases.json "$TAG" >actual-assets
+          $HELPER expected "$VERSION" "$DEBIAN_REVISION" "$RPM_COUNTER" "$PRERELEASE" final \
+            >expected-assets
+          $HELPER verify expected-assets actual-assets
+          release_id="$($HELPER release-id releases.json "$TAG")"
+          # Only the draft flag moves: the tag and its target commit are inputs
+          # this job verified, never values it writes.
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F draft=false >/dev/null
+          test "$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '.draft')" = false
+          echo "Published $TAG"
 
   trigger-pages:
     name: Trigger Pages Rebuild
     runs-on: ubuntu-latest
-    needs: [publish-apt]
+    needs: [publish-apt, publish]
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Trigger GitHub Pages workflow
         env:

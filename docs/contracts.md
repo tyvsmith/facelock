@@ -2317,6 +2317,50 @@ the artifacts are maintainer-trust records: preflight checks their shape and the
 binding to HEAD and the matrix, not that a real lane produced them. A forged
 record is a deliberate act, not the slip this gate exists to catch.
 
+### Direct release publication
+
+A tag creates a **draft** release. `.github/workflows/release.yml` gives its
+builders `contents: read` and a deny-all workflow default; the `publish` job is
+the only job that may write the release, and it runs after every builder and
+validator. Publication is one flip of the draft flag, performed once.
+
+Before that flip, `publish` requires all of:
+
+- The tag exists, equals the tag the validated version derives, and points at
+  the commit the workflow built. A tag carrying a PGP or SSH signature must
+  verify. Publication reads the tag; it never creates, moves, or replaces one,
+  and it never sends a tag name or target commitish.
+- The draft carries exactly the canonical assets, no more and no fewer:
+
+| Asset | Source |
+|-------|--------|
+| `facelock-x86_64-linux-gnu` | `build` |
+| `pam_facelock.so` | `build` |
+| `facelock-polkit-agent-x86_64-linux-gnu` | `build` |
+| `facelock_<debian-version>_<architecture>.deb`, one per published suite | `build-deb` |
+| `facelock-<rpm-version>-<rpm-release>.fc<N>.x86_64.rpm` | `build-rpm` |
+| `apt-repo.tar.gz`, stable releases only | `publish-apt` |
+| `MANIFEST.json` | `publish` |
+
+  The Debian and RPM names come from the validated version, Debian revision,
+  and RPM counter, so an artifact built from any other identity has no
+  canonical name. Debug RPMs are built beside the payload, are inspected by no
+  validator, and are not published. A duplicate name, an unmatched asset, or a
+  second asset matching one canonical name each fail closed.
+- Every asset matches the SHA-256 its builder attested. Each builder writes a
+  `release-digests-*` artifact naming what it produced, the image it produced it
+  in, and the components it consumed. An asset attested by no builder, or by
+  two, fails closed.
+- The release is still an unpublished draft for this tag and channel. A rerun
+  after publication refuses rather than republishing.
+
+`MANIFEST.json` covers the whole release: the tag, version, commit, and
+prerelease flag; the source tarball URL and digest; the pinned build-image
+digests; the reviewed ONNX Runtime and Cargo-vendor component digests; and the
+name, size, and SHA-256 of every asset, itself included. It replaces the
+`SHA256SUMS` file that covered three binaries and was written before the
+packages existed. `facelock-bin` takes its per-binary checksums from it.
+
 ### Debian source and binary package contract
 
 Trixie package builds use the official Trixie Backports `cargo` and `rustc`;

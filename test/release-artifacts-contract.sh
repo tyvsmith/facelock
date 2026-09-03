@@ -1,0 +1,497 @@
+#!/usr/bin/env bash
+# Contract for the direct release artifacts: a draft created once, validated
+# once, and published once.
+#
+# The release workflow runs only on a `v*` tag, so its shape cannot be proven
+# by running it. This gate proves the shape statically and proves the decisions
+# it delegates -- the canonical asset allowlist, the tag check, the draft
+# check, the digest attestations and the manifest -- by fixture.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+workflow_path="${FACELOCK_RELEASE_WORKFLOW:-.github/workflows/release.yml}"
+helper_path="${FACELOCK_RELEASE_ASSETS:-.github/workflows/scripts/release-assets.sh}"
+
+fail() {
+    echo "release artifacts contract: $*" >&2
+    exit 1
+}
+
+# ------------------------------------------------------------------ workflow
+
+[ -f "$workflow_path" ] || fail "missing release workflow: $workflow_path"
+[ -x "$helper_path" ] || fail "release asset helper must be executable: $helper_path"
+
+job_body() {
+    awk -v job="$1" '
+        $0 == "  " job ":" { inside = 1; next }
+        inside && /^  [A-Za-z]/ { inside = 0 }
+        inside { print }
+    ' "$workflow_path"
+}
+
+job_names() {
+    awk '
+        /^jobs:/ { inside = 1; next }
+        inside && /^[A-Za-z]/ { inside = 0 }
+        inside && match($0, /^  [a-z][a-z0-9-]*:$/) {
+            name = $0
+            sub(/^  /, "", name)
+            sub(/:$/, "", name)
+            print name
+        }
+    ' "$workflow_path"
+}
+
+# The `needs:` list of one job, as space-delimited job names.
+job_needs() {
+    job_body "$1" | awk '
+        /^    needs:/ {
+            sub(/^    needs:[[:space:]]*/, "")
+            gsub(/[][,]/, " ")
+            print
+        }
+    ' | tr -s ' '
+}
+
+requires_job() {
+    local job="$1" dependency="$2"
+    case " $(job_needs "$job") " in
+        *" $dependency "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# The `permissions:` body of one job, as `scope: value` lines.
+job_permissions() {
+    job_body "$1" | awk '
+        /^    permissions:/ { inside = 1; next }
+        inside && /^    [A-Za-z]/ { inside = 0 }
+        inside { sub(/^ +/, ""); print }
+    '
+}
+
+builders=(
+    metadata
+    build
+    download-ort
+    prepare-cargo-vendor
+    build-deb
+    build-rpm
+    build-nix
+    publish-apt
+)
+expected_jobs=("${builders[@]}" publish publish-aur trigger-pages)
+
+actual_jobs="$(job_names | LC_ALL=C sort)"
+wanted_jobs="$(printf '%s\n' "${expected_jobs[@]}" | LC_ALL=C sort)"
+[ "$actual_jobs" = "$wanted_jobs" ] ||
+    fail "release jobs drifted; every job needs a permission ceiling and a place in the publish graph: $(echo "$actual_jobs" | tr '\n' ' ')"
+
+# A workflow-level write grant reaches every builder. The floor is deny-all and
+# each job asks for exactly what it needs.
+awk '/^permissions:/ { inside = 1; next } inside && /^[A-Za-z]/ { inside = 0 } inside { print }' \
+    "$workflow_path" | grep -q . &&
+    fail "workflow-level permissions must be the deny-all floor, not a scope list"
+grep -Eq '^permissions:[[:space:]]*\{\}[[:space:]]*$' "$workflow_path" ||
+    fail "workflow must declare the deny-all permission floor: permissions: {}"
+
+for job in "${expected_jobs[@]}"; do
+    permissions="$(job_permissions "$job")"
+    [ -n "$permissions" ] || fail "job $job declares no permissions: block"
+    if [ "$job" = publish ]; then
+        printf '%s\n' "$permissions" | grep -Eq '^contents:[[:space:]]*write$' ||
+            fail "the publish job must hold contents: write"
+    else
+        if printf '%s\n' "$permissions" | grep -Eq '^contents:[[:space:]]*write$'; then
+            fail "only the publish job may hold contents: write, not $job"
+        fi
+    fi
+done
+
+build_job="$(job_body build)"
+printf '%s\n' "$build_job" | grep -Eq '^[[:space:]]+draft: true[[:space:]]*$' ||
+    fail "the build job must create the GitHub release as a draft"
+# Literal workflow expressions; nothing here is a shell expansion.
+# shellcheck disable=SC2016
+printf '%s\n' "$build_job" | grep -Fq 'prerelease: ${{ needs.metadata.outputs.prerelease }}' ||
+    fail "the draft must carry the validated prerelease identity"
+if printf '%s\n' "$build_job" | grep -Fq 'SHA256SUMS'; then
+    fail "the build job must not publish a partial checksum file; MANIFEST.json covers every asset"
+fi
+
+# Every release write goes through the dedicated publication credential, so a
+# builder holding only contents: read cannot reach the release with its own token.
+upload_steps="$(grep -c 'uses: softprops/action-gh-release@' "$workflow_path" || true)"
+# shellcheck disable=SC2016
+upload_tokens="$(grep -cF 'token: ${{ secrets.RELEASE_PAT }}' "$workflow_path" || true)"
+[ "$upload_steps" -ge 1 ] || fail "release workflow uploads no assets to the release"
+[ "$upload_steps" = "$upload_tokens" ] ||
+    fail "every release upload must pass the publication token: $upload_steps step(s), $upload_tokens token(s)"
+
+publish_job="$(job_body publish)"
+for need in "${builders[@]}"; do
+    requires_job publish "$need" ||
+        fail "the publish job must wait for $need before publishing"
+done
+printf '%s\n' "$publish_job" | grep -Fq 'MANIFEST.json' ||
+    fail "the publish job must generate MANIFEST.json"
+printf '%s\n' "$publish_job" | grep -Fq 'release-assets.sh' ||
+    fail "the publish job must validate the draft through the release asset helper"
+printf '%s\n' "$publish_job" | grep -Fq 'draft=false' ||
+    fail "the publish job must flip the validated draft to published"
+
+# Publishing may never mint or move a tag: the maintainer's tag is an input.
+if grep -Eq 'tag_name=|target_commitish' "$workflow_path"; then
+    fail "publishing must not send a tag or target commitish; the tag is verified, never written"
+fi
+if grep -Eq 'git([[:space:]]+-C[[:space:]]+[^[:space:]]+)?[[:space:]]+(tag|push)([[:space:]]|$)' "$workflow_path"; then
+    fail "the release workflow must not create, move or push a git tag"
+fi
+
+requires_job trigger-pages publish ||
+    fail "trigger-pages must run after the release is published"
+
+publish_aur_job="$(job_body publish-aur)"
+requires_job publish-aur publish ||
+    fail "publish-aur consumes published release assets and must run after publish"
+if printf '%s\n' "$publish_aur_job" | grep -Fq 'SHA256SUMS'; then
+    fail "publish-aur must take its binary digests from MANIFEST.json"
+fi
+grep -Fq 'MANIFEST.json' .github/workflows/scripts/publish-aur.sh ||
+    fail "the AUR publisher must read per-binary digests from the release manifest"
+# shellcheck disable=SC2016
+if grep -Fq 'releases/download/v${VERSION}/SHA256SUMS' .github/workflows/scripts/publish-aur.sh; then
+    fail "the AUR publisher must not fetch the retired SHA256SUMS asset"
+fi
+
+# The RPM container digest is a manifest input, and `container.image` cannot
+# read an env context: the duplicate must be held equal here.
+rpm_job="$(job_body build-rpm)"
+rpm_container_image="$(printf '%s\n' "$rpm_job" | awk '/^      image: /{ sub(/^      image: /, ""); print; exit }')"
+rpm_env_image="$(printf '%s\n' "$rpm_job" | awk '/^      BUILD_IMAGE: /{ sub(/^      BUILD_IMAGE: /, ""); print; exit }')"
+[ -n "$rpm_container_image" ] || fail "build-rpm declares no pinned container image"
+[ "$rpm_container_image" = "$rpm_env_image" ] ||
+    fail "build-rpm BUILD_IMAGE ('$rpm_env_image') must repeat container.image ('$rpm_container_image')"
+
+# Only what a validator inspected may be published.
+printf '%s\n' "$rpm_job" | grep -Fq 'steps.rpm.outputs.rpm' ||
+    fail "build-rpm must upload exactly the RPM its validator inspected"
+
+for digest_producer in build download-ort prepare-cargo-vendor build-deb build-rpm publish-apt; do
+    job_body "$digest_producer" | grep -Fq 'release-digests-' ||
+        fail "$digest_producer must attest the digests of what it produced"
+done
+
+# ------------------------------------------------------------- helper: shape
+
+git_command='git([[:space:]]+-C[[:space:]]+[^[:space:]]+)?[[:space:]]+'
+grep -Eq "${git_command}tag[[:space:]]+-v" "$helper_path" ||
+    fail "tag verification must verify a present signature with git tag -v"
+if grep -Eq "${git_command}tag[[:space:]]+(-[afsm]|[^-])" "$helper_path"; then
+    fail "the release asset helper must never create or move a tag"
+fi
+if grep -Eq "${git_command}push" "$helper_path"; then
+    fail "the release asset helper must never push"
+fi
+
+# ------------------------------------------------------- helper: by fixture
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/facelock-release-artifacts.XXXXXX")"
+trap 'rm -rf -- "$work"' EXIT
+
+assert_rejects() {
+    local context="$1" needle="$2"
+    shift 2
+    local output
+    if output="$("$helper_path" "$@" 2>&1)"; then
+        fail "$context: helper accepted what it must reject"
+    fi
+    printf '%s\n' "$output" | grep -Fq "$needle" ||
+        fail "$context: rejected for an unrelated reason: $output"
+    echo "release artifacts case: $context rejected"
+}
+
+# --- the canonical allowlist
+
+stable_expected="$work/expected-stable"
+"$helper_path" expected 0.2.0 1 1 false final >"$stable_expected"
+for wanted in \
+    'facelock-x86_64-linux-gnu' \
+    'pam_facelock\.so' \
+    'facelock-polkit-agent-x86_64-linux-gnu' \
+    'facelock_0\.2\.0-1~deb13u1_amd64\.deb' \
+    'facelock_0\.2\.0-1~ubuntu26\.04\.1_amd64\.deb' \
+    'facelock-0\.2\.0-1\.fc[0-9]+\.x86_64\.rpm' \
+    'apt-repo\.tar\.gz' \
+    'MANIFEST\.json'; do
+    grep -Fq "	$wanted" "$stable_expected" ||
+        fail "canonical stable allowlist omits $wanted: $(cat "$stable_expected")"
+done
+
+prerelease_expected="$work/expected-prerelease"
+"$helper_path" expected 0.2.0-alpha.1 1 1 true final >"$prerelease_expected"
+grep -Fq '	facelock_0\.2\.0~alpha\.1-1~deb13u1_amd64\.deb' "$prerelease_expected" ||
+    fail "prerelease allowlist does not carry the Debian prerelease upstream version"
+grep -Fq '	facelock-0\.2\.0-0\.1\.alpha\.1\.fc[0-9]+\.x86_64\.rpm' "$prerelease_expected" ||
+    fail "prerelease allowlist does not carry the monotonic RPM prerelease release"
+if grep -Fq 'apt-repo' "$prerelease_expected"; then
+    fail "a prerelease publishes no APT repository, so it must not be an expected asset"
+fi
+
+builders_expected="$work/expected-builders"
+"$helper_path" expected 0.2.0 1 1 false builders >"$builders_expected"
+if grep -q 'MANIFEST' "$builders_expected"; then
+    fail "the builder-stage allowlist must not expect the manifest the publish job adds"
+fi
+
+# --- allowlist enforcement
+
+canonical_assets() {
+    cat <<'ASSETS'
+facelock-x86_64-linux-gnu
+pam_facelock.so
+facelock-polkit-agent-x86_64-linux-gnu
+facelock_0.2.0-1~deb13u1_amd64.deb
+facelock_0.2.0-1~ubuntu26.04.1_amd64.deb
+facelock-0.2.0-1.fc44.x86_64.rpm
+apt-repo.tar.gz
+MANIFEST.json
+ASSETS
+}
+
+canonical_assets >"$work/actual-ok"
+"$helper_path" verify "$stable_expected" "$work/actual-ok" >/dev/null ||
+    fail "the canonical asset set was rejected"
+
+{ canonical_assets; echo "facelock-x86_64-linux-musl"; } >"$work/actual-extra"
+assert_rejects "extra release asset" "unexpected release asset" \
+    verify "$stable_expected" "$work/actual-extra"
+
+canonical_assets | grep -Fvx 'pam_facelock.so' >"$work/actual-missing"
+assert_rejects "missing release asset" "no release asset matches" \
+    verify "$stable_expected" "$work/actual-missing"
+
+{ canonical_assets; echo "pam_facelock.so"; } >"$work/actual-duplicate"
+assert_rejects "duplicate asset name" "duplicate release asset" \
+    verify "$stable_expected" "$work/actual-duplicate"
+
+{ canonical_assets; echo "facelock-0.2.0-1.fc45.x86_64.rpm"; } >"$work/actual-collision"
+assert_rejects "two assets claiming one canonical name" "more than one release asset" \
+    verify "$stable_expected" "$work/actual-collision"
+
+# --- the maintainer tag
+
+fixture_repo="$work/repo"
+(
+    # Each fixture subshell isolates itself from the host git configuration.
+    # shellcheck disable=SC2030,SC2031
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+    git init -q -b main "$fixture_repo"
+    cd "$fixture_repo"
+    git config user.email release@example.invalid
+    git config user.name Release
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    echo release >file
+    git add file
+    git commit -qm "release"
+    git tag v0.2.0
+    echo other >file
+    git commit -qam "after the tag"
+) >/dev/null
+tag_commit="$(git -C "$fixture_repo" rev-list -n1 v0.2.0)"
+head_commit="$(git -C "$fixture_repo" rev-parse HEAD)"
+
+"$helper_path" verify-tag v0.2.0 0.2.0 "$tag_commit" "$fixture_repo" >/dev/null ||
+    fail "the maintainer tag at the built commit was rejected"
+
+assert_rejects "tag that does not name the validated version" "does not match the validated version" \
+    verify-tag v0.2.1 0.2.0 "$tag_commit" "$fixture_repo"
+assert_rejects "tag that does not exist" "does not exist" \
+    verify-tag v9.9.9 9.9.9 "$tag_commit" "$fixture_repo"
+assert_rejects "tag that does not point at the built commit" "does not point at the built commit" \
+    verify-tag v0.2.0 0.2.0 "$head_commit" "$fixture_repo"
+
+# A tag carrying a signature block must verify, whatever the block is.
+(
+    # Each fixture subshell isolates itself from the host git configuration.
+    # shellcheck disable=SC2030,SC2031
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+    cd "$fixture_repo"
+    git config tag.gpgsign false
+    printf '%s\n' "signed release" "-----BEGIN PGP SIGNATURE-----" "not a signature" "-----END PGP SIGNATURE-----" |
+        git tag -a -F - v0.2.0-rc.1 "$tag_commit"
+) >/dev/null
+assert_rejects "tag whose signature cannot be verified" "signature verification failed" \
+    verify-tag v0.2.0-rc.1 0.2.0-rc.1 "$tag_commit" "$fixture_repo"
+
+# --- the draft is published exactly once
+
+cat >"$work/release-draft.json" <<'JSON'
+{"id": 42, "tag_name": "v0.2.0", "draft": true, "prerelease": false}
+JSON
+"$helper_path" verify-draft v0.2.0 false "$work/release-draft.json" >/dev/null ||
+    fail "the unpublished draft for this tag was rejected"
+
+cat >"$work/release-published.json" <<'JSON'
+{"id": 42, "tag_name": "v0.2.0", "draft": false, "prerelease": false}
+JSON
+assert_rejects "publish-only rerun against a published release" "already published" \
+    verify-draft v0.2.0 false "$work/release-published.json"
+
+cat >"$work/release-other-tag.json" <<'JSON'
+{"id": 42, "tag_name": "v0.1.9", "draft": true, "prerelease": false}
+JSON
+assert_rejects "draft belonging to another tag" "another tag" \
+    verify-draft v0.2.0 false "$work/release-other-tag.json"
+
+cat >"$work/release-wrong-channel.json" <<'JSON'
+{"id": 42, "tag_name": "v0.2.0", "draft": true, "prerelease": true}
+JSON
+assert_rejects "draft whose channel differs from the validated identity" "prerelease identity" \
+    verify-draft v0.2.0 false "$work/release-wrong-channel.json"
+
+# The draft is selected out of the API listing, never assumed to be first.
+cat >"$work/releases-listing.json" <<'JSON'
+[{"id": 7, "tag_name": "v0.1.9", "draft": false, "prerelease": false,
+  "assets": [{"name": "facelock-x86_64-linux-gnu"}]},
+ {"id": 42, "tag_name": "v0.2.0", "draft": true, "prerelease": false,
+  "assets": [{"name": "pam_facelock.so"}, {"name": "MANIFEST.json"}]}]
+JSON
+[ "$("$helper_path" release-id "$work/releases-listing.json" v0.2.0)" = 42 ] ||
+    fail "the release id was not read from the API listing"
+[ "$("$helper_path" names "$work/releases-listing.json" v0.2.0 | tr '\n' ' ')" = "pam_facelock.so MANIFEST.json " ] ||
+    fail "the draft asset names were not read from the API listing"
+"$helper_path" verify-draft v0.2.0 false "$work/releases-listing.json" >/dev/null ||
+    fail "the draft for this tag was not selected out of the API listing"
+assert_rejects "tag with no release of its own" "expected exactly one release" \
+    verify-draft v0.3.0 false "$work/releases-listing.json"
+
+# --- builder digest attestations
+
+assets_dir="$work/assets"
+mkdir -p "$assets_dir"
+printf 'facelock\n' >"$assets_dir/facelock-x86_64-linux-gnu"
+printf 'pam\n' >"$assets_dir/pam_facelock.so"
+printf 'manifest placeholder\n' >"$assets_dir/MANIFEST.json"
+asset_digest() { sha256sum "$assets_dir/$1" | cut -d' ' -f1; }
+
+digests_dir="$work/digests"
+mkdir -p "$digests_dir/release-digests-build"
+cat >"$digests_dir/release-digests-build/digests.json" <<JSON
+{
+  "job": "build",
+  "image": "ubuntu-latest",
+  "assets": {
+    "facelock-x86_64-linux-gnu": "$(asset_digest facelock-x86_64-linux-gnu)",
+    "pam_facelock.so": "$(asset_digest pam_facelock.so)"
+  }
+}
+JSON
+
+printf '%s\n' facelock-x86_64-linux-gnu pam_facelock.so MANIFEST.json >"$work/actual-attested"
+"$helper_path" verify-digests "$digests_dir" "$assets_dir" "$work/actual-attested" >/dev/null ||
+    fail "assets matching their builder attestations were rejected"
+
+printf 'tampered\n' >"$assets_dir/pam_facelock.so"
+assert_rejects "release asset mutated after its builder attested it" "does not match the digest" \
+    verify-digests "$digests_dir" "$assets_dir" "$work/actual-attested"
+printf 'pam\n' >"$assets_dir/pam_facelock.so"
+
+printf 'smuggled\n' >"$assets_dir/extra-asset"
+printf '%s\n' facelock-x86_64-linux-gnu pam_facelock.so extra-asset MANIFEST.json >"$work/actual-unattested"
+assert_rejects "release asset no builder attested" "attested by no builder" \
+    verify-digests "$digests_dir" "$assets_dir" "$work/actual-unattested"
+rm -f "$assets_dir/extra-asset"
+
+mkdir -p "$digests_dir/release-digests-duplicate"
+cat >"$digests_dir/release-digests-duplicate/digests.json" <<JSON
+{"job": "other", "assets": {"pam_facelock.so": "$(asset_digest pam_facelock.so)"}}
+JSON
+assert_rejects "two builders claiming one asset" "attested by more than one builder" \
+    verify-digests "$digests_dir" "$assets_dir" "$work/actual-attested"
+rm -rf "$digests_dir/release-digests-duplicate"
+
+# --- the publication manifest
+
+mkdir -p "$digests_dir/release-digests-deb-trixie"
+cat >"$digests_dir/release-digests-deb-trixie/digests.json" <<'JSON'
+{"job": "build-deb", "suite": "trixie", "image": "docker.io/library/debian:13@sha256:34cd", "assets": {}}
+JSON
+mkdir -p "$digests_dir/release-digests-onnxruntime"
+cat >"$digests_dir/release-digests-onnxruntime/digests.json" <<'JSON'
+{"job": "download-ort", "assets": {},
+ "components": {"onnxruntime": {"version": "1.20.1", "library_sha256": "a5faaf78"}}}
+JSON
+
+manifest="$work/MANIFEST.json"
+"$helper_path" manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
+    tyvsmith/facelock deadbeef "$digests_dir" "$assets_dir" "$work/actual-attested" "$manifest" >/dev/null ||
+    fail "manifest generation failed for a complete release"
+
+python3 - "$manifest" "$(asset_digest facelock-x86_64-linux-gnu)" <<'PY' ||
+import json, sys
+manifest = json.load(open(sys.argv[1]))
+assets = {entry["name"]: entry for entry in manifest["assets"]}
+missing = {"facelock-x86_64-linux-gnu", "pam_facelock.so", "MANIFEST.json"} - set(assets)
+assert not missing, f"manifest omits {sorted(missing)}"
+assert assets["facelock-x86_64-linux-gnu"]["sha256"] == sys.argv[2], "manifest digest is not the asset digest"
+assert all("size" in entry for entry in manifest["assets"]), "manifest omits asset sizes"
+assert manifest["tag"] == "v0.2.0" and manifest["version"] == "0.2.0", "manifest identity drifted"
+assert manifest["source"]["sha256"] == "deadbeef", "manifest omits the source digest"
+assert "archive/refs/tags/v0.2.0" in manifest["source"]["url"], "manifest omits the source archive"
+images = manifest["build_images"]
+assert any("debian:13@sha256" in value for value in images.values()), "manifest omits a build image digest"
+assert manifest["components"]["onnxruntime"]["library_sha256"] == "a5faaf78", "manifest omits the ORT digest"
+PY
+    fail "the generated manifest does not cover every asset and every reviewed digest"
+
+rm -f "$assets_dir/pam_facelock.so"
+assert_rejects "manifest over an asset that was never downloaded" "is not present" \
+    manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
+    tyvsmith/facelock deadbeef "$digests_dir" "$assets_dir" "$work/actual-attested" "$manifest"
+
+# ------------------------------------------------------------------ mutations
+
+if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}" ]; then
+    mutation_root="$work/mutations"
+    mkdir -p "$mutation_root"
+
+    assert_workflow_mutation_rejected() {
+        local context="$1" expression="$2" needle="$3"
+        local mutated
+        mutated="$mutation_root/release-$(printf '%s' "$context" | tr ' ' '-').yml"
+        sed -E "$expression" "$workflow_path" >"$mutated"
+        if cmp -s "$workflow_path" "$mutated"; then
+            fail "$context mutation did not change the workflow"
+        fi
+        local output
+        if output="$(FACELOCK_RELEASE_WORKFLOW="$mutated" bash "$0" 2>&1)"; then
+            fail "release artifacts contract accepted $context"
+        fi
+        printf '%s\n' "$output" | grep -Fq "$needle" ||
+            fail "$context mutation failed for an unrelated reason: $output"
+        echo "release artifacts mutation: $context rejected"
+    }
+
+    assert_workflow_mutation_rejected "public release creation" \
+        's/^          draft: true$//' \
+        "must create the GitHub release as a draft"
+    assert_workflow_mutation_rejected "builder holding the release write scope" \
+        '0,/^      contents: read$/s//      contents: write/' \
+        "only the publish job may hold contents: write"
+    assert_workflow_mutation_rejected "pages rebuild before publication" \
+        's/^    needs: \[publish-apt, publish\]$/    needs: [publish-apt]/' \
+        "trigger-pages must run after the release is published"
+    assert_workflow_mutation_rejected "release upload without the publication token" \
+        '0,/^          token: \$\{\{ secrets.RELEASE_PAT \}\}$/s///' \
+        "every release upload must pass the publication token"
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "tag rewritten at publication" \
+        's/^      TAG: \$\{\{ github.ref_name \}\}$/      TAG: ${{ github.ref_name }}\n      TAG_TARGET: target_commitish/' \
+        "publishing must not send a tag or target commitish"
+fi
+
+echo "release artifacts contract: ok"

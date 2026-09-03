@@ -84,22 +84,65 @@ git push origin main --tags
 
 The `.github/workflows/release.yml` workflow:
 
-1. Builds release binaries and creates a GitHub Release
-2. Prepares the pinned ONNX Runtime and lock-bound Cargo-vendor source
+1. Validates the tag against the checked-in release identity and target matrix
+2. Builds release binaries and creates the GitHub Release **as a draft**
+3. Prepares the pinned ONNX Runtime and lock-bound Cargo-vendor source
    components with their reviewed manifests and checksums
-3. Builds two suite-specific TPM-enabled `.deb` packages for trixie and resolute
-4. Builds the direct `.rpm` package in the pinned Fedora 44 container and validates contents
-5. Validates Nix flake evaluation
-6. Publishes stable releases to AUR — `facelock`, `facelock-bin`, and `facelock-git` — if `AUR_SSH_KEY` is configured
+4. Builds two suite-specific TPM-enabled `.deb` packages for trixie and resolute
+5. Builds the direct `.rpm` package in the pinned Fedora 44 container and validates contents
+6. Validates Nix flake evaluation
 7. Publishes stable releases to the signed, codenamed APT suites, and to the `main` and `legacy` compatibility suites until 0.3.0, if the APT signing secrets are configured
-8. Triggers GitHub Pages rebuild to include updated APT repo
+8. Verifies the tag, validates the draft's assets, writes `MANIFEST.json`, and publishes the draft exactly once
+9. Publishes stable releases to AUR — `facelock`, `facelock-bin`, and `facelock-git` — if `AUR_SSH_KEY` is configured
+10. Triggers GitHub Pages rebuild to include updated APT repo
 
 Validated prerelease tags set the GitHub Release `prerelease` output and upload
 direct artifacts, but skip stable APT and all AUR publication. The workflow
 guards use the validated release identity rather than substring matching.
 
 COPR (Fedora) is **not** built by `release.yml`. It is handled by [Packit](https://packit.dev),
-which reacts to the GitHub Release published in step 1. See the COPR section below.
+which reacts to the release the `publish` job makes public in step 8. A draft
+raises no release event, so nothing downstream fires until validation passes.
+See the COPR section below.
+
+#### Draft until validated
+
+Step 2 creates the release with `draft: true`, and every later builder appends
+its artifact to that draft. Nothing is public, and no downstream automation has
+seen anything, until the `publish` job says so.
+
+`publish` is the only job that holds `contents: write`; every other job holds
+`contents: read`, and the workflow's own default is deny-all. It runs after
+every builder and validator, and it:
+
+- verifies the tag exists, names the validated version, and points at the built
+  commit; where the tag carries a signature it must verify. The job reads the
+  tag and never creates, moves, or replaces one.
+- holds the draft's asset list to the canonical allowlist derived from the
+  validated version, Debian revision, and RPM counter. An extra asset, a
+  missing one, or two assets claiming one canonical name each stop the release.
+- holds every asset to the SHA-256 its builder attested, so an asset that
+  changed between its build and publication stops the release.
+- writes `MANIFEST.json` over every asset, plus the source tarball digest, the
+  pinned build-image digests, and the reviewed ONNX Runtime and Cargo-vendor
+  component digests. It replaces the three-binary `SHA256SUMS` file, which
+  covered a fraction of the release and was written before most of it existed.
+- flips the draft to published once. Re-running the job against a release that
+  is already published stops with an error rather than republishing.
+
+Two consequences for the maintainer:
+
+- **`RELEASE_PAT` is required.** No builder can write the release with its own
+  token, so an unset secret fails the release at its first release write.
+  `just release-preflight` checks for it.
+- **A signed tag must be verifiable on the runner.** Importing the maintainer's
+  public key is release infrastructure tracked by #235; until it lands, an
+  unsigned tag is accepted and a signed one that the runner cannot verify stops
+  the release.
+
+`test/release-artifacts-contract.sh` (`just test-release-artifacts`) proves this
+shape by fixture and by mutation. The workflow itself runs only on a tag, so
+the gate never tags anything to test it.
 
 #### Debian package channels
 
