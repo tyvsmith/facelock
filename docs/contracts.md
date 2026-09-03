@@ -2356,9 +2356,17 @@ release until it does.
   name, an unmatched asset, a canonical name two artifacts claim, or a canonical
   name no artifact provides each fail closed.
 - Every staged asset matches the SHA-256 its builder attested. Each builder
-  writes a `release-digests-*` artifact naming what it produced, the image it
-  produced it in, and the components it consumed. An asset attested by no
-  builder, or by two, fails closed.
+  writes a `release-digests-<slot>` artifact naming what it produced, the image
+  it produced it in, and the components it consumed. An asset attested by no
+  builder, or by two, fails closed, and so does a build image or component two
+  attestations claim.
+- The attesting set is exactly the slots the workflow uploads: `build`,
+  `onnxruntime`, `cargo-vendor`, one `deb-<suite>` per published suite, `rpm`,
+  and, on a stable release, `apt`. Each artifact holds one document declaring
+  the job that slot belongs to. Anything running in a builder can upload an
+  artifact of its own, so an extra attestation, a missing one, or one claiming
+  another job's identity stops the release rather than being merged into the
+  manifest.
 - The tag has no published release. A release already published is refused
   before anything is written; the draft an interrupted run left behind is
   reused, so a failed run can be re-run. An asset on that draft whose canonical

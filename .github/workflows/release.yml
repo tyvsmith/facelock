@@ -582,7 +582,7 @@ jobs:
           $HELPER verify expected-assets actual-assets
 
       - name: Verify every asset against its builder attestation
-        run: $HELPER verify-digests artifacts assets actual-assets
+        run: $HELPER verify-digests artifacts assets actual-assets "$PRERELEASE"
 
       - name: Refuse a tag that is already published
         run: |

@@ -219,6 +219,39 @@ rpm_env_image="$(printf '%s\n' "$rpm_job" | awk '/^      BUILD_IMAGE: /{ sub(/^ 
 printf '%s\n' "$rpm_job" | grep -Fq 'steps.rpm.outputs.rpm' ||
     fail "build-rpm must validate the exact payload package the metadata names"
 
+# The attesting set the helper pins must be exactly the artifacts the workflow
+# uploads. Adding or removing an attesting job moves both or fails here.
+workflow_attestations() {
+    local wf_job body attest_job slot suite
+    for wf_job in build download-ort prepare-cargo-vendor build-deb build-rpm publish-apt; do
+        body="$(job_body "$wf_job")"
+        attest_job="$(printf '%s\n' "$body" |
+            sed -n 's|.*attest-digests\.sh \([a-z-]*\) .*|\1|p' | head -1)"
+        slot="$(printf '%s\n' "$body" |
+            sed -n 's/^ *name: release-digests-\(.*\)$/\1/p' | head -1)"
+        [ -n "$attest_job" ] || fail "job $wf_job uploads no digest attestation"
+        [ -n "$slot" ] || fail "job $wf_job names no digest artifact"
+        # A literal workflow expression, and suite names carry no spaces.
+        # shellcheck disable=SC2016,SC2013
+        case "$slot" in
+            *'${{ matrix.suite }}'*)
+                for suite in $(sed -n 's/^deb-\(.*\)	.*/\1/p' <"$attesting_set"); do
+                    printf '%s\t%s\n' \
+                        "$(printf '%s' "$slot" | sed "s/\${{ matrix.suite }}/$suite/")" \
+                        "$attest_job"
+                done
+                ;;
+            *) printf '%s\t%s\n' "$slot" "$attest_job" ;;
+        esac
+    done
+}
+
+attesting_set="$(mktemp "${TMPDIR:-/tmp}/facelock-attesting.XXXXXX")"
+"$helper_path" expected-attestations false >"$attesting_set"
+diff <(workflow_attestations | LC_ALL=C sort) <(LC_ALL=C sort "$attesting_set") >/dev/null ||
+    fail "the pinned attesting set differs from the release workflow's attest-digests.sh call sites: $(diff <(workflow_attestations | LC_ALL=C sort) <(LC_ALL=C sort "$attesting_set") | tr '\n' ' ')"
+rm -f "$attesting_set"
+
 # ------------------------------------------------------------- helper: shape
 
 git_command='git([[:space:]]+-C[[:space:]]+[^[:space:]]+)?[[:space:]]+'
@@ -351,6 +384,16 @@ build_artifacts() {
         "$artifacts"/release-rpm/*.rpm >/dev/null
     "$attest" publish-apt "$artifacts/release-digests-apt" \
         "$artifacts/release-apt-repo/apt-repo.tar.gz" >/dev/null
+    # The two source components carry provenance and no asset of their own.
+    printf '{"component":"onnxruntime","version":"1.20.1","library_sha256":"a5faaf78"}\n' \
+        >"$work/ort-manifest.json"
+    printf 'ort\n' >"$work/onnxruntime-bundle.tar.xz"
+    printf 'vendor\n' >"$work/cargo-vendor-bundle.tar.xz"
+    "$attest" download-ort "$artifacts/release-digests-onnxruntime" \
+        --component "onnxruntime=$work/ort-manifest.json" \
+        --component-archive "onnxruntime=$work/onnxruntime-bundle.tar.xz" >/dev/null
+    "$attest" prepare-cargo-vendor "$artifacts/release-digests-cargo-vendor" \
+        --component-archive "cargo-vendor=$work/cargo-vendor-bundle.tar.xz" >/dev/null
 }
 
 build_artifacts
@@ -366,7 +409,7 @@ if [ -e "$staged/facelock_0.2.0-1~deb13u1_amd64.manifest" ]; then
     fail "staging copied a file the allowlist does not name"
 fi
 
-"$helper_path" verify-digests "$artifacts" "$staged" "$work/actual-staged" >/dev/null ||
+"$helper_path" verify-digests "$artifacts" "$staged" "$work/actual-staged" false >/dev/null ||
     fail "the staged assets did not match the attestations in the same artifact tree"
 
 cat >"$artifacts/release-binaries/digests.json" <<'JSON'
@@ -374,7 +417,7 @@ cat >"$artifacts/release-binaries/digests.json" <<'JSON'
  "components": {"onnxruntime": {"version": "666", "library_sha256": "forged"}}}
 JSON
 assert_rejects "payload artifact claiming another builder's provenance" "inside a payload artifact" \
-    verify-digests "$artifacts" "$staged" "$work/actual-staged"
+    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
 build_artifacts
 
 rm -f "$artifacts/release-rpm/facelock-debugsource-0.2.0-1.fc44.x86_64.rpm"
@@ -520,85 +563,118 @@ echo "release artifacts case: rerun over a draft that already carries the manife
 
 # --- builder digest attestations
 
-assets_dir="$work/attested"
-rm -rf "$assets_dir"
-mkdir -p "$assets_dir"
-printf 'facelock\n' >"$assets_dir/facelock-x86_64-linux-gnu"
-printf 'pam\n' >"$assets_dir/pam_facelock.so"
-asset_digest() { sha256sum "$assets_dir/$1" | cut -d' ' -f1; }
+# One tree, the one the publish job hands to both readers: payload artifacts
+# beside the attestations that cover them.
+attested_digest() { sha256sum "$staged/$1" | cut -d' ' -f1; }
+attestation() { printf '%s' "$artifacts/release-digests-$1/digests.json"; }
 
-digests_dir="$work/digests"
-rm -rf "$digests_dir"
-mkdir -p "$digests_dir/release-digests-build"
-cat >"$digests_dir/release-digests-build/digests.json" <<JSON
-{
-  "job": "build",
-  "assets": {
-    "facelock-x86_64-linux-gnu": "$(asset_digest facelock-x86_64-linux-gnu)",
-    "pam_facelock.so": "$(asset_digest pam_facelock.so)"
-  }
-}
-JSON
-
-printf '%s\n' facelock-x86_64-linux-gnu pam_facelock.so >"$work/actual-attested"
-"$helper_path" verify-digests "$digests_dir" "$assets_dir" "$work/actual-attested" >/dev/null ||
+"$helper_path" verify-digests "$artifacts" "$staged" "$work/actual-staged" false >/dev/null ||
     fail "assets matching their builder attestations were rejected"
 
-printf 'tampered\n' >"$assets_dir/pam_facelock.so"
+printf 'tampered\n' >"$staged/pam_facelock.so"
 assert_rejects "release asset mutated after its builder attested it" "does not match the digest" \
-    verify-digests "$digests_dir" "$assets_dir" "$work/actual-attested"
-printf 'pam\n' >"$assets_dir/pam_facelock.so"
+    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
+cp "$artifacts/release-binaries/pam_facelock.so" "$staged/pam_facelock.so"
 
-printf 'smuggled\n' >"$assets_dir/extra-asset"
-printf '%s\n' facelock-x86_64-linux-gnu pam_facelock.so extra-asset >"$work/actual-unattested"
+printf 'smuggled\n' >"$staged/extra-asset"
+{ cat "$work/actual-staged"; echo extra-asset; } >"$work/actual-unattested"
 assert_rejects "release asset no builder attested" "attested by no builder" \
-    verify-digests "$digests_dir" "$assets_dir" "$work/actual-unattested"
-rm -f "$assets_dir/extra-asset"
+    verify-digests "$artifacts" "$staged" "$work/actual-unattested" false
+rm -f "$staged/extra-asset"
+
+# An attesting artifact may not claim an asset another one produced.
+python3 - "$(attestation rpm)" "$(attested_digest pam_facelock.so)" <<'PY'
+import json, sys
+path = sys.argv[1]
+document = json.load(open(path))
+document["assets"]["pam_facelock.so"] = sys.argv[2]
+open(path, "w").write(json.dumps(document, indent=2) + "\n")
+PY
+assert_rejects "two builders claiming one asset" "attested by more than one builder" \
+    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
+build_artifacts
+
+# --- the attesting set is pinned, not merely deduplicated
+
+# Anything running in a builder can upload an artifact of its own. An extra
+# attestation claiming another job's identity would reach MANIFEST.json with
+# every asset digest still checking out.
+mkdir -p "$artifacts/release-digests-zzz-supplychain"
+cat >"$artifacts/release-digests-zzz-supplychain/digests.json" <<'JSON'
+{"job": "download-ort", "image": "evil.example/img@sha256:dead", "assets": {},
+ "components": {"onnxruntime": {"version": "666", "library_sha256": "forged"}}}
+JSON
+assert_rejects "extra digest artifact forging another job's provenance" "no builder attests as" \
+    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
+assert_rejects "extra digest artifact reaching the manifest" "no builder attests as" \
+    manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
+    tyvsmith/facelock deadbeef "$artifacts" "$staged" "$work/actual-staged" "$work/forged.json"
+build_artifacts
+
+python3 - "$(attestation build)" <<'PY'
+import json, sys
+path = sys.argv[1]
+document = json.load(open(path))
+document["job"] = "build-deb"
+open(path, "w").write(json.dumps(document, indent=2) + "\n")
+PY
+assert_rejects "attestation declaring a job that is not its slot" "belongs to" \
+    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
+build_artifacts
+
+rm -rf "$artifacts/release-digests-apt"
+assert_rejects "attesting job that did not attest" "no attestation from" \
+    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
+build_artifacts
+
+mkdir -p "$artifacts/release-digests-rpm/second"
+cp "$(attestation rpm)" "$artifacts/release-digests-rpm/second/digests.json"
+assert_rejects "attesting artifact holding two documents" "documents, expected one" \
+    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
+build_artifacts
+
+# A prerelease publishes no APT repository, so publish-apt attests nothing.
+assert_rejects "stable attestation set on a prerelease" "no builder attests as" \
+    verify-digests "$artifacts" "$staged" "$work/actual-staged" true
 
 # A payload artifact carrying an attestation is a builder claiming provenance
 # for work it did not do; the manifest would record its image and components.
-mkdir -p "$digests_dir/release-binaries"
-cat >"$digests_dir/release-binaries/digests.json" <<'JSON'
+cat >"$artifacts/release-binaries/digests.json" <<'JSON'
 {"job": "download-ort", "image": "evil.example/img@sha256:dead", "assets": {},
  "components": {"onnxruntime": {"version": "666", "library_sha256": "forged"}}}
 JSON
 assert_rejects "digest attestation planted in a payload artifact" "inside a payload artifact" \
-    verify-digests "$digests_dir" "$assets_dir" "$work/actual-attested"
+    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
 assert_rejects "forged provenance reaching the manifest" "inside a payload artifact" \
     manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
-    tyvsmith/facelock deadbeef "$digests_dir" "$assets_dir" "$work/actual-attested" "$work/forged.json"
-rm -rf "$digests_dir/release-binaries"
+    tyvsmith/facelock deadbeef "$artifacts" "$staged" "$work/actual-staged" "$work/forged.json"
+build_artifacts
 
-mkdir -p "$digests_dir/release-digests-duplicate"
-cat >"$digests_dir/release-digests-duplicate/digests.json" <<JSON
-{"job": "other", "assets": {"pam_facelock.so": "$(asset_digest pam_facelock.so)"}}
-JSON
-assert_rejects "two builders claiming one asset" "attested by more than one builder" \
-    verify-digests "$digests_dir" "$assets_dir" "$work/actual-attested"
-rm -rf "$digests_dir/release-digests-duplicate"
+# Two attestations claiming one provenance key is a contradiction, not a merge.
+python3 - "$(attestation cargo-vendor)" <<'PY'
+import json, sys
+path = sys.argv[1]
+document = json.load(open(path))
+document.setdefault("components", {})["onnxruntime"] = {"version": "666"}
+open(path, "w").write(json.dumps(document, indent=2) + "\n")
+PY
+assert_rejects "two attestations claiming one component" "claim the component" \
+    manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
+    tyvsmith/facelock deadbeef "$artifacts" "$staged" "$work/actual-staged" "$work/forged.json"
+build_artifacts
 
 # --- the publication manifest
 
-mkdir -p "$digests_dir/release-digests-deb-trixie"
-cat >"$digests_dir/release-digests-deb-trixie/digests.json" <<'JSON'
-{"job": "build-deb", "suite": "trixie", "image": "docker.io/library/debian:13@sha256:34cd", "assets": {}}
-JSON
-mkdir -p "$digests_dir/release-digests-onnxruntime"
-cat >"$digests_dir/release-digests-onnxruntime/digests.json" <<'JSON'
-{"job": "download-ort", "assets": {},
- "components": {"onnxruntime": {"version": "1.20.1", "library_sha256": "a5faaf78"}}}
-JSON
-
 manifest="$work/MANIFEST.json"
 "$helper_path" manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
-    tyvsmith/facelock deadbeef "$digests_dir" "$assets_dir" "$work/actual-attested" "$manifest" >/dev/null ||
+    tyvsmith/facelock deadbeef "$artifacts" "$staged" "$work/actual-staged" "$manifest" >/dev/null ||
     fail "manifest generation failed for a complete release"
 
-python3 - "$manifest" "$(asset_digest facelock-x86_64-linux-gnu)" <<'PY' ||
+python3 - "$manifest" "$(attested_digest facelock-x86_64-linux-gnu)" <<'PY' ||
 import json, sys
 manifest = json.load(open(sys.argv[1]))
 assets = {entry["name"]: entry for entry in manifest["assets"]}
-missing = {"facelock-x86_64-linux-gnu", "pam_facelock.so"} - set(assets)
+missing = {"facelock-x86_64-linux-gnu", "pam_facelock.so", "apt-repo.tar.gz"} - set(assets)
 assert not missing, f"manifest omits {sorted(missing)}"
 assert assets["facelock-x86_64-linux-gnu"]["sha256"] == sys.argv[2], "manifest digest is not the asset digest"
 assert all("size" in entry for entry in manifest["assets"]), "manifest omits asset sizes"
@@ -608,19 +684,48 @@ assert "archive/refs/tags/v0.2.0" in manifest["source"]["url"], "manifest omits 
 images = manifest["build_images"]
 assert any("debian:13@sha256" in value for value in images.values()), "manifest omits a build image digest"
 assert manifest["components"]["onnxruntime"]["library_sha256"] == "a5faaf78", "manifest omits the ORT digest"
+assert "cargo-vendor" in manifest["components"], "manifest omits the Cargo vendor component"
 PY
     fail "the generated manifest does not cover every asset and every reviewed digest"
 
-rm -f "$assets_dir/pam_facelock.so"
+rm -f "$staged/pam_facelock.so"
 assert_rejects "manifest over an asset that was never staged" "is not present" \
     manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
-    tyvsmith/facelock deadbeef "$digests_dir" "$assets_dir" "$work/actual-attested" "$manifest"
-
+    tyvsmith/facelock deadbeef "$artifacts" "$staged" "$work/actual-staged" "$manifest"
+cp "$artifacts/release-binaries/pam_facelock.so" "$staged/pam_facelock.so"
 # ------------------------------------------------------------------ mutations
 
-if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}" ]; then
+if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}" ] &&
+    [ -z "${FACELOCK_RELEASE_ATTESTATIONS:-}" ]; then
     mutation_root="$work/mutations"
     mkdir -p "$mutation_root"
+
+    # The attesting set is the only thing standing between an extra artifact
+    # and forged provenance in MANIFEST.json, so prove the check is load-bearing.
+    assert_loader_mutation_rejected() {
+        local context="$1" expression="$2" needle="$3"
+        local loader=.github/workflows/scripts/release_attestations.py
+        local mutant
+        mutant="$mutation_root/release_attestations-$(printf '%s' "$context" | tr ' ' '-').py"
+        sed -E "$expression" "$loader" >"$mutant"
+        if cmp -s "$loader" "$mutant"; then
+            fail "$context mutation did not change the attestation loader"
+        fi
+        local output
+        if output="$(FACELOCK_RELEASE_ATTESTATIONS="$mutant" bash "$0" 2>&1)"; then
+            fail "release artifacts contract accepted $context"
+        fi
+        printf '%s\n' "$output" | grep -Fq "$needle" ||
+            fail "$context mutation failed for an unrelated reason: $output"
+        echo "release artifacts mutation: $context rejected"
+    }
+
+    assert_loader_mutation_rejected "an unpinned attesting set" \
+        's/^    unexpected = sorted\(set\(present\) - set\(expected\)\)$/    unexpected = []/' \
+        "extra digest artifact forging another job's provenance: helper accepted"
+    assert_loader_mutation_rejected "attestations trusted to name their own job" \
+        's/^        if document.get\("job"\) != expected\[slot\]:$/        if False:/' \
+        "attestation declaring a job that is not its slot: helper accepted"
 
     assert_workflow_mutation_rejected() {
         local context="$1" expression="$2" needle="$3"
@@ -678,6 +783,12 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
     assert_workflow_mutation_rejected "tag rewritten at publication" \
         's/^      TAG: \$\{\{ github.ref_name \}\}$/      TAG: ${{ github.ref_name }}\n      TAG_TARGET: target_commitish/' \
         "publishing must not send a tag or target commitish"
+fi
+
+# Loading the attestation module must not leave bytecode in the checkout: the
+# recipes that demand a clean tree run right after this gate.
+if [ -e .github/workflows/scripts/__pycache__ ]; then
+    fail "the release asset helper left __pycache__ in the checkout"
 fi
 
 echo "release artifacts contract: ok"

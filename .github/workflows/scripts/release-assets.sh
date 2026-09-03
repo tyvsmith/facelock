@@ -16,6 +16,11 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 source "$REPO_ROOT/scripts/release-versions.sh"
 
 MANIFEST_ASSET='MANIFEST.json'
+ATTESTATIONS_MODULE="${FACELOCK_RELEASE_ATTESTATIONS:-$SCRIPT_DIR/release_attestations.py}"
+export ATTESTATIONS_MODULE
+# Loading that module by path would otherwise leave __pycache__ in the checkout,
+# and the recipes that demand a clean tree would fail on it.
+export PYTHONDONTWRITEBYTECODE=1
 
 fail() {
     echo "release assets: $*" >&2
@@ -75,6 +80,32 @@ expected_assets() {
     fi
     if [ "$stage" = final ]; then
         printf 'manifest\t%s\n' "$(literal "$MANIFEST_ASSET")"
+    fi
+}
+
+# The artifacts that attest this release, as `<slot><TAB><job>`. One slot per
+# `release-digests-*` artifact the workflow uploads: the publish job requires
+# exactly these, so a builder cannot add an artifact of its own and have its
+# claims believed. test/release-artifacts-contract.sh holds this list against
+# the workflow's attest-digests.sh call sites.
+expected_attestations() {
+    local prerelease="${1:?}"
+    local suite architecture
+
+    case "$prerelease" in
+        true | false) ;;
+        *) fail "prerelease must be true or false, got: $prerelease" ;;
+    esac
+
+    printf 'build\tbuild\n'
+    printf 'onnxruntime\tdownload-ort\n'
+    printf 'cargo-vendor\tprepare-cargo-vendor\n'
+    while IFS='	' read -r suite architecture; do
+        printf 'deb-%s\tbuild-deb\n' "$suite"
+    done < <(debian_suites)
+    printf 'rpm\tbuild-rpm\n'
+    if [ "$prerelease" = false ]; then
+        printf 'apt\tpublish-apt\n'
     fi
 }
 
@@ -306,40 +337,33 @@ PY
 # Every asset was produced by exactly one builder and still has the bytes that
 # builder attested.
 verify_digests() {
-    local digests_dir="${1:?}" assets_dir="${2:?}" actual_file="${3:?}"
-    python3 - "$digests_dir" "$assets_dir" "$actual_file" <<'PY'
+    local digests_dir="${1:?}" assets_dir="${2:?}" actual_file="${3:?}" prerelease="${4:?}"
+    local expected
+    expected="$(expected_attestations "$prerelease")"
+    python3 - "$digests_dir" "$assets_dir" "$actual_file" "$expected" <<'PY'
 import hashlib
-import json
+import importlib.util
+import os
 import sys
 from pathlib import Path
 
-digests_dir, assets_dir, actual_file = sys.argv[1:4]
+digests_dir, assets_dir, actual_file, expected = sys.argv[1:5]
 
+spec = importlib.util.spec_from_file_location(
+    "release_attestations", os.environ["ATTESTATIONS_MODULE"]
+)
+release_attestations = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(release_attestations)
 
-def attestations(root: str) -> list[Path]:
-    """Digest attestations, and only from the artifacts that carry them.
-
-    The publish job downloads the payload artifacts into the same tree. A
-    `digests.json` anywhere else is a builder claiming provenance for work it
-    did not do, so it stops the release rather than being skipped."""
-    base = Path(root)
-    smuggled = [
-        path
-        for path in sorted(base.rglob("digests.json"))
-        if not path.relative_to(base).parts[0].startswith("release-digests-")
-    ]
-    if smuggled:
-        raise SystemExit(
-            f"release assets: {smuggled[0]} is a digest attestation inside a payload artifact"
-        )
-    return sorted(base.glob("release-digests-*/**/digests.json"))
-
+try:
+    documents = release_attestations.load(digests_dir, expected)
+except release_attestations.AttestationError as error:
+    raise SystemExit(f"release assets: {error}")
 
 attested: dict[str, list[tuple[str, str]]] = {}
-for path in attestations(digests_dir):
-    document = json.loads(path.read_text(encoding="utf-8"))
+for document in documents:
     for name, digest in document.get("assets", {}).items():
-        attested.setdefault(name, []).append((document.get("job", path.parent.name), digest))
+        attested.setdefault(name, []).append((document["job"], digest))
 
 actual = [line.strip() for line in Path(actual_file).read_text(encoding="utf-8").splitlines() if line.strip()]
 
@@ -375,45 +399,31 @@ generate_manifest() {
     local tag="${1:?}" version="${2:?}" commit="${3:?}" prerelease="${4:?}"
     local repository="${5:?}" source_sha256="${6:?}" digests_dir="${7:?}"
     local assets_dir="${8:?}" actual_file="${9:?}" output="${10:?}"
+    local expected
+    expected="$(expected_attestations "$prerelease")"
     python3 - "$tag" "$version" "$commit" "$prerelease" "$repository" \
-        "$source_sha256" "$digests_dir" "$assets_dir" "$actual_file" "$output" <<'PY'
+        "$source_sha256" "$digests_dir" "$assets_dir" "$actual_file" "$output" "$expected" <<'PY'
 import hashlib
+import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
 (tag, version, commit, prerelease, repository, source_sha256,
- digests_dir, assets_dir, actual_file, output) = sys.argv[1:11]
+ digests_dir, assets_dir, actual_file, output, expected) = sys.argv[1:12]
 
-def attestations(root: str) -> list[Path]:
-    """Digest attestations, and only from the artifacts that carry them.
+spec = importlib.util.spec_from_file_location(
+    "release_attestations", os.environ["ATTESTATIONS_MODULE"]
+)
+release_attestations = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(release_attestations)
 
-    The publish job downloads the payload artifacts into the same tree. A
-    `digests.json` anywhere else is a builder claiming provenance for work it
-    did not do, so it stops the release rather than being skipped."""
-    base = Path(root)
-    smuggled = [
-        path
-        for path in sorted(base.rglob("digests.json"))
-        if not path.relative_to(base).parts[0].startswith("release-digests-")
-    ]
-    if smuggled:
-        raise SystemExit(
-            f"release assets: {smuggled[0]} is a digest attestation inside a payload artifact"
-        )
-    return sorted(base.glob("release-digests-*/**/digests.json"))
-
-
-build_images: dict[str, str] = {}
-components: dict[str, object] = {}
-for path in attestations(digests_dir):
-    document = json.loads(path.read_text(encoding="utf-8"))
-    job = document.get("job", path.parent.name)
-    key = f"{job}:{document['suite']}" if document.get("suite") else job
-    if document.get("image"):
-        build_images[key] = document["image"]
-    for name, value in document.get("components", {}).items():
-        components[name] = value
+try:
+    documents = release_attestations.load(digests_dir, expected)
+    build_images, components = release_attestations.provenance(documents)
+except release_attestations.AttestationError as error:
+    raise SystemExit(f"release assets: {error}")
 
 assets = []
 for name in sorted({line.strip() for line in Path(actual_file).read_text(encoding="utf-8").splitlines() if line.strip()}):
@@ -486,10 +496,15 @@ case "${1:-}" in
         [ "$#" -eq 2 ] || fail "usage: $0 $mode <releases-json> <tag>"
         release_query "$mode" "$1" "$2"
         ;;
+    expected-attestations)
+        shift
+        [ "$#" -eq 1 ] || fail "usage: $0 expected-attestations <prerelease>"
+        expected_attestations "$@"
+        ;;
     verify-digests)
         shift
-        [ "$#" -eq 3 ] ||
-            fail "usage: $0 verify-digests <digests-dir> <assets-dir> <actual-list>"
+        [ "$#" -eq 4 ] ||
+            fail "usage: $0 verify-digests <digests-dir> <assets-dir> <actual-list> <prerelease>"
         verify_digests "$@"
         ;;
     manifest)
@@ -499,6 +514,6 @@ case "${1:-}" in
         generate_manifest "$@"
         ;;
     *)
-        fail "usage: $0 {expected|verify|stage|verify-tag|verify-creatable|verify-draft|names|release-id|verify-digests|manifest}"
+        fail "usage: $0 {expected|expected-attestations|verify|stage|verify-tag|verify-creatable|verify-draft|names|release-id|verify-digests|manifest}"
         ;;
 esac
