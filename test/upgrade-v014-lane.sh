@@ -143,7 +143,17 @@ case "$FAMILY" in
     rpm)
         pkg_install() { dnf install -y "$1" >>"$LOG" 2>&1; }
         pkg_upgrade() { dnf upgrade -y "$1" >>"$LOG" 2>&1; }
-        pkg_downgrade() { dnf downgrade -y "$1" >>"$LOG" 2>&1; }
+        # `dnf downgrade` on a local file is the supported path; `rpm -Uvh
+        # --oldpackage` is the other real one an administrator would reach for.
+        # The fallback prints, so a run that needed it says so rather than
+        # quietly proving something about a different command.
+        pkg_downgrade() {
+            if dnf downgrade -y "$1" >>"$LOG" 2>&1; then
+                return 0
+            fi
+            echo "NOTE: dnf downgrade refused $1; falling back to rpm -Uvh --oldpackage" >&2
+            rpm -Uvh --oldpackage "$1" >>"$LOG" 2>&1
+        }
         pkg_remove() { dnf remove -y facelock >>"$LOG" 2>&1; }
         pkg_installed_version() { rpm -q --qf '%{VERSION}-%{RELEASE}' facelock 2>/dev/null; }
         pkg_is_installed() { rpm -q facelock >/dev/null 2>&1; }
@@ -869,13 +879,45 @@ open_database_with_candidate_daemon() {
     stop_packaged_daemon
     RUST_LOG=warn facelock daemon >"$output" 2>&1 &
     pid=$!
+    # Wait for the outcome, not for a proxy that races it.
+    # `reconcile_enrollment_markers` runs at daemon.rs:346, *before*
+    # `build_handler_from`, and the migration happens inside it -- so the store
+    # reaches V6 partway through reconciliation. Polling on the schema version
+    # alone stopped the daemon mid-reconcile, which the Debian half won by luck
+    # and the Fedora half lost.
     for _ in $(seq 1 120); do
-        if [ "$(schema_version)" = 6 ]; then break; fi
+        if [ "$(schema_version)" = 6 ] &&
+            [ "$(marker_model_count)" = "$(database_model_count)" ]; then
+            break
+        fi
         sleep 0.5
     done
     kill -TERM "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
+    if [ "$(marker_model_count)" != "$(database_model_count)" ]; then
+        echo "--- candidate daemon output ---" >&2
+        tail -20 "$output" >&2 || true
+    fi
     assert_eq 6 "$(schema_version)" "schema version after the candidate daemon ran"
+}
+
+database_model_count() {
+    sqlite_query "SELECT COUNT(*) FROM face_models WHERE user = 'testuser'"
+}
+
+# Never fails: a marker that is absent or unreadable is a value the caller
+# compares, not an error that stops the poll.
+marker_model_count() {
+    python3 - /var/lib/facelock/enrolled/testuser <<'MARKER_COUNT_PY' 2>/dev/null || echo unknown
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        print(json.load(handle)["models"])
+except Exception:  # noqa: BLE001 - any failure is just "not yet"
+    print("unknown")
+MARKER_COUNT_PY
 }
 
 # --- rollback --------------------------------------------------------------
