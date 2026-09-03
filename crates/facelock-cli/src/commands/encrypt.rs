@@ -59,6 +59,17 @@ fn key_replacement_refusal(config: &Config) -> Result<Option<String>> {
     }
 }
 
+/// Whether `decision` means *this* call minted the key file, for the notice
+/// `run_encrypt` prints. `Present` covers two different histories — the key
+/// was already there, or a concurrent creator published one first — and both
+/// get no "Generated" credit.
+fn key_was_generated(decision: &facelock_daemon::key_policy::KeyfileDecision) -> bool {
+    matches!(
+        decision,
+        facelock_daemon::key_policy::KeyfileDecision::Created
+    )
+}
+
 pub fn run_encrypt(config: &Config, generate_key: bool) -> Result<()> {
     // Root is established by `main`'s `require_root_for` gate (C6) before
     // `tpm::run` dispatches here.
@@ -147,13 +158,16 @@ pub fn run_encrypt(config: &Config, generate_key: bool) -> Result<()> {
     // and `facelock setup`.
     if config.encryption.method != EncryptionMethod::Tpm {
         let key_path = Path::new(&config.encryption.key_path);
-        let existed = key_path.exists();
-        if let Some(refusal) =
-            facelock_daemon::key_policy::ensure_encrypt_by_default_key(&store, config).refusal()
-        {
+        let decision = facelock_daemon::key_policy::ensure_encrypt_by_default_key(&store, config);
+        if let Some(refusal) = decision.refusal() {
             bail!("{refusal}");
         }
-        if !existed {
+        // The decision, not a pre-gate `exists()` sample: that sample races a
+        // concurrent creator. It can read `false` and then lose the gate's
+        // exclusive create to the other process, which leaves `decision`
+        // `Present` — that call wrote nothing, so it gets no "Generated"
+        // credit (round 1 of #231).
+        if key_was_generated(&decision) {
             println!("Generated encryption key at {}.", key_path.display());
             println!("Proceeding to encrypt embeddings...");
         }
@@ -300,7 +314,23 @@ pub fn run_decrypt(config: &Config) -> Result<()> {
 #[cfg(test)]
 mod key_gate_tests {
     use facelock_core::config::Config;
+    use facelock_daemon::key_policy::KeyfileDecision;
     use facelock_store::FaceStore;
+
+    /// The bug this replaces: `run_encrypt` used to print "Generated" from a
+    /// `key_path.exists()` sample taken *before* the gate ran, so a call that
+    /// raced a concurrent creator and lost — `decision` is `Present`, not
+    /// `Created` — still reported having generated the key. Driving the
+    /// mapping off `decision` itself makes that history unrepresentable: a
+    /// lost race and an already-there key are both `Present`.
+    #[test]
+    fn only_created_is_reported_as_generated() {
+        assert!(super::key_was_generated(&KeyfileDecision::Created));
+        assert!(!super::key_was_generated(&KeyfileDecision::Present));
+        assert!(!super::key_was_generated(&KeyfileDecision::Refused(
+            "irrelevant".into()
+        )));
+    }
 
     fn temp_db(name: &str) -> std::path::PathBuf {
         let unique = std::time::SystemTime::now()
