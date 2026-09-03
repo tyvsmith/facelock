@@ -51,10 +51,13 @@ context="$(mktemp -d "${TMPDIR:-/tmp}/facelock-deb-context.XXXXXX")"
 artifact_dir="$(mktemp -d "${TMPDIR:-/tmp}/facelock-deb-artifacts.XXXXXX")"
 rebuild_dir="$(mktemp -d "${TMPDIR:-/tmp}/facelock-deb-rebuild-output.XXXXXX")"
 cleanup() {
+    local status=$?
     # The context holds a Git repository; retry once so that a straggling writer
-    # cannot turn scratch cleanup into a spurious lane failure.
+    # cannot turn scratch cleanup into a spurious lane failure. Cleanup must never
+    # decide the exit status, so restore whatever the script had already reached.
     rm -rf -- "$context" "$artifact_dir" "$rebuild_dir" 2>/dev/null ||
-        rm -rf -- "$context" "$artifact_dir" "$rebuild_dir"
+        rm -rf -- "$context" "$artifact_dir" "$rebuild_dir" || true
+    exit "$status"
 }
 trap cleanup EXIT
 "$repo_root/test/prepare-deb-test-context.sh" "$context" >/dev/null
