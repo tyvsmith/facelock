@@ -85,6 +85,19 @@ pub fn run_encrypt(config: &Config, generate_key: bool) -> Result<()> {
         }
     }
 
+    // This command re-seals rows from a query that carries no device id, so
+    // under hard binding it could only produce id-bearing rows with no AAD,
+    // which the auth path then fails to open (#312). A bound row is something
+    // only enrollment can write.
+    if config.hard_binding_active() {
+        bail!(
+            "refusing to encrypt in place: security.bind_device_aad = true seals each \
+             template under its enrolling camera's device id, which this command cannot \
+             supply. Re-enroll to bind these templates, or set security.bind_device_aad = \
+             false before running `facelock tpm encrypt`."
+        );
+    }
+
     // For non-generate runs, if method is keyfile and key doesn't exist, generate it
     let key_path = Path::new(&config.encryption.key_path);
     if config.encryption.method != EncryptionMethod::Tpm && !key_path.exists() {
@@ -247,6 +260,25 @@ mod tests {
     fn encryption_method_default() {
         // Encrypt-by-default (finding #8): the default method is now keyfile.
         assert_eq!(EncryptionMethod::default(), EncryptionMethod::Keyfile);
+    }
+
+    /// #312: `tpm encrypt` re-seals rows without their device ids, so under
+    /// hard binding it would manufacture id-bearing rows with no AAD that
+    /// never open again. Refused before the key or the store is touched.
+    #[test]
+    fn encrypt_in_place_is_refused_under_hard_binding() {
+        use facelock_core::config::Config;
+
+        let mut config = Config::parse("[device]\npath = \"/dev/video0\"\n").unwrap();
+        config.security.bind_device_aad = true;
+        config.encryption.key_path = "/nonexistent/facelock-test/never-created.key".into();
+        let err = super::run_encrypt(&config, false).unwrap_err().to_string();
+        assert!(err.contains("security.bind_device_aad"), "{err}");
+        assert!(err.contains("Re-enroll"), "{err}");
+        assert!(
+            !std::path::Path::new(&config.encryption.key_path).exists(),
+            "refused before generating a key"
+        );
     }
 
     /// Integration test: encrypt embeddings in memory DB, then decrypt them back.

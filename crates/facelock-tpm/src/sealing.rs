@@ -1452,6 +1452,39 @@ mod tests {
         assert_eq!(via_plain, data);
     }
 
+    /// The ordinary-encryption contract (#312): an absent AAD and an empty
+    /// AAD are the same thing to the cipher. Templates enrolled without hard
+    /// device binding are sealed with `None`; a reader passing `Some(&[])`
+    /// (or the reverse) must open them, and a bound blob must open under
+    /// neither.
+    #[test]
+    fn software_seal_absent_aad_equals_empty_aad() {
+        let key = [0x42u8; 32];
+        let sealer = SoftwareSealer::from_key(key);
+        let emb = [0.125f32; 512];
+
+        let sealed_absent = sealer.seal_embedding_with_aad(&emb, None).unwrap();
+        assert_eq!(
+            sealer
+                .unseal_embedding_with_aad(&sealed_absent, Some(&[]))
+                .unwrap(),
+            emb
+        );
+        let sealed_empty = sealer.seal_embedding_with_aad(&emb, Some(&[])).unwrap();
+        assert_eq!(
+            sealer
+                .unseal_embedding_with_aad(&sealed_empty, None)
+                .unwrap(),
+            emb
+        );
+
+        let bound = sealer
+            .seal_embedding_with_aad(&emb, Some(b"facelock-device:046d:085e:"))
+            .unwrap();
+        assert!(sealer.unseal_embedding_with_aad(&bound, None).is_err());
+        assert!(sealer.unseal_embedding_with_aad(&bound, Some(&[])).is_err());
+    }
+
     // Golden vectors for the software blob format: 0x02 | 12-byte nonce |
     // ciphertext || 16-byte tag. Both were produced by an AES-256-GCM
     // implementation outside the `aes-gcm` crate, so they pin the *on-disk*

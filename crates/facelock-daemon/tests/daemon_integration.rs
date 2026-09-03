@@ -1082,6 +1082,131 @@ fn model_binding_still_enrolls_a_serial_less_camera() {
     assert_eq!(models[0].device_id.as_deref(), Some("046d:085e:"));
 }
 
+/// The sealer for `binding_handler`'s keyfile, to inspect what enrollment
+/// really sealed the rows under.
+fn sealer_for(key_dir: &Path) -> facelock_tpm::SoftwareSealer {
+    facelock_tpm::SoftwareSealer::from_key_file(&key_dir.join("facelock.key")).unwrap()
+}
+
+fn enroll_front(handler: &mut facelock_daemon::handler::Handler<MockCamera, MockFaceEngine>) {
+    let resp = handler.handle(DaemonRequest::Enroll {
+        user: "u".into(),
+        label: "front".into(),
+    });
+    assert!(
+        matches!(resp, DaemonResponse::Enrolled { .. }),
+        "enrollment must succeed, got: {resp:?}"
+    );
+}
+
+/// #312: with hard binding on, a camera with no usable identity is refused
+/// before any model write, so nothing durable is left behind.
+#[test]
+fn hard_binding_refuses_an_unidentifiable_camera_without_durable_state() {
+    let key_dir = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.security.bind_device_aad = true;
+    let mut handler = binding_handler(
+        config,
+        facelock_core::types::DeviceFingerprint::default(),
+        key_dir.path(),
+    );
+
+    let resp = handler.handle(DaemonRequest::Enroll {
+        user: "u".into(),
+        label: "front".into(),
+    });
+    match resp {
+        DaemonResponse::Error { ref message } => assert!(
+            message.contains("security.bind_device_aad"),
+            "refusal must name the policy: {message}"
+        ),
+        other => panic!("hard-bound enrollment without an id must be refused, got: {other:?}"),
+    }
+    assert!(listed_models(&mut handler).is_empty());
+    assert_eq!(handler.store.count_sealed().unwrap(), (0, 0));
+}
+
+/// With a stable identity the rows are sealed under that camera's AAD:
+/// they unseal only with it, and the enrolling camera authenticates.
+#[test]
+fn hard_binding_seals_under_the_enrolling_camera_aad_and_authenticates() {
+    use facelock_core::types::device_binding_aad;
+
+    let key_dir = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.security.bind_device_aad = true;
+    let mut handler = binding_handler(config, same_model_camera(None), key_dir.path());
+    enroll_front(&mut handler);
+
+    let rows = handler
+        .store
+        .get_user_embeddings_raw_with_device("u")
+        .unwrap();
+    assert!(!rows.is_empty());
+    let sealer = sealer_for(key_dir.path());
+    let bound = device_binding_aad(Some("046d:085e:")).unwrap();
+    for (id, blob, sealed, device_id) in &rows {
+        assert!(sealed, "row {id} must be sealed");
+        assert_eq!(device_id.as_deref(), Some("046d:085e:"));
+        sealer
+            .unseal_embedding_with_aad(blob, Some(&bound))
+            .unwrap_or_else(|e| panic!("row {id} must unseal under its camera's AAD: {e}"));
+        assert!(
+            sealer.unseal_embedding_with_aad(blob, None).is_err(),
+            "row {id} must not unseal without the AAD"
+        );
+        let other = device_binding_aad(Some("ffff:ffff:")).unwrap();
+        assert!(
+            sealer
+                .unseal_embedding_with_aad(blob, Some(&other))
+                .is_err(),
+            "row {id} must not unseal under another camera's AAD"
+        );
+    }
+
+    let auth = handler.handle(DaemonRequest::Authenticate { user: "u".into() });
+    match auth {
+        DaemonResponse::AuthResult(MatchResult { matched, .. }) => {
+            assert!(
+                matched,
+                "the enrolling camera must authenticate its bound template"
+            )
+        }
+        other => panic!("expected an auth result, got: {other:?}"),
+    }
+}
+
+/// Ordinary encryption (hard binding off, the default) seals with no AAD,
+/// which the sealing layer treats as an empty AAD.
+#[test]
+fn ordinary_encryption_seals_without_aad() {
+    let key_dir = tempfile::tempdir().unwrap();
+    let config = test_config();
+    assert!(
+        !config.security.bind_device_aad,
+        "hard binding defaults off"
+    );
+    let mut handler = binding_handler(config, same_model_camera(None), key_dir.path());
+    enroll_front(&mut handler);
+
+    let rows = handler
+        .store
+        .get_user_embeddings_raw_with_device("u")
+        .unwrap();
+    assert!(!rows.is_empty());
+    let sealer = sealer_for(key_dir.path());
+    for (id, blob, sealed, _) in &rows {
+        assert!(sealed, "row {id} must be sealed");
+        sealer
+            .unseal_embedding_with_aad(blob, None)
+            .unwrap_or_else(|e| panic!("row {id} must unseal with no AAD: {e}"));
+        sealer
+            .unseal_embedding_with_aad(blob, Some(&[]))
+            .unwrap_or_else(|e| panic!("row {id} must unseal with an empty AAD: {e}"));
+    }
+}
+
 #[test]
 fn failed_auth_rate_limit_persists_across_handler_restart() {
     use facelock_daemon::handler::Handler;

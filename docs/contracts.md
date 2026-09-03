@@ -3066,7 +3066,30 @@ request.
 **Hard device binding (opt-in).** `security.bind_device_aad = true` folds the enrolling
 camera's `device_id` into the AES-GCM AAD, so a template cannot be decrypted under a
 different camera. Default false (fails closed on unstable ids). Complements the advisory
-device coupling of Plan 02.
+device coupling of Plan 02. The contract (#312):
+
+- Enrollment with the flag on and no non-empty canonical `device_id` is refused before the
+  first model write, in the daemon `Enroll` path and the direct path (through
+  `Config::ensure_enrollment_binding_allowed`), and again inside the enrollment loop
+  (`Config::require_device_aad`). The error names the key and the remedy. The flag is inert
+  under `encryption.method = "none"`: no refusal, no classification.
+- Authentication derives the AAD from each row's own `device_id` (`SecurityConfig::device_aad`).
+  A row with a NULL or empty `device_id` decrypts with no AAD and is classified
+  `LegacyUnbound`; it authenticates as before, provided every other row in the user's store
+  decrypts (the first failing row fails the whole load; the unbound diagnostic is logged
+  before decryption). The daemon logs a warning naming such model ids
+  at each compare-set load; `facelock list` renders `unbound (re-enroll to bind)` in the Camera
+  column; `facelock status` renders `#N: label, unbound (re-enroll to bind)`. The `--json`
+  payloads are unchanged (`device_id` is `""` for such a row): a consumer cannot tell an
+  unbound row from a pre-coupling one without consulting the flag itself. A dedicated field
+  is a follow-up, not part of this contract.
+- With the flag off, templates are sealed with no AAD. An absent AAD and an empty AAD are the
+  same to the cipher; that equivalence is the ordinary-encryption contract.
+- Turning the flag off (or disabling encryption) over a store sealed under it makes every
+  hard-bound template fail to decrypt; `list`/`status` still report them bound and
+  `facelock tpm decrypt` fails on the first such row. The decrypt error names the way back
+  (re-enable, or re-enroll). `facelock tpm encrypt` refuses to run while the flag is on, since
+  it re-seals rows without their device ids.
 
 **TPM sealed-key format & unseal semantics (Plan 04).** The sealed-key blob is versioned:
 `0x01` = no PCR policy; `0x03` = PCR-bound, and self-describes its PCR index list. A
@@ -3188,7 +3211,7 @@ Only failed authentication attempts are recorded in `rate_limit`, and only those
 
 `device_id` is the canonical fingerprint (`"vid:pid:serial"`) of the camera that enrolled the template. It is **model-granularity at best and forgeable by a programmable USB device** — advisory defense-in-depth, NOT attestation. See `docs/security.md` §Device Coupling.
 
-**Enrollment precondition (#309).** Every non-NULL `device_id` matches its own enrolling camera at the `security.device_match_granularity` in force when it was enrolled (a `model` row does not match after switching to `unit`; re-enroll). Under `model`, a camera missing either the vendor or the product id is stored NULL (legacy-governed). Under `unit`, a camera with no non-empty serial, or with no full vendor:product identity, is refused: a `unit` enrollment never stores a NULL row, which would bind to nothing. With `bind_templates_to_device = true` and `bind_legacy_templates = false`, a camera with no usable identity is refused at any granularity, since the NULL row it would store could never authenticate. The check (`SecurityConfig::ensure_enrollment_binding_allowed`) runs once per enrollment, after the camera is open and before the first model write, in both the daemon `Enroll` path and the direct path; a refusal is an ordinary enroll error naming the key and the remedy, and leaves no row behind. It never re-judges an existing template, so it can refuse a new enrollment but never lock an authentication out.
+**Enrollment precondition (#309).** Every non-NULL `device_id` matches its own enrolling camera at the `security.device_match_granularity` in force when it was enrolled (a `model` row does not match after switching to `unit`; re-enroll). Under `model`, a camera missing either the vendor or the product id is stored NULL (legacy-governed). Under `unit`, a camera with no non-empty serial, or with no full vendor:product identity, is refused: a `unit` enrollment never stores a NULL row, which would bind to nothing. With `bind_templates_to_device = true` and `bind_legacy_templates = false`, a camera with no usable identity is refused at any granularity, since the NULL row it would store could never authenticate. The check (`Config::ensure_enrollment_binding_allowed`, which delegates the coupling half to `SecurityConfig::ensure_enrollment_binding_allowed`) runs once per enrollment, after the camera is open and before the first model write, in both the daemon `Enroll` path and the direct path; a refusal is an ordinary enroll error naming the key and the remedy, and leaves no row behind. It never re-judges an existing template, so it can refuse a new enrollment but never lock an authentication out.
 
 ## IPC Protocol
 

@@ -256,7 +256,9 @@
 # "unit" (VID:PID:serial — also blocks a same-model swap, but requires a camera
 # that exposes a stable serial; enrollment at "unit" on a camera without one, or
 # without a full vendor:product identity, is refused before any template is
-# written, whether or not bind_templates_to_device is on).
+# written, whether or not bind_templates_to_device is on). Integrated MIPI/CSI
+# cameras (IPU6/IPU7) report no USB identity at all: "unit" cannot be used with
+# them; keep "model" with bind_legacy_templates = true.
 # device_match_granularity = "model"
 #
 # Allow legacy templates (enrolled before device coupling, or on a camera with
@@ -271,8 +273,17 @@
 # AES-GCM Additional Authenticated Data, so an encrypted template CANNOT be
 # decrypted under a different camera — a cryptographic complement to the advisory
 # skip-on-mismatch coupling above. Default FALSE: hard binding fails closed on
-# unstable/absent device ids (which would otherwise degrade to password on every
-# auth), so enable it only on hardware with a stable USB identity.
+# unstable/absent device ids, so enable it only on hardware with a stable USB
+# identity. With it on, enrollment on a camera with no usable identity is
+# refused before any template is written. Templates enrolled earlier with no
+# device id still authenticate and are listed as "unbound (re-enroll to bind)";
+# templates that carry a device id but predate the flag fail to decrypt until
+# re-enrolled. Plan on re-enrolling every user after enabling this. Turning it
+# off again over a store sealed under it breaks every hard-bound template until
+# re-enrolled (the decrypt error says so); "facelock tpm encrypt" refuses to run
+# while it is on. Needs an encryption method: it is inert when
+# encryption.method is "none". Integrated MIPI/CSI cameras (IPU6/IPU7) report no
+# USB identity, so this cannot be enabled for them.
 # bind_device_aad = false
 
 # Allow storing plaintext (unencrypted) face templates. Only honored when

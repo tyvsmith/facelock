@@ -414,7 +414,15 @@ fn render_enrolled(out: &mut String, user: &str, enrolled: &Fact<EnrollmentHealt
                     },
                 );
                 for model in &enrolled.models {
-                    detail(out, &format!("#{}", model.id), &model.label);
+                    let value = if model.unbound {
+                        StatusMessage::StatusModelUnbound {
+                            label: model.label.clone(),
+                        }
+                        .localized()
+                    } else {
+                        model.label.clone()
+                    };
+                    detail(out, &format!("#{}", model.id), &value);
                 }
             }
             match &enrolled.marker {
@@ -632,10 +640,12 @@ pub(crate) mod tests {
                     ModelSummary {
                         id: 1,
                         label: "front".into(),
+                        unbound: false,
                     },
                     ModelSummary {
                         id: 2,
                         label: "side".into(),
+                        unbound: false,
                     },
                 ],
                 marker: MarkerDiagnostic::Consistent,
@@ -765,6 +775,34 @@ facelock system status
             report.contains("    [!!] no faces enrolled (run 'facelock enroll')\n"),
             "{report}"
         );
+    }
+
+    /// #312: a template with no device id under hard binding is listed as
+    /// unbound with the re-enrollment hint; a bound one stays a bare label.
+    #[test]
+    fn an_unbound_model_is_named_with_the_re_enrollment_hint() {
+        let mut health = healthy();
+        health.enrolled = Fact::probed(EnrollmentHealth {
+            models: vec![
+                ModelSummary {
+                    id: 1,
+                    label: "front".into(),
+                    unbound: true,
+                },
+                ModelSummary {
+                    id: 2,
+                    label: "side".into(),
+                    unbound: false,
+                },
+            ],
+            marker: MarkerDiagnostic::Consistent,
+        });
+        let report = render(&health);
+        assert!(
+            report.contains("    - #1: front, unbound (re-enroll to bind)\n"),
+            "{report}"
+        );
+        assert!(report.contains("    - #2: side\n"), "{report}");
     }
 
     /// A config that did not parse leaves every dependent section honestly
@@ -955,6 +993,7 @@ facelock system status
             models: vec![ModelSummary {
                 id: 1,
                 label: "front".into(),
+                unbound: false,
             }],
             marker: MarkerDiagnostic::Mismatch {
                 marker: 3,
