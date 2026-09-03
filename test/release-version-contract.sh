@@ -729,6 +729,9 @@ assert_extra_packit_job_rejected \
     '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
 
 assert_extra_packit_job_rejected \
+    "third copr_build job with allowlisted targets" \
+    '{"job":"copr_build","trigger":"ignore","owner":"tyvsmith","project":"facelock-scratch","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
+assert_extra_packit_job_rejected \
     "canonical Rawhide target outside production and staging" \
     '{"job":"copr_build","trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-rawhide"]}'
 assert_extra_packit_job_rejected \
@@ -1058,6 +1061,37 @@ assert_staging_provisioning_pair_rejected \
     's/"provisioned": false/"provisioned": true/' \
     '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
     "staging COPR provisioning must stay unclaimed"
+
+# Provisioning is three edits, and docs/releasing.md says so: flip the switch,
+# move the staging job to the pull-request trigger, and retire the pin that
+# keeps the switch unclaimed. The pairing cases above prove no two of them pass
+# alone; this proves the three together do, so the procedure is reachable.
+provisioned_root="$tmp_root/matrix-staging-provisioned"
+cp -R "$matrix_root" "$provisioned_root"
+sed -i 's/"provisioned": false/"provisioned": true/' "$provisioned_root/dist/release-matrix.json"
+replace_packit_staging_job \
+    "$provisioned_root/.packit.yaml" \
+    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
+python3 - "$provisioned_root/test/check-release-matrix.py" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+content = path.read_text()
+pin = """require(
+    staging_provisioned is False,
+    "staging COPR provisioning must stay unclaimed until issue #236 creates the project",
+)
+"""
+if pin not in content:
+    raise SystemExit("the unclaimed-provisioning pin is not the block the provisioning procedure retires")
+path.write_text(content.replace(pin, "", 1))
+PY
+if provisioned_output=$(RELEASE_MATRIX_VERSION=0.2.0 python3 "$provisioned_root/test/check-release-matrix.py" 2>&1); then
+    echo "release matrix staging pairing case: the three provisioning edits together accepted"
+else
+    fail "release matrix checker rejected the documented provisioning procedure: $provisioned_output"
+fi
 assert_matrix_mutation_rejected \
     "staging channel comparison dropped from CI" \
     ".github/workflows/ci.yml" \

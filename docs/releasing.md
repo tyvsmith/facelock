@@ -551,12 +551,22 @@ provisioned` and queries nothing.
 The trigger and that switch move together, and `test/check-release-matrix.py`
 enforces the pairing. While `provisioned` is false the staging job must stay on
 `trigger: ignore`; a pull-request trigger would aim every pull request's Packit
-run at a project that answers 404. Provisioning is therefore one edit in two
-places: create the project with exactly the Fedora 43, 44, and 45 chroots, then
-set `provisioned` to true **and** move the staging job to
-`trigger: pull_request`. Changing either alone fails the release matrix
-contract. From then on the same checker compares the live project with the
-checked-in authority on every pull request and in preflight.
+run at a project that answers 404.
+
+Provisioning is therefore three edits, and the contract rejects any two of them
+without the third. Create the project with exactly the Fedora 43, 44, and 45
+chroots, then:
+
+1. set `copr_channels.staging.provisioned` to true in `dist/release-matrix.json`
+2. move the staging job in `.packit.yaml` to `trigger: pull_request`
+3. delete the `staging COPR provisioning must stay unclaimed until issue #236
+   creates the project` assertion from `test/check-release-matrix.py`
+
+The third edit is the point of review: that assertion exists so provisioning
+cannot be claimed by a config change alone, and retiring it is the moment
+someone confirms the project really exists. From then on the same checker
+compares the live project with the checked-in authority on every pull request
+and in preflight.
 
 Staging tolerates no optional experimental chroot. Production accepts Rawhide's
 presence or absence; in staging any chroot beyond the supported three is drift.

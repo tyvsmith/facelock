@@ -433,11 +433,21 @@ require(
 )
 require(
     staging_job.get("manual_trigger") is True,
-    "Packit staging COPR job must stay manually triggered while the project is unprovisioned",
+    "Packit staging COPR job must stay manually triggered",
 )
 require(
     staging_provisioned is False,
     "staging COPR provisioning must stay unclaimed until issue #236 creates the project",
+)
+# Two COPR projects exist and no more. Without a bound, a job aimed at a third
+# project passes every check above simply by choosing allowlisted targets, and
+# the allowlist stops constraining where builds land. Counted after the staging
+# and per-job checks so a malformed job still reports what is wrong with it
+# rather than only that there are too many.
+copr_jobs = [job for job in packit_jobs if isinstance(job, dict) and job.get("job") == "copr_build"]
+require(
+    len(copr_jobs) == 2,
+    f"Packit must define exactly two copr_build jobs, production and staging, found {len(copr_jobs)}",
 )
 production_jobs = [
     job
@@ -709,6 +719,7 @@ staging_doc_claims = {
         "tyvsmith/facelock-testing",
         "copr_channels.staging.provisioned",
         "scripts/release-attestation.py",
+        "metadata_max_age_seconds",
     ),
 }
 for relative_path, claims in staging_doc_claims.items():
