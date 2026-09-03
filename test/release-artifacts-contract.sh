@@ -684,6 +684,29 @@ assert_rejects "symlink to a directory under artifacts" "refusing to stage a sym
     stage "$builders_expected" "$artifacts" "$work/assets-symlink-dir"
 build_artifacts
 
+# A whole payload artifact directory replaced by a symlink is still caught by
+# the same walk: every entry it yields is checked with is_symlink() before
+# is_file(), so the directory itself is refused before its target is ever
+# read as though it were a builder's own output.
+rm -rf "$artifacts/release-binaries"
+ln -s "$artifacts/release-rpm" "$artifacts/release-binaries"
+assert_rejects "symlinked payload artifact directory" "refusing to stage a symlink" \
+    stage "$builders_expected" "$artifacts" "$work/assets-symlink-payload-dir"
+build_artifacts
+
+# A `release-digests-*` slot itself can be a symlink, pointed at a directory
+# outside the downloaded attestation tree entirely. Path.is_dir() and
+# Path.rglob() both follow it, so the slot must be refused as a symlink
+# before either ever runs, not merely once something under it is inspected.
+rm -rf "$artifacts/release-digests-rpm"
+ln -s "$artifacts/release-rpm" "$artifacts/release-digests-rpm"
+assert_rejects "symlinked attestation slot directory" "is a symlink" \
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
+assert_rejects "symlinked attestation slot directory reaching the manifest" "is a symlink" \
+    manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
+    tyvsmith/facelock deadbeef "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" "$work/forged.json"
+build_artifacts
+
 # --- the maintainer tag
 
 fixture_repo="$work/repo"

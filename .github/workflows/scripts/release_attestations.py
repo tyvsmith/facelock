@@ -114,11 +114,10 @@ def load(root: str, spec: str, job_outputs: str) -> list[dict]:
             f"{smuggled[0]} is a digest attestation inside a payload artifact"
         )
 
-    present = sorted(
-        path.name[len(ARTIFACT_PREFIX):]
-        for path in base.iterdir()
-        if path.is_dir() and path.name.startswith(ARTIFACT_PREFIX)
+    prefixed = _no_symlinks(
+        sorted(path for path in base.iterdir() if path.name.startswith(ARTIFACT_PREFIX))
     )
+    present = sorted(path.name[len(ARTIFACT_PREFIX):] for path in prefixed if path.is_dir())
     unexpected = sorted(set(present) - set(expected))
     if unexpected:
         raise AttestationError(
@@ -135,7 +134,7 @@ def load(root: str, spec: str, job_outputs: str) -> list[dict]:
     documents: list[dict] = []
     for slot in sorted(expected):
         job, output = expected[slot]["job"], expected[slot]["output"]
-        artifact = base / f"{ARTIFACT_PREFIX}{slot}"
+        artifact = _no_symlinks([base / f"{ARTIFACT_PREFIX}{slot}"])[0]
         found = _no_symlinks(sorted(artifact.rglob(DOCUMENT_NAME)))
         if len(found) != 1:
             raise AttestationError(
