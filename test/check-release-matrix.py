@@ -1165,7 +1165,7 @@ require(
 # three more dnf transactions after this one (pamtester toolchain, the RPM
 # install, rpm-build), so only a persistent disable in the repo file keeps
 # every layer off the Cisco OpenH264 host.
-openh264_disable = "sed -i 's/^enabled=1/enabled=0/' /etc/yum.repos.d/fedora-cisco-openh264.repo"
+openh264_disable = "for repo in /etc/yum.repos.d/*openh264*.repo; do [ -e \"$repo\" ] && sed -i 's/^enabled=1/enabled=0/' \"$repo\"; done; true"
 require(
     openh264_disable in copr_lifecycle_image,
     "COPR lifecycle image does not persistently disable the Cisco OpenH264 repo",

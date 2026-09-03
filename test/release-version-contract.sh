@@ -695,7 +695,7 @@ assert_matrix_mutation_rejected \
 assert_matrix_mutation_rejected \
     "COPR lifecycle image not persistently disabling the Cisco OpenH264 repo" \
     "test/Containerfile.copr-e2e" \
-    's/fedora-cisco-openh264\.repo/fedora-cisco-openh264-disabled.repo/'
+    's/\*openh264\*/\*nomatch\*/'
 # The variable is literal fixture text inside the sed expression.
 # shellcheck disable=SC2016
 assert_matrix_mutation_rejected \

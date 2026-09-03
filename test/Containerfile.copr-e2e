@@ -32,7 +32,7 @@ FROM ${BASE_IMAGE}
 # each run their own `dnf` transaction and would still contact the repo for
 # metadata. Disabling it in the repo file itself persists across every later
 # layer in this image; the flag stays as belt-and-braces on this one.
-RUN sed -i 's/^enabled=1/enabled=0/' /etc/yum.repos.d/fedora-cisco-openh264.repo \
+RUN for repo in /etc/yum.repos.d/*openh264*.repo; do [ -e "$repo" ] && sed -i 's/^enabled=1/enabled=0/' "$repo"; done; true \
     && dnf -y install --disablerepo='*openh264*' \
         pam authselect dbus dbus-daemon rpm systemd binutils gettext \
         glibc libxkbcommon tpm2-tss ca-certificates openssl-libs python3 util-linux strace \
