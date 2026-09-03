@@ -2319,47 +2319,60 @@ record is a deliberate act, not the slip this gate exists to catch.
 
 ### Direct release publication
 
-A tag creates a **draft** release. `.github/workflows/release.yml` gives its
-builders `contents: read` and a deny-all workflow default; the `publish` job is
-the only job that may write the release, and it runs after every builder and
-validator. Publication is one flip of the draft flag, performed once.
+Builders in `.github/workflows/release.yml` produce workflow artifacts and
+never touch the release. They hold `contents: read` under a deny-all workflow
+default, and none of them may reference the publication credential or a
+release-writing step. `publish` is the only job that writes the release, the
+only one holding `contents: write` and `RELEASE_PAT`, and the only one that
+compiles nothing. It runs after every builder and validator; a tag has no
+release until it does.
 
-Before that flip, `publish` requires all of:
+`publish` requires all of, in order:
 
 - The tag exists, equals the tag the validated version derives, and points at
-  the commit the workflow built. A tag carrying a PGP or SSH signature must
-  verify. Publication reads the tag; it never creates, moves, or replaces one,
-  and it never sends a tag name or target commitish.
-- The draft carries exactly the canonical assets, no more and no fewer:
+  the commit the workflow built. An annotated tag is peeled on both sides. A
+  tag carrying a PGP or SSH signature must verify. Publication reads the tag;
+  it never creates, moves, or replaces one, and it never sends a tag name or
+  target commitish.
+- Exactly the canonical assets can be staged out of the builders' artifacts, no
+  more and no fewer:
 
-| Asset | Source |
-|-------|--------|
+| Asset | Produced by |
+|-------|-------------|
 | `facelock-x86_64-linux-gnu` | `build` |
 | `pam_facelock.so` | `build` |
 | `facelock-polkit-agent-x86_64-linux-gnu` | `build` |
 | `facelock_<debian-version>_<architecture>.deb`, one per published suite | `build-deb` |
 | `facelock-<rpm-version>-<rpm-release>.fc<N>.x86_64.rpm` | `build-rpm` |
+| `facelock-debuginfo-<rpm-version>-<rpm-release>.fc<N>.x86_64.rpm` | `build-rpm` |
+| `facelock-debugsource-<rpm-version>-<rpm-release>.fc<N>.x86_64.rpm` | `build-rpm` |
 | `apt-repo.tar.gz`, stable releases only | `publish-apt` |
 | `MANIFEST.json` | `publish` |
 
   The Debian and RPM names come from the validated version, Debian revision,
   and RPM counter, so an artifact built from any other identity has no
-  canonical name. Debug RPMs are built beside the payload, are inspected by no
-  validator, and are not published. A duplicate name, an unmatched asset, or a
-  second asset matching one canonical name each fail closed.
-- Every asset matches the SHA-256 its builder attested. Each builder writes a
-  `release-digests-*` artifact naming what it produced, the image it produced it
-  in, and the components it consumed. An asset attested by no builder, or by
-  two, fails closed.
-- The release is still an unpublished draft for this tag and channel. A rerun
-  after publication refuses rather than republishing.
+  canonical name and is never staged. `build-rpm` selects each of its three
+  packages by that identity and validates the payload package. A duplicate
+  name, an unmatched asset, a canonical name two artifacts claim, or a canonical
+  name no artifact provides each fail closed.
+- Every staged asset matches the SHA-256 its builder attested. Each builder
+  writes a `release-digests-*` artifact naming what it produced, the image it
+  produced it in, and the components it consumed. An asset attested by no
+  builder, or by two, fails closed.
+- The tag has no published release. A release already published is refused
+  before anything is written; the draft an interrupted run left behind is
+  reused. Re-running the workflow is therefore safe at any point.
 
-`MANIFEST.json` covers the whole release: the tag, version, commit, and
-prerelease flag; the source tarball URL and digest; the pinned build-image
-digests; the reviewed ONNX Runtime and Cargo-vendor component digests; and the
-name, size, and SHA-256 of every asset, itself included. It replaces the
-`SHA256SUMS` file that covered three binaries and was written before the
-packages existed. `facelock-bin` takes its per-binary checksums from it.
+The draft is created with those assets and the validated prerelease flag, and
+is flipped to published only after the draft's asset list is read back from the
+API and held to the allowlist a second time, `MANIFEST.json` now included.
+
+`MANIFEST.json` covers the release: the tag, version, commit, and prerelease
+flag; the source tarball URL and digest; the pinned build-image digests; the
+reviewed ONNX Runtime and Cargo-vendor component digests; and the name, size,
+and SHA-256 of every other asset. It replaces the `SHA256SUMS` file that
+covered three binaries and was written before the packages existed.
+`facelock-bin` takes its per-binary checksums from it.
 
 ### Debian source and binary package contract
 

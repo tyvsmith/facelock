@@ -78,25 +78,6 @@ jobs:
           name: release-digests-build
           path: digests/
 
-      - name: Create the draft GitHub Release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          # Write the release with a PAT, not the default GITHUB_TOKEN. Every
-          # builder holds contents: read, and a release published by
-          # GITHUB_TOKEN triggers no downstream automation, so Packit's release
-          # trigger never fires and COPR is never built.
-          token: ${{ secrets.RELEASE_PAT }}
-          # Draft until the publish job has validated the whole asset set. A
-          # draft is invisible to Packit, to the AUR recipes and to anyone
-          # following the release feed.
-          draft: true
-          files: |
-            release/facelock-x86_64-linux-gnu
-            release/pam_facelock.so
-            release/facelock-polkit-agent-x86_64-linux-gnu
-          generate_release_notes: true
-          prerelease: ${{ needs.metadata.outputs.prerelease }}
-
   download-ort:
     name: Download ONNX Runtime
     runs-on: ubuntu-latest
@@ -331,12 +312,6 @@ jobs:
           name: release-digests-deb-${{ matrix.suite }}
           path: digests/
 
-      - name: Upload .deb to the draft release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          token: ${{ secrets.RELEASE_PAT }}
-          files: debian-upload/*.deb
-
   build-rpm:
     name: Build RPM Package
     runs-on: ubuntu-latest
@@ -387,7 +362,7 @@ jobs:
       - name: Copy RPM to workspace
         run: cp ~/rpmbuild/RPMS/x86_64/*.rpm ./ 2>/dev/null || cp ~/rpmbuild/RPMS/**/*.rpm ./ 2>/dev/null || true
 
-      - name: Select the package the validated metadata names
+      - name: Select the packages the validated metadata names
         id: rpm
         run: |
           set -euo pipefail
@@ -395,20 +370,27 @@ jobs:
           evr="$(release_rpm_evr \
             '${{ needs.metadata.outputs.cargo-version }}' \
             '${{ needs.metadata.outputs.rpm-counter }}')"
-          # Debug packages are built beside the payload and no validator reads
-          # them; the release carries exactly the package that was inspected.
-          mapfile -t candidates < <(find . -maxdepth 1 -type f \
-            -name "facelock-${evr}.fc*.x86_64.rpm" -printf '%P\n' | LC_ALL=C sort)
-          test "${#candidates[@]}" -eq 1
-          echo "rpm=${candidates[0]}" >> "$GITHUB_OUTPUT"
+          # v0.1.4 published the payload package and its two debug packages.
+          # Each must exist exactly once at the validated version-release;
+          # anything else rpmbuild left behind stays out of the release.
+          mkdir -p rpm-upload
+          for prefix in '' debuginfo- debugsource-; do
+            mapfile -t candidates < <(find . -maxdepth 1 -type f \
+              -name "facelock-${prefix}${evr}.fc*.x86_64.rpm" -printf '%P\n' | LC_ALL=C sort)
+            test "${#candidates[@]}" -eq 1
+            cp "${candidates[0]}" rpm-upload/
+            if [ -z "$prefix" ]; then
+              echo "rpm=${candidates[0]}" >> "$GITHUB_OUTPUT"
+            fi
+          done
 
       - name: Validate .rpm contents
         run: .github/workflows/scripts/validate-rpm.sh '${{ steps.rpm.outputs.rpm }}' direct
 
-      - name: Attest the validated RPM digest
+      - name: Attest the validated RPM digests
         run: |
           .github/workflows/scripts/attest-digests.sh build-rpm digests \
-            --image "$BUILD_IMAGE" '${{ steps.rpm.outputs.rpm }}'
+            --image "$BUILD_IMAGE" rpm-upload/*.rpm
 
       - name: Upload RPM digest attestation
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -416,11 +398,11 @@ jobs:
           name: release-digests-rpm
           path: digests/
 
-      - name: Upload .rpm to the draft release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+      - name: Upload the validated RPM set
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          token: ${{ secrets.RELEASE_PAT }}
-          files: ${{ steps.rpm.outputs.rpm }}
+          name: release-rpm
+          path: rpm-upload/
 
   build-nix:
     name: Validate Nix Build
@@ -542,11 +524,11 @@ jobs:
           name: release-digests-apt
           path: digests/
 
-      - name: Upload APT repo to the draft release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+      - name: Upload the APT repository artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          token: ${{ secrets.RELEASE_PAT }}
-          files: apt-repo.tar.gz
+          name: release-apt-repo
+          path: apt-repo.tar.gz
 
   publish:
     name: Publish Release
@@ -560,7 +542,8 @@ jobs:
       contents: write
       actions: read
     env:
-      # The publication credential, so the published event reaches Packit.
+      # The publication credential, so the published event reaches Packit. This
+      # is the only job that holds it, and it compiles nothing.
       GH_TOKEN: ${{ secrets.RELEASE_PAT || github.token }}
       TAG: ${{ github.ref_name }}
       VERSION: ${{ needs.metadata.outputs.cargo-version }}
@@ -575,29 +558,53 @@ jobs:
           fetch-depth: 0
 
       - name: Verify the maintainer tag
-        run: $HELPER verify-tag "$TAG" "$VERSION" "$GITHUB_SHA"
-
-      - name: Validate the draft asset set
+        id: tag
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" >releases.json
-          $HELPER verify-draft "$TAG" "$PRERELEASE" releases.json
-          $HELPER names releases.json "$TAG" >actual-assets
-          $HELPER expected "$VERSION" "$DEBIAN_REVISION" "$RPM_COUNTER" "$PRERELEASE" builders \
-            >expected-assets
-          $HELPER verify expected-assets actual-assets
+          $HELPER verify-tag "$TAG" "$VERSION" "$GITHUB_SHA"
+          # An annotated tag makes GITHUB_SHA the tag object, not the commit.
+          echo "commit=$(git rev-parse "${GITHUB_SHA}^{commit}")" >> "$GITHUB_OUTPUT"
 
-      - name: Download the draft assets
-        run: gh release download "$TAG" --dir assets
-
-      - name: Download builder digest attestations
+      - name: Download every builder artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: release-digests-*
-          path: digests
+          # The release payloads and their digest attestations; not the ORT or
+          # Cargo-vendor source components, which no release asset carries.
+          pattern: release-*
+          path: artifacts
+
+      - name: Stage exactly the canonical release assets
+        run: |
+          set -euo pipefail
+          $HELPER expected "$VERSION" "$DEBIAN_REVISION" "$RPM_COUNTER" "$PRERELEASE" builders \
+            >expected-assets
+          $HELPER stage expected-assets artifacts assets >actual-assets
+          $HELPER verify expected-assets actual-assets
 
       - name: Verify every asset against its builder attestation
-        run: $HELPER verify-digests digests assets actual-assets
+        run: $HELPER verify-digests artifacts assets actual-assets
+
+      - name: Refuse a tag that is already published
+        run: |
+          set -euo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases" >releases.json
+          $HELPER verify-creatable "$TAG" releases.json
+
+      - name: Create the draft release with the staged assets
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          # Write the release with a PAT, not the default GITHUB_TOKEN: a
+          # release published by GITHUB_TOKEN triggers no downstream
+          # automation, so Packit's release trigger never fires and COPR is
+          # never built.
+          token: ${{ secrets.RELEASE_PAT }}
+          # Draft until MANIFEST.json is attached and the whole asset set has
+          # been read back. A draft is invisible to Packit, to the AUR recipes
+          # and to anyone following the release feed.
+          draft: true
+          files: assets/*
+          generate_release_notes: true
+          prerelease: ${{ needs.metadata.outputs.prerelease }}
 
       - name: Generate MANIFEST.json
         run: |
@@ -605,8 +612,8 @@ jobs:
           source_sha256="$(curl --proto '=https' --tlsv1.2 -fsSL \
             "https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/$TAG.tar.gz" |
             sha256sum | cut -d' ' -f1)"
-          $HELPER manifest "$TAG" "$VERSION" "$GITHUB_SHA" "$PRERELEASE" \
-            "$GITHUB_REPOSITORY" "$source_sha256" digests assets actual-assets MANIFEST.json
+          $HELPER manifest "$TAG" "$VERSION" '${{ steps.tag.outputs.commit }}' "$PRERELEASE" \
+            "$GITHUB_REPOSITORY" "$source_sha256" artifacts assets actual-assets MANIFEST.json
           cat MANIFEST.json
 
       - name: Attach MANIFEST.json to the draft
@@ -615,12 +622,12 @@ jobs:
       - name: Publish the validated draft exactly once
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" >releases.json
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases" >releases.json
           $HELPER verify-draft "$TAG" "$PRERELEASE" releases.json
-          $HELPER names releases.json "$TAG" >actual-assets
+          $HELPER names releases.json "$TAG" >published-assets
           $HELPER expected "$VERSION" "$DEBIAN_REVISION" "$RPM_COUNTER" "$PRERELEASE" final \
-            >expected-assets
-          $HELPER verify expected-assets actual-assets
+            >expected-published
+          $HELPER verify expected-published published-assets
           release_id="$($HELPER release-id releases.json "$TAG")"
           # Only the draft flag moves: the tag and its target commit are inputs
           # this job verified, never values it writes.

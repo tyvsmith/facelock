@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Decisions the release publication step delegates, so they can be proven by
-# fixture instead of by tagging: the canonical asset allowlist, the maintainer
-# tag check, the draft check, the builder digest attestations, and the
-# publication manifest.
+# fixture instead of by tagging: the canonical asset allowlist, staging those
+# assets out of the builders' workflow artifacts, the maintainer tag check, the
+# draft checks, the builder digest attestations, and the publication manifest.
 #
 # Nothing here writes to the release or to git. `verify-tag` reads a tag and
 # verifies a signature when one is present; it never creates, moves or pushes
@@ -30,13 +30,13 @@ literal() {
 # ------------------------------------------------------------------ allowlist
 
 # The canonical asset names for one validated release identity. Each line is
-# `<label><TAB><anchored ERE>`; the RPM's `%{?dist}` tag is decided inside the
-# pinned Fedora container, so that one entry is a pattern bound to the
-# validated epoch-version-release rather than a literal.
+# `<label><TAB><anchored ERE>`; the RPMs' `%{?dist}` tag is decided inside the
+# pinned Fedora container, so those entries are patterns bound to the validated
+# epoch-version-release rather than literals.
 expected_assets() {
     local version="${1:?}" debian_revision="${2:?}" rpm_counter="${3:?}"
     local prerelease="${4:?}" stage="${5:?}"
-    local suite architecture debian_version rpm_evr
+    local suite architecture debian_version rpm_evr rpm_kind rpm_prefix
 
     case "$stage" in
         builders | final) ;;
@@ -61,7 +61,14 @@ expected_assets() {
 
     rpm_evr="$(release_rpm_evr "$version" "$rpm_counter")" ||
         fail "cannot derive the RPM version-release"
-    printf 'rpm\t%s\\.fc[0-9]+\\.x86_64\\.rpm\n' "$(literal "facelock-${rpm_evr}")"
+    # v0.1.4 published the payload package and its two debug packages; the
+    # release keeps all three, each bound to the validated version-release.
+    for rpm_kind in payload debuginfo debugsource; do
+        rpm_prefix=''
+        [ "$rpm_kind" = payload ] || rpm_prefix="$rpm_kind-"
+        printf 'rpm-%s\t%s\\.fc[0-9]+\\.x86_64\\.rpm\n' "$rpm_kind" \
+            "$(literal "facelock-${rpm_prefix}${rpm_evr}")"
+    done
 
     if [ "$prerelease" = false ]; then
         printf 'apt-repo\t%s\n' "$(literal apt-repo.tar.gz)"
@@ -90,7 +97,7 @@ PY
 verify_assets() {
     local expected_file="${1:?}" actual_file="${2:?}"
     local -a labels=() patterns=() actual=()
-    local label pattern name matches duplicate
+    local label pattern name matches duplicate index
 
     while IFS='	' read -r label pattern; do
         [ -n "$label" ] || continue
@@ -130,12 +137,55 @@ verify_assets() {
     echo "release assets: ${#actual[@]} asset(s) match the canonical allowlist"
 }
 
+# -------------------------------------------------------------------- staging
+
+# Collect exactly the canonical assets out of the builders' workflow artifacts.
+# The allowlist decides what a release carries, so nothing else is copied and no
+# builder can smuggle a file in beside the one it was asked to produce.
+stage_assets() {
+    local expected_file="${1:?}" artifacts_dir="${2:?}" assets_dir="${3:?}"
+    python3 - "$expected_file" "$artifacts_dir" "$assets_dir" <<'PY'
+import re
+import shutil
+import sys
+from pathlib import Path
+
+expected_file, artifacts_dir, assets_dir = sys.argv[1:4]
+
+candidates: list[Path] = [path for path in Path(artifacts_dir).rglob("*") if path.is_file()]
+destination = Path(assets_dir)
+destination.mkdir(parents=True, exist_ok=True)
+
+staged: list[str] = []
+for line in Path(expected_file).read_text(encoding="utf-8").splitlines():
+    if not line.strip():
+        continue
+    label, _, pattern = line.partition("\t")
+    matched = [path for path in candidates if re.fullmatch(pattern, path.name)]
+    if not matched:
+        raise SystemExit(
+            f"release assets: no builder artifact provides the canonical asset {label} ({pattern})"
+        )
+    names = {path.name for path in matched}
+    if len(names) > 1 or len(matched) > 1:
+        found = ", ".join(sorted(str(path) for path in matched))
+        raise SystemExit(
+            f"release assets: more than one builder artifact provides {label}: {found}"
+        )
+    shutil.copy2(matched[0], destination / matched[0].name)
+    staged.append(matched[0].name)
+
+for name in staged:
+    print(name)
+PY
+}
+
 # ----------------------------------------------------------------- identities
 
 # The maintainer's tag is an input to publication, never an output of it.
 verify_tag() {
     local tag="${1:?}" version="${2:?}" commit="${3:?}" repo="${4:-.}"
-    local expected_tag tagged_commit object_type
+    local expected_tag tagged_commit built_commit object_type
 
     expected_tag="$(release_tag_from_cargo "$version")" ||
         fail "cannot derive the release tag for version $version"
@@ -145,8 +195,11 @@ verify_tag() {
         fail "tag $tag does not exist in this repository"
     tagged_commit="$(git -C "$repo" rev-list -n 1 "refs/tags/$tag")" ||
         fail "tag $tag does not resolve to a commit"
-    [ "$tagged_commit" = "$commit" ] ||
-        fail "tag $tag does not point at the built commit $commit (points at $tagged_commit)"
+    # GITHUB_SHA is the tag object for an annotated tag; peel both sides.
+    built_commit="$(git -C "$repo" rev-parse -q --verify "${commit}^{commit}")" ||
+        fail "the built revision $commit does not resolve to a commit"
+    [ "$tagged_commit" = "$built_commit" ] ||
+        fail "tag $tag does not point at the built commit $built_commit (points at $tagged_commit)"
 
     object_type="$(git -C "$repo" cat-file -t "refs/tags/$tag")"
     if [ "$object_type" = tag ] &&
@@ -154,71 +207,96 @@ verify_tag() {
         grep -Eq '^-----BEGIN (PGP|SSH) SIGNATURE-----$'; then
         git -C "$repo" tag -v "$tag" >/dev/null 2>&1 ||
             fail "tag $tag signature verification failed; publication needs a verifiable tag"
-        echo "release assets: tag $tag verified at $commit (signature verified)"
+        echo "release assets: tag $tag verified at $built_commit (signature verified)"
     else
-        echo "release assets: tag $tag verified at $commit (unsigned)"
+        echo "release assets: tag $tag verified at $built_commit (unsigned)"
     fi
 }
 
-# The release this workflow is about to publish must still be an unpublished
-# draft for this exact tag and channel. A rerun after publication stops here.
-verify_draft() {
-    local tag="${1:?}" prerelease="${2:?}" release_json="${3:?}"
-    python3 - "$tag" "$prerelease" "$release_json" <<'PY'
+# The release listing this tag names, read back from the API.
+#
+# `verify-creatable` runs before the draft is written: this tag may have no
+# release at all, or the draft an interrupted run left behind, never a published
+# one. `verify-draft` runs before the flip. `names` and `release-id` read the
+# selected release. Accepts a JSON array, one release object, gh's paginated
+# object stream, and gh's slurped pages.
+release_query() {
+    local mode="${1:?}" releases_json="${2:?}" tag="${3:?}" prerelease="${4:-}"
+    python3 - "$mode" "$releases_json" "$tag" "$prerelease" <<'PY'
 import json
 import sys
+from pathlib import Path
 
-tag, prerelease, path = sys.argv[1], sys.argv[2] == "true", sys.argv[3]
-releases = json.load(open(path, encoding="utf-8"))
-if isinstance(releases, dict):
-    candidates = [releases] if releases else []
-else:
-    candidates = [entry for entry in releases if entry.get("tag_name") == tag]
+mode, path, tag, prerelease = sys.argv[1:5]
+
+
+def load(source: str) -> tuple[list, bool]:
+    """Every shape gh emits: a JSON array, one object, a paginated object
+    stream, or slurped pages. The flag says the caller already selected one."""
+    text = Path(source).read_text(encoding="utf-8")
+    try:
+        document = json.loads(text) if text.strip() else []
+    except json.JSONDecodeError:
+        document = [json.loads(line) for line in text.splitlines() if line.strip()]
+    if isinstance(document, dict):
+        return ([document] if document else []), True
+    releases: list = []
+    for entry in document:
+        if isinstance(entry, list):
+            releases.extend(entry)
+        else:
+            releases.append(entry)
+    return releases, False
+
+
+releases, selected = load(path)
+# A single object is a caller-selected release: hold it to the tag it claims.
+candidates = releases if selected else [r for r in releases if r.get("tag_name") == tag]
+
+if mode == "verify-creatable":
+    if not candidates:
+        print(f"release assets: no release exists for {tag} yet")
+        raise SystemExit(0)
+    if len(candidates) > 1:
+        raise SystemExit(f"release assets: {len(candidates)} releases already exist for {tag}")
+    release = candidates[0]
+    if not release.get("draft"):
+        raise SystemExit(
+            f"release assets: release {release.get('id')} for {tag} is already published; "
+            "refusing to publish twice"
+        )
+    print(f"release assets: reusing the unpublished draft {release.get('id')} for {tag}")
+    raise SystemExit(0)
+
 if len(candidates) != 1:
     raise SystemExit(
         f"release assets: expected exactly one release for tag {tag}, found {len(candidates)}"
     )
 release = candidates[0]
-if release.get("tag_name") != tag:
-    raise SystemExit(
-        f"release assets: draft {release.get('id')} belongs to another tag: {release.get('tag_name')}"
-    )
-if not release.get("draft"):
-    raise SystemExit(
-        f"release assets: release {release.get('id')} for {tag} is already published; refusing to publish twice"
-    )
-if bool(release.get("prerelease")) is not prerelease:
-    raise SystemExit(
-        f"release assets: draft {release.get('id')} carries prerelease="
-        f"{release.get('prerelease')}, which is not the validated prerelease identity"
-    )
-print(f"release assets: draft {release.get('id')} for {tag} is unpublished")
-PY
-}
 
-# The single release this tag names, read back from the API listing.
-read_release() {
-    local mode="${1:?}" releases_json="${2:?}" tag="${3:?}"
-    python3 - "$mode" "$releases_json" "$tag" <<'PY'
-import json
-import sys
-
-mode, path, tag = sys.argv[1], sys.argv[2], sys.argv[3]
-releases = json.load(open(path, encoding="utf-8"))
-if isinstance(releases, dict):
-    candidates = [releases] if releases else []
-else:
-    candidates = [release for release in releases if release.get("tag_name") == tag]
-if len(candidates) != 1:
-    raise SystemExit(
-        f"release assets: expected exactly one release for tag {tag}, found {len(candidates)}"
-    )
-release = candidates[0]
 if mode == "release-id":
     print(release["id"])
-else:
+elif mode == "names":
     for asset in release.get("assets", []):
         print(asset["name"])
+elif mode == "verify-draft":
+    if release.get("tag_name") != tag:
+        raise SystemExit(
+            f"release assets: draft {release.get('id')} belongs to another tag: {release.get('tag_name')}"
+        )
+    if not release.get("draft"):
+        raise SystemExit(
+            f"release assets: release {release.get('id')} for {tag} is already published; "
+            "refusing to publish twice"
+        )
+    if bool(release.get("prerelease")) is not (prerelease == "true"):
+        raise SystemExit(
+            f"release assets: draft {release.get('id')} carries prerelease="
+            f"{release.get('prerelease')}, which is not the validated prerelease identity"
+        )
+    print(f"release assets: draft {release.get('id')} for {tag} is unpublished")
+else:
+    raise SystemExit(f"release assets: unknown release query: {mode}")
 PY
 }
 
@@ -228,16 +306,16 @@ PY
 # builder attested.
 verify_digests() {
     local digests_dir="${1:?}" assets_dir="${2:?}" actual_file="${3:?}"
-    python3 - "$digests_dir" "$assets_dir" "$actual_file" "$MANIFEST_ASSET" <<'PY'
+    python3 - "$digests_dir" "$assets_dir" "$actual_file" <<'PY'
 import hashlib
 import json
 import sys
 from pathlib import Path
 
-digests_dir, assets_dir, actual_file, manifest_asset = sys.argv[1:5]
+digests_dir, assets_dir, actual_file = sys.argv[1:4]
 
 attested: dict[str, list[tuple[str, str]]] = {}
-for path in sorted(Path(digests_dir).rglob("*.json")):
+for path in sorted(Path(digests_dir).rglob("digests.json")):
     document = json.loads(path.read_text(encoding="utf-8"))
     for name, digest in document.get("assets", {}).items():
         attested.setdefault(name, []).append((document.get("job", path.parent.name), digest))
@@ -245,8 +323,6 @@ for path in sorted(Path(digests_dir).rglob("*.json")):
 actual = [line.strip() for line in Path(actual_file).read_text(encoding="utf-8").splitlines() if line.strip()]
 
 for name in actual:
-    if name == manifest_asset:
-        continue
     claims = attested.get(name, [])
     if not claims:
         raise SystemExit(f"release assets: {name} is attested by no builder")
@@ -273,7 +349,7 @@ PY
 # ------------------------------------------------------------------- manifest
 
 # One document covering every published asset plus the source, build-image and
-# component digests the release was built from.
+# component digests the release was built from. It cannot cover itself.
 generate_manifest() {
     local tag="${1:?}" version="${2:?}" commit="${3:?}" prerelease="${4:?}"
     local repository="${5:?}" source_sha256="${6:?}" digests_dir="${7:?}"
@@ -290,7 +366,7 @@ from pathlib import Path
 
 build_images: dict[str, str] = {}
 components: dict[str, object] = {}
-for path in sorted(Path(digests_dir).rglob("*.json")):
+for path in sorted(Path(digests_dir).rglob("digests.json")):
     document = json.loads(path.read_text(encoding="utf-8"))
     job = document.get("job", path.parent.name)
     key = f"{job}:{document['suite']}" if document.get("suite") else job
@@ -303,7 +379,7 @@ assets = []
 for name in sorted({line.strip() for line in Path(actual_file).read_text(encoding="utf-8").splitlines() if line.strip()}):
     asset = Path(assets_dir) / name
     if not asset.is_file():
-        raise SystemExit(f"release assets: {name} is not present in the downloaded release assets")
+        raise SystemExit(f"release assets: {name} is not present in the staged release assets")
     payload = asset.read_bytes()
     assets.append({
         "name": name,
@@ -343,22 +419,32 @@ case "${1:-}" in
         [ "$#" -eq 2 ] || fail "usage: $0 verify <expected-list> <actual-list>"
         verify_assets "$@"
         ;;
+    stage)
+        shift
+        [ "$#" -eq 3 ] || fail "usage: $0 stage <expected-list> <artifacts-dir> <assets-dir>"
+        stage_assets "$@"
+        ;;
     verify-tag)
         shift
         [ "$#" -eq 3 ] || [ "$#" -eq 4 ] ||
             fail "usage: $0 verify-tag <tag> <version> <commit> [repo]"
         verify_tag "$@"
         ;;
+    verify-creatable)
+        shift
+        [ "$#" -eq 2 ] || fail "usage: $0 verify-creatable <tag> <releases-json>"
+        release_query verify-creatable "$2" "$1"
+        ;;
+    verify-draft)
+        shift
+        [ "$#" -eq 3 ] || fail "usage: $0 verify-draft <tag> <prerelease> <releases-json>"
+        release_query verify-draft "$3" "$1" "$2"
+        ;;
     names | release-id)
         mode="$1"
         shift
         [ "$#" -eq 2 ] || fail "usage: $0 $mode <releases-json> <tag>"
-        read_release "$mode" "$1" "$2"
-        ;;
-    verify-draft)
-        shift
-        [ "$#" -eq 3 ] || fail "usage: $0 verify-draft <tag> <prerelease> <release-json>"
-        verify_draft "$@"
+        release_query "$mode" "$1" "$2"
         ;;
     verify-digests)
         shift
@@ -373,6 +459,6 @@ case "${1:-}" in
         generate_manifest "$@"
         ;;
     *)
-        fail "usage: $0 {expected|verify|verify-tag|verify-draft|verify-digests|manifest|names|release-id}"
+        fail "usage: $0 {expected|verify|stage|verify-tag|verify-creatable|verify-draft|names|release-id|verify-digests|manifest}"
         ;;
 esac

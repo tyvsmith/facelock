@@ -126,11 +126,12 @@ build-deb · build-rpm · build-nix
 publish-apt · publish · publish-aur · trigger-pages
 ```
 
-`build` creates the release as a **draft**. `publish` is the only job that
-writes to the release: it verifies the tag, holds every asset to the canonical
-allowlist and to its builder's digest, writes `MANIFEST.json`, and flips the
-draft to published exactly once. Until it runs, nothing is public and Packit has
-seen nothing.
+Every builder produces workflow artifacts and nothing else. `publish` is the
+only job that touches the release: it verifies the tag, stages exactly the
+canonical assets out of those artifacts, holds each one to the digest its
+builder attested, creates the release as a **draft**, writes `MANIFEST.json`,
+and flips the draft to published exactly once. Until it runs, no release exists
+and Packit has seen nothing.
 
 ```bash
 gh run watch
@@ -138,7 +139,8 @@ gh release view v<X.Y.Z> --json assets --jq '.assets[].name'
 ```
 
 A release that stays a draft failed validation: read the `publish` job, fix the
-cause, and re-run the workflow. Never publish the draft by hand.
+cause, and re-run the workflow. Re-running is safe; publishing the draft by hand
+is not, and `publish` refuses a tag that is already published.
 
 `publish-aur` and `publish-apt` push to external package repositories. A failure
 after those succeed is only partially recoverable — check them first when
