@@ -178,8 +178,35 @@ for row in matrix.get("platforms", []):
             f"{row['id']} image is not digest-pinned: {image!r}",
         )
 
+release_identity = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?")
+release_version = os.environ.get("RELEASE_MATRIX_VERSION")
+if release_version is not None:
+    require(
+        release_identity.fullmatch(release_version) is not None,
+        f"invalid RELEASE_MATRIX_VERSION: {release_version!r}",
+    )
+
+
+def workspace_version() -> str:
+    match = re.search(r'(?m)^version = "([^"]+)"', (ROOT / "Cargo.toml").read_text())
+    require(match is not None, "Cargo.toml must declare the workspace version")
+    version = match.group(1)
+    require(release_identity.fullmatch(version) is not None, f"invalid Cargo.toml workspace version: {version!r}")
+    return version
+
+
+def version_triple(version: str) -> tuple[int, int, int]:
+    major, minor, patch = version.split("-", 1)[0].split(".")
+    return (int(major), int(minor), int(patch))
+
+
+# The version the tree is judged as: the tag under release, otherwise the
+# version this tree would tag. Time-boxed contracts measure against it.
+gate_version = release_version if release_version is not None else workspace_version()
+
 expected_suites = {"trixie", "resolute"}
-suite_map = matrix.get("apt_suites", {})
+apt_suites = matrix.get("apt_suites", {})
+suite_map = {suite: details for suite, details in apt_suites.items() if suite != "compat"}
 require(set(suite_map) == expected_suites, "canonical APT suite set drifted")
 expected_suite_contracts = {
     "trixie": {
@@ -230,10 +257,70 @@ for suite, expected in expected_suite_contracts.items():
     require(platform_row.get("package") == "facelock", f"APT suite {suite} must map to the facelock package")
     require(platform_row.get("required_capabilities") == ["tpm"], f"APT suite {suite} must require TPM")
 
+# The v0.1.4 suite names stay published as compatibility suites so a source
+# entry written for 0.1.4 keeps updating: `main` carries trixie's exact package
+# set, `legacy` carries signed empty indexes. The window closes at `retire_at`;
+# the first tree at or past that version, prerelease included, ships without
+# them (#310).
+expected_compat_suites = {"main": "trixie", "legacy": "none"}
+compat_map = apt_suites.get("compat", {})
+require(
+    set(compat_map) == set(expected_compat_suites),
+    f"compatibility APT suite set drifted: {sorted(compat_map)}",
+)
+compat_retire_versions = set()
+for suite, source in expected_compat_suites.items():
+    details = compat_map[suite]
+    require(details.get("source") == source, f"compatibility APT suite {suite} source drifted: {details.get('source')!r}")
+    retire_at = details.get("retire_at")
+    require(
+        isinstance(retire_at, str)
+        and re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", retire_at) is not None,
+        f"compatibility APT suite {suite} has no stable retire_at version: {retire_at!r}",
+    )
+    compat_retire_versions.add(retire_at)
+require(len(compat_retire_versions) == 1, "compatibility APT suites must share one retirement version")
+compat_retire_at = compat_retire_versions.pop()
+compat_active = version_triple(gate_version) < version_triple(compat_retire_at)
+active_compat_suites = set(expected_compat_suites) if compat_active else set()
+
 apt_config = (ROOT / "dist/apt/conf/distributions").read_text()
-declared_suites = set(re.findall(r"^Codename:\s*(\S+)\s*$", apt_config, re.MULTILINE))
-require(declared_suites == expected_suites, f"APT config suites {sorted(declared_suites)} != {sorted(expected_suites)}")
-require("Codename: main" not in apt_config and "Codename: legacy" not in apt_config, "ambiguous APT suites remain")
+apt_stanzas: dict[str, dict[str, str]] = {}
+for stanza in re.split(r"\n\s*\n", apt_config.strip()):
+    fields = dict(re.findall(r"(?m)^([A-Za-z]+):[ \t]*(.*?)[ \t]*$", stanza))
+    require("Codename" in fields, f"APT config stanza without a Codename: {stanza!r}")
+    require(fields["Codename"] not in apt_stanzas, f"duplicate APT config stanza {fields['Codename']}")
+    apt_stanzas[fields["Codename"]] = fields
+declared_suites = set(apt_stanzas)
+for suite in sorted(set(expected_compat_suites) - active_compat_suites):
+    require(
+        suite not in declared_suites,
+        f"compatibility APT suite {suite} reached retire_at {compat_retire_at}; remove its stanza from dist/apt/conf/distributions",
+    )
+require(
+    declared_suites == expected_suites | active_compat_suites,
+    f"APT config suites {sorted(declared_suites)} != {sorted(expected_suites | active_compat_suites)}",
+)
+for suite, fields in apt_stanzas.items():
+    # Origin and Label are compared by every installed client: a change is an
+    # apt update failure, not a warning. Suite is not pinned; adding one where
+    # none existed passes apt.
+    for field, value in (
+        ("Origin", "tysmith"),
+        ("Label", "Ty Smith Packages"),
+        ("Architectures", "amd64"),
+        ("Components", "facelock"),
+        ("SignWith", "default"),
+    ):
+        require(fields.get(field) == value, f"APT suite {suite} {field} drifted: {fields.get(field)!r}")
+for suite in active_compat_suites:
+    description = apt_stanzas[suite].get("Description", "")
+    source = expected_compat_suites[suite]
+    replacements = {source} if source != "none" else expected_suites
+    require(
+        "deprecated" in description.lower() and all(name in description for name in replacements),
+        f"compatibility APT suite {suite} description must name the deprecation and the codenamed replacement: {description!r}",
+    )
 
 try:
     packit = json.loads((ROOT / ".packit.yaml").read_text())
@@ -280,13 +367,6 @@ require(
     production_trigger in {"ignore", "release"},
     f"Packit production COPR trigger must be 'ignore' or 'release', got {production_trigger!r}",
 )
-release_version = os.environ.get("RELEASE_MATRIX_VERSION")
-if release_version is not None:
-    require(
-        re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?", release_version)
-        is not None,
-        f"invalid RELEASE_MATRIX_VERSION: {release_version!r}",
-    )
 if release_version is not None and "-" not in release_version:
     require(
         production_trigger == "release",
@@ -408,6 +488,18 @@ require(
 )
 for suffix in ("~deb13u1", "~ubuntu26.04.1"):
     require(suffix not in apt_publisher, f"APT publisher duplicates the central suite suffix {suffix}")
+# The publisher's compatibility steps run only when their stanza is declared,
+# so retirement is the stanza deletion and the steps may stay.
+for suite in active_compat_suites:
+    step = f"includedeb {suite}" if expected_compat_suites[suite] != "none" else f"export {suite}"
+    require(
+        re.search(rf'(?m)^\s*reprepro -b "\$\{{REPO_DIR\}}" {re.escape(step)}\b', apt_publisher) is not None,
+        f"APT publisher does not populate compatibility suite {suite} ({step})",
+    )
+require(
+    "dists pool tysmith-archive-keyring.gpg" in workflow,
+    "APT repo artifact must carry the whole dists tree, every published suite included",
+)
 direct_fedora_image = next(row["image"] for row in matrix["platforms"] if row["id"] == "fedora-44-direct")
 require(f"image: {direct_fedora_image}" in workflow, "direct RPM workflow must pin Fedora 44 by digest")
 require("prerelease: ${{ needs.metadata.outputs.prerelease }}" in workflow, "GitHub Release prerelease output is not wired")
@@ -527,6 +619,15 @@ for relative_path in (
         "registry.fedoraproject.org/fedora:" not in fedora_containerfile,
         f"{relative_path} pins a Fedora image outside the release matrix",
     )
+apt_client_containerfile = (ROOT / "test/Containerfile.apt-client").read_text()
+require(
+    re.search(r"(?m)^ARG BASE_IMAGE\s*$\n^FROM \$\{BASE_IMAGE\}\s*$", apt_client_containerfile) is not None,
+    "test/Containerfile.apt-client does not take its base image from the release matrix",
+)
+require(
+    "docker.io/library/debian:" not in apt_client_containerfile,
+    "test/Containerfile.apt-client pins a Debian image outside the release matrix",
+)
 lane_resolver = (ROOT / "test/fedora-lane-image.sh").read_text()
 for phrase in ("RELEASE_MATRIX_TODAY", "_eol_gate", "staging_copr_targets"):
     require(phrase in lane_resolver, f"Fedora lane resolver omits matrix authority: {phrase}")
@@ -758,7 +859,6 @@ for phrase in (
     "## Release Channels and APT Paths",
     "https://tysmith.me/facelock/apt/dists/trixie/Release",
     "https://tysmith.me/facelock/apt/dists/resolute/Release",
-    "`main` and `legacy`",
     "stable APT, stable AUR, or production COPR",
     "required supported production COPR chroots are exactly Fedora 43, Fedora 44, and Fedora 45",
     "Rawhide is the only optional allowed experimental production chroot",
@@ -858,7 +958,7 @@ debian_support_phrase = (
 )
 debian_source_phrases = (
     "Trixie package builds use the official Trixie Backports `cargo` and `rustc`",
-    "Both suites ship one binary package named `facelock` with TPM support enabled.",
+    "Both codenamed suites ship one binary package named `facelock` with TPM support enabled.",
     "No `rustup` toolchain participates in Debian source builds.",
     "deterministic Cargo-vendor component",
     "network denied and empty Cargo/Rustup caches",
@@ -872,6 +972,58 @@ normalized_releasing = re.sub(r"\s+", " ", (ROOT / "docs/releasing.md").read_tex
 for phrase in debian_source_phrases:
     require(phrase in normalized_releasing, f"release documentation omits Debian source policy: {phrase}")
     require(phrase in normalized_contracts, f"system contracts omit Debian source policy: {phrase}")
+
+# The window is a promise to clients that are not reading this repository, so
+# every install document carries it while it is open, and none may keep the
+# present-tense promise once it has closed.
+compat_window_claims = {
+    "docs/contracts.md": (
+        normalized_contracts,
+        ("`main` and `legacy` are compatibility suites", f"removed at {compat_retire_at}"),
+        "`main` and `legacy` are compatibility suites",
+    ),
+    "docs/releasing.md": (
+        normalized_releasing,
+        (f"compatibility suites present until {compat_retire_at}",),
+        f"compatibility suites present until {compat_retire_at}",
+    ),
+    "README.md": (
+        re.sub(r"\s+", " ", readme),
+        (
+            "`main` or `legacy`",
+            f"keep working until {compat_retire_at}",
+            "`apt update` fails until the entry is removed",
+        ),
+        f"keep working until {compat_retire_at}",
+    ),
+    "book/src/quickstart.md": (
+        re.sub(r"\s+", " ", install_docs["book/src/quickstart.md"]),
+        (
+            "`main` or `legacy`",
+            f"keep working until {compat_retire_at}",
+            "`apt update` fails until the entry is removed",
+        ),
+        f"keep working until {compat_retire_at}",
+    ),
+    "website/index.html": (
+        re.sub(r"\s+", " ", install_docs["website/index.html"]),
+        (
+            "<code>main</code> or <code>legacy</code>",
+            f"keep working until {compat_retire_at}",
+            "<code>apt update</code> fails until the entry is removed",
+        ),
+        f"keep working until {compat_retire_at}",
+    ),
+}
+for relative_path, (content, claims, promise) in compat_window_claims.items():
+    if compat_active:
+        for claim in claims:
+            require(claim in content, f"{relative_path} omits the APT compatibility window: {claim}")
+    else:
+        require(
+            promise not in content,
+            f"{relative_path} still promises the APT compatibility window past {compat_retire_at}: {promise}",
+        )
 
 compatibility_paths = ("docs/compatibility.md", "book/src/compatibility.md")
 compatibility_support_floor = debian_support_phrase

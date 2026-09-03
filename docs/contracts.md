@@ -2117,15 +2117,28 @@ paths and payload identities are:
 |-------|---------------------|--------------|---------|
 | `trixie` | `https://tysmith.me/facelock/apt/dists/trixie/Release` | amd64 | `facelock`, TPM enabled |
 | `resolute` | `https://tysmith.me/facelock/apt/dists/resolute/Release` | amd64 | `facelock`, TPM enabled |
+| `main` | `https://tysmith.me/facelock/apt/dists/main/Release` | amd64 | the `trixie` package, until 0.3.0 |
+| `legacy` | `https://tysmith.me/facelock/apt/dists/legacy/Release` | amd64 | none, until 0.3.0 |
 
-The former `main` and `legacy` suite names are retired; they are not aliases or
-redirects. Existing source entries must replace that suite component with the
-host operating-system codename while keeping the `facelock` component.
+The v0.1.4 suite names `main` and `legacy` are compatibility suites, not
+aliases or redirects, and neither ships a package of its own. Only `main`
+carries a package: the exact signed `trixie` package set. `legacy`, which
+served the non-TPM build, carries signed empty indexes so that `apt update`
+still succeeds. Both are published with every stable release through 0.2.x
+and both are removed at 0.3.0. `dist/release-matrix.json` declares them under
+`apt_suites.compat` with that `retire_at`. `test/check-release-matrix.py`
+requires their stanzas, the publisher steps, and the migration note while the
+window is open, and refuses the stanzas and the note from that version on,
+prereleases included; the publisher runs each step only when its stanza is
+declared, so retirement is the stanza deletion. Existing source entries must
+replace that suite with the host operating-system codename before 0.3.0 while
+keeping the `facelock` component.
 Debian-family release support is exactly Debian 13 (Trixie) and Ubuntu 26.04
 LTS (Resolute). Bookworm and Noble artifacts may remain in historical releases,
 but those suites are unsupported and receive no new packages.
 
-Both suites ship one binary package named `facelock` with TPM support enabled.
+Both codenamed suites ship one binary package named `facelock` with TPM
+support enabled.
 There are no legacy/TPM package-name alternatives and the package declares no
 `Provides`, `Conflicts`, or `Replaces` transition identity. Stable publication
 consumes exactly two suite manifests, one matching package per suite, and a

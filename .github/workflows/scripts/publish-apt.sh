@@ -69,11 +69,13 @@ if [ -z "${APT_GPG_PASSPHRASE:-}" ]; then
   exit 1
 fi
 
-# Configure GPG agent for non-interactive signing
-mkdir -p ~/.gnupg
-chmod 700 ~/.gnupg
-echo "allow-preset-passphrase" >> ~/.gnupg/gpg-agent.conf
-echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+# Configure GPG agent for non-interactive signing. GNUPGHOME is honoured so a
+# test can give the publisher its own keyring and agent instead of the user's.
+export GNUPGHOME="${GNUPGHOME:-$HOME/.gnupg}"
+mkdir -p "$GNUPGHOME"
+chmod 700 "$GNUPGHOME"
+echo "allow-preset-passphrase" >> "$GNUPGHOME/gpg-agent.conf"
+echo "allow-loopback-pinentry" >> "$GNUPGHOME/gpg-agent.conf"
 gpgconf --kill gpg-agent || true
 gpg-agent --daemon 2>/dev/null || gpgconf --launch gpg-agent
 
@@ -99,7 +101,20 @@ for index in "${!DEBS[@]}"; do
   DEB="${DEBS[index]}"
   echo "Adding ${DEB} to ${SUITE}"
   reprepro -b "${REPO_DIR}" includedeb "$SUITE" "$DEB"
+  # Clients set up from the v0.1.4 README ask for the `main` suite. They keep
+  # receiving the trixie package under that name until 0.3.0 (#310). The step
+  # follows its stanza, so retiring the suite is deleting the stanza.
+  if [ "$SUITE" = trixie ] && grep -qx 'Codename: main' "${REPO_DIR}/conf/distributions"; then
+    echo "Adding ${DEB} to main (compatibility suite for v0.1.4 source entries)"
+    reprepro -b "${REPO_DIR}" includedeb main "$DEB"
+  fi
 done
+
+# `legacy` was the non-TPM suite and nothing is built for it any more. Signed
+# empty indexes keep `apt update` succeeding on those clients until 0.3.0.
+if grep -qx 'Codename: legacy' "${REPO_DIR}/conf/distributions"; then
+  reprepro -b "${REPO_DIR}" export legacy
+fi
 
 # Export only the signing key (not the entire keyring)
 gpg --export "${KEY_FPR}" > "${REPO_DIR}/tysmith-archive-keyring.gpg"
@@ -108,7 +123,9 @@ echo "Public keyring exported ($(du -h "${REPO_DIR}/tysmith-archive-keyring.gpg"
 echo "=== APT repo structure ==="
 find "${REPO_DIR}" -type f | sort
 echo ""
-echo "=== Release file (trixie) ==="
-cat "${REPO_DIR}/dists/trixie/Release" || true
+for SUITE in $(sed -n 's/^Codename:[[:space:]]*//p' "${REPO_DIR}/conf/distributions"); do
+  echo "=== Release file (${SUITE}) ==="
+  cat "${REPO_DIR}/dists/${SUITE}/Release" || true
+done
 
 echo "=== APT repository built ==="

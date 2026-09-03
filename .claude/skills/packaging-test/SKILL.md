@@ -32,7 +32,7 @@ need `podman`; none in the routing table needs a camera.
 | `dist/PKGBUILD*`, `dist/facelock.install`, `dist/facelock-pam-remove.hook` | `just test-arch-pkg` |
 | `.packit.yaml` schema only | `just test-packit-config` — real `packit` in a pinned Fedora container, seconds |
 | `.packit.yaml` semantics, or anything COPR consumes | `just test-copr` — slow, opt-in, Packit SRPM plus a mock from-source rebuild |
-| APT repo generation, `publish-apt` workflow | `just test-apt-repo` — needs `reprepro` and `gpg` |
+| APT repo generation, `publish-apt` workflow, `dist/apt/**` | `just test-apt-repo` — the real publisher, signing, and a clean APT client for every suite, in the pinned trixie container |
 | `systemd/`, `dbus/`, `polkit/`, install paths | both Debian suite recipes or `just test-rpm-pkg` — all validate under booted systemd |
 | `crates/pam-facelock/**`, `/etc/pam.d` handling | `just test-arch-pam` and `just check-pam-standalone` |
 | File layout, installed paths | `just test-arch-layout` |

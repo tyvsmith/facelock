@@ -21,6 +21,16 @@
       "revision_suffix": "~ubuntu26.04.1",
       "image": "docker.io/library/ubuntu:26.04@sha256:6df9e8dd1eac389ebfef692c9648449adeb815d01e16e29cd6f3e50fe64ba9a6",
       "image_amd64_digest": "sha256:889d056d5c6c0bfb55789ff3710681d68e50713cb562d2196dc07110599c7a6f"
+    },
+    "compat": {
+      "main": {
+        "source": "trixie",
+        "retire_at": "0.3.0"
+      },
+      "legacy": {
+        "source": "none",
+        "retire_at": "0.3.0"
+      }
     }
   },
   "fedora": {

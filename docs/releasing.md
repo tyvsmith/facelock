@@ -91,7 +91,7 @@ The `.github/workflows/release.yml` workflow:
 4. Builds the direct `.rpm` package in the pinned Fedora 44 container and validates contents
 5. Validates Nix flake evaluation
 6. Publishes stable releases to AUR — `facelock`, `facelock-bin`, and `facelock-git` — if `AUR_SSH_KEY` is configured
-7. Publishes stable releases to the signed, codenamed APT suites if the APT signing secrets are configured
+7. Publishes stable releases to the signed, codenamed APT suites, and to the `main` and `legacy` compatibility suites until 0.3.0, if the APT signing secrets are configured
 8. Triggers GitHub Pages rebuild to include updated APT repo
 
 Validated prerelease tags set the GitHub Release `prerelease` output and upload
@@ -109,7 +109,7 @@ which reacts to the GitHub Release published in step 1. See the COPR section bel
 | `resolute` | Ubuntu 26.04 | native distro `cargo` and `rustc` | Yes | `X.Y.Z-1~ubuntu26.04.1` |
 
 Debian-family release support is exactly Debian 13 (Trixie) and Ubuntu 26.04
-LTS (Resolute). Both suites ship one binary package named `facelock` with TPM
+LTS (Resolute). Both codenamed suites ship one binary package named `facelock` with TPM
 support enabled. No `rustup` toolchain participates in Debian source builds.
 Bookworm and Noble artifacts may remain in historical releases, but those
 suites are unsupported and receive no new packages.
@@ -356,6 +356,11 @@ reachable without a host `packit` install. It has no skip path: podman is a
 preflight prerequisite, and without it the gate fails rather than passing
 unrun. `just test-packit-config` runs the same gate on its own.
 
+Preflight also holds the APT compatibility window: `main` and `legacy`
+compatibility suites present until 0.3.0, as `dist/release-matrix.json`
+declares, and absent from the first 0.3.0 tree on. `just test-apt-repo` proves
+the published shape when run, as a clean APT client; no workflow runs it.
+
 ### Package repository setup (one-time)
 
 #### AUR (Arch Linux)
@@ -523,10 +528,19 @@ codenamed suites are published:
 - **`trixie`**: Debian 13 TPM build using Trixie Backports Rust/Cargo
 - **`resolute`**: Ubuntu 26.04 TPM build using native Rust/Cargo
 
-The former ambiguous `main` and `legacy` suite names are retired. Existing
-clients must replace that suite component in their Facelock source entry with
-their operating-system codename before the first codenamed stable publication.
-Prerelease packages are never inserted into these stable suites.
+Two compatibility suites are published alongside them until 0.3.0, for
+clients whose source entry was written for v0.1.4:
+
+- **`main`**: the `trixie` package, included by `publish-apt.sh` from the same
+  validated artifact
+- **`legacy`**: no package; `reprepro export` writes signed empty indexes so
+  `apt update` keeps succeeding
+
+Those clients must replace the suite in their Facelock source entry
+with their operating-system codename before 0.3.0. `dist/release-matrix.json`
+declares the window under `apt_suites.compat`, and `check-release-matrix.py`
+fails the first tree at or past `retire_at` that still carries the stanzas.
+Prerelease packages are never inserted into any of these stable suites.
 Stable publication requires exactly one suite-matching package for both
 codenames before signing or repository writes begin.
 

@@ -617,6 +617,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   embedding counts, so remove any model from an enrollment you remember
   failing with `facelock remove <id>`, or `facelock clear` and re-enroll.
 
+- **APT source entries from v0.1.4 keep updating** (#310): the `main` and
+  `legacy` suites are published again as compatibility suites until 0.3.0.
+  `main` carries the signed trixie package, `legacy` carries signed empty
+  indexes, and `apt update` succeeds with either entry unchanged. Replace the
+  suite with the host codename (`trixie` or `resolute`) before 0.3.0.
 - **Root refusal now precedes config-state errors** (#191): for the commands
   dispatched through the shared config parse (`enroll`, `remove`, `clear`,
   `list`, `test`, `preview`, `devices`, `bench`, `tpm …`, `audit`), the root

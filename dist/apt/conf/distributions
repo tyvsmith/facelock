@@ -13,3 +13,19 @@ Architectures: amd64
 Components: facelock
 Description: Facelock APT repository - Ubuntu 26.04 resolute
 SignWith: default
+
+Origin: tysmith
+Label: Ty Smith Packages
+Codename: main
+Architectures: amd64
+Components: facelock
+Description: Facelock APT repository - deprecated v0.1.4 suite name, serves the trixie package until 0.3.0
+SignWith: default
+
+Origin: tysmith
+Label: Ty Smith Packages
+Codename: legacy
+Architectures: amd64
+Components: facelock
+Description: Facelock APT repository - deprecated v0.1.4 non-TPM suite, empty; use trixie (Debian 13) or resolute (Ubuntu 26.04)
+SignWith: default

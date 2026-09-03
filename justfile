@@ -1282,31 +1282,20 @@ test-rpm-release-shell release="44": (_fedora-lane-image release) build-release
     podman run --rm -it $devices $mounts facelock-rpm-pkg-f{{ release }} \
         bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; exec bash"
 
-# Test APT repo generation locally from both exact manifests (requires reprepro + gpg).
+# Publish both exact manifests, or stand-in packages when none are given,
+# through the real stable publisher in the pinned Debian trixie container, then
+# prove a clean APT client resolves every declared suite from the tree pages.yml
+# serves: the codenamed pair and the v0.1.4 compatibility names (#310).
+# Needs podman; reprepro, gpg, dpkg-deb and apt all run in the container.
 test-apt-repo trixie_manifest='' resolute_manifest='':
     #!/usr/bin/env bash
     set -euo pipefail
 
-    # Check tools
-    for cmd in reprepro dpkg-deb; do
-        command -v "$cmd" >/dev/null || { echo "Error: '$cmd' not found. Install it first."; exit 1; }
-    done
-
-    # Verify config exists
+    command -v podman >/dev/null || { echo "Error: 'podman' not found. Install it first."; exit 1; }
     if [ ! -f dist/apt/conf/distributions ]; then
         echo "Error: dist/apt/conf/distributions not found"
         exit 1
     fi
-
-    TMPDIR=$(mktemp -d)
-    trap 'rm -rf "$TMPDIR"' EXIT
-
-    REPO_DIR="${TMPDIR}/repo"
-    mkdir -p "${REPO_DIR}/conf"
-    cp dist/apt/conf/distributions "${REPO_DIR}/conf/distributions"
-
-    # For local testing without GPG, strip SignWith lines
-    sed -i '/^SignWith:/d' "${REPO_DIR}/conf/distributions"
 
     suites=(trixie resolute)
     manifests=(
@@ -1319,67 +1308,59 @@ test-apt-repo trixie_manifest='' resolute_manifest='':
             supplied=$((supplied + 1))
         fi
     done
-
-    if [ "$supplied" -eq 0 ]; then
-        echo "No exact Debian artifact manifest supplied."
-        echo "Validating reprepro config only..."
-        reprepro -b "${REPO_DIR}" check
-        echo ""
-        echo "APT repo config: OK"
-        echo "Pass the trixie and resolute manifests to include their exact .deb payloads."
-        exit 0
-    fi
-    if [ "$supplied" -ne "${#suites[@]}" ]; then
+    if [ "$supplied" -ne 0 ] && [ "$supplied" -ne "${#suites[@]}" ]; then
         echo "Error: test-apt-repo requires either no manifests or exactly one manifest for each stable suite: trixie, resolute" >&2
         exit 1
     fi
 
+    mounts=(-v "$PWD:/src:ro")
+    lane_args=()
     for index in "${!suites[@]}"; do
         suite="${suites[$index]}"
         manifest="${manifests[$index]}"
-        [ -n "$manifest" ] || {
-            echo "Error: missing exact generated manifest for $suite" >&2
+        [ -n "$manifest" ] || continue
+        [ -f "$manifest" ] || {
+            echo "Error: missing exact generated manifest for $suite: $manifest" >&2
             exit 1
         }
-        bash test/deb-package-contract.sh --manifest "$manifest"
         manifest_dir=$(cd "$(dirname "$manifest")" && pwd)
-        mapfile -t packages < <(grep -E '\.deb$' "$manifest")
-        if [ "${#packages[@]}" -ne 1 ]; then
-            echo "Error: $suite manifest must name exactly one .deb payload: $manifest" >&2
-            exit 1
-        fi
-        deb="$manifest_dir/${packages[0]}"
-        version=$(dpkg-deb -f "$deb" Version)
-        case "$suite" in
-            trixie) expected_suffix='~deb13u1' ;;
-            resolute) expected_suffix='~ubuntu26.04.1' ;;
-        esac
-        case "$version" in
-            *"$expected_suffix") ;;
-            *)
-                echo "Error: $deb version '$version' does not match stable APT suite '$suite' ($expected_suffix)" >&2
-                exit 1
-                ;;
-        esac
-        reprepro -b "${REPO_DIR}" includedeb "$suite" "$deb"
+        mounts+=(-v "$manifest_dir:/manifests/$suite:ro,Z")
+        lane_args+=(--manifest "$suite=/manifests/$suite/$(basename "$manifest")")
+    done
+    if [ "$supplied" -eq 0 ]; then
+        echo "No exact Debian artifact manifest supplied; publishing stand-in packages at this tree's version."
+    fi
+
+    # The lane image is the trixie suite image; the compatibility suites and
+    # what each serves come from the matrix, for the suites the config declares.
+    base_image="$(python3 - dist/release-matrix.json <<'PY'
+    import json
+    import sys
+
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        print(json.load(handle)["apt_suites"]["trixie"]["image"])
+    PY
+    )"
+    mapfile -t compat < <(python3 - dist/release-matrix.json dist/apt/conf/distributions <<'PY'
+    import json
+    import re
+    import sys
+
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        compat = json.load(handle)["apt_suites"].get("compat", {})
+    with open(sys.argv[2], encoding="utf-8") as handle:
+        declared = set(re.findall(r"(?m)^Codename:\s*(\S+)", handle.read()))
+    for suite, details in compat.items():
+        if suite in declared:
+            print(f"{suite}={details['source']}")
+    PY
+    )
+    for entry in "${compat[@]}"; do
+        lane_args+=(--compat "$entry")
     done
 
-    echo ""
-    echo "=== APT repo structure ==="
-    find "${REPO_DIR}" -type f -not -path '*/db/*' -not -path '*/conf/*' | sort
-
-    # Validate expected structure
-    for SUITE in trixie resolute; do
-        [ -f "${REPO_DIR}/dists/${SUITE}/Release" ] || { echo "MISSING: dists/${SUITE}/Release" >&2; exit 1; }
-        echo "OK: dists/${SUITE}/Release"
-        [ -d "${REPO_DIR}/dists/${SUITE}/facelock/binary-amd64" ] || { echo "MISSING: dists/${SUITE}/facelock/binary-amd64/" >&2; exit 1; }
-        echo "OK: dists/${SUITE}/facelock/binary-amd64/"
-    done
-    [ -d "${REPO_DIR}/pool/facelock" ] || { echo "MISSING: pool/facelock/" >&2; exit 1; }
-    echo "OK: pool/facelock/"
-
-    echo ""
-    echo "APT repo generation: OK"
+    podman build --build-arg "BASE_IMAGE=$base_image" -t facelock-apt-client -f test/Containerfile.apt-client test
+    podman run --rm --network=none "${mounts[@]}" facelock-apt-client /src/test/apt-client-lane.sh "${lane_args[@]}"
 
 # Quick preflight before tagging a release
 # Usage:
