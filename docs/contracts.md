@@ -3405,8 +3405,14 @@ package upgrade:
   key artifact.** Creation is `O_CREAT | O_EXCL | O_NOFOLLOW` with the file and
   its parent directory flushed, so concurrent starts resolve to exactly one key
   and a symlink at the key path is refused rather than followed.
-- **Config, models, enrollment markers and audit data are untouched.**
-  Administrator edits to `/etc/facelock/config.toml` survive.
+- **Config, models and audit data are untouched.** Administrator edits to
+  `/etc/facelock/config.toml` survive.
+- **Enrollment markers keep their owner and mode, and their content is
+  reconciled.** The marker is the one piece of state an upgrade is supposed to
+  rewrite: a marker that disagrees with the database is rewritten at daemon
+  startup, so `facelock is-enrolled` cannot answer "not enrolled" for a user
+  whose templates are present (#137). Byte identity is deliberately not the
+  contract here, because it would preserve a marker that lies.
 - **Modes converge to ADR 010** without content changing, and the retired
   `facelock` group is removed if an older install left one.
 - **PAM is never activated by an upgrade.** An existing service file keeps its

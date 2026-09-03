@@ -738,9 +738,11 @@ legacy rows at `device_id = NULL`. A known embedding still decrypts to the exact
 plaintext it was enrolled as, which a file hash cannot show: a preserved key and
 a preserved ciphertext nobody can open any more hash identically. No key
 artifact is replaced and none appears that was not there before. Modes converge
-to ADR 010 without content changing. The administrator's PAM service is
-byte-identical, a correct password still authenticates, and a wrong one still
-fails.
+to ADR 010 without content changing. The enrollment marker keeps its owner and
+mode and its content is reconciled against the database rather than preserved
+byte for byte — the one piece of state the upgrade is supposed to rewrite
+(#137). The administrator's PAM service is byte-identical, a correct password
+still authenticates, and a wrong one still fails.
 
 **Version ordering on a development tree.** Until `just release` bumps the
 workspace, the candidate .deb built from the tree is `0.1.4-1~deb13u1`, which
