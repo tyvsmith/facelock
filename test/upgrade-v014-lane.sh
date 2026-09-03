@@ -892,7 +892,13 @@ assert_key_refusal() {
         install -m0600 "$saved" /etc/facelock/encryption.key
         fail "the daemon stopped serving on a $variant key (exit $status)"
     }
-    grep -qiE 'refusing to write a replacement key|could not be created/read' "$output" || {
+    # Matches the refusal, not one release's phrasing of it. The security
+    # review that owns this message has already moved it once, from "refusing
+    # to write a replacement key" to "refusing to write an encryption key at
+    # <path>", and this lane is stacked under that work. Pinning the sentence
+    # would make the harness red on wording; requiring the daemon to say it is
+    # refusing to write or mint a key keeps the assertion.
+    grep -qiE 'refus[a-z]* to (write|mint)[^.]*key|could not be created/read' "$output" || {
         tail -20 "$output" >&2
         install -m0600 "$saved" /etc/facelock/encryption.key
         fail "the daemon did not report the $variant key over encrypted rows"
