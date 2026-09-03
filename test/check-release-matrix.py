@@ -151,6 +151,13 @@ require(
     "production COPR authority must separate required supported and optional experimental chroots",
 )
 require(production_copr.get("prerelease_publication") is False, "production COPR must exclude prereleases")
+# Production has no provisioning switch and must never grow one. The switch is
+# what makes test/check-live-release-channels.py skip a channel, and production
+# is the channel that must always be queried.
+require(
+    "provisioned" not in production_copr,
+    "production COPR must not declare a provisioning switch",
+)
 require(staging_copr.get("owner") == "tyvsmith", "staging COPR owner drifted")
 require(staging_copr.get("project") == "facelock-testing", "staging COPR identity drifted")
 require(

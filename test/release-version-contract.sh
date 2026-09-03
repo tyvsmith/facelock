@@ -978,6 +978,11 @@ assert_matrix_mutation_rejected \
 # checked-in authority it must agree with, and the fact that neither may reach
 # Rawhide or the production project.
 assert_matrix_mutation_rejected \
+    "production COPR granted a provisioning switch" \
+    "dist/release-matrix.json" \
+    's/"prerelease_publication": false/"provisioned": true, "prerelease_publication": false/' \
+    "production COPR must not declare a provisioning switch"
+assert_matrix_mutation_rejected \
     "staging COPR api_url pointed at the production project" \
     "dist/release-matrix.json" \
     's@projectname=facelock-testing@projectname=facelock@' \
@@ -1280,6 +1285,26 @@ live_channel_authority_case() {
     esac
     echo "release channel case: $context rejected"
 }
+
+# Production carries no provisioning switch, so it must query on every run. The
+# authority here points at a closed local port: the checker has to report a
+# failed read rather than skipping, and nothing reaches COPR to prove it.
+live_offline_root="$tmp_root/live-channel-offline"
+mkdir -p "$live_offline_root/dist" "$live_offline_root/test"
+cp "$repo_root/test/check-live-release-channels.py" "$live_offline_root/test/"
+sed 's@"api_url": "https://copr.fedorainfracloud.org/api_3/project?ownername=tyvsmith&projectname=facelock"@"api_url": "http://127.0.0.1:1/"@' \
+    "$repo_root/dist/release-matrix.json" > "$live_offline_root/dist/release-matrix.json"
+if cmp -s "$repo_root/dist/release-matrix.json" "$live_offline_root/dist/release-matrix.json"; then
+    fail "live channel offline fixture did not repoint the production API"
+fi
+if live_offline_output=$(python3 "$live_offline_root/test/check-live-release-channels.py" 2>&1); then
+    fail "live channel checker skipped the production query instead of performing it: $live_offline_output"
+fi
+case "$live_offline_output" in
+    *"cannot read the public production COPR API"*) ;;
+    *) fail "live channel checker did not report a failed production query: $live_offline_output" ;;
+esac
+echo "release channel case: production queries its authority on every run"
 
 live_channel_authority_case \
     "production authority without optional experimental chroots" \

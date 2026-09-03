@@ -79,13 +79,27 @@ if not required_chroots.isdisjoint(optional_chroots):
     fail(f"release matrix {args.channel} COPR required and optional chroots overlap")
 allowed_chroots = required_chroots | optional_chroots
 
+# The provisioning switch decides whether a channel may be skipped, so it is
+# read strictly. Only an explicit false skips: a missing or malformed switch
+# queries, because a channel that cannot say it is unprovisioned has not said
+# it. Production declares no switch at all and therefore always queries.
+declared_provisioned = channel.get("provisioned")
+if args.channel == "production":
+    if declared_provisioned is not None:
+        fail("release matrix production COPR authority must not declare a provisioning switch")
+elif not isinstance(declared_provisioned, bool):
+    fail(
+        "release matrix staging COPR authority must declare a boolean provisioning switch: "
+        f"{declared_provisioned!r}"
+    )
+
 # A response fixture is the project answering, so it is always compared. Without
 # one, an unprovisioned channel reports that and queries nothing: issue #236
 # owns creating the staging project, and a checker that invented a verdict for a
 # project that does not exist would be the failure this gate exists to prevent.
 if args.response_file:
     response = load_json(args.response_file, f"{args.channel} COPR response fixture")
-elif channel.get("provisioned") is not True:
+elif declared_provisioned is False:
     provisioning_issue = channel.get("provisioning_issue")
     owed_to = f"; issue #{provisioning_issue} owns it" if provisioning_issue else ""
     print(
