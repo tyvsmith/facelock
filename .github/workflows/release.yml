@@ -8,6 +8,14 @@ on:
 # publish job may write to the release (#235).
 permissions: {}
 
+# One run per tag. A re-run started while a run is inside publish would pass
+# verify-creatable beside it and the survivor could carry one run's binaries
+# under the other's digests; it queues instead. Never cancel the run in
+# progress: it may be mid-publication.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   metadata:
     name: Validate Release Identity
@@ -442,15 +450,17 @@ jobs:
           nix_path: nixpkgs=channel:nixpkgs-unstable
 
       - name: Check flake
+        # Evaluation is deterministic against flake.lock and gates
+        # publication; a network flake is a re-run, not a pass.
         run: nix flake check ./dist/nix --no-build
-        continue-on-error: true
 
       - name: Build with Nix
         run: nix build ./dist/nix
         continue-on-error: true
         # Nix build may fail if onnxruntime hash changes.
-        # This job validates the expression evaluates, not that
-        # the build succeeds (which depends on nixpkgs state).
+        # This step is advisory: the job gates on the expression
+        # evaluating, not on the build succeeding (which depends on
+        # nixpkgs state).
 
   publish-aur:
     name: Publish to AUR
@@ -667,6 +677,10 @@ jobs:
           $HELPER expected "$VERSION" "$DEBIAN_REVISION" "$RPM_COUNTER" "$PRERELEASE" final \
             >expected-published
           $HELPER verify expected-published published-assets
+          # Names alone would let one run's binaries sit under another run's
+          # digests: hold each published asset's size, and digest where the
+          # API exposes one, to the manifest, and the manifest to this file.
+          $HELPER verify-published releases.json "$TAG" MANIFEST.json
           release_id="$($HELPER release-id releases.json "$TAG")"
           # Only the draft flag moves: the tag and its target commit are inputs
           # this job verified, never values it writes.

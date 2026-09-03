@@ -1573,6 +1573,11 @@ release-preflight tag='':
             echo "MISSING: RELEASE_PAT — the release workflow cannot write the release"
             failed=1
         fi
+    else
+        # A check that could not be made is not a pass: without the secret
+        # the tag builds and publishes nothing.
+        echo "UNCHECKED: RELEASE_PAT — gh is missing or not authenticated, so the secret cannot be verified"
+        failed=1
     fi
 
     if [ "$prerelease" -eq 1 ]; then

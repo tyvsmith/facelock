@@ -2354,7 +2354,10 @@ release until it does.
   canonical name and is never staged. `build-rpm` selects each of its three
   packages by that identity and validates the payload package. A duplicate
   name, an unmatched asset, a canonical name two artifacts claim, or a canonical
-  name no artifact provides each fail closed.
+  name no artifact provides each fail closed. A canonically named file in an
+  artifact other than its producer's is a builder's extra output; the release
+  fails closed on it, and the failure names the remedy: fix the builder and
+  re-run all jobs, since re-running only the failed job keeps the artifact.
 - Every staged asset matches the SHA-256 its builder attested. Each builder
   writes a `release-digests-<slot>` artifact naming what it produced, the image
   it produced it in, and the components it consumed. An asset attested by no
@@ -2392,11 +2395,20 @@ release until it does.
   before anything is written; the draft an interrupted run left behind is
   reused, so a failed run can be re-run. An asset on that draft whose canonical
   name changed in between, after a Debian revision or RPM counter bump, is
-  refused as unexpected and must be deleted from the draft by hand.
+  refused as unexpected and must be deleted from the draft by hand. Two
+  releases for one tag are refused with the `gh api --method DELETE` command
+  that removes the extra one.
+
+The workflow runs once at a time per tag: `concurrency` is keyed by the ref
+and never cancels the run in progress, so a second run queues rather than
+passing the checks above beside the first. `build-nix` gates publication
+through its flake evaluation; its `nix build` step is advisory.
 
 The draft is created with those assets and the validated prerelease flag, and
 is flipped to published only after the draft's asset list is read back from the
-API and held to the allowlist a second time, `MANIFEST.json` now included.
+API and held to the allowlist a second time, `MANIFEST.json` now included, and
+each published asset's size, and digest where the API exposes one, is held to
+`MANIFEST.json`, the uploaded manifest to the file the job wrote.
 
 `MANIFEST.json` covers the release: the tag, version, commit, and prerelease
 flag; the source tarball URL and digest; the pinned build-image digests; the

@@ -92,12 +92,24 @@ wanted_jobs="$(printf '%s\n' "${expected_jobs[@]}" | LC_ALL=C sort)"
 
 # A workflow-level write grant reaches every builder. The floor is deny-all and
 # each job asks for exactly what it needs.
-if awk '/^permissions:/ { inside = 1; next } inside && /^[A-Za-z]/ { inside = 0 } inside { print }' \
+if awk '/^permissions:/ { inside = 1; next } inside && /^[A-Za-z]/ { inside = 0 } inside && !/^[[:space:]]*(#|$)/ { print }' \
     "$workflow_path" | grep -q .; then
     fail "workflow-level permissions must be the deny-all floor, not a scope list"
 fi
 grep -Eq '^permissions:[[:space:]]*\{\}[[:space:]]*$' "$workflow_path" ||
     fail "workflow must declare the deny-all permission floor: permissions: {}"
+
+# "Exactly once" needs one run at a time per tag: two runs inside publish
+# both pass verify-creatable, both create or upload, and the survivor can
+# carry one run's binaries under the other's digests. A queued run is fine; a
+# cancelled one is not, because the first run may be mid-publication.
+concurrency_block="$(awk '/^concurrency:/ { inside = 1; next } inside && /^[A-Za-z]/ { inside = 0 } inside && !/^[[:space:]]*(#|$)/ { sub(/^ +/, ""); print }' "$workflow_path")"
+[ -n "$concurrency_block" ] || fail "the release workflow must declare a concurrency group per tag"
+# shellcheck disable=SC2016
+printf '%s\n' "$concurrency_block" | grep -Fxq 'group: release-${{ github.ref }}' ||
+    fail "the release concurrency group must be keyed by the tag ref: $concurrency_block"
+printf '%s\n' "$concurrency_block" | grep -Fxq 'cancel-in-progress: false' ||
+    fail "a release run must queue behind the one in progress, never cancel it: $concurrency_block"
 
 for job in "${expected_jobs[@]}"; do
     permissions="$(job_permissions "$job")"
@@ -175,7 +187,7 @@ printf '%s\n' "$publish_statements" | grep -Fq 'prerelease: ${{ needs.metadata.o
 for step in '$HELPER verify-tag ' '$HELPER stage expected-assets' \
     '$HELPER verify-digests artifacts job-outputs.json ' '$HELPER verify-creatable ' \
     'PRERELEASE" final' 'artifacts job-outputs.json assets actual-assets MANIFEST.json' \
-    'draft=false'; do
+    '$HELPER verify-published releases.json "$TAG" MANIFEST.json' 'draft=false'; do
     printf '%s\n' "$publish_statements" | grep -Fq "$step" ||
         fail "the publish job must run ${step% } before the release becomes public"
 done
@@ -213,6 +225,11 @@ if grep -Fq 'releases/download/v${VERSION}/SHA256SUMS' .github/workflows/scripts
     fail "the AUR publisher must not fetch the retired SHA256SUMS asset"
 fi
 
+# Preflight must not pass on a check it could not make: without gh, or
+# unauthenticated, the RELEASE_PAT check fails closed rather than being skipped.
+grep -Fq 'UNCHECKED: RELEASE_PAT' justfile ||
+    fail "release-preflight must fail closed when it cannot check RELEASE_PAT"
+
 # The RPM container digest is a manifest input, and `container.image` cannot
 # read an env context: the duplicate must be held equal here.
 rpm_job="$(job_body build-rpm)"
@@ -225,6 +242,27 @@ rpm_env_image="$(printf '%s\n' "$rpm_job" | awk '/^      BUILD_IMAGE: /{ sub(/^ 
 # Only what a validator inspected may be published.
 printf '%s\n' "$rpm_job" | grep -Fq 'steps.rpm.outputs.rpm' ||
     fail "build-rpm must validate the exact payload package the metadata names"
+
+# build-nix gates publication through its evaluation, which is deterministic
+# against flake.lock; the build itself depends on nixpkgs state and stays
+# advisory. A gate that cannot fail is not a gate.
+nix_step() {
+    job_body build-nix | awk -v needle="$1" '
+        function flush() { if (index(step, needle)) printf "%s", step; step = "" }
+        /^      - / { flush() }
+        { step = step $0 "\n" }
+        END { flush() }
+    '
+}
+flake_check_step="$(nix_step 'nix flake check')"
+[ -n "$flake_check_step" ] || fail "build-nix must evaluate the flake with nix flake check"
+if printf '%s\n' "$flake_check_step" | grep -Eq '^ +continue-on-error:'; then
+    fail "the flake evaluation must gate publication; drop continue-on-error from nix flake check"
+fi
+nix_build_step="$(nix_step 'nix build')"
+[ -n "$nix_build_step" ] || fail "build-nix must attempt nix build"
+printf '%s\n' "$nix_build_step" | grep -Eq '^ +continue-on-error: true$' ||
+    fail "nix build depends on nixpkgs state and is documented as advisory; it must keep continue-on-error"
 
 # The attesting set the helper pins must be exactly the artifacts the workflow
 # uploads, each bound to a job output. The artifact store is writable by every
@@ -386,6 +424,32 @@ assert_rejects() {
         fail "$context: rejected for an unrelated reason: $output"
     echo "release artifacts case: $context rejected"
 }
+
+# --- the AUR publisher's binary digests
+
+# The AUR recipe pins the published binaries by the digests MANIFEST.json
+# carries; a value that is not a SHA-256 must never reach a published PKGBUILD.
+# The publisher validates them before it touches SSH or the network, so this
+# runs hermetically with a manifest of its own.
+aur_publisher=.github/workflows/scripts/publish-aur.sh
+aur_home="$work/aur-home"
+mkdir -p "$aur_home"
+python3 - "$work/aur-manifest-bad.json" <<'PY'
+import json, sys
+json.dump({"assets": [
+    {"name": "facelock-x86_64-linux-gnu", "sha256": "not-a-digest"},
+    {"name": "pam_facelock.so", "sha256": "a" * 64},
+    {"name": "facelock-polkit-agent-x86_64-linux-gnu", "sha256": "b" * 64},
+]}, open(sys.argv[1], "w"))
+PY
+if aur_output="$(HOME="$aur_home" AUR_SSH_KEY=fixture FACELOCK_RELEASE_MANIFEST_FILE="$work/aur-manifest-bad.json" \
+    bash "$aur_publisher" 0.2.0 "$(printf 'c%.0s' $(seq 64))" 2>&1)"; then
+    fail "the AUR publisher accepted a binary digest that is not a SHA-256"
+fi
+printf '%s\n' "$aur_output" | grep -Fq 'not a plausible SHA-256' ||
+    fail "the AUR publisher refused the bad digest for an unrelated reason: $aur_output"
+[ ! -e "$aur_home/.ssh" ] || fail "the AUR publisher touched SSH before validating the manifest digests"
+echo "release artifacts case: AUR publisher refusing a malformed binary digest rejected"
 
 # --- the canonical allowlist
 
@@ -592,7 +656,9 @@ assert_rejects "builder artifact missing a canonical asset" "no builder artifact
 
 build_artifacts
 cp "$artifacts/release-binaries/pam_facelock.so" "$artifacts/release-rpm/pam_facelock.so"
-assert_rejects "two builders providing one canonical asset" "more than one builder artifact provides" \
+# A builder's extra output under a canonical name fails closed, and the
+# failure says what to do: re-running only the failed job keeps the artifact.
+assert_rejects "two builders providing one canonical asset" "fix the builder and re-run all jobs" \
     stage "$builders_expected" "$artifacts" "$work/assets-ambiguous"
 build_artifacts
 
@@ -705,6 +771,20 @@ cat >"$work/release-wrong-channel.json" <<'JSON'
 JSON
 assert_rejects "draft whose channel differs from the validated identity" "prerelease identity" \
     verify-draft v0.2.0 false "$work/release-wrong-channel.json"
+
+# Two drafts for one tag is what two concurrent runs leave behind. The
+# concurrency group prevents it; the refusal names the remedy anyway.
+cat >"$work/releases-two-drafts.json" <<'JSON'
+[{"id": 42, "tag_name": "v0.2.0", "draft": true, "prerelease": false, "assets": []},
+ {"id": 43, "tag_name": "v0.2.0", "draft": true, "prerelease": false, "assets": []}]
+JSON
+assert_rejects "two drafts for one tag before creation" "delete the other with" \
+    verify-creatable v0.2.0 "$work/releases-two-drafts.json"
+assert_rejects "two drafts for one tag before the flip" "delete the other with" \
+    verify-draft v0.2.0 false "$work/releases-two-drafts.json"
+{ "$helper_path" verify-creatable v0.2.0 "$work/releases-two-drafts.json" 2>&1 || true; } |
+    grep -Fq 'releases/43' ||
+    fail "the two-drafts refusal must name the ids to delete"
 
 # A run interrupted between the manifest upload and the flip must be able to
 # run again: the draft already carries MANIFEST.json, and the final allowlist
@@ -986,6 +1066,69 @@ assert_rejects "manifest over an asset that was never staged" "is not present" \
     manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
     tyvsmith/facelock deadbeef "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" "$manifest"
 cp "$artifacts/release-binaries/pam_facelock.so" "$staged/pam_facelock.so"
+
+# --- the final readback holds every published asset to the manifest
+
+# Names alone would let one run's binaries sit under another run's digests.
+# The listing the API returns carries each asset's size, and a digest where
+# the API exposes one; both are compared with MANIFEST.json, and the manifest
+# itself with the local file.
+published_listing() {
+    # <output> <mode>: the release as the API would list it after upload.
+    python3 - "$manifest" "$1" "$2" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+manifest_path, output, mode = sys.argv[1:4]
+manifest = json.loads(Path(manifest_path).read_text())
+payload = Path(manifest_path).read_bytes()
+assets = [
+    {"name": entry["name"], "size": entry["size"], "digest": f"sha256:{entry['sha256']}"}
+    for entry in manifest["assets"]
+]
+assets.append({"name": "MANIFEST.json", "size": len(payload),
+               "digest": "sha256:" + hashlib.sha256(payload).hexdigest()})
+if mode == "no-digest":
+    for asset in assets:
+        del asset["digest"]
+elif mode == "wrong-size":
+    assets[0]["size"] += 1
+elif mode == "wrong-digest":
+    assets[1]["digest"] = "sha256:" + "0" * 64
+elif mode == "wrong-manifest":
+    assets[-1]["size"] -= 1
+elif mode == "unknown-digest":
+    assets[2]["digest"] = "sha512:" + "0" * 128
+elif mode == "unlisted":
+    assets.append({"name": "facelock-x86_64-linux-musl", "size": 1})
+release = {"id": 42, "tag_name": "v0.2.0", "draft": True, "prerelease": False, "assets": assets}
+Path(output).write_text(json.dumps([release]) + "\n")
+PY
+}
+published_listing "$work/published-ok.json" exact
+"$helper_path" verify-published "$work/published-ok.json" v0.2.0 "$manifest" >/dev/null ||
+    fail "a published asset list matching the manifest was rejected"
+published_listing "$work/published-no-digest.json" no-digest
+"$helper_path" verify-published "$work/published-no-digest.json" v0.2.0 "$manifest" >/dev/null ||
+    fail "an API listing without digests must still pass on sizes"
+echo "release artifacts case: published assets matching the manifest accepted"
+published_listing "$work/published-wrong-size.json" wrong-size
+assert_rejects "published asset whose size differs from the manifest" "size" \
+    verify-published "$work/published-wrong-size.json" v0.2.0 "$manifest"
+published_listing "$work/published-wrong-digest.json" wrong-digest
+assert_rejects "published asset whose digest differs from the manifest" "digest" \
+    verify-published "$work/published-wrong-digest.json" v0.2.0 "$manifest"
+published_listing "$work/published-wrong-manifest.json" wrong-manifest
+assert_rejects "published manifest that is not the generated one" "MANIFEST.json" \
+    verify-published "$work/published-wrong-manifest.json" v0.2.0 "$manifest"
+published_listing "$work/published-unknown-digest.json" unknown-digest
+assert_rejects "published asset with a digest that cannot be compared" "digest" \
+    verify-published "$work/published-unknown-digest.json" v0.2.0 "$manifest"
+published_listing "$work/published-unlisted.json" unlisted
+assert_rejects "published asset the manifest does not cover" "not covered" \
+    verify-published "$work/published-unlisted.json" v0.2.0 "$manifest"
 # ------------------------------------------------------------------ mutations
 
 if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}" ] &&
@@ -1114,6 +1257,19 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
     assert_workflow_mutation_rejected "no revalidation before the flip" \
         's|^( *)\$HELPER expected "\$VERSION" "\$DEBIAN_REVISION" "\$RPM_COUNTER" "\$PRERELEASE" final .*|\1: # final readback disabled|' \
         'must run PRERELEASE" final'
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "final readback comparing names only" \
+        's|^( *)\$HELPER verify-published .*|\1: # verify-published disabled|' \
+        'must run $HELPER verify-published'
+    assert_workflow_mutation_rejected "two runs publishing one tag" \
+        '/^concurrency:$/,/^$/d' \
+        "must declare a concurrency group"
+    assert_workflow_mutation_rejected "runs cancelling the one in progress" \
+        's/^  cancel-in-progress: false$/  cancel-in-progress: true/' \
+        "never cancel it"
+    assert_workflow_mutation_rejected "flake evaluation that cannot fail" \
+        's|^        run: nix flake check ./dist/nix --no-build$|        run: nix flake check ./dist/nix --no-build\n        continue-on-error: true|' \
+        "flake evaluation must gate publication"
     # shellcheck disable=SC2016
     assert_workflow_mutation_rejected "attestation left unbound to its job" \
         '0,/^      attestation: \$\{\{ steps.attest.outputs.sha256 \}\}$/s///' \

@@ -149,26 +149,44 @@ deny-all.
   build-image digests, and the reviewed ONNX Runtime and Cargo-vendor component
   digests. It replaces the three-binary `SHA256SUMS` file, which covered a
   fraction of the release and was written before most of it existed.
-- reads the draft back from the API, holds it to the allowlist a last time, and
-  flips it to published once. A tag whose release is already published is
+- reads the draft back from the API, holds it to the allowlist a last time,
+  holds each published asset's size, and digest where the API exposes one, to
+  `MANIFEST.json` and the uploaded manifest to the file it wrote, and flips
+  the draft to published once. A tag whose release is already published is
   refused before anything is written, so re-running the workflow after a
-  failure is safe and re-running it after success changes nothing. One case
-  needs a hand: if the Debian revision or RPM counter changed between runs, the
-  draft still carries the asset built under the old name, and the readback
-  refuses it. The failure names the file and the command that removes it,
+  failure is safe; re-running it after success goes red by design, at
+  `verify-creatable`, with nothing written. One case needs a hand: if the
+  Debian revision or RPM counter changed between runs, the draft still carries
+  the asset built under the old name, and the readback refuses it. The
+  failure names the file and the command that removes it,
   `gh release delete-asset`.
+
+The workflow runs once at a time per tag (`concurrency` keyed by the ref,
+never cancelling the run in progress), so a re-run started while a run is
+inside `publish` queues behind it instead of racing it. Two drafts for one
+tag, which only a race could leave behind, are refused with the
+`gh api --method DELETE` command that removes the extra one.
+
+A builder's extra output fails the release closed: a canonically named file in
+an artifact the allowlist does not expect it from is refused at staging, and
+the failure says so. Re-running only the failed `publish` job keeps that
+artifact, so the remedy is fixing the builder and re-running all jobs.
 
 Two consequences for the maintainer:
 
 - **`RELEASE_PAT` is required.** It is now the only credential that can write
   the release, so an unset secret fails the `publish` job.
-  `just release-preflight` checks for it.
+  `just release-preflight` checks for it, and fails when it cannot check:
+  without `gh`, or unauthenticated, the check is reported as unchecked and
+  preflight does not pass.
 - **A signed tag must be verifiable on the runner.** Importing the maintainer's
   public key is release infrastructure tracked by #235; until it lands, an
   unsigned tag is accepted and a signed one that the runner cannot verify stops
   the release.
 
-Every job in the graph gates publication, `build-nix` included. A Nix
+Every job in the graph gates publication, `build-nix` included: its flake
+evaluation is deterministic against `flake.lock` and must pass, while its
+`nix build` step is advisory because the build depends on nixpkgs state. An
 evaluation failure means the release stays a draft; fix the flake and re-run
 the failed jobs, never tag again.
 

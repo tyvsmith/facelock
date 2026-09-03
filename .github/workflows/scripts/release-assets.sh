@@ -248,7 +248,9 @@ for line in Path(expected_file).read_text(encoding="utf-8").splitlines():
     if len(names) > 1 or len(matched) > 1:
         found = ", ".join(sorted(str(path) for path in matched))
         raise SystemExit(
-            f"release assets: more than one builder artifact provides {label}: {found}"
+            f"release assets: more than one builder artifact provides {label}: {found}; "
+            "a builder produced a file it does not own, and re-running only the failed "
+            "job keeps that artifact: fix the builder and re-run all jobs"
         )
     shutil.copy2(matched[0], destination / matched[0].name)
     staged.append(matched[0].name)
@@ -295,17 +297,37 @@ verify_tag() {
 #
 # `verify-creatable` runs before the draft is written: this tag may have no
 # release at all, or the draft an interrupted run left behind, never a published
-# one. `verify-draft` runs before the flip. `names` and `release-id` read the
-# selected release. Accepts a JSON array, one release object, gh's paginated
-# object stream, and gh's slurped pages.
+# one. `verify-draft` runs before the flip. `verify-published` holds every
+# asset the API lists to MANIFEST.json by size, and by digest where the API
+# exposes one, so one run's binaries cannot sit under another run's digests.
+# `names` and `release-id` read the selected release. Accepts a JSON array, one
+# release object, gh's paginated object stream, and gh's slurped pages.
 release_query() {
-    local mode="${1:?}" releases_json="${2:?}" tag="${3:?}" prerelease="${4:-}"
-    python3 - "$mode" "$releases_json" "$tag" "$prerelease" <<'PY'
+    local mode="${1:?}" releases_json="${2:?}" tag="${3:?}" extra="${4:-}"
+    python3 - "$mode" "$releases_json" "$tag" "$extra" <<'PY'
+import hashlib
 import json
 import sys
 from pathlib import Path
 
-mode, path, tag, prerelease = sys.argv[1:5]
+# `extra` is the validated prerelease flag for verify-draft and the local
+# MANIFEST.json path for verify-published.
+mode, path, tag, extra = sys.argv[1:5]
+prerelease = extra
+
+
+def concurrent_drafts(candidates: list) -> str:
+    """Two releases for one tag is what two concurrent runs leave behind; the
+    concurrency group prevents it, and the refusal names the remedy anyway."""
+    commands = " or ".join(
+        f"gh api --method DELETE repos/{{owner}}/{{repo}}/releases/{release.get('id')}"
+        for release in candidates
+    )
+    return (
+        f"release assets: {len(candidates)} releases exist for {tag}; a concurrent run "
+        f"left a second draft behind. Keep the one this run should finish and delete "
+        f"the other with: {commands}"
+    )
 
 
 def load(source: str) -> tuple[list, bool]:
@@ -336,7 +358,7 @@ if mode == "verify-creatable":
         print(f"release assets: no release exists for {tag} yet")
         raise SystemExit(0)
     if len(candidates) > 1:
-        raise SystemExit(f"release assets: {len(candidates)} releases already exist for {tag}")
+        raise SystemExit(concurrent_drafts(candidates))
     release = candidates[0]
     if not release.get("draft"):
         raise SystemExit(
@@ -346,10 +368,10 @@ if mode == "verify-creatable":
     print(f"release assets: reusing the unpublished draft {release.get('id')} for {tag}")
     raise SystemExit(0)
 
-if len(candidates) != 1:
-    raise SystemExit(
-        f"release assets: expected exactly one release for tag {tag}, found {len(candidates)}"
-    )
+if len(candidates) > 1:
+    raise SystemExit(concurrent_drafts(candidates))
+if not candidates:
+    raise SystemExit(f"release assets: expected exactly one release for tag {tag}, found 0")
 release = candidates[0]
 
 if mode == "release-id":
@@ -357,6 +379,40 @@ if mode == "release-id":
 elif mode == "names":
     for asset in release.get("assets", []):
         print(asset["name"])
+elif mode == "verify-published":
+    manifest_path = Path(extra)
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = json.loads(manifest_bytes)
+    expected = {entry["name"]: (entry["size"], entry["sha256"]) for entry in manifest["assets"]}
+    # The manifest cannot cover itself; hold the uploaded copy to this file.
+    expected[manifest_path.name] = (len(manifest_bytes), hashlib.sha256(manifest_bytes).hexdigest())
+    listed = release.get("assets", [])
+    compared = 0
+    for asset in listed:
+        name = asset.get("name")
+        if name not in expected:
+            raise SystemExit(f"release assets: published asset {name} is not covered by {manifest_path.name}")
+        size, sha256 = expected[name]
+        if asset.get("size") != size:
+            raise SystemExit(
+                f"release assets: published asset {name} has size {asset.get('size')}, "
+                f"{manifest_path.name} records {size}"
+            )
+        digest = asset.get("digest")
+        if digest is None:
+            continue
+        # A digest the API exposes in a form this check cannot compare is not
+        # evidence; refuse rather than skip it.
+        if digest != f"sha256:{sha256}":
+            raise SystemExit(
+                f"release assets: published asset {name} has digest {digest}, "
+                f"{manifest_path.name} records sha256:{sha256}"
+            )
+        compared += 1
+    print(
+        f"release assets: {len(listed)} published asset(s) match {manifest_path.name} "
+        f"by size, {compared} by digest"
+    )
 elif mode == "verify-draft":
     if release.get("tag_name") != tag:
         raise SystemExit(
@@ -544,6 +600,11 @@ case "${1:-}" in
         [ "$#" -eq 2 ] || fail "usage: $0 $mode <releases-json> <tag>"
         release_query "$mode" "$1" "$2"
         ;;
+    verify-published)
+        shift
+        [ "$#" -eq 3 ] || fail "usage: $0 verify-published <releases-json> <tag> <manifest>"
+        release_query verify-published "$1" "$2" "$3"
+        ;;
     expected-attestations)
         shift
         [ "$#" -eq 1 ] || fail "usage: $0 expected-attestations <prerelease>"
@@ -562,6 +623,6 @@ case "${1:-}" in
         generate_manifest "$@"
         ;;
     *)
-        fail "usage: $0 {expected|expected-attestations|verify|stage|verify-tag|verify-creatable|verify-draft|names|release-id|verify-digests|manifest}"
+        fail "usage: $0 {expected|expected-attestations|verify|stage|verify-tag|verify-creatable|verify-draft|verify-published|names|release-id|verify-digests|manifest}"
         ;;
 esac
