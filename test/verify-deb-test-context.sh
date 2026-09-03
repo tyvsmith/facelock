@@ -17,9 +17,11 @@ git -C "$candidate_repo" rev-parse --verify 'HEAD^{commit}' >/dev/null 2>&1 ||
 # Callers copy this repository by reading .git directly. Git's post-commit auto
 # maintenance detaches and rewrites .git/objects underneath such a read, so the
 # prepared repository must have both auto maintenance and auto gc switched off.
-[ "$(git -C "$candidate_repo" config --type=bool --get maintenance.auto 2>/dev/null || true)" = "false" ] ||
+# Read only the repository's own configuration: a global setting on the machine
+# running this would otherwise satisfy the check while the candidate lacks it.
+[ "$(git -C "$candidate_repo" config --local --type=bool --get maintenance.auto 2>/dev/null || true)" = "false" ] ||
     fail "candidate repository must disable detached auto maintenance"
-[ "$(git -C "$candidate_repo" config --type=int --get gc.auto 2>/dev/null || true)" = "0" ] ||
+[ "$(git -C "$candidate_repo" config --local --type=int --get gc.auto 2>/dev/null || true)" = "0" ] ||
     fail "candidate repository must disable automatic gc"
 
 verification_root="$(mktemp -d "${TMPDIR:-/tmp}/facelock-context-verification.XXXXXX")"
