@@ -2139,13 +2139,20 @@ acceptance or release evidence. Promotion requires a separately reviewed
 amendment and full Fedora gates.
 
 The staging channel is `tyvsmith/facelock-testing`. `.packit.yaml` declares
-exactly one `copr_build` job for it, pull-request triggered and manually run; a
-release-triggered staging job is rejected, as is a second one. Its chroots equal
-the supported set exactly: staging declares no optional experimental chroot, so
-Rawhide there is drift rather than a permitted experiment.
-`copr_channels.staging.provisioned` stays false until issue #236 creates the
-project, and while it is false `test/check-live-release-channels.py --channel
-staging` reports `not provisioned` and contacts nothing.
+exactly one `copr_build` job for it; a release-triggered staging job is
+rejected, as is a second one. Its chroots equal the supported set exactly:
+staging declares no optional experimental chroot, so Rawhide there is drift
+rather than a permitted experiment.
+
+`copr_channels.staging.provisioned` and the staging job's trigger are one
+contract. While `provisioned` is false the job must carry `trigger: ignore` and
+is dispatched by hand; when it is true the job must carry
+`trigger: pull_request`. Either value alone fails the release matrix contract,
+so the project cannot be declared live without the job that builds into it, and
+the job cannot chase a project that does not exist. `provisioned` stays false
+until issue #236 creates the project, and while it is false
+`test/check-live-release-channels.py --channel staging` reports `not
+provisioned` and contacts nothing.
 
 A pre-tag attestation binds the candidate commit to the EVRs each channel
 serves, the artifact and repository digests, the signing key fingerprints, and

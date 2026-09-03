@@ -172,14 +172,17 @@ require(
 )
 require(staging_copr.get("provisioning_issue") == 236, "staging COPR provisioning must remain owned by issue #236")
 require(staging_copr.get("managed_by_this_change") is False, "issue #234 cannot provision staging COPR")
-# `provisioned` is the maintainer's switch, and the only thing that lets
-# test/check-live-release-channels.py query the staging project. While it is
-# false that checker reports "not provisioned" and touches no network, which is
-# what keeps the staging fixtures in release-version-contract.sh offline.
+# `provisioned` is the maintainer's switch. It gates two things at once: it is
+# the only thing that lets test/check-live-release-channels.py query the staging
+# project, and it decides which trigger the staging Packit job may carry. While
+# it is false that checker reports "not provisioned" and touches no network,
+# which is what keeps the staging fixtures in release-version-contract.sh
+# offline. The trigger half is checked with the Packit jobs below.
 require(
-    staging_copr.get("provisioned") is False,
-    "staging COPR provisioning must stay unclaimed until issue #236 creates the project",
+    isinstance(staging_copr.get("provisioned"), bool),
+    f"staging COPR provisioned must be a boolean: {staging_copr.get('provisioned')!r}",
 )
+staging_provisioned = staging_copr["provisioned"]
 staging_copr_targets = require_string_set(
     matrix.get("fedora", {}).get("staging_copr_targets"),
     expected_copr_targets,
@@ -410,13 +413,24 @@ require(
     staging_job.get("owner") == staging_copr["owner"],
     "Packit staging COPR owner disagrees with the release matrix",
 )
+# The trigger tracks provisioning. Until the project exists, `ignore` keeps the
+# job hand-dispatched (`/packit build`), because a pull-request trigger would
+# aim every pull request's Packit run at a project that answers 404. Once the
+# maintainer creates it they flip `provisioned` and the trigger together, and
+# this pairing is what stops one moving without the other.
+expected_staging_trigger = "pull_request" if staging_provisioned else "ignore"
 require(
-    staging_job.get("trigger") == "pull_request",
-    f"Packit staging COPR trigger must be 'pull_request', got {staging_job.get('trigger')!r}",
+    staging_job.get("trigger") == expected_staging_trigger,
+    f"Packit staging COPR trigger must be {expected_staging_trigger!r} while "
+    f"copr_channels.staging.provisioned is {staging_provisioned}, got {staging_job.get('trigger')!r}",
 )
 require(
     staging_job.get("manual_trigger") is True,
     "Packit staging COPR job must stay manually triggered while the project is unprovisioned",
+)
+require(
+    staging_provisioned is False,
+    "staging COPR provisioning must stay unclaimed until issue #236 creates the project",
 )
 production_jobs = [
     job

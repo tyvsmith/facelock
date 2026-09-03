@@ -22,7 +22,7 @@
     },
     {
       "job": "copr_build",
-      "trigger": "pull_request",
+      "trigger": "ignore",
       "manual_trigger": true,
       "owner": "tyvsmith",
       "project": "facelock-testing",

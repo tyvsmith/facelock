@@ -339,7 +339,24 @@ case "$apt_guard_output" in
     *) fail "APT publisher did not consume the mutated central resolute suffix: $apt_guard_output" ;;
 esac
 
-sed -i 's/"trigger": "ignore"/"trigger": "release"/' "$matrix_root/.packit.yaml"
+# Both Packit jobs sit on "trigger": "ignore", so this restores the release
+# trigger on the production job by project rather than by text.
+python3 - "$matrix_root/.packit.yaml" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+config = json.loads(path.read_text())
+restored = 0
+for job in config["jobs"]:
+    if job.get("project") == "facelock":
+        job["trigger"] = "release"
+        restored += 1
+if restored != 1:
+    raise SystemExit(f"expected exactly one production Packit job to restore, found {restored}")
+path.write_text(json.dumps(config, indent=2) + "\n")
+PY
 env -u RELEASE_MATRIX_VERSION python3 "$matrix_root/test/check-release-matrix.py"
 if prerelease_packit_output=$(RELEASE_MATRIX_VERSION=0.2.0-alpha.1 python3 "$matrix_root/test/check-release-matrix.py" 2>&1); then
     fail "release matrix checker accepted a production COPR release job for a prerelease identity"
@@ -703,13 +720,13 @@ valid_packit_staging_root="$tmp_root/packit-valid-staging"
 cp -R "$matrix_root" "$valid_packit_staging_root"
 replace_packit_staging_job \
     "$valid_packit_staging_root/.packit.yaml" \
-    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-45-x86_64","fedora-43-x86_64","fedora-44-x86_64"]}'
+    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-45-x86_64","fedora-43-x86_64","fedora-44-x86_64"]}'
 RELEASE_MATRIX_VERSION=0.2.0 python3 "$valid_packit_staging_root/test/check-release-matrix.py" >/dev/null
 echo "release matrix Packit case: exact facelock-testing staging targets accepted"
 
 assert_extra_packit_job_rejected \
     "second facelock-testing staging job" \
-    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
+    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
 
 assert_extra_packit_job_rejected \
     "canonical Rawhide target outside production and staging" \
@@ -725,14 +742,14 @@ assert_extra_packit_job_rejected \
     '{"job":"copr_build","trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-development-aarch64"]}'
 assert_staging_packit_job_rejected \
     "facelock-testing Rawhide target" \
-    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-rawhide-x86_64"]}' \
+    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-rawhide-x86_64"]}' \
     "targets Rawhide"
 assert_extra_packit_job_rejected \
     "Rawhide target outside production and staging" \
     '{"job":"copr_build","trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-rawhide-x86_64"]}'
 assert_staging_packit_job_rejected \
     "facelock-testing incomplete staging targets" \
-    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64"]}' \
+    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64"]}' \
     "Packit staging COPR targets drifted"
 assert_extra_packit_job_rejected \
     "duplicate targets outside production and staging" \
@@ -975,31 +992,67 @@ assert_matrix_mutation_rejected \
     "dist/release-matrix.json" \
     's/"provisioned": false/"optional_experimental_chroots": ["fedora-rawhide-x86_64"], "provisioned": false/' \
     "staging COPR must not declare optional experimental chroots"
-assert_matrix_mutation_rejected \
-    "staging COPR claimed as provisioned" \
-    "dist/release-matrix.json" \
-    's/"provisioned": false/"provisioned": true/' \
-    "staging COPR provisioning must stay unclaimed"
-assert_matrix_mutation_rejected \
+assert_staging_packit_job_rejected \
     "Packit staging job deleted" \
-    ".packit.yaml" \
-    's/"project": "facelock-testing"/"project": "facelock-retired"/' \
+    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-retired","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
     "Packit must define exactly one staging COPR job"
-assert_matrix_mutation_rejected \
+assert_staging_packit_job_rejected \
     "Packit staging job made release-triggered" \
-    ".packit.yaml" \
-    's/"trigger": "pull_request"/"trigger": "release"/' \
+    '{"job":"copr_build","trigger":"release","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
     "Packit staging COPR trigger"
-assert_matrix_mutation_rejected \
+assert_staging_packit_job_rejected \
     "Packit staging job made automatic" \
-    ".packit.yaml" \
-    's/"manual_trigger": true/"manual_trigger": false/' \
+    '{"job":"copr_build","trigger":"ignore","manual_trigger":false,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
     "Packit staging COPR job must stay manually triggered"
-assert_matrix_mutation_rejected \
+assert_staging_packit_job_rejected \
     "Packit staging job owner drifted" \
-    ".packit.yaml" \
-    '/"trigger": "pull_request"/,/"targets"/s/"owner": "tyvsmith"/"owner": "packit"/' \
+    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"packit","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
     "Packit staging COPR owner"
+
+# The staging trigger and copr_channels.staging.provisioned move together. An
+# unprovisioned project must not be the target of every pull request's Packit
+# run, and a provisioned one that stays hand-dispatched is a gate nobody runs.
+staging_pairing_index=0
+assert_staging_provisioning_pair_rejected() {
+    local context="$1"
+    local matrix_expression="$2"
+    local staging_job_json="$3"
+    local diagnostic="$4"
+    local mutation_root="$tmp_root/staging-pairing-$staging_pairing_index"
+    local checker_output
+    staging_pairing_index=$((staging_pairing_index + 1))
+    cp -R "$matrix_root" "$mutation_root"
+    if [ -n "$matrix_expression" ]; then
+        sed -i "$matrix_expression" "$mutation_root/dist/release-matrix.json"
+    fi
+    if [ -n "$staging_job_json" ]; then
+        replace_packit_staging_job "$mutation_root/.packit.yaml" "$staging_job_json"
+    fi
+    if checker_output=$(RELEASE_MATRIX_VERSION=0.2.0 python3 "$mutation_root/test/check-release-matrix.py" 2>&1); then
+        fail "release matrix checker accepted drift: $context"
+    fi
+    case "$checker_output" in
+        *"$diagnostic"*) ;;
+        *) fail "release matrix checker rejected $context for another reason: $checker_output" ;;
+    esac
+    echo "release matrix staging pairing case: $context rejected"
+}
+
+assert_staging_provisioning_pair_rejected \
+    "unprovisioned staging job triggered by pull requests" \
+    "" \
+    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    "must be 'ignore' while copr_channels.staging.provisioned is False"
+assert_staging_provisioning_pair_rejected \
+    "provisioned staging left on the manual trigger" \
+    's/"provisioned": false/"provisioned": true/' \
+    "" \
+    "must be 'pull_request' while copr_channels.staging.provisioned is True"
+assert_staging_provisioning_pair_rejected \
+    "staging claimed as provisioned with its pull-request trigger restored" \
+    's/"provisioned": false/"provisioned": true/' \
+    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    "staging COPR provisioning must stay unclaimed"
 assert_matrix_mutation_rejected \
     "staging channel comparison dropped from CI" \
     ".github/workflows/ci.yml" \

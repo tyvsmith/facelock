@@ -538,18 +538,25 @@ tag at production while staging is unavailable.
 ##### Staging COPR (`tyvsmith/facelock-testing`)
 
 `.packit.yaml` declares a second `copr_build` job, for
-`tyvsmith/facelock-testing`. It is pull-request triggered with
-`manual_trigger: true`, so it builds only when a maintainer asks for it with a
-`/packit build` comment. A tag never publishes into staging.
+`tyvsmith/facelock-testing`. It carries `trigger: ignore`, so nothing runs it
+automatically: a maintainer dispatches it by hand with a `/packit build`
+comment. A tag never publishes into staging.
 
 The project does not exist yet. Issue #236 owns creating it and granting Packit
 builder access; until then `dist/release-matrix.json` keeps
 `copr_channels.staging.provisioned` false and
 `python3 test/check-live-release-channels.py --channel staging` reports `not
-provisioned` and queries nothing. Provisioning is one edit here: create the
-project with exactly the Fedora 43, 44, and 45 chroots, then set `provisioned`
-to true. The same checker then compares the live project with the checked-in
-authority on every pull request and in preflight.
+provisioned` and queries nothing.
+
+The trigger and that switch move together, and `test/check-release-matrix.py`
+enforces the pairing. While `provisioned` is false the staging job must stay on
+`trigger: ignore`; a pull-request trigger would aim every pull request's Packit
+run at a project that answers 404. Provisioning is therefore one edit in two
+places: create the project with exactly the Fedora 43, 44, and 45 chroots, then
+set `provisioned` to true **and** move the staging job to
+`trigger: pull_request`. Changing either alone fails the release matrix
+contract. From then on the same checker compares the live project with the
+checked-in authority on every pull request and in preflight.
 
 Staging tolerates no optional experimental chroot. Production accepts Rawhide's
 presence or absence; in staging any chroot beyond the supported three is drift.
