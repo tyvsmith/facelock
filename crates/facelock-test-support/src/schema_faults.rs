@@ -90,6 +90,68 @@ pub fn break_face_models_table(db_path: &Path) {
     }
 }
 
+/// Make every query that walks `face_embeddings` (or its index) report
+/// corruption, while leaving a database that still opens and migrates cleanly.
+///
+/// Same page-type mismatch as [`break_face_models_table`], aimed at the other
+/// table. Its callers are the guards that must distinguish "the store says
+/// there are no encrypted templates" from "the store could not be asked":
+/// minting an encryption key on the second answer is what orphans real
+/// enrollments, so the failing-query path needs a test of its own and no
+/// public store API can produce a database that fails one query.
+///
+/// **Schema coupling:** `face_embeddings` has one explicit index,
+/// `idx_face_embeddings_model`. It has no `sqlite_autoindex_*` — its
+/// uniqueness comes from `INTEGER PRIMARY KEY`, which is the rowid itself.
+/// Add new indexes here when the schema grows them, or a query served
+/// entirely from a new index will succeed where the test expects failure.
+pub fn break_face_embeddings_table(db_path: &Path) {
+    let conn = rusqlite::Connection::open(db_path).expect("open database for fault injection");
+    conn.execute_batch("CREATE TABLE e1(x); CREATE INDEX ei1 ON e1(x);")
+        .expect("create donor pages");
+
+    let page = |name: &str| -> i64 {
+        conn.query_row(
+            "SELECT rootpage FROM sqlite_master WHERE name = ?1",
+            [name],
+            |r| r.get(0),
+        )
+        .unwrap_or_else(|e| panic!("donor page {name} has no rootpage: {e}"))
+    };
+    let (p_e1, p_ei1) = (page("e1"), page("ei1"));
+
+    conn.execute_batch(&format!(
+        "PRAGMA writable_schema=ON;
+         UPDATE sqlite_master SET rootpage={p_ei1} WHERE name='face_embeddings';
+         UPDATE sqlite_master SET rootpage={p_e1} WHERE name='idx_face_embeddings_model';
+         DELETE FROM sqlite_master WHERE name IN ('e1','ei1');
+         PRAGMA writable_schema=OFF;",
+    ))
+    .expect("repoint face_embeddings rootpages");
+
+    // An UPDATE that matched nothing leaves a *working* table, and the test
+    // that depends on this would then silently assert nothing.
+    for name in ["face_embeddings", "idx_face_embeddings_model"] {
+        let repointed: i64 = conn
+            .query_row(
+                "SELECT rootpage FROM sqlite_master WHERE name = ?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap_or_else(|e| {
+                panic!(
+                    "schema object {name} is gone, so the fault was not injected \
+                     — update break_face_embeddings_table for the current schema: {e}"
+                )
+            });
+        assert!(
+            [p_e1, p_ei1].contains(&repointed),
+            "{name} was not repointed at a donor page; the schema changed and \
+             break_face_embeddings_table needs re-deriving"
+        );
+    }
+}
+
 /// Remove the `embedder_model` column from `face_models`, so a query that
 /// selects it fails while the database as a whole stays open and usable.
 ///

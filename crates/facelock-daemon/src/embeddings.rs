@@ -62,15 +62,29 @@ impl TpmAccess<'_> {
     }
 }
 
-/// True when the store must be read through the raw-row path: either a
-/// software sealer is active, or `tpm.seal_database` says TPM-sealed rows may
-/// exist. The `seal_database` half matters even when the sealer failed to
-/// initialize (or TPM support is not compiled in): the fast path would hand
-/// sealed blobs to callers as if they were raw embeddings, which at best
+/// True when the store must be read through the raw-row path: a software
+/// sealer is active, `tpm.seal_database` says TPM-sealed rows may exist, or a
+/// configured encryption method has no usable sealer at all.
+///
+/// The first two are about rows that *can* be decrypted. The third is about
+/// rows that cannot, and it matters for the same reason: the fast path would
+/// hand sealed blobs to callers as if they were raw embeddings, which at best
 /// reports a misleading "corrupt store" and at worst misreads a template (the
-/// B3 class — the handler previously made exactly this mistake).
-pub fn needs_raw_rows(config: &Config, software_sealer_active: bool) -> bool {
-    software_sealer_active || config.tpm.seal_database
+/// B3 class — the handler previously made exactly this mistake). A daemon
+/// refusing to mint a replacement key is exactly that state, and telling an
+/// operator whose key went missing that their database is corrupt sends them
+/// to reinstall the one file that still holds their enrollments.
+///
+/// The raw path is not a fallback to a worse answer here: a user whose rows
+/// are all plaintext still authenticates through it, and a user whose rows are
+/// encrypted gets a decrypt failure naming the missing key. Both beat a
+/// corruption report.
+pub fn needs_raw_rows(
+    config: &Config,
+    software_sealer_active: bool,
+    sealer_unavailable: bool,
+) -> bool {
+    software_sealer_active || config.tpm.seal_database || sealer_unavailable
 }
 
 /// Decrypt raw `(id, blob, sealed, device_id)` rows into embeddings.
@@ -531,10 +545,21 @@ mod tests {
     #[test]
     fn seal_database_forces_raw_rows_without_a_sealer() {
         let sealed = Config::parse("[tpm]\nseal_database = true\n").unwrap();
-        assert!(needs_raw_rows(&sealed, false));
+        assert!(needs_raw_rows(&sealed, false, false));
 
         let plain = Config::parse("").unwrap();
-        assert!(!needs_raw_rows(&plain, false));
-        assert!(needs_raw_rows(&plain, true));
+        assert!(!needs_raw_rows(&plain, false, false));
+        assert!(needs_raw_rows(&plain, true, false));
+    }
+
+    /// A refused sealer is the third way encrypted rows can be present with
+    /// nothing to decrypt them. Taking the fast path there hands a 2077-byte
+    /// blob to a caller expecting 2048 raw bytes, and the store reports the
+    /// database as corrupt — sending an operator whose key merely went missing
+    /// to reinstall the file that still holds their enrollments.
+    #[test]
+    fn a_refused_sealer_forces_raw_rows() {
+        let plain = Config::parse("").unwrap();
+        assert!(needs_raw_rows(&plain, false, true));
     }
 }

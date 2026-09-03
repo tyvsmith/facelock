@@ -637,42 +637,20 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         let mut sealer_init_error: Option<String> = None;
         let software_sealer = match config.encryption.method {
             EncryptionMethod::Keyfile => {
-                let key_path = std::path::Path::new(&config.encryption.key_path);
-                // Encrypt-by-default (finding #8): auto-generate the key on first
-                // use so a keyfile default actually encrypts. Safe — if a key was
-                // lost, any prior encrypted rows were already unreadable, and a new
-                // key only affects future writes; plaintext rows stay readable.
-                if !key_path.exists() {
-                    match facelock_tpm::SoftwareSealer::generate_key_file(key_path) {
-                        Ok(()) => info!(
-                            "generated encryption key at {} (encrypt-by-default)",
-                            key_path.display()
-                        ),
-                        // Not necessarily fatal on its own; the read-back below is
-                        // the authoritative check for whether encryption works.
-                        Err(e) => warn!(
-                            "failed to auto-generate encryption key at {}: {e}",
-                            key_path.display()
-                        ),
-                    }
-                }
-                match facelock_tpm::SoftwareSealer::from_key_file(key_path) {
-                    Ok(sealer) => {
-                        info!(
-                            "software encryption sealer initialized from {}",
-                            key_path.display()
-                        );
-                        Some(sealer)
-                    }
-                    Err(e) => {
-                        // Fail CLOSED on enroll: record the cause so `handle`
-                        // refuses to enroll rather than silently storing the
-                        // biometric template as plaintext (finding: silent
-                        // plaintext downgrade).
-                        let msg = format!(
-                            "{} keyfile could not be created/read: {e}",
-                            key_path.display()
-                        );
+                // Encrypt-by-default (finding #8): auto-generate the key on
+                // first use so a keyfile default actually encrypts — but only
+                // for a database that holds no encrypted row. `key_policy` is
+                // the one gate; the daemon, the one-shot path, `facelock
+                // setup` and `facelock encrypt` all mint through it, because a
+                // refusal wired into one writer is not a refusal (#231).
+                match Self::resolve_keyfile_sealer(&config, &store) {
+                    Ok(sealer) => Some(sealer),
+                    // Fail CLOSED on enroll: record the cause so `handle`
+                    // refuses to enroll rather than silently storing the
+                    // biometric template as plaintext (finding: silent
+                    // plaintext downgrade). Auth is untouched and keeps
+                    // falling through to password.
+                    Err(msg) => {
                         warn!(
                             "software encryption sealer unavailable — enroll will be refused: {msg}"
                         );
@@ -724,6 +702,77 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         })
     }
 
+    /// Resolve the keyfile sealer: mint the encrypt-by-default key when that
+    /// is allowed, then read it. `Err` is the reason enroll must fail closed.
+    fn resolve_keyfile_sealer(
+        config: &Config,
+        store: &FaceStore,
+    ) -> Result<facelock_tpm::SoftwareSealer, String> {
+        let key_path = std::path::Path::new(&config.encryption.key_path);
+        if let Some(refusal) =
+            crate::key_policy::ensure_encrypt_by_default_key(store, config).refusal()
+        {
+            return Err(refusal.to_string());
+        }
+        match facelock_tpm::SoftwareSealer::from_key_file(key_path) {
+            Ok(sealer) => {
+                info!(
+                    "software encryption sealer initialized from {}",
+                    key_path.display()
+                );
+                Ok(sealer)
+            }
+            Err(e) => {
+                let complaint = format!("{} keyfile could not be read: {e}", key_path.display());
+                // A key that cannot be read leaves an operator holding
+                // encrypted rows in exactly the predicament a missing one
+                // does. The generic byte-count complaint names neither what
+                // is at risk nor the artifact that brings it back.
+                match crate::key_policy::encrypted_rows_at_risk(store, config) {
+                    Some(at_risk) => Err(format!("{complaint} — {at_risk}")),
+                    None => Err(complaint),
+                }
+            }
+        }
+    }
+
+    /// Re-ask whether the keyfile sealer is available, for a handler that is
+    /// currently refusing.
+    ///
+    /// The refusal names an artifact to restore. Deciding once at construction
+    /// meant the operator restored the key, did exactly what they were told,
+    /// and was told the same thing again — the message's next suggestion being
+    /// `facelock clear`, which destroys the enrollments the restore just
+    /// saved. A fix that looks like a no-op is a fix nobody completes, so the
+    /// enrollment that follows a restore re-reads the key.
+    ///
+    /// Only the keyfile method: a TPM sealer that cannot initialize fails
+    /// handler construction outright, so no handler is ever live in that
+    /// state. Re-running the gate is one `stat` once the key file is back.
+    /// While it stays absent that fast path can't fire: the gate opens an
+    /// exclusive store section over one projection query, and can wait up
+    /// to the busy timeout behind a concurrent enrollment.
+    fn refresh_software_sealer(&mut self) {
+        if self.sealer_init_error.is_none()
+            || self.config.encryption.method != EncryptionMethod::Keyfile
+        {
+            return;
+        }
+        match Self::resolve_keyfile_sealer(&self.config, &self.store) {
+            Ok(sealer) => {
+                info!("encryption key is readable again — enrollment is no longer refused");
+                self.software_sealer = Some(sealer);
+                self.sealer_init_error = None;
+                // The compare set was decrypted (or not) under the old
+                // decision; the next frame reloads it under this one.
+                self.preview_embeddings = None;
+            }
+            // Still refused — but report the *current* reason, which may name
+            // a different artifact than the one construction found.
+            Err(msg) => self.sealer_init_error = Some(msg),
+        }
+    }
+
     /// Close the camera if its warm hold has run out. Called from the
     /// daemon's [`CAMERA_POLL_INTERVAL`] tick; a tick that finds the handler
     /// locked simply misses, because the deadline is absolute.
@@ -747,7 +796,18 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         &mut self,
         user: &str,
     ) -> Result<Vec<(u32, facelock_core::types::FaceEmbedding)>, DaemonResponse> {
-        if !crate::embeddings::needs_raw_rows(&self.config, self.software_sealer.is_some()) {
+        // The third argument is the one that reads oddly and matters most.
+        // With the sealer refused there is no sealer, so the fast path used to
+        // hand a 2077-byte encrypted blob to the caller as a raw embedding and
+        // the store called the database corrupt. The rows are unreadable
+        // either way; which of the two things the operator is told decides
+        // whether they restore a key or reinstall a database.
+        let refusal = self.sealer_init_error.clone();
+        if !crate::embeddings::needs_raw_rows(
+            &self.config,
+            self.software_sealer.is_some(),
+            refusal.is_some(),
+        ) {
             // Fast path: no encryption, use standard method (no overhead)
             return self
                 .store
@@ -772,7 +832,15 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
             self.software_sealer.as_ref(),
             crate::embeddings::TpmAccess::Held(self.tpm_sealer.as_mut()),
         )
-        .map_err(|message| DaemonResponse::Error { message })
+        .map_err(|message| DaemonResponse::Error {
+            // Carry the refusal into the auth path's own line. "no key is
+            // configured" is true and useless; the operator needs the artifact
+            // to restore, and this is the message they will actually see.
+            message: match &refusal {
+                Some(reason) => format!("{message} — {reason}"),
+                None => message,
+            },
+        })
     }
 
     /// Serve a request that nobody can cancel.
@@ -826,6 +894,9 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                     warn!(user, "enroll refused: {message}");
                     return DaemonResponse::Error { message };
                 }
+                // An operator who restored the key artifact the refusal named
+                // gets to enroll, without restarting the daemon to prove it.
+                self.refresh_software_sealer();
                 // Fail CLOSED: an encryption method is configured but its sealer
                 // could not be initialized (e.g. keyfile IO/permission error).
                 // Refuse to enroll rather than silently storing the biometric
@@ -840,10 +911,11 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                         "the configured encryption sealer could not be initialized".to_string()
                     });
                     let message = format!(
-                        "refusing to enroll: {cause}. Storing your face would otherwise fall \
+                        "refusing to enroll: {} Storing your face would otherwise fall \
                          back to plaintext. Fix the keyfile path/permissions (or set \
                          encryption.method = \"none\" with security.allow_plaintext = true to \
-                         intentionally store plaintext)."
+                         intentionally store plaintext).",
+                        crate::key_policy::sentence(&cause)
                     );
                     warn!(user, "enroll refused (encryption unavailable): {message}");
                     return DaemonResponse::Error { message };
@@ -1080,6 +1152,14 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         intent: AuthIntent,
         cancel: &CancelToken,
     ) -> DaemonResponse {
+        // An operator who restored the key artifact the refusal named gets a
+        // real compare on the next authentication attempt, not just the next
+        // enrollment — this is one `lstat` once the key is back, and a no-op
+        // once the refusal is gone. While the key stays absent, it is instead
+        // an exclusive store section over one projection query, which can
+        // wait up to the busy timeout behind a concurrent enrollment.
+        self.refresh_software_sealer();
+
         // A storage failure here must surface as an error, never fold into an
         // empty model list (C3, issue #105): empty `models` means an empty
         // device-allowed set, a guaranteed "no match", and a rate-limit charge

@@ -824,14 +824,52 @@ impl SoftwareSealer {
     /// Create a new SoftwareSealer from a key file.
     ///
     /// The key file must contain exactly 32 bytes (256 bits) of key material.
+    ///
+    /// The open is `O_NOFOLLOW`. `std::fs::read` follows a symlink, so a link
+    /// planted at `encryption.key_path` used to hand this reader whatever it
+    /// named — while the creation path refused the very same link. A refusal
+    /// only one of the two paths makes is not a refusal, so the symlink gets
+    /// its own message here too, distinct from an I/O failure.
+    ///
+    /// The bytes are read into a wiping buffer: a plain `read` leaves a copy
+    /// of the key in freed heap for the life of the process.
     pub fn from_key_file(path: &std::path::Path) -> Result<Self> {
-        let data = std::fs::read(path).map_err(|e| {
-            FacelockError::Encryption(format!("failed to read key file {}: {e}", path.display()))
+        use std::io::Read;
+
+        let file = facelock_core::fs_security::open_no_follow(path).map_err(|e| {
+            if facelock_core::fs_security::is_symlink(path) {
+                FacelockError::Encryption(symlink_key_refusal(path))
+            } else {
+                FacelockError::Encryption(format!(
+                    "failed to read key file {}: {e}",
+                    path.display()
+                ))
+            }
         })?;
+        // Bounded read: a valid key file is never more than `AES_KEY_SIZE`
+        // bytes, so `key_path` pointed at something else — a log file, a
+        // misconfigured path — must not be read into memory in full before
+        // the length check below gets to run. One byte past the expected
+        // size is enough to know the file is too big without reading the
+        // rest of it.
+        let mut data = zeroize::Zeroizing::new(Vec::with_capacity(AES_KEY_SIZE + 1));
+        file.take((AES_KEY_SIZE + 1) as u64)
+            .read_to_end(&mut data)
+            .map_err(|e| {
+                FacelockError::Encryption(format!(
+                    "failed to read key file {}: {e}",
+                    path.display()
+                ))
+            })?;
         if data.len() != AES_KEY_SIZE {
+            let got = if data.len() > AES_KEY_SIZE {
+                format!("more than {AES_KEY_SIZE}")
+            } else {
+                data.len().to_string()
+            };
             return Err(FacelockError::Encryption(format!(
-                "key file must be exactly {AES_KEY_SIZE} bytes, got {}",
-                data.len()
+                "key file {} must be exactly {AES_KEY_SIZE} bytes, got {got}",
+                path.display()
             )));
         }
         let mut key = [0u8; AES_KEY_SIZE];
@@ -847,26 +885,40 @@ impl SoftwareSealer {
     /// Generate a new random 256-bit key and write it to a file at 0600.
     ///
     /// The file is created at mode 0600 in the same `open(2)` that creates it
-    /// (via `fs_security::create_truncate_file`), so it is never momentarily
-    /// world/group-readable — closing the create-then-`chmod` TOCTOU window
-    /// (finding #11). The key material is flushed to disk with `sync_all` and
-    /// zeroized from memory before returning.
+    /// (via `fs_security::create_truncate_file_nofollow`), so it is never
+    /// momentarily world/group-readable — closing the create-then-`chmod`
+    /// TOCTOU window (finding #11). The key material is flushed to disk with
+    /// `sync_all` and zeroized from memory before returning.
+    ///
+    /// Refuses a symlink at `path` up front, for a clearer message than the
+    /// generic I/O failure `open`'s `ELOOP` would otherwise surface as. The
+    /// open itself is `create_truncate_file_nofollow`, which carries its own
+    /// `O_NOFOLLOW` — the pre-check alone would leave a link planted in the
+    /// gap between it and the open free to be followed.
     pub fn generate_key_file(path: &std::path::Path) -> Result<()> {
         use rand::Rng;
         use std::io::Write;
         use zeroize::Zeroize;
 
+        if facelock_core::fs_security::is_symlink(path) {
+            return Err(FacelockError::Encryption(symlink_key_refusal(path)));
+        }
+
         let mut key = [0u8; AES_KEY_SIZE];
         rand::rng().fill_bytes(&mut key);
 
         let write_result = (|| -> Result<()> {
-            let mut file =
-                facelock_core::fs_security::create_truncate_file(path, 0o600).map_err(|e| {
+            let mut file = facelock_core::fs_security::create_truncate_file_nofollow(path, 0o600)
+                .map_err(|e| {
+                if facelock_core::fs_security::is_symlink(path) {
+                    FacelockError::Encryption(symlink_key_refusal(path))
+                } else {
                     FacelockError::Encryption(format!(
                         "failed to create key file {}: {e}",
                         path.display()
                     ))
-                })?;
+                }
+            })?;
             file.write_all(&key)
                 .and_then(|()| file.sync_all())
                 .map_err(|e| {
@@ -875,6 +927,92 @@ impl SoftwareSealer {
                         path.display()
                     ))
                 })
+        })();
+
+        key.zeroize();
+        write_result
+    }
+
+    /// Create the default encryption key, refusing to replace one that exists.
+    ///
+    /// This is the auto-generation primitive: the one called when nobody asked
+    /// for a key and the code is about to make one anyway. `generate_key_file`
+    /// truncates, which is correct when an operator explicitly asked to
+    /// regenerate and wrong here — two daemons starting at once would each
+    /// write a key over the other's, and the rows one of them then encrypts
+    /// become unreadable to the key that survives.
+    ///
+    /// The key is therefore *staged*, not created in place. `O_EXCL` alone
+    /// makes only the name atomic: the 32 bytes are written after the create,
+    /// so a second starter that arrives in between sees a file that exists,
+    /// skips every gate keyed on its absence, and reads zero bytes — a
+    /// spurious "the key is corrupt" on a system whose key is merely three
+    /// microseconds old. Instead the bytes go to an `O_EXCL` temporary beside
+    /// the key at 0600, are flushed, and only then take the real name through
+    /// `renameat2(RENAME_NOREPLACE)`. The name never refers to an incomplete
+    /// file, and the loser of the rename reads the winner's complete one.
+    ///
+    /// Returns `Ok(true)` if this call created the key and `Ok(false)` if
+    /// another creator won the race, in which case the existing file is left
+    /// exactly as it is and the caller should read it.
+    pub fn create_key_file_exclusive(path: &std::path::Path) -> Result<bool> {
+        use rand::Rng;
+        use std::io::Write;
+        use zeroize::Zeroize;
+
+        // A symlink standing where the key belongs is its own fact, and not
+        // one `renameat2` can report: it answers `EEXIST` for a link exactly
+        // as it does for a real file, and "someone else won the race" is the
+        // wrong thing to tell an operator whose key path has been redirected.
+        if facelock_core::fs_security::is_symlink(path) {
+            return Err(FacelockError::Encryption(symlink_key_refusal(path)));
+        }
+
+        let mut key = [0u8; AES_KEY_SIZE];
+        rand::rng().fill_bytes(&mut key);
+
+        let write_result = (|| -> Result<bool> {
+            let (staged, mut file) = stage_key_file(path)?;
+            let staged_write = file
+                .write_all(&key)
+                .and_then(|()| file.sync_all())
+                .map_err(|e| {
+                    FacelockError::Encryption(format!(
+                        "failed to write the staged key file {}: {e}",
+                        staged.display()
+                    ))
+                });
+            drop(file);
+            if let Err(e) = staged_write {
+                let _ = std::fs::remove_file(&staged);
+                return Err(e);
+            }
+
+            match facelock_core::fs_security::rename_noreplace(&staged, path) {
+                Ok(()) => {
+                    // The name is only durable once its directory entry is.
+                    facelock_core::fs_security::sync_parent_dir(path).map_err(|e| {
+                        FacelockError::Encryption(format!(
+                            "failed to flush the directory holding {}: {e}",
+                            path.display()
+                        ))
+                    })?;
+                    Ok(true)
+                }
+                Err(e) if e.raw_os_error() == Some(libc::EEXIST) => {
+                    // Someone else published first. Their file is complete by
+                    // construction, so the caller simply reads it.
+                    let _ = std::fs::remove_file(&staged);
+                    Ok(false)
+                }
+                Err(e) => {
+                    let _ = std::fs::remove_file(&staged);
+                    Err(FacelockError::Encryption(format!(
+                        "failed to move the staged key into place at {}: {e}",
+                        path.display()
+                    )))
+                }
+            }
         })();
 
         key.zeroize();
@@ -1076,16 +1214,92 @@ impl Drop for ZeroizingBytes {
 /// Detect whether a blob is TPM-sealed (version byte 0x01 no-PCR, or 0x03
 /// PCR-bound) rather than a raw 2048-byte embedding.
 pub fn is_sealed(data: &[u8]) -> bool {
-    !data.is_empty()
-        && (data[0] == SEALED_VERSION_BYTE || data[0] == SEALED_PCR_VERSION_BYTE)
-        && data.len() != RAW_EMBEDDING_SIZE
+    is_sealed_shape(data.first().copied(), data.len())
 }
 
 /// Detect whether a blob is software-encrypted (version byte 0x02).
 pub fn is_software_encrypted(data: &[u8]) -> bool {
-    !data.is_empty()
-        && data[0] == SOFTWARE_ENCRYPTED_VERSION_BYTE
-        && data.len() != RAW_EMBEDDING_SIZE
+    is_software_encrypted_shape(data.first().copied(), data.len())
+}
+
+/// [`is_sealed`] for a caller holding a blob's version byte and length but not
+/// the blob.
+///
+/// The store can project those two columns out of SQLite directly. A caller
+/// that only needs to *classify* rows — how many templates are encrypted, and
+/// under which method — has no business pulling every plaintext template into
+/// memory to find out, outside the wiping discipline the read paths keep. Same
+/// rule, one implementation, so the two spellings cannot drift.
+pub fn is_sealed_shape(first_byte: Option<u8>, len: usize) -> bool {
+    matches!(
+        first_byte,
+        Some(SEALED_VERSION_BYTE) | Some(SEALED_PCR_VERSION_BYTE)
+    ) && len != RAW_EMBEDDING_SIZE
+}
+
+/// [`is_software_encrypted`] for a caller holding a blob's version byte and
+/// length but not the blob. See [`is_sealed_shape`].
+pub fn is_software_encrypted_shape(first_byte: Option<u8>, len: usize) -> bool {
+    first_byte == Some(SOFTWARE_ENCRYPTED_VERSION_BYTE) && len != RAW_EMBEDDING_SIZE
+}
+
+/// The one refusal every path gives for a symlink standing where the
+/// encryption key file belongs.
+///
+/// One string, because the creator and the reader must describe the same fact
+/// the same way: a link at the key path is not "the key is missing" and not
+/// "the key is corrupt", it is a key path pointing somewhere else, and the
+/// remedy is different from either.
+pub fn symlink_key_refusal(path: &std::path::Path) -> String {
+    format!(
+        "refusing to use a symlink as the encryption key file: {} is a symbolic link. \
+         Replace it with the key file itself, or point encryption.key_path at the \
+         real file.",
+        path.display()
+    )
+}
+
+/// Open an `O_EXCL` staging file beside `path`, at 0600, for the bytes that
+/// will take `path`'s name once they are complete and flushed.
+///
+/// The name is unique per attempt and hidden (leading dot) so a crash between
+/// create and rename leaves an obvious orphan rather than something that looks
+/// like a key. A collision is retried rather than treated as failure: the pid
+/// and clock can repeat across containers sharing a mount.
+fn stage_key_file(path: &std::path::Path) -> Result<(std::path::PathBuf, std::fs::File)> {
+    const ATTEMPTS: u32 = 8;
+
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("encryption.key");
+
+    for attempt in 0..ATTEMPTS {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let staged = parent.join(format!(
+            ".{name}.new-{}-{unique:x}-{attempt}",
+            std::process::id()
+        ));
+        match facelock_core::fs_security::create_new_file(&staged, 0o600) {
+            Ok(Some(file)) => return Ok((staged, file)),
+            Ok(None) => continue,
+            Err(e) => {
+                return Err(FacelockError::Encryption(format!(
+                    "failed to create the staged key file {}: {e}",
+                    staged.display()
+                )));
+            }
+        }
+    }
+
+    Err(FacelockError::Encryption(format!(
+        "failed to create a staging file for {} after {ATTEMPTS} attempts",
+        path.display()
+    )))
 }
 
 /// Detect whether a blob is encrypted (either TPM-sealed or software-encrypted).
@@ -1295,6 +1509,50 @@ mod tests {
             err.contains("32"),
             "error should mention expected size: {err}"
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A key file is never legitimately larger than 32 bytes. Before this,
+    /// `from_key_file` `read_to_end`'d the whole thing before checking the
+    /// length — unbounded if `key_path` pointed at something huge. The read
+    /// must stop a byte past the expected size, so the error can never report
+    /// the file's true (unread) length.
+    #[test]
+    fn software_sealer_from_key_file_oversized_is_refused_without_reading_it_all() {
+        let dir = std::env::temp_dir().join("facelock_key_oversized_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let key_path = dir.join("oversized.key");
+        std::fs::write(&key_path, [0u8; 64]).unwrap(); // 64 bytes instead of 32
+
+        let err = SoftwareSealer::from_key_file(&key_path)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("32"),
+            "error should mention the expected size: {err}"
+        );
+        assert!(
+            !err.contains("64"),
+            "the true (unread) length must never appear — the bounded read \
+             cannot know it: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn software_sealer_from_key_file_exact_size_still_loads() {
+        let dir = std::env::temp_dir().join("facelock_key_exact_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let key_path = dir.join("exact.key");
+        std::fs::write(&key_path, [0x7Au8; AES_KEY_SIZE]).unwrap();
+
+        SoftwareSealer::from_key_file(&key_path).unwrap();
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1622,6 +1880,256 @@ mod tests {
         assert_eq!(idx, Some(vec![0, 7]));
         assert_eq!(pubb, &[0xDE, 0xAD]);
         assert_eq!(privb, &[0xBE, 0xEF, 0x00]);
+    }
+
+    // --- Exclusive default-key creation (#231, Track K task 8) ---
+
+    #[test]
+    fn create_key_file_exclusive_creates_a_root_only_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+
+        assert!(SoftwareSealer::create_key_file_exclusive(&key_path).unwrap());
+
+        let metadata = std::fs::metadata(&key_path).unwrap();
+        assert_eq!(metadata.len(), AES_KEY_SIZE as u64);
+        assert_eq!(
+            std::os::unix::fs::PermissionsExt::mode(&metadata.permissions()) & 0o777,
+            0o600
+        );
+        SoftwareSealer::from_key_file(&key_path).unwrap();
+    }
+
+    #[test]
+    fn create_key_file_exclusive_never_replaces_an_existing_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        SoftwareSealer::generate_key_file(&key_path).unwrap();
+        let original = std::fs::read(&key_path).unwrap();
+
+        // The loser of a creation race is told so, and the winner's bytes are
+        // still the bytes on disk: an O_TRUNC create here would hand one of the
+        // two processes a key nobody's rows were written under.
+        assert!(!SoftwareSealer::create_key_file_exclusive(&key_path).unwrap());
+        assert_eq!(std::fs::read(&key_path).unwrap(), original);
+    }
+
+    #[test]
+    fn create_key_file_exclusive_refuses_a_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("elsewhere.key");
+        std::fs::write(&target, b"not a key").unwrap();
+        let key_path = dir.path().join("encryption.key");
+        std::os::unix::fs::symlink(&target, &key_path).unwrap();
+
+        // O_NOFOLLOW: a symlink planted at the key path must not become a
+        // write primitive pointed at whatever it names.
+        let error = SoftwareSealer::create_key_file_exclusive(&key_path)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("symlink"),
+            "a link at the key path is its own refusal, not an I/O failure: {error}"
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"not a key");
+    }
+
+    #[test]
+    fn generate_key_file_refuses_a_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("elsewhere.key");
+        std::fs::write(&target, b"not a key").unwrap();
+        let key_path = dir.path().join("encryption.key");
+        std::os::unix::fs::symlink(&target, &key_path).unwrap();
+
+        // `--generate-key` and `setup --encryption keyfile` both call this
+        // primitive directly, not `create_key_file_exclusive`. It must refuse
+        // the symlink itself, with the clearer message the pre-check gives —
+        // `create_truncate_file_nofollow`'s own `O_NOFOLLOW` is the backstop
+        // for a link planted after this check runs, exercised directly on
+        // the primitive in facelock-core's own tests (ELOOP).
+        let error = SoftwareSealer::generate_key_file(&key_path)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("symlink"),
+            "a link at the key path is its own refusal, not an I/O failure: {error}"
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"not a key");
+        assert!(
+            std::fs::symlink_metadata(&key_path)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the refusal must not remove the link it found"
+        );
+    }
+
+    /// A symlink that resolves is the shape that used to slip through every
+    /// gate: `Path::exists` follows it, so the caller never asked whether a
+    /// key was missing, and `std::fs::read` then loaded the link target as the
+    /// key. The reader has to refuse what the creator refuses.
+    #[test]
+    fn from_key_file_refuses_a_symlink_to_a_valid_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("attacker.key");
+        SoftwareSealer::generate_key_file(&target).unwrap();
+        let key_path = dir.path().join("encryption.key");
+        std::os::unix::fs::symlink(&target, &key_path).unwrap();
+
+        assert!(
+            key_path.exists(),
+            "`exists` follows the link — that is the trap"
+        );
+        let error = SoftwareSealer::from_key_file(&key_path)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("symlink"),
+            "the read path must name the link rather than load its target: {error}"
+        );
+    }
+
+    #[test]
+    fn from_key_file_refuses_a_symlink_to_a_device() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        std::os::unix::fs::symlink("/dev/null", &key_path).unwrap();
+
+        let error = SoftwareSealer::from_key_file(&key_path)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("symlink"),
+            "a link to a device is the same refusal, not a length complaint: {error}"
+        );
+    }
+
+    /// `O_EXCL` alone publishes the *name* before the bytes. A reader that
+    /// arrives in that window used to see a key file of zero length and report
+    /// it as corrupt. Staging the bytes under another name and moving them in
+    /// with `RENAME_NOREPLACE` closes the window by construction: at every
+    /// instant the key path either does not exist or holds all 32 bytes.
+    #[test]
+    fn create_key_file_exclusive_never_publishes_a_partial_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(9));
+
+        let watcher = {
+            let key_path = key_path.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+                let mut seen_complete = false;
+                while std::time::Instant::now() < deadline {
+                    match std::fs::metadata(&key_path) {
+                        Ok(m) => {
+                            assert_eq!(
+                                m.len(),
+                                AES_KEY_SIZE as u64,
+                                "the key path was observed holding a partial key"
+                            );
+                            seen_complete = true;
+                        }
+                        Err(_) => continue,
+                    }
+                }
+                seen_complete
+            })
+        };
+
+        let creators: Vec<_> = (0..8)
+            .map(|_| {
+                let key_path = key_path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let created = SoftwareSealer::create_key_file_exclusive(&key_path);
+                    // A loser is told "read what the winner wrote", so it must
+                    // be readable the instant it is told that. Under a
+                    // create-then-write scheme this is where it reads zero
+                    // bytes and calls a three-microsecond-old key corrupt.
+                    if matches!(created, Ok(false)) {
+                        SoftwareSealer::from_key_file(&key_path)
+                            .expect("the loser must be able to read the winner's key at once");
+                    }
+                    created
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = creators.into_iter().map(|h| h.join().unwrap()).collect();
+        assert!(watcher.join().unwrap(), "the watcher never saw the key");
+        assert_eq!(
+            results.iter().filter(|r| matches!(r, Ok(true))).count(),
+            1,
+            "exactly one creator publishes the key"
+        );
+        assert!(results.iter().all(|r| r.is_ok()), "a loser is not an error");
+        // Every loser must be able to read what the winner wrote.
+        SoftwareSealer::from_key_file(&key_path).unwrap();
+    }
+
+    #[test]
+    fn create_key_file_exclusive_leaves_no_staging_file_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        SoftwareSealer::create_key_file_exclusive(&key_path).unwrap();
+        // The loser's staging file has to go too, or a busy boot litters the
+        // directory that holds the key with near-miss key files.
+        assert!(!SoftwareSealer::create_key_file_exclusive(&key_path).unwrap());
+
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(entries, vec![std::ffi::OsString::from("encryption.key")]);
+    }
+
+    #[test]
+    fn create_key_file_exclusive_names_a_missing_parent_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("not-installed").join("encryption.key");
+
+        let error = SoftwareSealer::create_key_file_exclusive(&key_path)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("not-installed"),
+            "the error must name the directory installation was meant to create: {error}"
+        );
+        assert!(!dir.path().join("not-installed").exists());
+    }
+
+    #[test]
+    fn blob_shape_predicates_agree_with_their_byte_slice_forms() {
+        let cases: Vec<Vec<u8>> = vec![
+            vec![],
+            vec![0x02; 96],
+            vec![0x02; RAW_EMBEDDING_SIZE],
+            vec![0x01; 200],
+            vec![0x03; 200],
+            vec![0x00; RAW_EMBEDDING_SIZE],
+            vec![0x01; RAW_EMBEDDING_SIZE],
+        ];
+        for blob in cases {
+            assert_eq!(
+                is_software_encrypted(&blob),
+                is_software_encrypted_shape(blob.first().copied(), blob.len()),
+                "software: {:?}/{}",
+                blob.first(),
+                blob.len()
+            );
+            assert_eq!(
+                is_sealed(&blob),
+                is_sealed_shape(blob.first().copied(), blob.len()),
+                "sealed: {:?}/{}",
+                blob.first(),
+                blob.len()
+            );
+        }
     }
 
     #[test]

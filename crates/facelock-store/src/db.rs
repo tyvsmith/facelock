@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::params;
 
@@ -18,6 +18,23 @@ use crate::migrations::run_migrations;
 /// from more than one angle (#308). The daemon's enrollment loop derives its
 /// minimum-capture count from this constant, so the two cannot drift.
 pub const MIN_EMBEDDINGS_PER_MODEL: usize = 3;
+
+/// How long an operation waits for another connection's write lock before
+/// giving up with [`StoreError::Busy`].
+///
+/// Facelock's writers genuinely exclude each other: an enrollment commits its
+/// model in one transaction, and the encryption-key gate holds an exclusive
+/// section across its row check and its key write
+/// ([`FaceStore::with_exclusive`]). Both are short — one small query and a
+/// 32-byte file — so the alternative to waiting is failing an enrollment
+/// because a key check happened to be in flight. Five seconds is far longer
+/// than either section and far shorter than any caller's own deadline.
+///
+/// Set explicitly even though rusqlite happens to apply the same value to
+/// every connection it opens: that default is undocumented, and whether a
+/// concurrent enrollment waits or fails is not a property to leave resting on
+/// it.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub struct FaceStore {
@@ -131,6 +148,11 @@ impl FaceStore {
     /// WAL, foreign keys, migrations, restrictive file modes. Only the flags
     /// used to obtain `conn` differ between them.
     fn init(conn: rusqlite::Connection, db_path: &Path) -> Result<Self> {
+        // First, not rusqlite's default: migrations below can contend with a
+        // concurrent writer, and should wait on the timeout this crate
+        // chose rather than whatever rusqlite starts a connection with.
+        conn.busy_timeout(BUSY_TIMEOUT)
+            .map_err(|e| StoreError::classify(db_path, e))?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .map_err(|e| StoreError::classify(db_path, e))?;
         run_migrations(db_path, &conn)?;
@@ -181,6 +203,60 @@ impl FaceStore {
     /// Classify a rusqlite failure from this store's connection.
     fn err(&self, e: rusqlite::Error) -> StoreError {
         StoreError::classify(&self.path, e)
+    }
+
+    /// Begin a write transaction that takes the database's write lock now,
+    /// not at its first write statement.
+    ///
+    /// `BEGIN IMMEDIATE`, never `BEGIN DEFERRED`. A deferred transaction that
+    /// reads before it writes has to *promote* a read transaction to a write
+    /// one, and SQLite will not run the busy handler for that — the two
+    /// waiters could deadlock — so it fails with `SQLITE_BUSY` at once
+    /// however long [`BUSY_TIMEOUT`] is. Today's transactions all write with
+    /// their first statement and so would wait anyway; taking the lock at
+    /// `BEGIN` costs them nothing and keeps a later read-then-write edit from
+    /// quietly turning a wait into a failed enrollment.
+    fn write_tx(&self) -> Result<rusqlite::Transaction<'_>> {
+        rusqlite::Transaction::new_unchecked(&self.conn, rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| self.err(e))
+    }
+
+    /// Run `f` with this connection holding the database's write lock, and
+    /// release it only once `f` has returned.
+    ///
+    /// `BEGIN EXCLUSIVE`, so the lock is taken before `f` runs rather than at
+    /// its first write: `f` may only read and still excludes every writer.
+    /// That is what the encryption-key gate needs. It asks whether any stored
+    /// blob is encrypted and then writes the key artifact, and those two steps
+    /// have to be one indivisible act — under WAL a plain read sees the
+    /// snapshot it opened on, so an enrollment committing a sealed row between
+    /// the question and the answer produces a row the new key cannot read
+    /// (#231). Enrollment's own write is one transaction
+    /// ([`Self::replace_model_with_embeddings`]), so the two serialize.
+    ///
+    /// `f` is handed this store's own connection, so a query issued through
+    /// `&self` from inside the closure runs inside the same transaction — but
+    /// a method that opens a transaction of its own (every write on this type)
+    /// cannot: SQLite has no nested transactions, and such a call fails rather
+    /// than silently escaping the section.
+    ///
+    /// Returning `Err` — or unwinding — rolls the section back. The section
+    /// holds no writes of its own, so rollback and commit differ only in name.
+    pub fn with_exclusive<T, E>(
+        &self,
+        f: impl FnOnce(&rusqlite::Connection) -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E>
+    where
+        E: From<StoreError>,
+    {
+        let tx = rusqlite::Transaction::new_unchecked(
+            &self.conn,
+            rusqlite::TransactionBehavior::Exclusive,
+        )
+        .map_err(|e| E::from(self.err(e)))?;
+        let value = f(&tx)?;
+        tx.commit().map_err(|e| E::from(self.err(e)))?;
+        Ok(value)
     }
 
     /// Add a face model with its embedding. Returns the new model ID.
@@ -235,7 +311,7 @@ impl FaceStore {
         embedder_model: &str,
         device_id: Option<&str>,
     ) -> Result<u32> {
-        let tx = self.conn.unchecked_transaction().map_err(|e| self.err(e))?;
+        let tx = self.write_tx()?;
 
         let model_id = self.insert_model_row(&tx, user, label, embedder_model, device_id)?;
 
@@ -510,7 +586,7 @@ impl FaceStore {
         embedder_model: &str,
         device_id: Option<&str>,
     ) -> Result<u32> {
-        let tx = self.conn.unchecked_transaction().map_err(|e| self.err(e))?;
+        let tx = self.write_tx()?;
 
         let model_id = self.insert_model_row(&tx, user, label, embedder_model, device_id)?;
         let sealed_int: i64 = if sealed { 1 } else { 0 };
@@ -559,7 +635,7 @@ impl FaceStore {
             });
         }
 
-        let tx = self.conn.unchecked_transaction().map_err(|e| self.err(e))?;
+        let tx = self.write_tx()?;
 
         // Cascades to the old model's embeddings (`ON DELETE CASCADE`, with
         // foreign keys on for every connection this crate opens).
@@ -629,6 +705,43 @@ impl FaceStore {
             )
             .map_err(|e| self.err(e))?;
         Ok((sealed, unsealed))
+    }
+
+    /// The version byte and byte length of every stored embedding blob.
+    ///
+    /// Returns one `(first_byte, len)` per row; `first_byte` is `None` for an
+    /// empty blob.
+    ///
+    /// This exists so a caller can classify rows by *encryption shape* — how
+    /// many templates are software-encrypted, how many TPM-sealed — without
+    /// reading templates. [`Self::count_sealed`] cannot answer that question:
+    /// the `sealed` column is one bit that every method sets, so a TPM system
+    /// and a keyfile system look identical through it, and a row whose flag
+    /// outlived its ciphertext looks encrypted when it is not. The blob's own
+    /// version byte is the fact. Selecting whole rows to reach that byte would
+    /// pull every plaintext biometric template into the caller's memory,
+    /// outside the wiping discipline the read paths keep; SQLite does the
+    /// projection instead.
+    pub fn embedding_blob_shapes(&self) -> Result<Vec<(Option<u8>, usize)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT substr(embedding, 1, 1), length(embedding) FROM face_embeddings")
+            .map_err(|e| self.err(e))?;
+        let rows = stmt
+            .query_map([], |row| {
+                // `substr` over a zero-length blob is NULL, not an empty
+                // blob — the one row shape that would otherwise turn a
+                // classification query into a type error.
+                let head: Option<Vec<u8>> = row.get(0)?;
+                let len: i64 = row.get(1)?;
+                Ok((
+                    head.as_deref().and_then(<[u8]>::first).copied(),
+                    len.max(0) as usize,
+                ))
+            })
+            .map_err(|e| self.err(e))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| self.err(e))
     }
 
     /// Get all embeddings (all users) as raw bytes with sealed flag.
@@ -1103,6 +1216,32 @@ mod tests {
         let (s, u) = store.count_sealed().unwrap();
         assert_eq!(s, 1);
         assert_eq!(u, 2);
+    }
+
+    #[test]
+    fn embedding_blob_shapes_report_the_version_byte_not_the_sealed_flag() {
+        let store = FaceStore::open_memory().unwrap();
+        // A flag that outlived its ciphertext: sealed = 1 over a plaintext
+        // 2048-byte template. `count_sealed` calls this encrypted; the blob
+        // says otherwise, and a caller deciding whether a new key would
+        // orphan anything needs the blob's answer.
+        store
+            .add_model_raw("alice", "stale-flag", &[0u8; 2048], true, "e")
+            .unwrap();
+        store
+            .add_model_raw("bob", "software", &[0x02u8; 96], true, "e")
+            .unwrap();
+        store
+            .add_model_raw("carol", "empty", &[], true, "e")
+            .unwrap();
+
+        let mut shapes = store.embedding_blob_shapes().unwrap();
+        shapes.sort();
+        assert_eq!(
+            shapes,
+            vec![(None, 0), (Some(0x00), 2048), (Some(0x02), 96)]
+        );
+        assert_eq!(store.count_sealed().unwrap(), (3, 0));
     }
 
     #[test]
@@ -1754,5 +1893,90 @@ mod tests {
         let bob_row = all.iter().find(|(_, u, _, _)| u == "bob").unwrap();
         assert!(bob_row.3);
         assert_eq!(bob_row.2, vec![0x01; 50]);
+    }
+
+    /// The guarantee the encryption-key gate is built on (#231): while a
+    /// section is open, an enrollment cannot commit — it waits, and lands
+    /// only after the section has ended.
+    ///
+    /// The enrollment runs on its own connection, as the daemon's does, and
+    /// starts only once the section is known to be open. The flag is cleared
+    /// at the end of the closure, before the lock is released, so a write
+    /// that observed it still set would have to have slipped inside.
+    #[test]
+    fn an_exclusive_section_holds_off_an_enrollment_until_it_ends() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("facelock.db");
+        let holder = FaceStore::create(&db).unwrap();
+        let section_open = Arc::new(AtomicBool::new(true));
+
+        let (announce, wait_for_section) = std::sync::mpsc::channel();
+        let enroller_path = db.clone();
+        let observed = Arc::clone(&section_open);
+        let enrollment = std::thread::spawn(move || {
+            let enroller = FaceStore::open_existing(&enroller_path).unwrap();
+            wait_for_section.recv().expect("section never opened");
+            let started = std::time::Instant::now();
+            let blobs = vec![vec![0u8; 8]; MIN_EMBEDDINGS_PER_MODEL];
+            let refs: Vec<&[u8]> = blobs.iter().map(Vec::as_slice).collect();
+            let result =
+                enroller.replace_model_with_embeddings("alice", "front", &refs, false, "e", None);
+            (result, observed.load(Ordering::SeqCst), started.elapsed())
+        });
+
+        holder
+            .with_exclusive(|_conn| {
+                announce.send(()).expect("the enrollment thread is waiting");
+                // Long enough that the enrollment is certainly blocked on the
+                // lock, far short of the store's busy timeout.
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                section_open.store(false, Ordering::SeqCst);
+                Ok::<(), StoreError>(())
+            })
+            .unwrap();
+
+        let (result, saw_section_open, elapsed) = enrollment.join().unwrap();
+        assert!(
+            result.is_ok(),
+            "the enrollment must wait for the section, not fail: {result:?}"
+        );
+        assert!(
+            !saw_section_open,
+            "the enrollment committed while the section was still open"
+        );
+        assert!(
+            elapsed >= std::time::Duration::from_millis(100),
+            "the enrollment did not block on the section: {elapsed:?}"
+        );
+        assert_eq!(holder.list_models("alice").unwrap().len(), 1);
+    }
+
+    /// A section that ends in `Err` still ends: the transaction rolls back and
+    /// the next writer gets the lock.
+    #[test]
+    fn a_failed_exclusive_section_releases_the_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("facelock.db");
+        let store = FaceStore::create(&db).unwrap();
+
+        let err = store
+            .with_exclusive(|_conn| {
+                Err::<(), _>(StoreError::Query {
+                    path: db.clone(),
+                    detail: "refused".into(),
+                })
+            })
+            .unwrap_err();
+        assert!(matches!(err, StoreError::Query { .. }), "got {err:?}");
+
+        let blobs = vec![vec![0u8; 8]; MIN_EMBEDDINGS_PER_MODEL];
+        let refs: Vec<&[u8]> = blobs.iter().map(Vec::as_slice).collect();
+        FaceStore::open_existing(&db)
+            .unwrap()
+            .replace_model_with_embeddings("alice", "front", &refs, false, "e", None)
+            .expect("the lock must be released when the section fails");
     }
 }

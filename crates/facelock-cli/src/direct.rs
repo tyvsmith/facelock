@@ -225,22 +225,52 @@ pub fn authenticate(config: &Config, user: &str) -> anyhow::Result<MatchResult> 
 }
 
 /// Initialize a software sealer based on encryption config.
-/// Returns `None` if encryption is disabled.
-fn init_software_sealer(config: &Config) -> anyhow::Result<Option<facelock_tpm::SoftwareSealer>> {
+///
+/// Returns the sealer and, when a configured method has none, the reason —
+/// mirroring the daemon's posture rather than propagating. That difference was
+/// not cosmetic: a hard failure here is taken by *every* one-shot caller
+/// (`auth`, `test`, `bench`, `preview`), and the encrypted-row check that
+/// produces it is global to the store, so one user's encrypted row disabled
+/// face authentication for every plaintext-only user on the machine — a
+/// lockout the daemon transport did not have. Enrollment fails closed on the
+/// reason ([`enroll`]); everything else serves the rows it can read.
+///
+/// `Err` stays `Err` for the TPM method, whose failures are configuration
+/// errors rather than a missing artifact the operator can restore.
+fn init_software_sealer(
+    config: &Config,
+    store: &FaceStore,
+) -> anyhow::Result<(Option<facelock_tpm::SoftwareSealer>, Option<String>)> {
     match config.encryption.method {
         EncryptionMethod::Keyfile => {
             let key_path = Path::new(&config.encryption.key_path);
             // Encrypt-by-default (finding #8): generate the key on first use so
-            // the keyfile default actually encrypts new templates.
-            if !key_path.exists() {
-                facelock_tpm::SoftwareSealer::generate_key_file(key_path)
-                    .context("failed to auto-generate encryption key")?;
-                debug!("generated encryption key at {}", key_path.display());
+            // the keyfile default actually encrypts new templates. The gate is
+            // `facelock_daemon::key_policy`, shared with the daemon, `facelock
+            // setup` and `facelock encrypt`, so no writer of this key can
+            // drift on when a replacement may be written (#231).
+            if let Some(refusal) =
+                facelock_daemon::key_policy::ensure_encrypt_by_default_key(store, config).refusal()
+            {
+                debug!("{refusal}");
+                return Ok((None, Some(refusal.to_string())));
             }
-            Ok(Some(
-                facelock_tpm::SoftwareSealer::from_key_file(key_path)
-                    .context("failed to initialize software encryption sealer")?,
-            ))
+            match facelock_tpm::SoftwareSealer::from_key_file(key_path) {
+                Ok(sealer) => Ok((Some(sealer), None)),
+                Err(e) => {
+                    // Same as the daemon: an unreadable key over encrypted
+                    // rows must name what is at risk, not just the byte count.
+                    let complaint =
+                        format!("{} keyfile could not be read: {e}", key_path.display());
+                    let reason =
+                        match facelock_daemon::key_policy::encrypted_rows_at_risk(store, config) {
+                            Some(at_risk) => format!("{complaint} — {at_risk}"),
+                            None => complaint,
+                        };
+                    debug!("{reason}");
+                    Ok((None, Some(reason)))
+                }
+            }
         }
         EncryptionMethod::Tpm => {
             #[cfg(feature = "tpm")]
@@ -251,7 +281,7 @@ fn init_software_sealer(config: &Config) -> anyhow::Result<Option<facelock_tpm::
                 let key = tpm.unseal_key_from_file(sealed_path).with_context(|| {
                     format!("failed to unseal AES key from {}", sealed_path.display())
                 })?;
-                Ok(Some(facelock_tpm::SoftwareSealer::from_key(key)))
+                Ok((Some(facelock_tpm::SoftwareSealer::from_key(key)), None))
             }
             #[cfg(not(feature = "tpm"))]
             {
@@ -261,7 +291,7 @@ fn init_software_sealer(config: &Config) -> anyhow::Result<Option<facelock_tpm::
                 );
             }
         }
-        EncryptionMethod::None => Ok(None),
+        EncryptionMethod::None => Ok((None, None)),
     }
 }
 
@@ -275,12 +305,18 @@ pub fn load_user_embeddings(
     config: &Config,
     user: &str,
 ) -> anyhow::Result<Vec<(u32, facelock_core::types::FaceEmbedding)>> {
-    let software_sealer = init_software_sealer(config)?;
+    let (software_sealer, sealer_error) = init_software_sealer(config, store)?;
 
     // Fast path: nothing is configured that could have written encrypted rows.
     // `seal_database` forces the raw path even without a software sealer, so a
-    // TPM-sealed blob is never misread as a raw embedding.
-    if !facelock_daemon::embeddings::needs_raw_rows(config, software_sealer.is_some()) {
+    // TPM-sealed blob is never misread as a raw embedding — and so does an
+    // unavailable sealer, so an encrypted blob is never reported as store
+    // corruption (same rule as the daemon).
+    if !facelock_daemon::embeddings::needs_raw_rows(
+        config,
+        software_sealer.is_some(),
+        sealer_error.is_some(),
+    ) {
         return store
             .get_user_embeddings(user)
             .context("storage error loading embeddings");
@@ -301,7 +337,10 @@ pub fn load_user_embeddings(
             sealer: None,
         },
     )
-    .map_err(|message| anyhow::anyhow!(message))
+    .map_err(|message| match &sealer_error {
+        Some(reason) => anyhow::anyhow!("{message} — {reason}"),
+        None => anyhow::anyhow!(message),
+    })
 }
 
 /// Direct enrollment — returns (model_id, embedding_count).
@@ -321,8 +360,23 @@ pub fn enroll(config: &Config, user: &str, label: &str) -> anyhow::Result<(u32, 
     let store = open_store(config)?;
     let mut engine = load_engine(config)?;
 
-    // Initialize sealer if encryption is configured
-    let software_sealer = init_software_sealer(config)?;
+    // Initialize sealer if encryption is configured. Enrollment is the one
+    // one-shot path that fails CLOSED on an unavailable sealer: writing the
+    // template anyway would store a biometric as plaintext, which is the
+    // downgrade `ensure_enroll_encryption_allowed` exists to make explicit.
+    let (software_sealer, sealer_error) = init_software_sealer(config, &store)?;
+    if config.encryption.method != EncryptionMethod::None && software_sealer.is_none() {
+        let cause = sealer_error.unwrap_or_else(|| {
+            "the configured encryption sealer could not be initialized".to_string()
+        });
+        bail!(
+            "refusing to enroll: {} Storing your face would otherwise fall back to \
+             plaintext. Fix the keyfile path/permissions (or set encryption.method = \
+             \"none\" with security.allow_plaintext = true to intentionally store \
+             plaintext).",
+            facelock_daemon::key_policy::sentence(&cause)
+        );
+    }
 
     // Shared with daemon mode (facelock-daemon/src/enroll.rs): same quality
     // gate, angle-diversity check, rejection breakdown, and deadline. A local
@@ -554,5 +608,129 @@ warmup_frames = 9
         let loaded = load_user_embeddings(&store, &config, "alice").unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].1, emb);
+    }
+}
+
+#[cfg(test)]
+mod missing_key_tests {
+    use super::*;
+
+    // --- #231: the one-shot path makes the same decision as the daemon ---
+
+    fn config_for(key_path: &Path) -> Config {
+        Config::parse(&format!(
+            "[encryption]\nmethod = \"keyfile\"\nkey_path = \"{}\"\n",
+            key_path.display()
+        ))
+        .unwrap()
+    }
+
+    fn software_encrypted_row() -> Vec<u8> {
+        facelock_tpm::SoftwareSealer::from_key([0x11u8; 32])
+            .seal_embedding(&[0.5f32; 512])
+            .unwrap()
+    }
+
+    /// The daemon and the one-shot path both auto-generate the
+    /// encrypt-by-default key, so a refusal implemented in only one of them is
+    /// no refusal at all: `facelock auth` runs when the daemon is not there,
+    /// which is exactly the situation an operator hits after a failed upgrade.
+    #[test]
+    fn oneshot_refuses_to_replace_a_missing_key_over_encrypted_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        let config = config_for(&key_path);
+
+        let store = FaceStore::open_memory().unwrap();
+        store
+            .add_model_raw(
+                "alice",
+                "front",
+                &software_encrypted_row(),
+                true,
+                "embedder",
+            )
+            .unwrap();
+
+        let (sealer, reason) = init_software_sealer(&config, &store).unwrap();
+        assert!(sealer.is_none());
+        let reason = reason.expect("the refusal must be recorded");
+        assert!(
+            reason.contains("software-encrypted") && reason.contains("facelock clear"),
+            "refusal must name what is at risk and the remedy: {reason}"
+        );
+        assert!(
+            !key_path.exists(),
+            "a replacement key was written over encrypted rows"
+        );
+    }
+
+    #[test]
+    fn oneshot_still_creates_the_key_for_a_plaintext_only_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        let config = config_for(&key_path);
+
+        let store = FaceStore::open_memory().unwrap();
+        store
+            .add_model_raw("alice", "front", &[0u8; 2048], false, "embedder")
+            .unwrap();
+
+        let (sealer, reason) = init_software_sealer(&config, &store).unwrap();
+        assert!(sealer.is_some());
+        assert!(reason.is_none());
+        assert_eq!(std::fs::metadata(&key_path).unwrap().len(), 32);
+    }
+
+    /// The refusal is global to the store — one user's encrypted row is what
+    /// triggers it — but its consequence must not be. A hard failure here took
+    /// face authentication away from every plaintext-only user on the machine,
+    /// on the transport that runs precisely when the daemon is unavailable.
+    /// The daemon serves those users; so does this.
+    #[test]
+    fn a_plaintext_user_still_loads_while_another_users_row_forces_the_refusal() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        let config = config_for(&key_path);
+
+        let store = FaceStore::open_memory().unwrap();
+        store
+            .add_model_raw("bob", "front", &software_encrypted_row(), true, "embedder")
+            .unwrap();
+        let emb = [0.25f32; 512];
+        store.add_model("alice", "front", &emb, "embedder").unwrap();
+
+        let loaded = load_user_embeddings(&store, &config, "alice").unwrap();
+        assert_eq!(loaded.len(), 1, "alice must still be able to face-auth");
+        assert_eq!(loaded[0].1, emb);
+        assert!(!key_path.exists(), "and no key was minted to do it");
+    }
+
+    /// The user who *does* own an encrypted row gets a decrypt failure that
+    /// names the missing key — never a store-corruption report, which would
+    /// send them to reinstall the one file still holding their enrollments.
+    #[test]
+    fn an_encrypted_user_gets_the_refusal_not_a_corruption_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        let config = config_for(&key_path);
+
+        let store = FaceStore::open_memory().unwrap();
+        store
+            .add_model_raw("bob", "front", &software_encrypted_row(), true, "embedder")
+            .unwrap();
+
+        let error = format!(
+            "{:#}",
+            load_user_embeddings(&store, &config, "bob").unwrap_err()
+        );
+        assert!(
+            error.contains("facelock clear") && error.contains("software-encrypted"),
+            "the load failure must carry the refusal: {error}"
+        );
+        assert!(
+            !error.contains("corrupt"),
+            "a missing key is not a corrupt database: {error}"
+        );
     }
 }
