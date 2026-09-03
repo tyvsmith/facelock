@@ -8,7 +8,7 @@ The following flags are accepted by every subcommand (declared `global = true`):
 
 | Flag | Description |
 |------|-------------|
-| `-c`, `--config <PATH>` | Override the config file path. Takes precedence over `FACELOCK_CONFIG`. |
+| `-c`, `--config <PATH>` | Override the config file path. Takes precedence over `FACELOCK_CONFIG`. The packaged daemon reads only the default file, so under a non-default path `enroll` and `test` use direct camera access and `setup --systemd` refuses, except `--disable`, which stays allowed since stopping the packaged unit reads no config file; a symlink or `..` spelling of the default counts as the default (see [facelock setup](#facelock-setup)). |
 | `-q`, `--quiet` | Suppress stdout: informational text, and on commands whose stdout is the payload, the payload too. Errors (stderr), prompts and exit codes are unaffected. |
 | `-v`, `--verbose` | Raise diagnostic verbosity on stderr, one level per repeat. The CLI starts at `warn`, `daemon run` at `info`. `RUST_LOG` overrides it. |
 
@@ -75,6 +75,19 @@ of `setup` an untouched daemon would hold the answers from before the wizard.
 A restart interrupts any authentication that daemon is mid-way through, so a
 `sudo` prompt waiting on a face in another terminal falls back to a password
 that once.
+
+`--systemd` is not supported under a non-default `--config`. The unit runs
+bare `facelock daemon`, which reads only `/etc/facelock/config.toml`, so the
+daemon it enables would not use the file setup just configured. `facelock
+--config /etc/facelock/scratch.toml setup --systemd --enroll` exits non-zero
+before it writes anything or calls `systemctl`, and says what to do instead:
+copy the file to `/etc/facelock/config.toml` and re-run without `--config`, or
+re-run without
+`--systemd` to enroll with direct camera access under `/etc/facelock/scratch.toml`. The
+wizard skips the daemon question under such a `--config` and says why.
+`--systemd --disable` still runs, with a note that the unit it stops reads the
+default file; a symlink or `..` spelling of the default path counts as the
+default.
 
 ```bash
 facelock setup                          # interactive wizard
@@ -283,6 +296,12 @@ facelock enroll --skip-setup-check      # enroll on a tree setup never marked co
 ```
 
 Captures 3-10 frames over ~15 seconds. Requires exactly one face per frame. Re-enrolling with the same label replaces the previous model on success; a cancelled or failed re-enrollment leaves the previous model in place.
+
+Under a non-default `--config`, enrollment uses direct camera access under that
+file and never the running daemon, which reads only `/etc/facelock/config.toml`;
+when `daemon.mode = "daemon"` a note on stderr says so. The same holds for
+`test`, `list`, `remove`, `clear`, `devices` and `preview` (which then has only
+its text preview).
 
 Without `--skip-setup-check`, an install whose setup-complete marker is missing
 is offered `facelock setup` first and enrolls through it, since setup enrolls a

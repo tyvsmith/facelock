@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::RwLock;
 
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/facelock/config.toml";
@@ -85,10 +85,94 @@ pub fn config_path() -> PathBuf {
     )
 }
 
+/// The config path this process reads, when it is not the default file.
+///
+/// `None` when [`config_path`] resolves to [`DEFAULT_CONFIG_PATH`], including
+/// an override that spells the default another way (through a symlink or a
+/// `..` component). `Some` is the answer to a question the packaged daemon
+/// forces: its unit runs bare `facelock daemon`, which reads only the default
+/// file, so a command running under any other file cannot treat that daemon
+/// as configured the way it is (#314).
+pub fn non_default_config_override() -> Option<PathBuf> {
+    non_default_override_of(&config_path())
+}
+
+fn non_default_override_of(effective: &Path) -> Option<PathBuf> {
+    if names_a_different_file(effective, Path::new(DEFAULT_CONFIG_PATH)) {
+        Some(effective.to_path_buf())
+    } else {
+        None
+    }
+}
+
+/// Whether two spellings name different files, decided on the filesystem as
+/// far as it exists and on the spelling past that. Setup runs before the
+/// config file, and on a from-source install before its directory, exists;
+/// what is still unresolvable after both fails closed as "different".
+fn names_a_different_file(a: &Path, b: &Path) -> bool {
+    resolved_identity(a) != resolved_identity(b)
+}
+
+/// Passes of [`resolve_once`] before a spelling is taken as it stands. Each
+/// pass past the first is only needed when a `..` folded by the one before
+/// exposed a symlink; a chain longer than this is left unresolved, which
+/// compares as "different", the fail-closed side.
+const RESOLVE_PASSES: usize = 4;
+
+/// [`resolve_once`], repeated until the result stops changing. One pass
+/// folds a trailing `..` lexically, which can land back in existing
+/// territory and re-descend into a component that exists as a symlink
+/// (`/exists/ghost/../real_symlink/config.toml`); the next pass then
+/// resolves that symlink the way the kernel would, since the prefix now
+/// exists as far as it.
+fn resolved_identity(path: &Path) -> PathBuf {
+    let mut current = path.to_path_buf();
+    for _ in 0..RESOLVE_PASSES {
+        let folded = resolve_once(&current);
+        if folded == current {
+            break;
+        }
+        current = folded;
+    }
+    current
+}
+
+/// The deepest existing ancestor, resolved on the filesystem, with the
+/// remaining components applied lexically. A component that does not exist
+/// cannot be a symlink, so folding its `.` and `..` is exactly what the
+/// kernel will do once it exists; `..` out of the resolved part goes to the
+/// real parent, as it does through a symlinked directory, and `..` at the
+/// root stays at the root, as the kernel resolves it. Only a spelling with no
+/// existing ancestor at all, a relative path whose first component is
+/// missing, is returned as spelled, which compares unequal to anything
+/// resolved: the fail-closed default for what cannot be answered.
+fn resolve_once(path: &Path) -> PathBuf {
+    let components: Vec<Component<'_>> = path.components().collect();
+    for split in (1..=components.len()).rev() {
+        let prefix: PathBuf = components[..split].iter().collect();
+        let Ok(mut real) = prefix.canonicalize() else {
+            continue;
+        };
+        for component in &components[split..] {
+            match component {
+                Component::Normal(name) => real.push(name),
+                Component::CurDir => {}
+                // `pop` is false only at the root, where `..` stays put.
+                Component::ParentDir => {
+                    real.pop();
+                }
+                Component::RootDir | Component::Prefix(_) => return path.to_path_buf(),
+            }
+        }
+        return real;
+    }
+    path.to_path_buf()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+
     use std::sync::Mutex;
 
     static TEST_MUTEX: Mutex<()> = Mutex::new(());
@@ -161,5 +245,198 @@ mod tests {
         set_process_config_override(PathBuf::from("/tmp/process-override.toml"));
         assert_eq!(config_path(), PathBuf::from("/tmp/process-override.toml"));
         clear_process_config_override();
+    }
+
+    // -----------------------------------------------------------------------
+    // Non-default override (#314): the identity question setup and backend
+    // selection ask. Two spellings of one file are the same file; a file that
+    // does not exist yet is compared through the directory that will hold it.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn no_override_is_not_a_non_default_override() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        unsafe { std::env::remove_var("FACELOCK_CONFIG") };
+        clear_process_config_override();
+        assert_eq!(non_default_config_override(), None);
+    }
+
+    #[test]
+    fn override_naming_the_default_path_is_not_non_default() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        clear_process_config_override();
+        set_process_config_override(PathBuf::from(DEFAULT_CONFIG_PATH));
+        assert_eq!(non_default_config_override(), None);
+        clear_process_config_override();
+    }
+
+    #[test]
+    fn override_naming_another_file_is_reported_as_set() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        clear_process_config_override();
+        let path = PathBuf::from("/tmp/facelock-non-default-override.toml");
+        set_process_config_override(path.clone());
+        assert_eq!(non_default_config_override(), Some(path));
+        clear_process_config_override();
+    }
+
+    /// The same file reached through a symlinked directory is the default,
+    /// not an override: the daemon would read exactly this file.
+    #[test]
+    fn symlinked_spelling_of_the_same_file_is_the_same_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let etc = dir.path().join("etc");
+        std::fs::create_dir(&etc).unwrap();
+        let default = etc.join("config.toml");
+        std::fs::write(&default, "").unwrap();
+        std::os::unix::fs::symlink(&etc, dir.path().join("link")).unwrap();
+
+        let via_link = dir.path().join("link").join("config.toml");
+        assert!(!names_a_different_file(&via_link, &default));
+        assert!(!names_a_different_file(
+            &etc.join("..").join("etc").join("config.toml"),
+            &default
+        ));
+        assert!(names_a_different_file(&etc.join("other.toml"), &default));
+    }
+
+    /// Setup runs before the config file exists. A missing file is compared
+    /// through its directory, so `--config /etc/facelock/../facelock/config.toml`
+    /// on a fresh install is still the default.
+    #[test]
+    fn missing_file_is_compared_through_its_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let etc = dir.path().join("etc");
+        std::fs::create_dir(&etc).unwrap();
+        let default = etc.join("config.toml");
+        assert!(!default.exists());
+
+        let dotted = etc.join("..").join("etc").join("config.toml");
+        assert!(!names_a_different_file(&dotted, &default));
+        assert!(names_a_different_file(&etc.join("other.toml"), &default));
+
+        let ghost = dir.path().join("ghost").join("config.toml");
+        assert!(!names_a_different_file(&ghost, &ghost));
+        assert!(names_a_different_file(&ghost, &default));
+    }
+
+    /// A from-source install runs the identity check before the base flow
+    /// creates the config directory. With no `/etc/facelock` to resolve, the
+    /// `..` spelling of the default must still be the default: the deepest
+    /// existing ancestor is resolved on the filesystem and the rest of the
+    /// spelling is normalized lexically, which is safe because a component
+    /// that does not exist cannot be a symlink.
+    #[test]
+    fn dotted_spelling_is_the_default_even_before_the_config_dir_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let etc = dir.path().join("etc");
+        assert!(!etc.exists());
+        let default = etc.join("config.toml");
+
+        let dotted = etc.join("..").join("etc").join("config.toml");
+        assert!(!names_a_different_file(&dotted, &default));
+        let cur = etc.join(".").join("config.toml");
+        assert!(!names_a_different_file(&cur, &default));
+        // Through a missing sibling: `ghost/../etc` is `etc`, since `ghost`
+        // cannot be a symlink to anywhere.
+        let via_ghost = dir
+            .path()
+            .join("ghost")
+            .join("..")
+            .join("etc")
+            .join("config.toml");
+        assert!(!names_a_different_file(&via_ghost, &default));
+        assert!(names_a_different_file(&etc.join("other.toml"), &default));
+
+        // `..` out of a resolved directory goes to that directory's real
+        // parent, as the kernel would: through a symlinked directory that
+        // exists, `link/../etc` lands beside the link's target.
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, dir.path().join("link")).unwrap();
+        let via_link = dir
+            .path()
+            .join("link")
+            .join("..")
+            .join("etc")
+            .join("config.toml");
+        assert!(!names_a_different_file(&via_link, &default));
+    }
+
+    /// A trailing `..` can pop back into existing territory and re-descend
+    /// into a component that exists as a symlink: `/exists/ghost/..` is
+    /// `/exists` again, and `real_symlink` under it must then be resolved,
+    /// not joined as spelled. One lexical pass alone would call this
+    /// spelling of the default a different file.
+    #[test]
+    fn a_symlink_exposed_by_dot_dot_is_resolved() {
+        let dir = tempfile::tempdir().unwrap();
+        let exists = dir.path().join("exists");
+        let target = dir.path().join("target");
+        std::fs::create_dir(&exists).unwrap();
+        std::fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, exists.join("real_symlink")).unwrap();
+        let default = target.join("config.toml");
+
+        let exposed = exists
+            .join("ghost")
+            .join("..")
+            .join("real_symlink")
+            .join("config.toml");
+        assert!(!names_a_different_file(&exposed, &default));
+
+        // Two levels deep, still within the pass bound.
+        std::os::unix::fs::symlink(&exists, dir.path().join("hop")).unwrap();
+        let twice = dir
+            .path()
+            .join("ghost")
+            .join("..")
+            .join("hop")
+            .join("ghost")
+            .join("..")
+            .join("real_symlink")
+            .join("config.toml");
+        assert!(!names_a_different_file(&twice, &default));
+    }
+
+    /// `..` at the root stays at the root, as the kernel resolves `/..`, so
+    /// climbing past a missing top-level directory lands where the kernel
+    /// would once it exists.
+    #[test]
+    fn dot_dot_at_the_root_stays_at_the_root() {
+        let plain = Path::new("/facelock-no-such-root/config.toml");
+        assert!(!names_a_different_file(
+            Path::new("/../facelock-no-such-root/config.toml"),
+            plain
+        ));
+        assert!(!names_a_different_file(
+            Path::new("/facelock-no-such-root/../../facelock-no-such-root/config.toml"),
+            plain
+        ));
+    }
+
+    /// What has no existing ancestor to resolve from fails closed: a relative
+    /// spelling whose first component is missing is compared as written, so
+    /// two lexically equal spellings of it still count as different.
+    #[test]
+    fn a_spelling_with_no_existing_ancestor_fails_closed() {
+        let plain = Path::new("facelock-no-such-dir/config.toml");
+        let dotted = Path::new("facelock-no-such-dir/../facelock-no-such-dir/config.toml");
+        assert!(!plain.exists() && !Path::new("facelock-no-such-dir").exists());
+        assert!(names_a_different_file(dotted, plain));
+        assert!(!names_a_different_file(plain, plain));
+    }
+
+    /// An unprivileged process reads `FACELOCK_CONFIG`, so that is an override
+    /// too; a privileged one ignores it, so for root only `--config` counts.
+    #[test]
+    fn env_override_counts_only_where_config_path_honours_it() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        clear_process_config_override();
+        let env = PathBuf::from("/tmp/facelock-env-override.toml");
+        let resolved = resolve_config_path(None, Some("/tmp/facelock-env-override.toml"), false);
+        assert_eq!(non_default_override_of(&resolved), Some(env));
+        let resolved = resolve_config_path(None, Some("/tmp/facelock-env-override.toml"), true);
+        assert_eq!(non_default_override_of(&resolved), None);
     }
 }

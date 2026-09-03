@@ -26,8 +26,10 @@ pub enum AccessMessage {
 
     // -- backend selection (D1) --
     DaemonUnreachableFallback,
+    DirectByConfigOverride,
     PreviewGraphicalNeedsDaemonOneshot,
     PreviewGraphicalDaemonUnreachable,
+    PreviewGraphicalDaemonConfigOverride,
 }
 
 impl Message for AccessMessage {
@@ -59,6 +61,16 @@ impl Message for AccessMessage {
             DaemonUnreachableFallback => translate(
                 "Warning: daemon.mode = \"daemon\" but the facelock daemon is unreachable — falling back to direct camera access.\nStart the facelock-daemon service to use it.",
             ),
+            // Not a warning: the operator chose the file, and the daemon on
+            // the bus is doing nothing wrong by reading the default one. The
+            // default path is spelled out because it is the whole reason.
+            // Neither note names `--config`: an unprivileged process reaches
+            // the same selection through `FACELOCK_CONFIG`, and "direct
+            // access" rather than "direct camera access" because the store
+            // reads (`list`, `remove`) select the same way.
+            DirectByConfigOverride => translate(
+                "Note: a non-default configuration is active; the facelock daemon reads only /etc/facelock/config.toml.\nUsing direct access under the selected configuration.",
+            ),
             // The flag is `--json` since #169; `--text-only` is a hidden
             // alias that `preview --help` no longer lists, so naming it here
             // taught a spelling the program had stopped showing. "text-only
@@ -69,6 +81,9 @@ impl Message for AccessMessage {
             ),
             PreviewGraphicalDaemonUnreachable => translate(
                 "Graphical preview requires the daemon, which is configured but not reachable.\nFalling back to text-only mode. Start the facelock-daemon service to use it.\n",
+            ),
+            PreviewGraphicalDaemonConfigOverride => translate(
+                "Graphical preview requires the daemon, which reads only /etc/facelock/config.toml and is not used under a non-default configuration.\nFalling back to text-only mode.\n",
             ),
         }
     }
@@ -82,7 +97,7 @@ impl Message for AccessMessage {
 /// above: no wildcard arm, so a variant that renders nothing does not build.
 #[cfg(test)]
 impl super::Samples for AccessMessage {
-    const VARIANT_COUNT: usize = 9;
+    const VARIANT_COUNT: usize = 11;
 
     fn samples() -> Vec<Self> {
         use AccessMessage::*;
@@ -97,8 +112,33 @@ impl super::Samples for AccessMessage {
             AccessDeniedRootHint,
             EnrollTimedOutClientSide,
             DaemonUnreachableFallback,
+            DirectByConfigOverride,
             PreviewGraphicalNeedsDaemonOneshot,
             PreviewGraphicalDaemonUnreachable,
+            PreviewGraphicalDaemonConfigOverride,
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The two `--config` lines (#314) spell the default path out because it
+    /// is the whole reason; a moved default must move them too.
+    #[test]
+    fn config_override_lines_name_the_default_path() {
+        use AccessMessage::*;
+        let default = facelock_core::paths::DEFAULT_CONFIG_PATH;
+
+        let note = DirectByConfigOverride.localized();
+        assert!(note.contains(default), "{note}");
+        assert!(note.contains("direct access"), "{note}");
+        assert!(!note.contains("--config"), "{note}");
+
+        let preview = PreviewGraphicalDaemonConfigOverride.localized();
+        assert!(preview.contains(default), "{preview}");
+        assert!(preview.contains("text-only"), "{preview}");
+        assert!(!preview.contains("--config"), "{preview}");
     }
 }

@@ -49,6 +49,7 @@ pub fn run(config: &Config, json: bool, user: Option<String>) -> anyhow::Result<
 fn graphical_unavailable_message(kind: BackendKind) -> AccessMessage {
     match kind {
         BackendKind::DirectByFallback => AccessMessage::PreviewGraphicalDaemonUnreachable,
+        BackendKind::DirectByOverride => AccessMessage::PreviewGraphicalDaemonConfigOverride,
         _ => AccessMessage::PreviewGraphicalNeedsDaemonOneshot,
     }
 }
@@ -94,6 +95,12 @@ mod tests {
         assert_eq!(
             graphical_unavailable_message(BackendKind::DirectByConfig),
             AccessMessage::PreviewGraphicalNeedsDaemonOneshot
+        );
+        // Likewise a daemon bypassed under `--config` (#314) is neither
+        // stopped nor configured off.
+        assert_eq!(
+            graphical_unavailable_message(BackendKind::DirectByOverride),
+            AccessMessage::PreviewGraphicalDaemonConfigOverride
         );
     }
 

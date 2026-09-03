@@ -349,6 +349,31 @@ fn enroll_refuses_before_setup_prompt_non_root() {
     );
 }
 
+#[test]
+fn setup_systemd_under_config_override_refuses_root_first_non_root() {
+    // #314: `--systemd` under a non-default `--config` is refused, because
+    // the packaged unit reads only the default file. That refusal sits
+    // *behind* the root gate, so an unprivileged caller hears "Root
+    // required" and nothing else: the identity diagnosis, the base flow's
+    // first line and the unit narration are all forbidden here. The refusal
+    // itself is witnessed as root by tier 3a (test/run-camera-free-tests.sh)
+    // and by the setup unit tests.
+    assert_refuses_before_output(
+        &[
+            "--config",
+            "/nonexistent/facelock-setup-override-c6.toml",
+            "setup",
+            "--systemd",
+            "--non-interactive",
+        ],
+        &[
+            "--systemd is not supported with --config",
+            "facelock setup: preparing system",
+            "Validating installed facelock-daemon",
+        ],
+    );
+}
+
 /// DEC-6: `enroll` is the **interactive** escalation class — with a terminal
 /// attached it offers `Re-run with sudo? [Y/n]` before it refuses, the
 /// opposite of `daemon run` above.

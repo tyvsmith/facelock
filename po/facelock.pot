@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: facelock\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-01 22:47-0700\n"
+"POT-Creation-Date: 2026-09-02 19:50-0700\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,53 +17,65 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: crates/facelock-cli/src/message/access.rs:38
+#: crates/facelock-cli/src/message/access.rs:40
 #, python-brace-format
 msgid "no config file at {path} — run 'sudo facelock setup' to create one"
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:42
+#: crates/facelock-cli/src/message/access.rs:44
 #, python-brace-format
 msgid "invalid config at {path}: {error}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:46
+#: crates/facelock-cli/src/message/access.rs:48
 #, python-brace-format
 msgid ""
 "Root required.\n"
 "  Run: {hint}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:52
+#: crates/facelock-cli/src/message/access.rs:54
 msgid "Root required. Re-run with sudo?"
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:54
+#: crates/facelock-cli/src/message/access.rs:56
 msgid ""
 "Access denied: this operation requires root.\n"
 "  Re-run with sudo, or as root."
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:57
+#: crates/facelock-cli/src/message/access.rs:59
 msgid "enrollment timed out client-side; the daemon may have completed it — run `facelock list` before retrying"
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:60
+#: crates/facelock-cli/src/message/access.rs:62
 msgid ""
 "Warning: daemon.mode = \"daemon\" but the facelock daemon is unreachable — falling back to direct camera access.\n"
 "Start the facelock-daemon service to use it."
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:68
+#: crates/facelock-cli/src/message/access.rs:72
+msgid ""
+"Note: a non-default configuration is active; the facelock daemon reads only /etc/facelock/config.toml.\n"
+"Using direct access under the selected configuration."
+msgstr ""
+
+#: crates/facelock-cli/src/message/access.rs:80
 msgid ""
 "Graphical preview requires the daemon. In oneshot mode, use --json.\n"
 "Falling back to text-only mode.\n"
 msgstr ""
 
-#: crates/facelock-cli/src/message/access.rs:71
+#: crates/facelock-cli/src/message/access.rs:83
 msgid ""
 "Graphical preview requires the daemon, which is configured but not reachable.\n"
 "Falling back to text-only mode. Start the facelock-daemon service to use it.\n"
+msgstr ""
+
+#: crates/facelock-cli/src/message/access.rs:86
+msgid ""
+"Graphical preview requires the daemon, which reads only /etc/facelock/config.toml and is not used under a non-default configuration.\n"
+"Falling back to text-only mode.\n"
 msgstr ""
 
 #: crates/facelock-cli/src/message/device.rs:54
@@ -1448,87 +1460,109 @@ msgstr ""
 msgid "{path} ({error})"
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:44
+#: crates/facelock-cli/src/message/system.rs:49
 msgid "Enable daemon mode with D-Bus activation?"
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:46
+#: crates/facelock-cli/src/message/system.rs:51
 msgid ""
 "  systemd not detected. Skipping daemon configuration.\n"
 "  Facelock will use oneshot mode for authentication."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:49
+#: crates/facelock-cli/src/message/system.rs:54
 msgid "  Skipping systemd setup. Facelock will use oneshot mode."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:52
+#: crates/facelock-cli/src/message/system.rs:57
 msgid ""
 "  Skipping daemon configuration (--no-systemd).\n"
 "  No unit files are written and systemctl is not invoked."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:54
+#: crates/facelock-cli/src/message/system.rs:59
 msgid "  Answered on the command line."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:56
+#: crates/facelock-cli/src/message/system.rs:65
+#, python-brace-format
+msgid ""
+"  Skipping daemon configuration: --config {path} is not /etc/facelock/config.toml,\n"
+"  the only file the facelock-daemon unit reads.\n"
+"  Enrollment and the recognition test use direct camera access under {path}."
+msgstr ""
+
+#: crates/facelock-cli/src/message/system.rs:71
+#, python-brace-format
+msgid ""
+"--systemd is not supported with --config {path}: the facelock-daemon unit runs `facelock daemon`,\n"
+"  which reads only /etc/facelock/config.toml, so the daemon it enables would not use this configuration.\n"
+"  Either copy {path} to /etc/facelock/config.toml and re-run without --config,\n"
+"  or re-run without --systemd to enroll with direct camera access under {path}."
+msgstr ""
+
+#: crates/facelock-cli/src/message/system.rs:79
+#, python-brace-format
+msgid "Note: --config {path} names another file; this stops the unit that reads /etc/facelock/config.toml."
+msgstr ""
+
+#: crates/facelock-cli/src/message/system.rs:84
 msgid ""
 "  facelock-daemon was already running; restarted so enrollment uses\n"
 "  the new configuration."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:58
+#: crates/facelock-cli/src/message/system.rs:86
 msgid "  facelock-daemon is running."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:61
+#: crates/facelock-cli/src/message/system.rs:89
 #, python-brace-format
 msgid ""
 "  facelock-daemon did not answer within {seconds}s.\n"
 "  Continuing with direct camera access; check: systemctl status facelock-daemon"
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:66
+#: crates/facelock-cli/src/message/system.rs:94
 msgid "  Removed the legacy 'facelock' group; face unlock no longer uses it."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:68
+#: crates/facelock-cli/src/message/system.rs:96
 msgid "Disabling facelock-daemon systemd units..."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:69
+#: crates/facelock-cli/src/message/system.rs:97
 msgid "facelock-daemon service disabled and stopped."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:71
+#: crates/facelock-cli/src/message/system.rs:99
 msgid "Validating installed facelock-daemon systemd and D-Bus assets..."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:74
+#: crates/facelock-cli/src/message/system.rs:102
 #, python-brace-format
 msgid "  Removed exact known legacy {path}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:79
+#: crates/facelock-cli/src/message/system.rs:107
 #, python-brace-format
 msgid "  Preserved merged local D-Bus policy {path}; review it if Facelock bus authorization is unexpected."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:83
+#: crates/facelock-cli/src/message/system.rs:111
 msgid "  Installed systemd and D-Bus assets validated."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:84
+#: crates/facelock-cli/src/message/system.rs:112
 msgid "  systemctl daemon-reload done."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:86
+#: crates/facelock-cli/src/message/system.rs:114
 #, python-brace-format
 msgid "  systemctl enable {unit} done."
 msgstr ""
 
-#: crates/facelock-cli/src/message/system.rs:90
+#: crates/facelock-cli/src/message/system.rs:118
 msgid ""
 "\n"
 "facelock-daemon D-Bus activation is now enabled."
