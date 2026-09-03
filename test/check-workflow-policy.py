@@ -91,7 +91,7 @@ GATE_CLAUSE = re.compile(
 SECRET_REF = re.compile(r"\bsecrets\s*[.:\[]|toJSON\s*\(\s*secrets\b", re.IGNORECASE)
 ACTION_USE = re.compile(rf"^\s*(?:- )?uses:\s*{re.escape(ACTION)}@(\S+)")
 STEP_KEY = re.compile(r"^\s+([A-Za-z_][A-Za-z0-9_-]*)\s*:")
-BLOCK_SCALAR = re.compile(r"^(\s*)(?:- )?[^\s#][^:#]*:\s*[|>][-+]?[0-9]*\s*(?:#.*)?$")
+BLOCK_SCALAR = re.compile(r"^(\s*)(- )?[^\s#][^:#]*:\s*[|>][-+]?[0-9]*\s*(?:#.*)?$")
 # `always()`/`failure()`/`cancelled()` override the implicit `success()` an
 # `if:` carries by default; a negated `success()` does the same.
 BYPASS_IF = re.compile(r"\b(?:always|failure|cancelled)\s*\(\s*\)|!\s*success\s*\(\s*\)")
@@ -118,7 +118,14 @@ def content_lines(text: str) -> list[str]:
     """Drop blank lines and full-line comments outside block scalars.
 
     Lines inside a block scalar come back verbatim as `ScalarLine`, so a
-    `#` there is not a comment and a `key:` there is not a key."""
+    `#` there is not a comment and a `key:` there is not a key.
+
+    A block scalar's owning key can be a step's first line (`      - run: |`):
+    the `- ` marker is part of that key's indent, not the scalar's, so the
+    scalar's indent is the marker's end, not the dash. Otherwise a sibling
+    key written at the marker's own indent (`continue-on-error:` at 8 spaces
+    after a `- run: |` at 6) would read as deeper than the scalar and get
+    swallowed as content instead of structure."""
     out: list[str] = []
     scalar_indent: int | None = None
     for line in text.splitlines():
@@ -134,7 +141,7 @@ def content_lines(text: str) -> list[str]:
         out.append(line)
         opened = BLOCK_SCALAR.match(line)
         if opened:
-            scalar_indent = len(opened.group(1))
+            scalar_indent = len(opened.group(1)) + len(opened.group(2) or "")
     return out
 
 
@@ -214,12 +221,18 @@ def block_text(inline: str | None, body: list[str]) -> str:
 
 
 def steps_of(job: list[str]) -> list[list[str]]:
-    """The job's `steps:` items, each as its own list of lines."""
+    """The job's `steps:` items, each as its own list of lines.
+
+    A step's first line keeps its `- ` marker in the raw text, which would
+    leave its inline key (`- run: |`, `- name: ...`) one column shallower
+    than the rest of the step's keys and invisible to `mapping()`. Replacing
+    the marker with two spaces puts that key at the same indent (8) as its
+    siblings."""
     _, body = mapping(job, "steps", 4)
     steps: list[list[str]] = []
     for line in body:
         if not isinstance(line, ScalarLine) and re.match(r"^      - ", line):
-            steps.append([line])
+            steps.append([re.sub(r"^      - ", "        ", line, count=1)])
         elif steps:
             steps[-1].append(line)
     return steps
