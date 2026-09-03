@@ -1605,7 +1605,10 @@ every `issue_comment` job that runs the action, the same-repo guard and the
 same ceiling on every secret-bearing `pull_request` job, a 40-hex pin on
 `anthropics/claude-code-action` with its bypass inputs
 (`allowed_non_write_users`, `allowed_bots`, `github_token`) refused, and the
-`pull_request_target` ban. It runs in `just check` and in CI.
+`pull_request_target` ban. It also refuses a fork-head guard step that carries
+`continue-on-error` and an action step whose `if:` (`always()`, `failure()`,
+`cancelled()`, a negated `success()`) or whose job's `continue-on-error` would
+run it past a failed guard. It runs in `just check` and in CI.
 
 ## Security Configuration Reference
 

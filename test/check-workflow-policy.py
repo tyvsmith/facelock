@@ -92,6 +92,9 @@ SECRET_REF = re.compile(r"\bsecrets\s*[.:\[]|toJSON\s*\(\s*secrets\b", re.IGNORE
 ACTION_USE = re.compile(rf"^\s*(?:- )?uses:\s*{re.escape(ACTION)}@(\S+)")
 STEP_KEY = re.compile(r"^\s+([A-Za-z_][A-Za-z0-9_-]*)\s*:")
 BLOCK_SCALAR = re.compile(r"^(\s*)(?:- )?[^\s#][^:#]*:\s*[|>][-+]?[0-9]*\s*(?:#.*)?$")
+# `always()`/`failure()`/`cancelled()` override the implicit `success()` an
+# `if:` carries by default; a negated `success()` does the same.
+BYPASS_IF = re.compile(r"\b(?:always|failure|cancelled)\s*\(\s*\)|!\s*success\s*\(\s*\)")
 
 failures: list[str] = []
 
@@ -365,7 +368,8 @@ def check_permissions(context: str, job: list[str]) -> None:
 
 
 def check_action_steps(context: str, job: list[str]) -> None:
-    """Every claude-code-action step: 40-hex pin, none of the bypass inputs.
+    """Every claude-code-action step: 40-hex pin, none of the bypass inputs, and
+    no `if:`/`continue-on-error:` shape that can run it past a failed fork guard.
 
     A job that names the action outside a readable step fails closed."""
     matched = 0
@@ -384,6 +388,13 @@ def check_action_steps(context: str, job: list[str]) -> None:
                 fail(context, f"input {key.group(1)!r} bypasses the action's own write-access check")
             if key.group(1) == "with" and "{" in line:
                 fail(context, "`with:` must be in block form; a flow mapping hides its inputs from this check")
+        condition = block_text(*mapping(step, "if", 8))
+        if condition and BYPASS_IF.search(condition):
+            fail(context, f"the action step's `if: {condition}` can run it after a failed fork guard")
+    if matched:
+        coe = continue_on_error(job, 4)
+        if coe is not None:
+            fail(context, f"job carries `continue-on-error: {coe}`, which can run {ACTION} after a failed step")
     if not matched and ACTION in "\n".join(structural(job)):
         fail(context, f"steps shape not readable: {ACTION} occurs in the job but no step at six-space `- ` uses it")
 
@@ -434,6 +445,12 @@ def shell_var(name: str) -> str:
     return rf"\$(?:\{{{re.escape(name)}\}}|{re.escape(name)})"
 
 
+def continue_on_error(lines: list[str], indent: int) -> str | None:
+    """The `continue-on-error` value at `indent`, or None when absent or `false`."""
+    value = scalar(block_text(*mapping(lines, "continue-on-error", indent)))
+    return value if value and value != "false" else None
+
+
 def fork_guard_defects(step: list[str]) -> list[str]:
     """What a step with the guard's `if:` still lacks to be the guard."""
     defects: list[str] = []
@@ -472,6 +489,9 @@ def check_fork_guard(context: str, job: list[str]) -> None:
         return
     for defect in fork_guard_defects(steps[guard_at]):
         fail(context, f"fork-head guard step lacks {defect}")
+    coe = continue_on_error(steps[guard_at], 8)
+    if coe is not None:
+        fail(context, f"fork-head guard step carries `continue-on-error: {coe}`, which makes its `exit 1` non-fatal")
     if guard_at > action_at:
         fail(context, "the fork-head guard step must run before the action step")
 
