@@ -185,7 +185,10 @@ pub fn ensure_encrypt_by_default_key(store: &FaceStore, config: &Config) -> Keyf
     // this call it can commit a row sealed under the current key between the
     // question and the answer — and that row is exactly what the refusal
     // exists to protect. Held only across a `stat`, one projection query and
-    // a 32-byte create.
+    // a 32-byte create — with one exception: `facelock encrypt
+    // --generate-key` under `method = "tpm"` holds its own such section
+    // across a TPM round trip (`generate_and_seal_key`), so a slow TPM can
+    // push a concurrent enrollment into the busy timeout.
     store
         .with_exclusive(|_conn| Ok::<_, StoreError>(decide_and_create(store, config)))
         .unwrap_or_else(|e| KeyfileDecision::Refused(unlockable_store_refusal(config, &e)))

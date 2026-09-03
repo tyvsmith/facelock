@@ -148,12 +148,15 @@ impl FaceStore {
     /// WAL, foreign keys, migrations, restrictive file modes. Only the flags
     /// used to obtain `conn` differ between them.
     fn init(conn: rusqlite::Connection, db_path: &Path) -> Result<Self> {
+        // First, not rusqlite's default: migrations below can contend with a
+        // concurrent writer, and should wait on the timeout this crate
+        // chose rather than whatever rusqlite starts a connection with.
+        conn.busy_timeout(BUSY_TIMEOUT)
+            .map_err(|e| StoreError::classify(db_path, e))?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .map_err(|e| StoreError::classify(db_path, e))?;
         run_migrations(db_path, &conn)?;
         secure_database_files(db_path)?;
-        conn.busy_timeout(BUSY_TIMEOUT)
-            .map_err(|e| StoreError::classify(db_path, e))?;
         Ok(Self {
             conn,
             path: db_path.to_path_buf(),

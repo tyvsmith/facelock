@@ -3128,14 +3128,19 @@ absent **and the database holds no encrypted template**, and never otherwise. En
 decided by each blob's version byte, not the `sealed` column. A store that cannot be
 queried counts as encrypted rows existing, and so does one that cannot be locked: the row
 check and the key write run inside one exclusive store transaction, which serializes them
-against the single transaction an enrollment commits its template in. Automatic creation
-happens only for `method = "keyfile"`; `--generate-key` is the explicit way to mint a key
-before switching the method to it. Creation is an `O_EXCL | O_NOFOLLOW` write to a
-temporary beside the key, flushed, then `renameat2(RENAME_NOREPLACE)` onto the key path
-with the parent directory flushed: concurrent creators resolve to exactly one key, an
-existing key is never truncated, and the key path never holds a partial file. A **symlink
-at the key path is refused** by both the creating and the reading path; the reader opens
-`O_NOFOLLOW`. The same gate governs every writer of that key — the daemon, the one-shot
+against the single transaction an enrollment commits its template in. That ordering is the
+whole guarantee — it does not invalidate a key a running daemon has already cached in
+memory, so `--generate-key` against a live daemon is a known limit, not closed by this gate
+(follow-up). Automatic creation happens only for `method = "keyfile"`; `--generate-key` is
+the explicit way to mint a key before switching the method to it. Creation is an `O_EXCL |
+O_NOFOLLOW` write to a temporary beside the key, flushed, then
+`renameat2(RENAME_NOREPLACE)` onto the key path with the parent directory flushed:
+concurrent creators resolve to exactly one key, an existing key is never truncated, and the
+key path never holds a partial file — true of the *create* path
+(`create_key_file_exclusive`). The *replace* path (`generate_key_file`, what
+`--generate-key` calls) truncates the key file in place instead. A **symlink at the key
+path is refused** by both the creating and the reading path; the reader opens `O_NOFOLLOW`.
+The same gate governs every writer of that key — the daemon, the one-shot
 commands, `facelock setup`'s automatic encryption policy, and `facelock encrypt` with and
 without `--generate-key`; `--generate-key` replaces a live key and is refused over
 encrypted rows, naming `facelock clear` as the deliberate destructive step.

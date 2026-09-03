@@ -748,8 +748,10 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
     ///
     /// Only the keyfile method: a TPM sealer that cannot initialize fails
     /// handler construction outright, so no handler is ever live in that
-    /// state. Re-running the gate is a `stat` and one small query, on a path
-    /// that already refuses.
+    /// state. Re-running the gate is one `stat` once the key file is back.
+    /// While it stays absent that fast path can't fire: the gate opens an
+    /// exclusive store section over one projection query, and can wait up
+    /// to the busy timeout behind a concurrent enrollment.
     fn refresh_software_sealer(&mut self) {
         if self.sealer_init_error.is_none()
             || self.config.encryption.method != EncryptionMethod::Keyfile
@@ -1152,8 +1154,10 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
     ) -> DaemonResponse {
         // An operator who restored the key artifact the refusal named gets a
         // real compare on the next authentication attempt, not just the next
-        // enrollment — this is one `lstat` while the refusal holds, and a
-        // no-op once it doesn't.
+        // enrollment — this is one `lstat` once the key is back, and a no-op
+        // once the refusal is gone. While the key stays absent, it is instead
+        // an exclusive store section over one projection query, which can
+        // wait up to the busy timeout behind a concurrent enrollment.
         self.refresh_software_sealer();
 
         // A storage failure here must surface as an error, never fold into an

@@ -61,9 +61,13 @@ fn generate_key_serialized(config: &Config) -> Result<()> {
             }
             write_key_artifact(config)
         }),
-        // Nothing to lock and nothing to orphan. A writer that creates this
-        // database from here mints its own key through the shared gate, which
-        // takes the same section on the database it just created.
+        // Nothing to lock and nothing to orphan yet. "Mints its own key
+        // through the shared gate" is true only if the key file is *also*
+        // absent at that creator's `stat` — `ensure_encrypt_by_default_key`'s
+        // fast path skips the lock entirely when a key is already there. If a
+        // concurrent daemon creates the database and reads that existing key
+        // through the lock-free path, a row it seals before the replacement
+        // below lands is orphaned. Documented, not closed.
         Err(facelock_store::StoreError::Absent { .. }) => write_key_artifact(config),
         Err(e) => bail!(
             "refusing to write an encryption key: the face database at {} could not be \

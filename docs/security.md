@@ -583,16 +583,22 @@ would not even observe the commit: under WAL it reads the snapshot it opened on.
 that cannot be locked is a refusal on the same reasoning as one that cannot be queried, and
 says which of the two happened. Automatic creation is further restricted to `method =
 "keyfile"`, the only method that reads the file; `--generate-key` still mints one under
-`none`, which is how an operator bootstraps a key before switching the method over.
+`none`, which is how an operator bootstraps a key before switching the method over. The
+guarantee is about ordering a row's commit against a key write through the store; it does
+not invalidate a key a running daemon has already cached in memory — replacing the key file
+while the daemon keeps running (`facelock encrypt --generate-key` against a live system) is
+a known limit, not covered here (follow-up).
 
 Creation is atomic and never destructive. The 32 bytes are written to an `O_EXCL |
 O_NOFOLLOW` temporary beside the key at mode `0600` in a single `open(2)` create-at-mode
 (no create-then-`chmod` window — finding #11), flushed, then moved onto the key path with
 `renameat2(RENAME_NOREPLACE)` and the parent directory flushed. Two daemons starting at
 once therefore resolve to one key rather than each overwriting the other's, and no reader
-ever observes the key path holding a partial file. A **symlink at the key path is its own
-refusal** on every path, creating and reading alike: the reader opens `O_NOFOLLOW`, so a
-planted link is never followed to whatever it names.
+ever observes the key path holding a partial file — true of the *create* path
+(`create_key_file_exclusive`). The *replace* path (`generate_key_file`, what
+`--generate-key` calls) truncates the key file in place instead. A **symlink at the key
+path is its own refusal** on every path, creating and reading alike: the reader opens
+`O_NOFOLLOW`, so a planted link is never followed to whatever it names.
 
 **What a refusal does.** Enrollment fails closed — facelock will not store a biometric
 template as plaintext because encryption is unavailable. Authentication is unaffected and
