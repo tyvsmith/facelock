@@ -105,9 +105,23 @@ case "$FAMILY" in
         # `rm -rf /var/lib/apt/lists/*`, so without it APT knows about no
         # archive at all and the candidate's own `Depends: dbus` is
         # "not installable" rather than merely absent.
+        #
+        # --force-confdef/--force-confold take dpkg's own documented default
+        # action for a modified conffile ("keep your current version") without
+        # a prompt, which is what unattended-upgrades does on a real machine.
+        # It is needed here and not in the synthesized-predecessor lane because
+        # that lane rebuilds the candidate's own payload as the older package,
+        # so its packaged config.toml is byte-identical across the upgrade and
+        # dpkg never asks. A real v0.1.4 ships a different config.toml, so the
+        # modified file this lane plants does provoke the prompt -- and an
+        # unanswered prompt is `end of file on stdin at conffile prompt`, not a
+        # preserved config.
         apt_transaction() {
             DEBIAN_FRONTEND=noninteractive apt-get update >>"$LOG" 2>&1
-            DEBIAN_FRONTEND=noninteractive apt-get "$@" >>"$LOG" 2>&1
+            DEBIAN_FRONTEND=noninteractive apt-get \
+                -o Dpkg::Options::=--force-confdef \
+                -o Dpkg::Options::=--force-confold \
+                "$@" >>"$LOG" 2>&1
         }
         pkg_install() { apt_transaction install -y --no-install-recommends "$1"; }
         pkg_upgrade() { apt_transaction install -y --no-install-recommends "$1"; }
