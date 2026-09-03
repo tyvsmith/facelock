@@ -751,6 +751,14 @@ Once the workspace version sorts above 0.1.4 the re-versioning stops and
 version exactly. The native comparator inside the container decides either way,
 so a lane can never quietly become a downgrade test.
 
+**Upgraders from v0.1.4 already have face authentication enabled.** That
+release's `pam-auth-update` profile shipped `Default: yes`, so installing it
+switched Facelock on in `common-auth`. The packaged profile is `Default: no`
+now, which applies to fresh installs; an upgrade leaves the global stack exactly
+as it found it, and the lane fails if it is edited in either direction. Removing
+an enabled profile would take face authentication away from someone using it, so
+the lane treats that as the more dangerous direction, not a clean result.
+
 **Rollback.** The candidate daemon starts and migrates the database before the
 downgrade, so the predecessor is handed the file production would hand it. V6
 has no down-migration and the schema stays at 6 after the package rolls back.
