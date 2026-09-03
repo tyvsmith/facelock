@@ -11,6 +11,7 @@
 # without an init can do.
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 family="${1:?usage: run-upgrade-v014-systemd.sh <deb|rpm> <image> [candidate.deb]}"
 image="${2:?usage: run-upgrade-v014-systemd.sh <deb|rpm> <image> [candidate.deb]}"
 
@@ -45,7 +46,7 @@ esac
 # no partial-run opt-out: without models the candidate daemon cannot start, and
 # a lane that skipped the daemon would report a rollback proof it never made.
 shopt -s nullglob
-onnx=(models/*.onnx)
+onnx=("$repo_root"/models/*.onnx)
 shopt -u nullglob
 if [ "${#onnx[@]}" -eq 0 ]; then
     cat >&2 <<'EOF'
@@ -59,7 +60,12 @@ the daemon cannot load, so there is nothing to prove. Stage them first:
 EOF
     exit 1
 fi
-mounts+=(-v "$PWD/models:/facelock-test-models:ro")
+# `z`, not `Z`: on an SELinux-enforcing host an unlabelled bind mount is denied
+# outright, and the private label `Z` would take the models away from whatever
+# else is reading them — the tree is hardlinked across worktrees and both lane
+# halves can be running at once. Shared and read-only is what a model directory
+# wants.
+mounts+=(-v "$repo_root/models:/facelock-test-models:ro,z")
 
 # --shm-size: the disk-full fault fills /dev/shm to get a real ENOSPC out of
 # the kernel rather than simulating one. 16M is small enough to fill in a
