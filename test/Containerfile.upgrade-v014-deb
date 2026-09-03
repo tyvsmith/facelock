@@ -11,6 +11,20 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
+# Harness tooling, not a candidate dependency. The released v0.1.4 .deb
+# hand-wrote `Depends: libpam-runtime, dbus, libtss2-esys-3.0.2-0t64` and missed
+# libxkbcommon0, which its own binary links against, so v0.1.4's `facelock`
+# refuses to start on a clean Debian 13. The candidate uses ${shlibs:Depends}
+# and declares it. This lane builds predecessor state with the released binary,
+# so it has to supply what that release forgot to ask for.
+#
+# Nothing is masked by this: dependency resolution for the candidate is
+# test/deb-dependency-closure.sh's job on a pristine suite base, not this
+# lane's. The two Fedora lane images install libxkbcommon for the same reason.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libxkbcommon0 && \
+    rm -rf /var/lib/apt/lists/*
+
 ARG FACELOCK_PREDECESSOR_URL
 ARG FACELOCK_PREDECESSOR_SHA256
 ARG FACELOCK_PREDECESSOR_SIZE
