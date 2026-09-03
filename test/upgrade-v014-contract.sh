@@ -93,6 +93,7 @@ for proof in \
     assert_enrollment_marker_reconciled \
     assert_key_artifacts_preserved \
     assert_adr010_modes \
+    record_pam_enabled_state \
     assert_pam_path_intact \
     assert_real_password_behavior \
     assert_no_replacement_key_over_encrypted_state \

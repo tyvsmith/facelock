@@ -50,6 +50,12 @@ STATE_ROOT=/run/facelock-upgrade-v014
 LOG=/tmp/facelock-upgrade-v014.log
 PAM_SERVICE=facelock-upgrade-v014
 PAM_PATH="/etc/pam.d/$PAM_SERVICE"
+# The stack a distribution actually authenticates through, as opposed to the
+# lane's own service. An upgrade must not edit it in either direction.
+case "${1:-}" in
+    deb) GLOBAL_PAM=/etc/pam.d/common-auth ;;
+    *) GLOBAL_PAM=/etc/pam.d/system-auth ;;
+esac
 PASSWORD_USER=testuser
 CORRECT_PASSWORD="test"
 WRONG_PASSWORD=definitely-not-the-password
@@ -496,8 +502,25 @@ snapshot_file() {
 # schema version and the device_id column: those are what the migration is for,
 # and asserting them separately keeps "changed as designed" from hiding inside
 # "changed".
+snapshot_path_any() {
+    local path="$1"
+    if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+        printf 'absent|%s\n' "$path"
+        return
+    fi
+    LC_ALL=C stat -c 'entry|%n|%F|%a|%u|%g' -- "$path"
+    if [ -L "$path" ]; then
+        printf 'link|%s|' "$path"
+        readlink -- "$path"
+    fi
+    if [ -f "$path" ]; then
+        sha256sum -- "$path" | sed 's|^|content|'
+    fi
+}
+
 snapshot_invariant_state() {
     local path
+    snapshot_path_any "$GLOBAL_PAM"
     for path in \
         /etc/facelock/config.toml \
         /etc/facelock/encryption.key \
@@ -742,25 +765,49 @@ EOF
         fail "the retired facelock group survived the upgrade"
 }
 
+# v0.1.4's pam-configs profile shipped `Default: yes`, so installing that
+# release ran pam-auth-update --package and turned face authentication on in
+# common-auth without anyone asking. The candidate ships `Default: no`.
+#
+# So the contract an upgrade has to meet is not "facelock is absent from the
+# global stack" -- on a v0.1.4 system it is present, and removing it would
+# silently take face authentication away from someone using it. It is that the
+# upgrade leaves the stack exactly as it found it, in either direction. The
+# byte comparison lives in the invariant snapshot; this records the verdict in
+# a form a reader of the log can act on.
+record_pam_enabled_state() {
+    local shape="$1"
+    pam_enabled_state >"$STATE_ROOT/$shape.pam-enabled"
+}
+
+pam_enabled_state() {
+    if [ -f "$GLOBAL_PAM" ] && grep -q pam_facelock.so "$GLOBAL_PAM"; then
+        echo enabled
+    else
+        echo disabled
+    fi
+}
+
 assert_pam_path_intact() {
-    local before="$1"
+    local before="$1" shape="$2"
     grep -Fq "$(sha256sum "$PAM_PATH")" "$before" ||
         fail "the upgrade rewrote the administrator's PAM service: $PAM_PATH"
+    assert_eq "$(cat "$STATE_ROOT/$shape.pam-enabled")" "$(pam_enabled_state)" \
+        "whether Facelock is enabled in $GLOBAL_PAM across the upgrade"
     case "$FAMILY" in
         deb)
-            # The packaged profile is registered, never selected: an upgrade
-            # that switched a system to face auth on its own is a lockout.
             [ -f /usr/share/pam-configs/facelock ] ||
                 fail "the candidate did not register its pam-configs profile"
-            ! grep -q pam_facelock.so /etc/pam.d/common-auth ||
-                fail "the upgrade activated Facelock in common-auth"
+            # The packaged default flipped to `no` in the candidate. That governs
+            # a fresh install only; it must never retire a profile an existing
+            # system already has enabled.
+            grep -Eq '^Default:[[:space:]]*no$' /usr/share/pam-configs/facelock ||
+                fail "the candidate profile no longer defaults to off for fresh installs"
             ;;
         rpm)
             # The authselect profile was retired; an upgrade must not put one back.
             [ ! -e /usr/share/authselect/vendor/facelock ] ||
                 fail "the upgrade reinstated the retired authselect profile"
-            ! grep -q pam_facelock.so /etc/pam.d/system-auth 2>/dev/null ||
-                fail "the upgrade activated Facelock in system-auth"
             ;;
     esac
 }
@@ -853,6 +900,7 @@ run_shape() {
     snapshot_invariant_state >"$STATE_ROOT/$shape.before"
 
     record_swtpm_state
+    record_pam_enabled_state "$shape"
     pkg_upgrade "$CANDIDATE" || fail "the native upgrade to the candidate failed"
     assert_eq "$(cat "$CANDIDATE_VERSION_FILE")" "$(pkg_installed_version)" \
         "installed candidate version after upgrade"
@@ -871,7 +919,7 @@ run_shape() {
     assert_enrollment_marker_reconciled
     assert_key_artifacts_preserved "$STATE_ROOT/$shape.before"
     assert_adr010_modes
-    assert_pam_path_intact "$STATE_ROOT/$shape.before"
+    assert_pam_path_intact "$STATE_ROOT/$shape.before" "$shape"
     assert_real_password_behavior
     assert_no_replacement_key_over_encrypted_state "$shape"
     pass "$shape state survives $(cat "$PREDECESSOR_VERSION_FILE") to $(cat "$CANDIDATE_VERSION_FILE")"
