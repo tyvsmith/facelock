@@ -592,8 +592,8 @@ open. The auth path reports the missing key, never "the database is corrupt".
 
 **Recovery** is to restore the key artifact for the method that wrote the rows —
 `encryption.key_path` for `keyfile`, `encryption.sealed_key_path` for `tpm` — from backup.
-No restart is needed: the daemon re-reads the key on the next enrollment attempt, so a
-restore lifts the refusal live. The destructive alternative, for an operator who has no
+The daemon re-reads the key on the next enrollment attempt, so a restore lifts the
+refusal live without restarting anything. The destructive alternative, for an operator who has no
 backup, is `facelock clear` followed by re-enrollment.
 
 **Known limits.**

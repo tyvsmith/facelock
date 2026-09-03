@@ -2161,6 +2161,50 @@ fn authenticate_in_the_refusal_state_names_the_key_not_corruption() {
     cleanup_db(&db_path);
 }
 
+/// A key file that exists but cannot be read — truncated by a full disk, half
+/// restored, replaced by a stray file — leaves an operator in exactly the
+/// predicament a missing key does. "expected 32 bytes, got 12" names neither
+/// what is at risk nor the artifact that brings it back.
+#[test]
+fn a_malformed_key_over_encrypted_rows_names_what_is_at_risk() {
+    let dir = tempfile::tempdir().unwrap();
+    let key_path = dir.path().join("encryption.key");
+    let db_path = temp_db_path("malformed-key");
+    std::fs::write(&key_path, b"truncated").unwrap();
+
+    let store = FaceStore::create(&db_path).unwrap();
+    store
+        .add_model_raw(
+            "alice",
+            "front",
+            &software_encrypted_row(),
+            true,
+            "embedder",
+        )
+        .unwrap();
+
+    let mut handler = keyfile_handler(&key_path, &db_path, store);
+    match handler.handle(DaemonRequest::Enroll {
+        user: "alice".to_string(),
+        label: "second".to_string(),
+    }) {
+        DaemonResponse::Error { message } => {
+            assert!(
+                message.contains("software-encrypted") && message.contains("facelock clear"),
+                "a malformed key must carry the same remedy as a missing one: {message}"
+            );
+        }
+        other => panic!("enroll must be refused on an unreadable key, got: {other:?}"),
+    }
+    assert_eq!(
+        std::fs::read(&key_path).unwrap(),
+        b"truncated",
+        "an unreadable key is never replaced either"
+    );
+
+    cleanup_db(&db_path);
+}
+
 /// The refusal is global to the store — one user's encrypted row triggers it —
 /// but a user whose own templates are plaintext must keep authenticating.
 #[test]

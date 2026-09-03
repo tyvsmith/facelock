@@ -258,7 +258,15 @@ fn init_software_sealer(
             match facelock_tpm::SoftwareSealer::from_key_file(key_path) {
                 Ok(sealer) => Ok((Some(sealer), None)),
                 Err(e) => {
-                    let reason = format!("{} keyfile could not be read: {e}", key_path.display());
+                    // Same as the daemon: an unreadable key over encrypted
+                    // rows must name what is at risk, not just the byte count.
+                    let complaint =
+                        format!("{} keyfile could not be read: {e}", key_path.display());
+                    let reason =
+                        match facelock_daemon::key_policy::encrypted_rows_at_risk(store, config) {
+                            Some(at_risk) => format!("{complaint} — {at_risk}"),
+                            None => complaint,
+                        };
                     debug!("{reason}");
                     Ok((None, Some(reason)))
                 }

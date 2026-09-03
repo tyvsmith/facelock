@@ -722,10 +722,17 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                 );
                 Ok(sealer)
             }
-            Err(e) => Err(format!(
-                "{} keyfile could not be created/read: {e}",
-                key_path.display()
-            )),
+            Err(e) => {
+                let complaint = format!("{} keyfile could not be read: {e}", key_path.display());
+                // A key that cannot be read leaves an operator holding
+                // encrypted rows in exactly the predicament a missing one
+                // does. The generic byte-count complaint names neither what
+                // is at risk nor the artifact that brings it back.
+                match crate::key_policy::encrypted_rows_at_risk(store, config) {
+                    Some(at_risk) => Err(format!("{complaint} — {at_risk}")),
+                    None => Err(complaint),
+                }
+            }
         }
     }
 

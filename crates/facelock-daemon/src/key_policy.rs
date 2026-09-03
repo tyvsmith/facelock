@@ -72,15 +72,28 @@ impl KeyfileDecision {
 /// nothing needed. The version byte at the head of the blob is the fact.
 pub fn key_creation_refusal(store: &FaceStore, config: &Config) -> Option<String> {
     let target = configured_key_artifact(config);
+    let at_risk = encrypted_rows_at_risk(store, config)?;
+    Some(format!(
+        "refusing to write an encryption key at {target}: {at_risk}"
+    ))
+}
 
+/// What a lost key would cost, and how to get it back — or `None` when the
+/// store holds nothing a key could orphan.
+///
+/// Split from [`key_creation_refusal`] because the same facts are needed by a
+/// caller that is *not* about to write a key: a key file that exists but
+/// cannot be read leaves an operator in exactly the same predicament, and
+/// "keyfile could not be read: expected 32 bytes, got 12" tells them nothing
+/// about what is at risk or which artifact brings it back.
+pub fn encrypted_rows_at_risk(store: &FaceStore, config: &Config) -> Option<String> {
     let shapes = match store.embedding_blob_shapes() {
         Ok(shapes) => shapes,
         Err(e) => {
             return Some(format!(
-                "refusing to write an encryption key at {target}: the face database could \
-                 not be read ({e}), so facelock cannot tell whether encrypted templates \
-                 would be orphaned. Fix access to {} and retry, or clear the enrollments \
-                 with `facelock clear`.",
+                "the face database could not be read ({e}), so facelock cannot tell \
+                 whether encrypted templates would be orphaned. Fix access to {} and \
+                 retry, or clear the enrollments with `facelock clear`.",
                 config.storage.db_path
             ));
         }
@@ -99,27 +112,26 @@ pub fn key_creation_refusal(store: &FaceStore, config: &Config) -> Option<String
         return None;
     }
 
-    let mut at_risk = Vec::new();
+    let mut found = Vec::new();
     if software > 0 {
-        at_risk.push(format!(
+        found.push(format!(
             "{software} row(s) are software-encrypted (method \"keyfile\", key file {})",
             config.encryption.key_path
         ));
     }
     if tpm > 0 {
-        at_risk.push(format!(
+        found.push(format!(
             "{tpm} row(s) are TPM-sealed (method \"tpm\", sealed key {})",
             config.encryption.sealed_key_path
         ));
     }
 
     Some(format!(
-        "refusing to write an encryption key at {target}: {}. A new key cannot read \
-         them, and writing one makes a later restore of the original useless. Restore \
-         the key artifacts for the encryption method that wrote those rows, or clear \
-         the encrypted enrollments with `facelock clear` and enrol again. Nothing needs \
-         restarting — the key is re-checked on the next enrollment attempt.",
-        at_risk.join("; ")
+        "{}. A new key cannot read them, and writing one makes a later restore of the \
+         original useless. Restore the key artifacts for the encryption method that \
+         wrote those rows, or clear the encrypted enrollments with `facelock clear` and \
+         enrol again. The daemon re-checks the key on the next enrollment attempt.",
+        found.join("; ")
     ))
 }
 
