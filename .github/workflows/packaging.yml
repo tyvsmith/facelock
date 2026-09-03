@@ -87,6 +87,22 @@ jobs:
       - name: Run the ${{ matrix.suite }} package gate
         run: just ${{ matrix.recipe }}
 
+      # The lane's evidence record, .packaging-evidence/<lane>.json, is what
+      # `just release-preflight` accepts from this run (#313): a green
+      # conclusion alone is not evidence, since a path-filtered run skips
+      # every lane and still concludes "success". Missing means the lane
+      # never recorded, which fails the job rather than passing silently.
+      - name: Upload packaging evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: packaging-evidence-deb-${{ matrix.suite }}
+          path: .packaging-evidence/
+          if-no-files-found: error
+          overwrite: true
+          # The directory is dot-prefixed; without this the action finds no
+          # files and if-no-files-found fails the job.
+          include-hidden-files: true
+
   # The Fedora lanes stage host-built binaries into the image rather than
   # compiling in it, and `just build-release` cannot run on the runner: its TPM
   # build needs tss2 4.1.3+, and Ubuntu 24.04 ships 4.0.1. Build them once in
@@ -185,6 +201,18 @@ jobs:
       - name: Run the Fedora ${{ matrix.release }} gate
         run: just ${{ matrix.recipe }}
 
+      # See the Debian lane's upload step.
+      - name: Upload packaging evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: packaging-evidence-rpm-${{ matrix.release }}
+          path: .packaging-evidence/
+          if-no-files-found: error
+          overwrite: true
+          # The directory is dot-prefixed; without this the action finds no
+          # files and if-no-files-found fails the job.
+          include-hidden-files: true
+
   arch:
     name: Arch Package From dist/PKGBUILD
     runs-on: ubuntu-latest
@@ -207,6 +235,18 @@ jobs:
       # workspace twice inside the container, which is why it is the slow one.
       - name: Run the Arch package gate
         run: just test-arch-pkg
+
+      # See the Debian lane's upload step.
+      - name: Upload packaging evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: packaging-evidence-arch
+          path: .packaging-evidence/
+          if-no-files-found: error
+          overwrite: true
+          # The directory is dot-prefixed; without this the action finds no
+          # files and if-no-files-found fails the job.
+          include-hidden-files: true
 
   release-matrix:
     name: Release Version Ordering Matrix

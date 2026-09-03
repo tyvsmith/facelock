@@ -14,9 +14,11 @@ IMAGE="${1:?usage: run-rpm-smoke-systemd.sh <image>}"
     exit 2
 }
 
+smoke_log="$(mktemp "${TMPDIR:-/tmp}/facelock-rpm-smoke.XXXXXX")"
+trap 'rm -f -- "$smoke_log"' EXIT
 cid=$(podman run -d --rm --systemd=always --security-opt unmask=ALL \
     "$IMAGE" /lib/systemd/systemd)
-trap 'podman rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+trap 'podman rm -f "$cid" >/dev/null 2>&1 || true; rm -f -- "$smoke_log"' EXIT
 
 booted=""
 for _ in $(seq 1 120); do
@@ -32,4 +34,13 @@ if [ -z "$booted" ]; then
     exit 1
 fi
 
-podman exec "$cid" /rpm-runtime-smoke.sh
+lane_status=0
+podman exec "$cid" /rpm-runtime-smoke.sh | tee "$smoke_log" || lane_status=$?
+
+# The lane's packaging-evidence record, when the recipe named itself in
+# PACKAGING_LANE (see test/run-pkg-validate-systemd.sh).
+if [ -n "${PACKAGING_LANE:-}" ]; then
+    python3 "$(dirname "$0")/packaging-evidence.py" record --lane "$PACKAGING_LANE" \
+        --results-log "$smoke_log" --exit-status "$lane_status"
+fi
+exit "$lane_status"

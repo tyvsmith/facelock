@@ -62,6 +62,15 @@ if [ -n "${FACELOCK_ALLOW_MISSING_MODELS:-}" ]; then
     exec_env=(-e "FACELOCK_ALLOW_MISSING_MODELS=$FACELOCK_ALLOW_MISSING_MODELS")
 fi
 
+# When a lane recipe names itself in PACKAGING_LANE, the run ends by writing
+# .packaging-evidence/<lane>.json through test/packaging-evidence.py: the
+# counts from pkg-validate.sh's RESULTS_JSON line, plus any skip this runner
+# took on its own, so `just test-packaging-matrix` can refuse a partial run
+# instead of recording it as the release gate.
+runner_skips=()
+validate_log="$(mktemp "${TMPDIR:-/tmp}/facelock-pkg-validate.XXXXXX")"
+trap 'rm -f -- "$validate_log"' EXIT
+
 # --systemd=always: podman sets up /run, /tmp, cgroups and SIGRTMIN+3 for a
 #   systemd payload.
 # --security-opt unmask=ALL: leave /proc unmasked so systemd can set up
@@ -69,7 +78,7 @@ fi
 #   kernel refuses when parts of /proc are overmounted).
 cid=$(podman run -d --rm --systemd=always --security-opt unmask=ALL \
     "${mounts[@]}" "${package_mount[@]}" "$IMAGE" /lib/systemd/systemd)
-trap 'podman rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+trap 'podman rm -f "$cid" >/dev/null 2>&1 || true; rm -f -- "$validate_log"' EXIT
 
 # Wait for systemd to finish booting (degraded is fine — minimal containers
 # routinely have a failed getty/timesyncd; the validation doesn't need them).
@@ -120,6 +129,7 @@ if podman exec "$cid" test -x /deb-package-lifecycle.sh; then
         podman exec "$cid" /deb-package-lifecycle.sh versioned-upgrade-active
     elif [ "${FACELOCK_ALLOW_MISSING_MODELS:-0}" = 1 ]; then
         echo "SKIP: Debian active-service versioned upgrades (no ONNX models, FACELOCK_ALLOW_MISSING_MODELS=1)" >&2
+        runner_skips+=(--extra-skip allowed)
     else
         echo "ERROR: Debian active-service versioned upgrades require the reviewed ONNX models" >&2
         exit 1
@@ -131,14 +141,26 @@ if podman exec "$cid" test -x /rpm-service-pam-lifecycle.sh; then
     podman exec "$cid" /rpm-service-pam-lifecycle.sh
 fi
 
-podman exec "${exec_env[@]}" "$cid" /pkg-validate.sh
+lane_status=0
+podman exec "${exec_env[@]}" "$cid" /pkg-validate.sh | tee "$validate_log" || lane_status=$?
 
 # pkg-validate.sh pins %config(noreplace) on erase and finishes with the package
 # uninstalled, which is the clean slate the upgrade half needs.
-if podman exec "$cid" test -x /rpm-config-lifecycle.sh; then
-    podman exec "$cid" /rpm-config-lifecycle.sh
+after_validate() {
+    if podman exec "$cid" test -x /rpm-config-lifecycle.sh; then
+        podman exec "$cid" /rpm-config-lifecycle.sh || return
+    fi
+    if podman exec "$cid" test -x /deb-package-lifecycle.sh; then
+        podman exec "$cid" /deb-package-lifecycle.sh purge || return
+    fi
+}
+if [ "$lane_status" -eq 0 ]; then
+    after_validate || lane_status=$?
 fi
 
-if podman exec "$cid" test -x /deb-package-lifecycle.sh; then
-    podman exec "$cid" /deb-package-lifecycle.sh purge
+# Recorded last, so the record's status covers every stage above it.
+if [ -n "${PACKAGING_LANE:-}" ]; then
+    python3 "$(dirname "$0")/packaging-evidence.py" record --lane "$PACKAGING_LANE" \
+        --results-log "$validate_log" --exit-status "$lane_status" "${runner_skips[@]}"
 fi
+exit "$lane_status"

@@ -184,4 +184,4 @@ echo "=== Arch package results: $PASS passed, $FAIL failed ==="
 # last and nothing may be added after it.
 echo ""
 echo "=== libalpm hook and PAM cleanup on removal ==="
-exec /arch-package-validate.sh
+ARCH_E2E_PASS=$PASS exec /arch-package-validate.sh

@@ -79,3 +79,6 @@ systemd-tmpfiles --cat-config >/dev/null || fail "systemd rejects the tmpfiles c
 pass "packaged tmpfiles entries applied at install time"
 
 printf '\n=== Fedora runtime smoke results: %d passed, 0 failed ===\n' "$pass_count"
+# For test/packaging-evidence.py. No assertion here needs the ONNX models, so
+# none was withheld for lack of them; a failure above exits before this line.
+printf 'RESULTS_JSON: {"pass":%d,"fail":0,"skip":0,"allowed_skip":0,"mandatory_skip":0,"models_present":true}\n' "$pass_count"

@@ -334,11 +334,22 @@ assertions rotted undetected as a result (#139). If they were already run by
 hand at this exact commit, acknowledge that by naming it:
 `FACELOCK_HARDWARE_TIERS_ACK=<sha> just release-preflight`.
 
-Preflight also refuses to pass without a packaging matrix result for HEAD. It
-accepts a successful `packaging.yml` run at that exact commit (looked up with
-`gh`), or the record `just test-packaging-matrix` writes to
-`.packaging-matrix-verified` after running every lane locally. A nightly run
-does not satisfy it: nightly builds whatever `main` was at 07:00 UTC, and a
+Preflight also refuses to pass without complete packaging evidence for HEAD.
+Every packaging lane writes a record of what it claimed and what it counted,
+and `test/packaging-evidence.py` accepts the set only when every lane the
+release matrix requires is present at this commit with zero skips and the ONNX
+models on hand (the contract is in `docs/contracts.md`, "Packaging matrix
+evidence"). Preflight reads it from the `packaging-evidence-*` artifacts a
+successful `packaging.yml` run at that exact commit uploaded, fetched with
+`gh run download`, or from `.packaging-matrix-verified`, which
+`just test-packaging-matrix` writes after running every lane locally. A run's
+green conclusion alone is not evidence: a path-filtered pull-request run skips
+every lane and still concludes "success". A pull-request run cannot satisfy it
+either: it builds the merge commit, not the commit being released. A
+`FACELOCK_ALLOW_MISSING_MODELS=1` run is a diagnostic: it writes its `partial`
+lane records, and the marker is withheld. The one-line commit marker from before
+0.2.0 is refused with a message naming the new format. A nightly run does not
+satisfy it either: nightly builds whatever `main` was at 07:00 UTC, and a
 release commit is a version bump nobody has built a package from yet.
 
 `just release-preflight` checks local tools, required packaging files (including

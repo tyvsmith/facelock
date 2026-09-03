@@ -244,6 +244,14 @@ require(
     rawhide.get("promotion_requires") == "separately reviewed amendment and full Fedora gates",
     "Rawhide promotion contract drifted",
 )
+# Only Rawhide may carry evidence_eligibility: test/packaging-evidence.py drops
+# a row whose lifecycle eligibility is false from the required lane set, so the
+# key on any other row would quietly shrink the release gate.
+for row in matrix.get("platforms", []):
+    require(
+        row.get("id") == "fedora-rawhide" or "evidence_eligibility" not in row,
+        f"{row.get('id')} declares evidence_eligibility; only the Rawhide row may",
+    )
 for suite, expected in expected_suite_contracts.items():
     details = suite_map[suite]
     for field, value in expected.items():
@@ -702,6 +710,150 @@ require(
     f"packaging workflow Debian lanes {sorted(workflow_deb_lanes)} are not the "
     f"declared APT suites {sorted(expected_suites)}",
 )
+# #313: a green packaging.yml conclusion is not release evidence; the lane
+# records its jobs upload are. Every lane job uploads them and fails when its
+# lane recorded nothing, or `just release-preflight` has nothing to validate
+# and quietly falls back to the local marker. The checks read the upload steps
+# themselves and the executable lines of the recipe bodies, full-line and
+# trailing comments dropped, so text that survives only in a comment or an
+# unrelated step satisfies nothing.
+
+
+def workflow_steps(workflow: str) -> list[str]:
+    """Each `- name:`/`- uses:` step of a workflow, comment lines removed."""
+    steps: list[list[str]] = []
+    current: list[str] | None = None
+    step_indent = 0
+    for line in workflow.splitlines():
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(stripped)
+        if re.match(r"- (?:name|uses): ", stripped):
+            current = [line]
+            step_indent = indent
+            steps.append(current)
+        elif current is not None and indent > step_indent:
+            current.append(line)
+        else:
+            current = None
+    return ["\n".join(step) for step in steps]
+
+
+def just_recipe_body(source: str, name: str) -> str:
+    """The indented body of one justfile recipe."""
+    match = re.search(
+        rf"(?m)^{re.escape(name)}(?=[\s:])[^\n]*:[^\n]*\n(?P<body>(?:[ \t]+[^\n]*\n|\n)*)", source
+    )
+    require(match is not None, f"justfile omits recipe {name}")
+    return match.group("body")
+
+
+def shell_command_text(line: str) -> str:
+    """One recipe line with its trailing `#` comment removed, quotes respected."""
+    quote = None
+    for index, char in enumerate(line):
+        if quote:
+            if char == quote:
+                quote = None
+        elif char in ("'", '"'):
+            quote = char
+        elif char == "#" and (index == 0 or line[index - 1].isspace()):
+            return line[:index]
+    return line
+
+
+def recipe_commands(body: str) -> list[str]:
+    """The executable lines of a recipe body, each stripped of leading
+    whitespace, a `@`/`-` recipe prefix, and a leading shell keyword."""
+    commands: list[str] = []
+    for line in body.splitlines():
+        executable = shell_command_text(line).strip()
+        if not executable:
+            continue
+        executable = re.sub(r"^[@-]\s*", "", executable)
+        executable = re.sub(r"^(?:if|elif|while|until)\s+", "", executable)
+        commands.append(executable)
+    return commands
+
+
+def recipe_runs(commands: list[str], command: str) -> bool:
+    """Whether a recipe line executes `command` and nothing else: only a
+    trailing line-continuation backslash, an inline `; then` closing an `if`
+    or `elif`, or trailing whitespace may follow it. A shell operator after
+    the command (`||`, `&&`, `|`, or `;` before anything but `then`) does not
+    count as running it."""
+    for line in commands:
+        if not line.startswith(command):
+            continue
+        rest = line[len(command) :]
+        if re.fullmatch(r"\s*\\?", rest) or re.fullmatch(r";\s+then\s*", rest):
+            return True
+    return False
+
+
+# A write into the marker by anything but the evidence script: `> file`,
+# `>> file`, or `tee file` (short options like `-a` or long ones like
+# `--append`, optionally `=value`-bearing, ahead of the path).
+MARKER_WRITE = re.compile(
+    r"""(?:>{1,2}\s*|\btee\s+(?:(?:-[a-z]+|--[a-z][a-z-]*(?:=\S+)?)\s+)*)["']?(?:\./)?\.packaging-matrix-verified\b"""
+)
+
+
+evidence_uploads = [
+    step
+    for step in workflow_steps(packaging_workflow)
+    if re.search(r"(?m)^\s+uses: actions/upload-artifact@", step)
+    and re.search(r"(?m)^\s+path: \.packaging-evidence/\s*$", step)
+]
+# One upload step per lane job: deb, rpm, arch. The two matrix jobs run the
+# same step once per entry, so the step count stays three. A new lane job (the
+# copr job #230 adds) brings its own upload step and bumps this count.
+EVIDENCE_UPLOAD_STEPS = 3
+require(
+    len(evidence_uploads) == EVIDENCE_UPLOAD_STEPS,
+    f"packaging workflow must carry exactly {EVIDENCE_UPLOAD_STEPS} evidence upload steps "
+    f"(found {len(evidence_uploads)}); a new lane job adds one and bumps the count",
+)
+for artifact in ("deb-${{ matrix.suite }}", "rpm-${{ matrix.release }}", "arch"):
+    matching = [
+        step
+        for step in evidence_uploads
+        if re.search(rf"(?m)^\s+name: packaging-evidence-{re.escape(artifact)}\s*$", step)
+    ]
+    require(
+        len(matching) == 1,
+        f"packaging workflow must upload the packaging-evidence-{artifact} artifact from exactly one step",
+    )
+    require(
+        re.search(r"(?m)^\s+if-no-files-found: error\s*$", matching[0]) is not None,
+        f"the packaging-evidence-{artifact} upload must fail the job when its lane recorded nothing",
+    )
+    # .packaging-evidence/ is dot-prefixed; upload-artifact skips hidden paths
+    # unless told otherwise, and then "no files" fails the job.
+    require(
+        re.search(r"(?m)^\s+include-hidden-files: true\s*$", matching[0]) is not None,
+        f"the packaging-evidence-{artifact} upload must set include-hidden-files: true for the dot-prefixed directory",
+    )
+preflight_commands = recipe_commands(just_recipe_body(justfile, "release-preflight"))
+require(
+    recipe_runs(preflight_commands, 'python3 test/packaging-evidence.py ci-run --commit "$HEAD_SHA" --run "$run_id"')
+    and recipe_runs(
+        preflight_commands,
+        'python3 test/packaging-evidence.py validate --commit "$HEAD_SHA" .packaging-matrix-verified',
+    ),
+    "release-preflight does not run test/packaging-evidence.py ci-run and validate as its own commands",
+)
+matrix_commands = recipe_commands(just_recipe_body(justfile, "test-packaging-matrix"))
+require(
+    recipe_runs(matrix_commands, 'python3 test/packaging-evidence.py aggregate --commit "$commit" --tree-clean'),
+    "test-packaging-matrix does not run test/packaging-evidence.py aggregate as its own command",
+)
+for command in matrix_commands + preflight_commands:
+    require(
+        "test/packaging-evidence.py" in command or MARKER_WRITE.search(command) is None,
+        f"only test/packaging-evidence.py may write .packaging-matrix-verified: {command!r}",
+    )
 require(
     "rawhide" not in packaging_workflow.lower(),
     "packaging workflow declares a Rawhide lane; Rawhide is experimental and never a gate",

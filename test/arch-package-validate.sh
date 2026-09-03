@@ -66,4 +66,9 @@ rm -f "$owned" /tmp/facelock-package-owned.sha \
 
 echo ""
 echo "=== Arch package results: $PASS passed, $FAIL failed ==="
+# For test/packaging-evidence.py: both halves in one line. The e2e half hands
+# its count over in ARCH_E2E_PASS before exec'ing this one, and neither needs
+# the ONNX models, so none was withheld for lack of them.
+printf 'RESULTS_JSON: {"pass":%d,"fail":%d,"skip":0,"allowed_skip":0,"mandatory_skip":0,"models_present":true}\n' \
+    "$((PASS + ${ARCH_E2E_PASS:-0}))" "$FAIL"
 test "$FAIL" -eq 0

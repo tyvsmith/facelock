@@ -13,6 +13,9 @@
 #
 # Env overrides (for running outside the package container):
 #   FACELOCK_POLKIT_AGENT_BIN  path to the agent binary
+#
+# Exit 77 means the check could not reach its subject. pkg-validate.sh counts
+# that as a mandatory skip, never a pass (#313).
 set -uo pipefail
 
 AGENT_BIN="${FACELOCK_POLKIT_AGENT_BIN:-}"
@@ -24,15 +27,15 @@ fi
 
 if [ -z "$AGENT_BIN" ] || [ ! -x "$AGENT_BIN" ]; then
     echo "SKIP: facelock-polkit-agent binary not found"
-    exit 0
+    exit 77
 fi
 if ! command -v dbus-daemon >/dev/null 2>&1; then
     echo "SKIP: dbus-daemon not available"
-    exit 0
+    exit 77
 fi
 if ! command -v busctl >/dev/null 2>&1; then
     echo "SKIP: busctl not available"
-    exit 0
+    exit 77
 fi
 
 echo "=== Polkit Agent D-Bus Boundary Validation ==="
@@ -79,7 +82,7 @@ if [ "$OWNED" -ne 1 ]; then
     echo "SKIP: agent did not claim its session-bus name (no session/system bus?)"
     echo "--- agent log ---"
     cat /tmp/polkit-agent.log 2>/dev/null || true
-    exit 0
+    exit 77
 fi
 
 call_begin() {

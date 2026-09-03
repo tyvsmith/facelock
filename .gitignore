@@ -8,3 +8,5 @@ dev/*.db
 docs/superpowers/
 /.hardware-tiers-verified
 /.packaging-matrix-verified
+/.packaging-evidence/
+__pycache__/

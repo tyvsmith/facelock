@@ -452,7 +452,9 @@ _require-models allow_opt_out="0": (_link-models "auto")
     if [ "{{ allow_opt_out }}" = "1" ] && [ "${FACELOCK_ALLOW_MISSING_MODELS:-0}" = "1" ]; then
         echo "warning: missing ONNX models, continuing (FACELOCK_ALLOW_MISSING_MODELS=1):" >&2
         for m in "${missing[@]}"; do echo "           $m" >&2; done
-        echo "         The daemon-start assertions will be reported as SKIPPED, not passed." >&2
+        echo "         The daemon-start assertions will be reported as SKIPPED, not passed," >&2
+        echo "         and the run cannot produce release evidence: its lane record is" >&2
+        echo "         refused by 'just test-packaging-matrix' and 'just release-preflight'." >&2
         exit 0
     fi
     echo "error: missing required ONNX models — this test tier needs them baked into the image:" >&2
@@ -465,7 +467,8 @@ _require-models allow_opt_out="0": (_link-models "auto")
     echo "       be committed by accident.)" >&2
     if [ "{{ allow_opt_out }}" = "1" ]; then
         echo "       To validate packaging only, with the daemon-start assertions counted" >&2
-        echo "       as skipped: FACELOCK_ALLOW_MISSING_MODELS=1 just <recipe>" >&2
+        echo "       as skipped (a diagnostic run, never release evidence):" >&2
+        echo "         FACELOCK_ALLOW_MISSING_MODELS=1 just <recipe>" >&2
     fi
     exit 1
 
@@ -605,7 +608,14 @@ test-arch-pkg:
     image="facelock-arch-pkg-$(basename "$staging" | cut -d. -f2 | tr '[:upper:]' '[:lower:]')"
     trap 'rm -rf -- "$staging"; podman rmi -f "$image" >/dev/null 2>&1 || true' EXIT
     test/build-arch-package-image.sh "$image" "$staging"
-    podman run --rm -v "$staging/source:/staged-source:ro,Z" "$image"
+    lane_status=0
+    podman run --rm -v "$staging/source:/staged-source:ro,Z" "$image" | tee "$staging/lane.log" || lane_status=$?
+    # The lane's packaging-evidence record, from the validator's RESULTS_JSON
+    # line; see the Debian suite gates for what the claims mean.
+    python3 test/packaging-evidence.py record \
+        --lane 'test-arch-pkg target=arch channel=aur build_origin=makepkg-source-build runtime_policy=system-ort depth=full' \
+        --results-log "$staging/lane.log" --exit-status "$lane_status"
+    exit "$lane_status"
 
 # Build release and install to system
 
@@ -1132,6 +1142,12 @@ test-deb: test-deb-trixie-pkg test-deb-resolute-pkg
 # Needs models/*.onnx: the validation starts the daemon under the hardened unit
 # and checks what it holds at runtime. FACELOCK_ALLOW_MISSING_MODELS=1 runs the
 # packaging half only, with the rest counted as skipped.
+#
+# PACKAGING_LANE names the lane and what it claims -- target, channel, how the
+# package was built, whose ONNX Runtime it ships, and its lifecycle depth -- and
+# the runner writes .packaging-evidence/<lane>.json from the validator's counts.
+# test/packaging-evidence.py derives what each lane must claim from
+# dist/release-matrix.json, so a claim that drifts from the matrix is refused.
 
 # Debian 13 Trixie package — exact source build, TPM/PCR, and booted lifecycle.
 test-deb-trixie-pkg: (_require-models "1")
@@ -1144,7 +1160,8 @@ test-deb-trixie-pkg: (_require-models "1")
     podman run --rm -v "$package:/facelock-test-package.deb:ro,Z" \
         facelock-deb-trixie-pkg \
         /bin/bash -c '/deb-package-lifecycle.sh install && exec /tpm-pcr-e2e.sh'
-    test/run-pkg-validate-systemd.sh facelock-deb-trixie-pkg "$package"
+    PACKAGING_LANE='test-deb-trixie-pkg target=debian-trixie channel=apt build_origin=container-source-build runtime_policy=bundled-ort depth=full' \
+        test/run-pkg-validate-systemd.sh facelock-deb-trixie-pkg "$package"
 
 # Ubuntu 26.04 Resolute package — exact source build, TPM/PCR, and booted lifecycle.
 test-deb-resolute-pkg: (_require-models "1")
@@ -1157,7 +1174,8 @@ test-deb-resolute-pkg: (_require-models "1")
     podman run --rm -v "$package:/facelock-test-package.deb:ro,Z" \
         facelock-deb-resolute-pkg \
         /bin/bash -c '/deb-package-lifecycle.sh install && exec /tpm-pcr-e2e.sh'
-    test/run-pkg-validate-systemd.sh facelock-deb-resolute-pkg "$package"
+    PACKAGING_LANE='test-deb-resolute-pkg target=ubuntu-resolute channel=apt build_origin=container-source-build runtime_policy=bundled-ort depth=full' \
+        test/run-pkg-validate-systemd.sh facelock-deb-resolute-pkg "$package"
 
 # Same model requirement (and same opt-out) as the two Debian suite package gates.
 
@@ -1168,7 +1186,8 @@ test-rpm-pkg release="44": (_fedora-lane-image release) (_require-models "1") _r
     image="$(bash test/fedora-lane-image.sh '{{ release }}')"
     podman build --build-arg "BASE_IMAGE=$image" --build-arg ORT_VERSION={{ _ort-version }} \
         -t facelock-rpm-pkg-f{{ release }} -f test/Containerfile.rpm-e2e .
-    test/run-pkg-validate-systemd.sh facelock-rpm-pkg-f{{ release }}
+    PACKAGING_LANE='test-rpm-pkg-{{ release }} target=fedora-{{ release }} channel=direct-rpm build_origin=host-binaries runtime_policy=bundled-ort depth=full' \
+        test/run-pkg-validate-systemd.sh facelock-rpm-pkg-f{{ release }}
 
 # dist/release-matrix.json gives Fedora 45 a lifecycle depth of build/runtime
 # smoke, so this deliberately stops short of the full lifecycle gate and never
@@ -1181,7 +1200,8 @@ test-rpm-smoke release="45": (_fedora-lane-image release) _require-release-binar
     image="$(bash test/fedora-lane-image.sh '{{ release }}')"
     podman build --build-arg "BASE_IMAGE=$image" --build-arg ORT_VERSION={{ _ort-version }} \
         -t facelock-rpm-smoke-f{{ release }} -f test/Containerfile.rpm-e2e .
-    bash test/run-rpm-smoke-systemd.sh facelock-rpm-smoke-f{{ release }}
+    PACKAGING_LANE='test-rpm-smoke-{{ release }} target=fedora-{{ release }} channel=direct-rpm build_origin=host-binaries runtime_policy=bundled-ort depth=smoke' \
+        bash test/run-rpm-smoke-systemd.sh facelock-rpm-smoke-f{{ release }}
 
 # Full lifecycle for 43 and 44, build plus runtime smoke for branched 45.
 
@@ -1521,28 +1541,32 @@ release-preflight tag='':
     # package built from it. The nightly matrix does not close that either: it
     # runs against whatever main was at 07:00 UTC, not against this commit.
     # A tag ships to four channels; this is the last place to find out.
-    PACKAGING_RUN=""
+    #
+    # #313: a run's green conclusion is not the evidence; the lane records its
+    # jobs upload are. A path-filtered run skips every lane and still concludes
+    # "success", and a local FACELOCK_ALLOW_MISSING_MODELS=1 run used to write
+    # the same one-line marker as a complete one. test/packaging-evidence.py
+    # aggregates the workflow artifacts, or reads .packaging-matrix-verified,
+    # and refuses anything short of every required lane at HEAD with zero skips.
+    PACKAGING_EVIDENCE=""
     if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-        PACKAGING_RUN="$(gh run list --workflow packaging.yml --commit "$HEAD_SHA" \
-            --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)"
+        for run_id in $(gh run list --workflow packaging.yml --commit "$HEAD_SHA" \
+                --status success --limit 5 --json databaseId --jq '.[].databaseId' 2>/dev/null || true); do
+            if python3 test/packaging-evidence.py ci-run --commit "$HEAD_SHA" --run "$run_id"; then
+                PACKAGING_EVIDENCE="workflow run $run_id"
+                break
+            fi
+        done
     fi
-    PACKAGING_RECORDED=""
-    if [ -f .packaging-matrix-verified ]; then
-        PACKAGING_RECORDED="$(head -1 .packaging-matrix-verified)"
-    fi
-    if [ -n "$PACKAGING_RUN" ]; then
-        echo "OK: packaging workflow run $PACKAGING_RUN succeeded at $HEAD_SHA"
-    elif [ "$PACKAGING_RECORDED" = "$HEAD_SHA" ]; then
-        echo "OK: packaging matrix recorded green at $HEAD_SHA"
+    if [ -n "$PACKAGING_EVIDENCE" ]; then
+        echo "OK: packaging $PACKAGING_EVIDENCE carries complete lane evidence at $HEAD_SHA"
+    elif python3 test/packaging-evidence.py validate --commit "$HEAD_SHA" .packaging-matrix-verified; then
+        echo "OK: packaging matrix evidence recorded at $HEAD_SHA"
     else
-        if [ -z "$PACKAGING_RECORDED" ]; then
-            echo "MISSING: no packaging matrix result for $HEAD_SHA"
-        else
-            echo "STALE: packaging matrix recorded at $PACKAGING_RECORDED, HEAD is $HEAD_SHA"
-        fi
+        echo "MISSING: no complete packaging evidence for $HEAD_SHA (reasons above)"
         echo "  Run the matrix in CI against this commit, then re-run preflight:"
         echo "    gh workflow run packaging.yml --ref $(git rev-parse --abbrev-ref HEAD)"
-        echo "  Or run every lane locally (30-60+ minutes, needs podman):"
+        echo "  Or run every lane locally (30-60+ minutes, needs podman and the ONNX models):"
         echo "    just test-packaging-matrix"
         failed=1
     fi
@@ -1571,16 +1595,32 @@ test-release-native-ordering:
 # Complete Track V version/matrix gate.
 test-release-matrix: test-release-contract test-release-native-ordering
 
+# A marker that outlives the run that wrote it is the failure this guards
+# against: the previous marker and every lane record go before the first lane
+# starts, so an interrupted or failed run leaves nothing preflight accepts.
+_packaging-evidence-reset:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -rf -- .packaging-matrix-verified .packaging-evidence
+    mkdir -p .packaging-evidence
+    date -u +%Y-%m-%dT%H:%M:%SZ > .packaging-evidence/started-at
+
 # The same lanes `.github/workflows/packaging.yml` runs, in one command, for a
 # maintainer without CI in reach (#229). It is 30-60+ minutes and needs podman
 # plus the ONNX models; CI is the faster path, and `just release-preflight`
-# accepts a green run of that workflow at HEAD instead of this record.
+# accepts a green run of that workflow at HEAD through the evidence artifacts
+# its lanes upload, validated the same way as this record.
 #
 # Clean tree first, for the same reason the camera tiers demand one: a record
 # that names a commit the lanes did not actually build is worse than no record.
+# Each lane writes .packaging-evidence/<lane>.json; the marker is those records
+# folded together by test/packaging-evidence.py, which refuses to write one
+# when any lane skipped anything, ran without the ONNX models, names another
+# commit, or is missing (#313). A FACELOCK_ALLOW_MISSING_MODELS=1 run therefore
+# never records.
 
 # Every packaging lane the release gate requires, recorded for release-preflight
-test-packaging-matrix: _require-clean-tree test-release-matrix test-arch-pkg test-deb test-rpm-lanes
+test-packaging-matrix: _require-clean-tree _packaging-evidence-reset test-release-matrix test-arch-pkg test-deb test-rpm-lanes
     #!/usr/bin/env bash
     set -euo pipefail
     commit="$(git rev-parse HEAD)"
@@ -1588,7 +1628,9 @@ test-packaging-matrix: _require-clean-tree test-release-matrix test-arch-pkg tes
         echo "error: the tree changed while the lanes ran; not recording." >&2
         exit 1
     fi
-    printf '%s\n' "$commit" > .packaging-matrix-verified
+    python3 test/packaging-evidence.py aggregate --commit "$commit" --tree-clean \
+        --started-at "$(cat .packaging-evidence/started-at)" \
+        --evidence-dir .packaging-evidence --output .packaging-matrix-verified
     echo ""
-    echo "Recorded: packaging matrix passed at $commit"
+    echo "Recorded: packaging matrix evidence at $commit"
     echo "'just release-preflight' accepts this until HEAD moves."

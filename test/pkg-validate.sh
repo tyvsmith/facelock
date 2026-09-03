@@ -5,6 +5,9 @@ PASS=0
 FAIL=0
 SKIP=0
 ALLOWED_SKIP=0
+# Whether the daemon-start block found its ONNX models. Reported in the
+# RESULTS_JSON line so a partial run can never be recorded as a complete one.
+MODELS_PRESENT=false
 
 # Record an assertion (or a whole block of them) that did not run.
 #
@@ -37,6 +40,17 @@ run_test() {
         result=0
     else
         result=$?
+    fi
+
+    # Exit 77 is a validator saying it could not reach its subject
+    # (test/polkit-agent-validate.sh). That is a skip, never a pass, and it is
+    # mandatory: nothing in this lane opted out of it.
+    if [ "$result" -eq 77 ]; then
+        local reason
+        reason="$(sed -n 's/^SKIP: //p' /tmp/test-output | head -n 1)"
+        echo "SKIP"
+        skip_test "$name" "${reason:-exit 77}"
+        return
     fi
 
     if [ "$expected_result" = "any" ] || [ "$result" -eq "$expected_result" ]; then
@@ -577,6 +591,7 @@ if [ -d /run/systemd/system ] && systemctl show facelock-daemon >/dev/null 2>&1;
     # container: an explicit device.path skips auto-detection, and a probe
     # failure on that path is non-fatal (the camera is only opened on auth).
     if ls /var/lib/facelock/models/*.onnx >/dev/null 2>&1; then
+        MODELS_PRESENT=true
         if ! grep -q '^path\s*=' /etc/facelock/config.toml; then
             sed -i '/^\[device\]/a path = "/dev/video0"' /etc/facelock/config.toml
         fi
@@ -821,6 +836,7 @@ rm -f "$PACKAGE_OWNED_PAM" "$PACKAGE_BLOCKER_PAM" \
     /tmp/facelock-common-auth.before
 
 UNEXPECTED_SKIP=$((SKIP - ALLOWED_SKIP))
+ASSERTION_FAILURES=$FAIL
 if [ "$UNEXPECTED_SKIP" -gt 0 ]; then
     echo "FAIL: $UNEXPECTED_SKIP unexpected skip(s) make package validation incomplete"
     FAIL=$((FAIL + UNEXPECTED_SKIP))
@@ -836,6 +852,13 @@ if [ "$SKIP" -gt 0 ]; then
         echo "      FACELOCK_ALLOW_MISSING_MODELS=1 partial-run opt-out."
     fi
 fi
+
+# One machine-readable line for test/run-pkg-validate-systemd.sh to turn into
+# the lane's packaging-evidence record (test/packaging-evidence.py). These are
+# assertion counts by class; the mandatory-skip penalty folded into FAIL above
+# is a verdict, so it is reported as mandatory_skip rather than as failures.
+printf 'RESULTS_JSON: {"pass":%d,"fail":%d,"skip":%d,"allowed_skip":%d,"mandatory_skip":%d,"models_present":%s}\n' \
+    "$PASS" "$ASSERTION_FAILURES" "$SKIP" "$ALLOWED_SKIP" "$UNEXPECTED_SKIP" "$MODELS_PRESENT"
 
 if [ "$FAIL" -gt 0 ]; then
     exit 1

@@ -11,8 +11,9 @@ suite gates, every declared Fedora lane, the Arch package built from the real
 run **only when the diff reaches a package**. A `changes` job classifies the
 merge-base diff, and every lane sits behind
 `if: needs.changes.outputs.packaging == 'true'`. Unfiltered runs happen nightly
-and at `just release-preflight`, which refuses to pass without a green matrix at
-HEAD.
+and at `just release-preflight`, which refuses to pass without complete lane
+evidence at HEAD: the `packaging-evidence-*` artifacts a green run uploads, or
+the record a local `just test-packaging-matrix` writes.
 
 Two consequences for you. A green pull request says nothing about packaging
 unless those jobs ran on it, so check rather than assume. COPR and the APT repo
@@ -117,7 +118,7 @@ the question is "does a fresh install work", a dev shell when iterating.
 - Name which packaging recipe you ran; if none, say so
 - Report camera-gated tests as not run, never as passed
 - A green pull request only proves packaging if the `packaging.yml` jobs ran rather than reporting skipped
-- `just test-packaging-matrix` is the whole gate in one command (30-60+ minutes), and it records the commit for `just release-preflight`
+- `just test-packaging-matrix` is the whole gate in one command (30-60+ minutes), and it writes the lane evidence `just release-preflight` validates; a `FACELOCK_ALLOW_MISSING_MODELS=1` run is a diagnostic — it writes its `partial` per-lane records, but the marker is withheld
 
 ## Cost
 

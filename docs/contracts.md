@@ -2176,6 +2176,74 @@ consumes exactly two suite manifests, one matching package per suite, and a
 prerelease or cross-suite version is rejected before signing or repository
 writes.
 
+### Packaging matrix evidence
+
+`just release-preflight` accepts packaging evidence only in the form
+`test/packaging-evidence.py` validates (#313). Each packaging lane writes one
+record, `.packaging-evidence/<lane>.json`, from the `RESULTS_JSON:` line its
+validator prints. `just test-packaging-matrix` deletes the previous marker and
+every record before its first lane, then folds the records into
+`.packaging-matrix-verified`:
+
+```json
+{"schema": 1, "commit": "<40-hex sha>", "tree_clean": true,
+ "started_at": "<ISO 8601 UTC>", "finished_at": "<ISO 8601 UTC>",
+ "required_lanes": ["test-arch-pkg", "test-deb-resolute-pkg", "test-deb-trixie-pkg",
+                    "test-rpm-pkg-43", "test-rpm-pkg-44", "test-rpm-smoke-45"],
+ "lanes": [{"name": "test-deb-trixie-pkg", "target": "debian-trixie", "channel": "apt",
+            "build_origin": "container-source-build", "runtime_policy": "bundled-ort",
+            "depth": "full", "commit": "<sha>", "models_present": true,
+            "pass": 40, "fail": 0, "skip": 0, "allowed_skip": 0, "mandatory_skip": 0,
+            "status": "pass"}]}
+```
+
+Lane claims use a fixed vocabulary. `channel`: `apt`, `direct-rpm`, `aur`
+(#230 adds `copr`). `build_origin`: `container-source-build` (the Debian
+assembler and `.dsc` rebuild), `host-binaries` (release binaries staged from
+`target/release`), `makepkg-source-build` (#230 adds `mock-source-rebuild`).
+`runtime_policy`: `bundled-ort`, `system-ort`. `depth`: `full`, `smoke`.
+`status`: `pass`; `partial` for an exit 0 with an allowed skip or without
+models; `fail` for a non-zero exit, a failed assertion, or a mandatory skip.
+The counters are assertion counts by class, and `skip` equals
+`allowed_skip` (the `FACELOCK_ALLOW_MISSING_MODELS=1` opt-out) plus
+`mandatory_skip`. `models_present` says whether the ONNX models were on hand
+for every assertion that needs them; a lane with no such assertion
+(`test-rpm-smoke-45`, `test-arch-pkg`) reports `true` because nothing was
+withheld.
+
+`required_lanes` derives from `dist/release-matrix.json`: one Debian lane per
+APT suite whose platform row is a non-optional release target, the Arch recipe
+lane, and one direct-RPM lane per `fedora.packit_release_targets` entry at the
+depth its platform rows declare. A row whose `evidence_eligibility.lifecycle`
+is false (Rawhide) contributes nothing.
+
+The marker is refused, and the aggregate refuses to write it, unless all of
+the following hold: `schema` is 1; `commit` equals HEAD; `tree_clean` is true;
+`started_at` and `finished_at` are ISO 8601 timestamps with an offset, in
+order; `required_lanes` equals the derived list exactly (sorted, no
+duplicates); every required lane has exactly one record and no record names a
+lane outside that set; and every record carries `schema` 1, names HEAD, has
+`models_present` true, has `fail`, `skip`, `allowed_skip` and
+`mandatory_skip` all 0, has `pass` of at least 1, has `status` `pass`, and
+carries the target, channel, build origin, runtime policy and depth the matrix
+requires of that lane. A partial run therefore never produces release
+evidence, and a record from one channel cannot stand in for another's lane.
+
+The legacy one-line commit marker is refused with a message naming this
+format. Preflight reads evidence from two places, in order: the
+`packaging-evidence-*` artifacts a successful `packaging.yml` run at HEAD
+uploaded (`packaging-evidence-deb-<suite>`, `packaging-evidence-rpm-<release>`
+and `packaging-evidence-arch`, fetched with `gh run download` and aggregated
+the same way), then the local marker. `.packaging-evidence/` is dot-prefixed,
+so every upload step sets `include-hidden-files: true`; without it
+`actions/upload-artifact` finds no files and `if-no-files-found: error` fails
+the job. A run without those artifacts is not
+evidence, whatever its conclusion; neither is a pull-request run, which builds
+the merge commit, nor a run of any other workflow. The marker and the
+artifacts are maintainer-trust records: preflight checks their shape and their
+binding to HEAD and the matrix, not that a real lane produced them. A forged
+record is a deliberate act, not the slip this gate exists to catch.
+
 ### Debian source and binary package contract
 
 Trixie package builds use the official Trixie Backports `cargo` and `rustc`;
