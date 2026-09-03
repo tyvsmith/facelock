@@ -98,7 +98,7 @@ check-package-names-live:
     python3 test/check-package-names-live.py
 
 # Run all checks (test + lint + format + audit + PAM standalone surface + agent docs)
-check: test lint fmt-check audit check-pam-standalone check-agent-docs test-source-install-daemon-lifecycle test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test test-legacy-system-assets test-locale-install-contract test-classify-changes
+check: test lint fmt-check audit check-pam-standalone check-agent-docs test-source-install-daemon-lifecycle test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test test-legacy-system-assets test-locale-install-contract test-classify-changes test-arch-package-select
 
 # The path filter that decides whether the packaging gates run on a pull
 # request. A pattern that stops matching fails nothing: it reports every deb,
@@ -107,6 +107,15 @@ check: test lint fmt-check audit check-pam-standalone check-agent-docs test-sour
 # one-line commits in a temporary directory.
 test-classify-changes:
     bash test/classify-changes-test.sh
+
+# Prove the Arch lane installs the package makepkg built for pkgname=facelock
+# and not the debug split it now emits beside it. Getting this wrong installs
+# facelock-debug, and every assertion after it reports facelock as absent --
+# nondeterministically, because the losing selection reads directory order
+# (#212). Runs in `just check`: it is a few file names in a temporary directory,
+# and the lane that would otherwise catch it is a full release build.
+test-arch-package-select:
+    bash test/arch-package-select-test.sh
 
 # Prove every install path ships compiled gettext catalogs. Static checks run
 # everywhere; the compile check needs gettext and skips without it, so that

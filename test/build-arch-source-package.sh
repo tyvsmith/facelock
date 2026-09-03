@@ -48,6 +48,46 @@ fail() {
     exit 1
 }
 
+# Print the one package this lane is meant to install, out of everything makepkg
+# left in $1.
+#
+# makepkg's `debug` option splits a second package out of the same build,
+# facelock-debug-<pkgver>-<pkgrel>-<arch>.pkg.tar.zst, into the same directory.
+# Taking the first match `find` returns is directory order, not a choice: on one
+# pull request that was the debug package, `pacman -U` installed it, and every
+# assertion after it failed with "package 'facelock' was not found"; on the next
+# it was the real package and the identical code passed (#212).
+#
+# The main package's name continues with the version, so the character after the
+# pkgname dash is a digit and the debug split's is not. Both halves of that are
+# spelled out rather than relying on one, and the count is asserted, so a third
+# split package makepkg starts emitting fails here instead of being installed by
+# lottery.
+select_main_package() {
+    local dir="$1"
+    local -a main=() present=()
+    local path name
+
+    while IFS= read -r -d '' path; do
+        name="${path##*/}"
+        present+=("$name")
+        case "$name" in
+            facelock-debug-*) ;;
+            facelock-[0-9]*) main+=("$path") ;;
+        esac
+    done < <(find "$dir" -maxdepth 1 -type f -name '*.pkg.tar.zst' -print0 | sort -z)
+
+    [ "${#main[@]}" -eq 1 ] || fail \
+        "expected exactly one facelock package in $dir, found ${#main[@]} (built: ${present[*]:-none})"
+    printf '%s\n' "${main[0]}"
+}
+
+# test/arch-package-select-test.sh sources this file for select_main_package
+# alone; everything below builds a package and must not run under it.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+    return 0
+fi
+
 [ -d "$STAGED" ] || fail "candidate source tree is not mounted at $STAGED"
 [ -f "$STAGED/Cargo.toml" ] && [ -f "$STAGED/dist/PKGBUILD" ] ||
     fail "$STAGED does not look like a facelock checkout"
@@ -143,8 +183,7 @@ runuser -u "$BUILDER" -- \
     bash -c "cd '$BUILD' && makepkg --syncdeps --noconfirm" ||
     fail "makepkg failed"
 
-package="$(find "$BUILD" -maxdepth 1 -type f -name 'facelock-*.pkg.tar.zst' -print -quit)"
-[ -n "$package" ] || fail "makepkg produced no package"
+package="$(select_main_package "$BUILD")" || exit 1
 
 echo "==> pacman -U $(basename -- "$package")"
 cp -- "$package" /facelock-test-package.pkg.tar.zst
