@@ -754,8 +754,11 @@ version exactly. The native comparator inside the container decides either way,
 so a lane can never quietly become a downgrade test. Whatever version it lands
 on is spelled by `scripts/release-versions.sh`, the same file the release
 workflow uses, so a pre-release candidate reaches the lane as
-`0.2.0~alpha.3-1~deb13u1` and as `Version: 0.2.0` / `Release: 0.1.alpha.3`
-rather than in a Cargo spelling neither packager would ever ship.
+`0.2.0~alpha.3-1~deb13u1` rather than in a Cargo spelling neither packager
+would ever ship. The RPM release counter it passes is local to the lane, not
+the series counter from "Prerelease identity conversions" above: the lane's
+only ordering requirement is against the published predecessor, never against
+a previously published prerelease.
 
 **Upgraders from v0.1.4 already have face authentication enabled.** That
 release's `pam-auth-update` profile shipped `Default: yes`, so installing it
