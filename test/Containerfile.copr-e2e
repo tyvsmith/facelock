@@ -26,9 +26,14 @@ FROM ${BASE_IMAGE}
 # The Cisco OpenH264 repo Fedora enables by default is a single unpinned host
 # with no mirrors (ciscobinary.openh264.org). Nothing here needs a codec, and a
 # packaging gate that fails when that one host is unreachable reports a network
-# outage as a packaging regression. Disabled by glob so it stays harmless on a
-# release whose image does not ship the repo.
-RUN dnf -y install --disablerepo='*openh264*' \
+# outage as a packaging regression. --disablerepo only covers this transaction;
+# the pamtester toolchain install, the package install below that resolves
+# `Requires: onnxruntime`, and the rpm-build install for the upgrade fixture
+# each run their own `dnf` transaction and would still contact the repo for
+# metadata. Disabling it in the repo file itself persists across every later
+# layer in this image; the flag stays as belt-and-braces on this one.
+RUN sed -i 's/^enabled=1/enabled=0/' /etc/yum.repos.d/fedora-cisco-openh264.repo \
+    && dnf -y install --disablerepo='*openh264*' \
         pam authselect dbus dbus-daemon rpm systemd binutils gettext \
         glibc libxkbcommon tpm2-tss ca-certificates openssl-libs python3 util-linux strace \
     && dnf clean all

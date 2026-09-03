@@ -1159,6 +1159,21 @@ require(
     "onnxruntime" in copr_lifecycle_image,
     "COPR lifecycle image does not pin its system ONNX Runtime dependency",
 )
+# --disablerepo only covers the transaction it is passed to; the image runs
+# three more dnf transactions after this one (pamtester toolchain, the RPM
+# install, rpm-build), so only a persistent disable in the repo file keeps
+# every layer off the Cisco OpenH264 host.
+openh264_disable = "sed -i 's/^enabled=1/enabled=0/' /etc/yum.repos.d/fedora-cisco-openh264.repo"
+require(
+    openh264_disable in copr_lifecycle_image,
+    "COPR lifecycle image does not persistently disable the Cisco OpenH264 repo",
+)
+require(
+    copr_lifecycle_image.index(openh264_disable)
+    < copr_lifecycle_image.index("dnf -y install --disablerepo"),
+    "COPR lifecycle image disables the Cisco OpenH264 repo after its first dnf "
+    "transaction, so that transaction and later layers still contact it",
+)
 # Full depth for an RPM lane is three stages. The upgrade candidate is a
 # re-versioned repack of the mock payload, not a second COPR build, so the
 # image has to carry both the stage script and the fixture it consumes.

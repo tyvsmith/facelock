@@ -692,6 +692,10 @@ assert_matrix_mutation_rejected \
     "RPM service-scoped PAM lifecycle omitted from package fixture" \
     "test/Containerfile.rpm-e2e" \
     's@COPY test/rpm-service-pam-lifecycle.sh /rpm-service-pam-lifecycle.sh@COPY test/rpm-service-pam-lifecycle.sh /rpm-service-pam-lifecycle-disabled.sh@'
+assert_matrix_mutation_rejected \
+    "COPR lifecycle image not persistently disabling the Cisco OpenH264 repo" \
+    "test/Containerfile.copr-e2e" \
+    's/fedora-cisco-openh264\.repo/fedora-cisco-openh264-disabled.repo/'
 # The variable is literal fixture text inside the sed expression.
 # shellcheck disable=SC2016
 assert_matrix_mutation_rejected \
