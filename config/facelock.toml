@@ -254,13 +254,17 @@
 #
 # Match granularity: "model" (VID:PID, default — blocks a cross-model swap) or
 # "unit" (VID:PID:serial — also blocks a same-model swap, but requires a camera
-# that exposes a stable serial; enrollment at "unit" is refused otherwise).
+# that exposes a stable serial; enrollment at "unit" on a camera without one, or
+# without a full vendor:product identity, is refused before any template is
+# written, whether or not bind_templates_to_device is on).
 # device_match_granularity = "model"
 #
 # Allow legacy templates (enrolled before device coupling, or on a camera with
 # no readable USB identity — NULL device_id) to authenticate. Default true
 # (allow-with-warn) so upgrades never lock anyone out; set false to require every
-# template to carry a matching device id.
+# template to carry a matching device id. With it false (and
+# bind_templates_to_device on), enrolling on a camera with no readable USB
+# identity is refused, since its NULL row could never authenticate.
 # bind_legacy_templates = true
 #
 # Hard device binding (opt-in). Folds the enrolling camera's device_id into the
