@@ -19,6 +19,18 @@
         "fedora-44-x86_64",
         "fedora-45-x86_64"
       ]
+    },
+    {
+      "job": "copr_build",
+      "trigger": "pull_request",
+      "manual_trigger": true,
+      "owner": "tyvsmith",
+      "project": "facelock-testing",
+      "targets": [
+        "fedora-43-x86_64",
+        "fedora-44-x86_64",
+        "fedora-45-x86_64"
+      ]
     }
   ]
 }

@@ -225,6 +225,9 @@ jobs:
       - name: Compare live production release channels with checked-in authority
         run: python3 test/check-live-release-channels.py
 
+      - name: Compare the staging release channel with checked-in authority
+        run: python3 test/check-live-release-channels.py --channel staging
+
   catalog-check:
     name: Translation Catalog Freshness
     runs-on: ubuntu-latest

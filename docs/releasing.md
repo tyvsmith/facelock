@@ -532,9 +532,46 @@ reproduces the Packit SRPM + `mock` from-source rebuild on a Fedora chroot and
 checks that the payload has no bundle while its dependencies select Fedora ORT.
 
 Only a stable-tagged config with the deliberately restored production release
-trigger can populate production COPR automatically. Prerelease staging project
-provisioning and served-repository validation are separate release-infrastructure
-work; do not point prerelease tags at production while it is unavailable.
+trigger can populate production COPR automatically. Do not point a prerelease
+tag at production while staging is unavailable.
+
+##### Staging COPR (`tyvsmith/facelock-testing`)
+
+`.packit.yaml` declares a second `copr_build` job, for
+`tyvsmith/facelock-testing`. It is pull-request triggered with
+`manual_trigger: true`, so it builds only when a maintainer asks for it with a
+`/packit build` comment. A tag never publishes into staging.
+
+The project does not exist yet. Issue #236 owns creating it and granting Packit
+builder access; until then `dist/release-matrix.json` keeps
+`copr_channels.staging.provisioned` false and
+`python3 test/check-live-release-channels.py --channel staging` reports `not
+provisioned` and queries nothing. Provisioning is one edit here: create the
+project with exactly the Fedora 43, 44, and 45 chroots, then set `provisioned`
+to true. The same checker then compares the live project with the checked-in
+authority on every pull request and in preflight.
+
+Staging tolerates no optional experimental chroot. Production accepts Rawhide's
+presence or absence; in staging any chroot beyond the supported three is drift.
+
+##### Pre-tag attestation
+
+`scripts/release-attestation.py` renders and validates the document that binds a
+candidate to what its channels serve: the candidate commit, the EVR each channel
+serves per target, artifact and repository digests, signing key fingerprints, and
+when each channel last refreshed its repository metadata.
+
+```bash
+python3 scripts/release-attestation.py render --input facts.json --output attestation.json
+python3 scripts/release-attestation.py validate --attestation attestation.json --expect expect.json
+```
+
+`validate` fails closed on a drifted candidate commit, a served EVR or digest
+that disagrees with the recorded expectations, a changed signing fingerprint,
+metadata older than `metadata_max_age_seconds` or stamped in the future, and on
+any channel carrying the production COPR identity. Gathering those facts from
+live staging repositories is issue #236's remaining infrastructure work; the
+script and its contract cases run against fixtures today.
 
 Note: a previously published release will **not** retroactively build — Packit
 reacts only to *new* Release events.
