@@ -41,6 +41,11 @@ jobs:
     needs: metadata
     permissions:
       contents: read
+    outputs:
+      # The SHA-256 of this job's digests.json. The artifact store is writable
+      # by every job in the run; a job output is recorded under this job alone,
+      # so publish trusts the uploaded attestation only once it hashes to this.
+      attestation: ${{ steps.attest.outputs.sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -70,6 +75,7 @@ jobs:
           path: release/
 
       - name: Attest built binary digests
+        id: attest
         run: .github/workflows/scripts/attest-digests.sh build digests release/*
 
       - name: Upload binary digest attestation
@@ -84,6 +90,8 @@ jobs:
     needs: metadata
     permissions:
       contents: read
+    outputs:
+      attestation: ${{ steps.attest.outputs.sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -96,6 +104,7 @@ jobs:
           scripts/prepare-ort-bundle.sh component-tar onnxruntime onnxruntime-bundle.tar.xz
 
       - name: Attest the reviewed ORT component
+        id: attest
         run: |
           .github/workflows/scripts/attest-digests.sh download-ort digests \
             --component onnxruntime=onnxruntime/manifest.json \
@@ -119,6 +128,8 @@ jobs:
     needs: metadata
     permissions:
       contents: read
+    outputs:
+      attestation: ${{ steps.attest.outputs.sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -135,6 +146,7 @@ jobs:
           scripts/prepare-cargo-vendor.sh component-tar cargo-vendor cargo-vendor-bundle.tar.xz
 
       - name: Attest the exact Cargo vendor component
+        id: attest
         run: |
           .github/workflows/scripts/attest-digests.sh prepare-cargo-vendor digests \
             --component-archive cargo-vendor=cargo-vendor-bundle.tar.xz
@@ -158,6 +170,13 @@ jobs:
     permissions:
       contents: read
       actions: read
+    outputs:
+      # A matrix job shares one outputs map across its legs. Each leg fills
+      # only its own suite's key and leaves the other empty; the service does
+      # not record an empty value over a set one, and publish refuses an empty
+      # one, so the failure direction is a refusal either way.
+      attestation-trixie: ${{ matrix.suite == 'trixie' && steps.attest.outputs.sha256 || '' }}
+      attestation-resolute: ${{ matrix.suite == 'resolute' && steps.attest.outputs.sha256 || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -301,6 +320,7 @@ jobs:
           path: debian-upload/
 
       - name: Attest the built Debian package digest
+        id: attest
         run: |
           .github/workflows/scripts/attest-digests.sh build-deb digests \
             --suite '${{ matrix.suite }}' --image '${{ matrix.image }}' \
@@ -319,6 +339,8 @@ jobs:
     permissions:
       contents: read
       actions: read
+    outputs:
+      attestation: ${{ steps.attest.outputs.sha256 }}
     container:
       image: registry.fedoraproject.org/fedora:44@sha256:fc3ec3da3ce49de0da0bab5a33223e90866c488d5d04fc6612284169e20a1bdb
     env:
@@ -388,6 +410,7 @@ jobs:
         run: .github/workflows/scripts/validate-rpm.sh '${{ steps.rpm.outputs.rpm }}' direct
 
       - name: Attest the validated RPM digests
+        id: attest
         run: |
           .github/workflows/scripts/attest-digests.sh build-rpm digests \
             --image "$BUILD_IMAGE" rpm-upload/*.rpm
@@ -462,6 +485,8 @@ jobs:
     permissions:
       contents: read
       actions: read
+    outputs:
+      attestation: ${{ steps.attest.outputs.sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -516,6 +541,7 @@ jobs:
           echo "APT repo tarball: $(du -h apt-repo.tar.gz | cut -f1)"
 
       - name: Attest the APT repository digest
+        id: attest
         run: .github/workflows/scripts/attest-digests.sh publish-apt digests apt-repo.tar.gz
 
       - name: Upload APT digest attestation
@@ -581,8 +607,21 @@ jobs:
           $HELPER stage expected-assets artifacts assets >actual-assets
           $HELPER verify expected-assets actual-assets
 
+      - name: Record the job outputs that bind each attestation
+        env:
+          # Every needed job's result and outputs, JSON-encoded by the Actions
+          # service. It reaches the helper as a file, never as a shell line: a
+          # builder controls the text of its own output.
+          JOB_OUTPUTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$JOB_OUTPUTS" >job-outputs.json
+
       - name: Verify every asset against its builder attestation
-        run: $HELPER verify-digests artifacts assets actual-assets "$PRERELEASE"
+        # An attestation is trusted only once it hashes to the output its job
+        # recorded: the artifact store is writable by every job in the run, a
+        # job output only by the job that owns it.
+        run: $HELPER verify-digests artifacts job-outputs.json assets actual-assets "$PRERELEASE"
 
       - name: Refuse a tag that is already published
         run: |
@@ -613,7 +652,7 @@ jobs:
             "https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/$TAG.tar.gz" |
             sha256sum | cut -d' ' -f1)"
           $HELPER manifest "$TAG" "$VERSION" '${{ steps.tag.outputs.commit }}' "$PRERELEASE" \
-            "$GITHUB_REPOSITORY" "$source_sha256" artifacts assets actual-assets MANIFEST.json
+            "$GITHUB_REPOSITORY" "$source_sha256" artifacts job-outputs.json assets actual-assets MANIFEST.json
           cat MANIFEST.json
 
       - name: Attach MANIFEST.json to the draft

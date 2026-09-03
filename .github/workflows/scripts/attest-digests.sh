@@ -4,6 +4,9 @@
 # consumed. The publish job holds the published bytes to these digests, so a
 # release asset that changed between its builder and publication is refused.
 set -euo pipefail
+# The interpreter runs from the builder's checkout; a module planted there must
+# not shadow the standard library.
+export PYTHONSAFEPATH=1
 
 fail() {
     echo "attest digests: $*" >&2
@@ -95,5 +98,14 @@ if components:
     document["components"] = dict(sorted(components.items()))
 
 output.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
-print(f"attest digests: {output} covers {len(assets)} artifact(s)")
+
+# The document's own digest becomes a job output: the artifact store is shared
+# by every job in the run, a job output belongs to this job alone, so the
+# publish job trusts the uploaded document only once it hashes to this value.
+document_sha256 = hashlib.sha256(output.read_bytes()).hexdigest()
+github_output = os.environ.get("GITHUB_OUTPUT")
+if github_output:
+    with open(github_output, "a", encoding="utf-8") as handle:
+        handle.write(f"sha256={document_sha256}\n")
+print(f"attest digests: {output} covers {len(assets)} artifact(s), sha256 {document_sha256}")
 PY

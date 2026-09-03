@@ -21,6 +21,9 @@ export ATTESTATIONS_MODULE
 # Loading that module by path would otherwise leave __pycache__ in the checkout,
 # and the recipes that demand a clean tree would fail on it.
 export PYTHONDONTWRITEBYTECODE=1
+# The heredocs below run from the publish job's checkout; a module planted
+# there must not shadow the standard library.
+export PYTHONSAFEPATH=1
 
 fail() {
     echo "release assets: $*" >&2
@@ -83,11 +86,15 @@ expected_assets() {
     fi
 }
 
-# The artifacts that attest this release, as `<slot><TAB><job>`. One slot per
-# `release-digests-*` artifact the workflow uploads: the publish job requires
-# exactly these, so a builder cannot add an artifact of its own and have its
-# claims believed. test/release-artifacts-contract.sh holds this list against
-# the workflow's attest-digests.sh call sites.
+# The artifacts that attest this release, as `<slot><TAB><job><TAB><output>`.
+# One slot per `release-digests-*` artifact the workflow uploads: the publish
+# job requires exactly these, so a builder cannot add an artifact of its own
+# and have its claims believed. The output is the job output under which the
+# job recorded its document's SHA-256; the artifact store is writable by every
+# job in the run, so an attestation is trusted only once it hashes to that
+# value. build-deb is a matrix job with one output per suite.
+# test/release-artifacts-contract.sh holds this list against the workflow's
+# attest-digests.sh call sites and outputs.
 expected_attestations() {
     local prerelease="${1:?}"
     local suite architecture
@@ -97,15 +104,15 @@ expected_attestations() {
         *) fail "prerelease must be true or false, got: $prerelease" ;;
     esac
 
-    printf 'build\tbuild\n'
-    printf 'onnxruntime\tdownload-ort\n'
-    printf 'cargo-vendor\tprepare-cargo-vendor\n'
+    printf 'build\tbuild\tattestation\n'
+    printf 'onnxruntime\tdownload-ort\tattestation\n'
+    printf 'cargo-vendor\tprepare-cargo-vendor\tattestation\n'
     while IFS='	' read -r suite architecture; do
-        printf 'deb-%s\tbuild-deb\n' "$suite"
+        printf 'deb-%s\tbuild-deb\tattestation-%s\n' "$suite" "$suite"
     done < <(debian_suites)
-    printf 'rpm\tbuild-rpm\n'
+    printf 'rpm\tbuild-rpm\tattestation\n'
     if [ "$prerelease" = false ]; then
-        printf 'apt\tpublish-apt\n'
+        printf 'apt\tpublish-apt\tattestation\n'
     fi
 }
 
@@ -335,19 +342,21 @@ PY
 # ---------------------------------------------------------------- attestations
 
 # Every asset was produced by exactly one builder and still has the bytes that
-# builder attested.
+# builder attested. `job_outputs` is the publish job's `toJSON(needs)`: each
+# attestation is trusted only once it hashes to the output its job recorded.
 verify_digests() {
-    local digests_dir="${1:?}" assets_dir="${2:?}" actual_file="${3:?}" prerelease="${4:?}"
+    local digests_dir="${1:?}" job_outputs="${2:?}" assets_dir="${3:?}"
+    local actual_file="${4:?}" prerelease="${5:?}"
     local expected
     expected="$(expected_attestations "$prerelease")"
-    python3 - "$digests_dir" "$assets_dir" "$actual_file" "$expected" <<'PY'
+    python3 - "$digests_dir" "$job_outputs" "$assets_dir" "$actual_file" "$expected" <<'PY'
 import hashlib
 import importlib.util
 import os
 import sys
 from pathlib import Path
 
-digests_dir, assets_dir, actual_file, expected = sys.argv[1:5]
+digests_dir, job_outputs, assets_dir, actual_file, expected = sys.argv[1:6]
 
 spec = importlib.util.spec_from_file_location(
     "release_attestations", os.environ["ATTESTATIONS_MODULE"]
@@ -356,7 +365,7 @@ release_attestations = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release_attestations)
 
 try:
-    documents = release_attestations.load(digests_dir, expected)
+    documents = release_attestations.load(digests_dir, expected, job_outputs)
 except release_attestations.AttestationError as error:
     raise SystemExit(f"release assets: {error}")
 
@@ -398,11 +407,11 @@ PY
 generate_manifest() {
     local tag="${1:?}" version="${2:?}" commit="${3:?}" prerelease="${4:?}"
     local repository="${5:?}" source_sha256="${6:?}" digests_dir="${7:?}"
-    local assets_dir="${8:?}" actual_file="${9:?}" output="${10:?}"
+    local job_outputs="${8:?}" assets_dir="${9:?}" actual_file="${10:?}" output="${11:?}"
     local expected
     expected="$(expected_attestations "$prerelease")"
-    python3 - "$tag" "$version" "$commit" "$prerelease" "$repository" \
-        "$source_sha256" "$digests_dir" "$assets_dir" "$actual_file" "$output" "$expected" <<'PY'
+    python3 - "$tag" "$version" "$commit" "$prerelease" "$repository" "$source_sha256" \
+        "$digests_dir" "$job_outputs" "$assets_dir" "$actual_file" "$output" "$expected" <<'PY'
 import hashlib
 import importlib.util
 import json
@@ -411,7 +420,7 @@ import sys
 from pathlib import Path
 
 (tag, version, commit, prerelease, repository, source_sha256,
- digests_dir, assets_dir, actual_file, output, expected) = sys.argv[1:12]
+ digests_dir, job_outputs, assets_dir, actual_file, output, expected) = sys.argv[1:13]
 
 spec = importlib.util.spec_from_file_location(
     "release_attestations", os.environ["ATTESTATIONS_MODULE"]
@@ -420,7 +429,7 @@ release_attestations = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release_attestations)
 
 try:
-    documents = release_attestations.load(digests_dir, expected)
+    documents = release_attestations.load(digests_dir, expected, job_outputs)
     build_images, components = release_attestations.provenance(documents)
 except release_attestations.AttestationError as error:
     raise SystemExit(f"release assets: {error}")
@@ -503,14 +512,14 @@ case "${1:-}" in
         ;;
     verify-digests)
         shift
-        [ "$#" -eq 4 ] ||
-            fail "usage: $0 verify-digests <digests-dir> <assets-dir> <actual-list> <prerelease>"
+        [ "$#" -eq 5 ] ||
+            fail "usage: $0 verify-digests <digests-dir> <job-outputs> <assets-dir> <actual-list> <prerelease>"
         verify_digests "$@"
         ;;
     manifest)
         shift
-        [ "$#" -eq 10 ] ||
-            fail "usage: $0 manifest <tag> <version> <commit> <prerelease> <repository> <source-sha256> <digests-dir> <assets-dir> <actual-list> <output>"
+        [ "$#" -eq 11 ] ||
+            fail "usage: $0 manifest <tag> <version> <commit> <prerelease> <repository> <source-sha256> <digests-dir> <job-outputs> <assets-dir> <actual-list> <output>"
         generate_manifest "$@"
         ;;
     *)

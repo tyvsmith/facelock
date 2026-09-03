@@ -172,8 +172,10 @@ printf '%s\n' "$publish_statements" | grep -Fq 'prerelease: ${{ needs.metadata.o
 # The helper invocations are matched with their trailing space so that a
 # `verify-digests-disabled` lookalike cannot stand in for the real call.
 # shellcheck disable=SC2016
-for step in '$HELPER verify-tag ' '$HELPER stage expected-assets' '$HELPER verify-digests ' \
-    '$HELPER verify-creatable ' 'PRERELEASE" final' 'MANIFEST.json' 'draft=false'; do
+for step in '$HELPER verify-tag ' '$HELPER stage expected-assets' \
+    '$HELPER verify-digests artifacts job-outputs.json ' '$HELPER verify-creatable ' \
+    'PRERELEASE" final' 'artifacts job-outputs.json assets actual-assets MANIFEST.json' \
+    'draft=false'; do
     printf '%s\n' "$publish_statements" | grep -Fq "$step" ||
         fail "the publish job must run ${step% } before the release becomes public"
 done
@@ -225,37 +227,101 @@ printf '%s\n' "$rpm_job" | grep -Fq 'steps.rpm.outputs.rpm' ||
     fail "build-rpm must validate the exact payload package the metadata names"
 
 # The attesting set the helper pins must be exactly the artifacts the workflow
-# uploads. Adding or removing an attesting job moves both or fails here.
+# uploads, each bound to a job output. The artifact store is writable by every
+# job in the run; a job output is recorded under the job that produced it and
+# no other job can rewrite it, so the output is what makes the artifact
+# evidence. Adding or removing an attesting job moves both or fails here.
+
+# The `outputs:` block of one job, as `key: expression` lines.
+job_outputs_block() {
+    job_body "$1" | awk '
+        /^    outputs:/ { inside = 1; next }
+        inside && /^    [A-Za-z]/ { inside = 0 }
+        inside && /^      [a-z]/ { sub(/^ +/, ""); print }
+    '
+}
+
+# The step of one job that runs attest-digests.sh, as its own lines.
+attest_step() {
+    job_body "$1" | awk '
+        function flush() { if (step ~ /attest-digests\.sh/) printf "%s", step; step = "" }
+        /^      - / { flush() }
+        { step = step $0 "\n" }
+        END { flush() }
+    '
+}
+
 workflow_attestations() {
-    local wf_job body attest_job slot suite
+    local wf_job body step attest_job name_pattern outputs line key expression suite slot
     for wf_job in build download-ort prepare-cargo-vendor build-deb build-rpm publish-apt; do
         body="$(job_body "$wf_job")"
-        attest_job="$(printf '%s\n' "$body" |
+        step="$(attest_step "$wf_job")"
+        [ -n "$step" ] || fail "job $wf_job runs no attest-digests.sh step"
+        printf '%s\n' "$step" | grep -Eq '^        id: attest$' ||
+            fail "job $wf_job must give its attestation step the id attest so its digest can be a job output"
+        attest_job="$(printf '%s\n' "$step" |
             sed -n 's|.*attest-digests\.sh \([a-z-]*\) .*|\1|p' | head -1)"
-        slot="$(printf '%s\n' "$body" |
+        name_pattern="$(printf '%s\n' "$body" |
             sed -n 's/^ *name: release-digests-\(.*\)$/\1/p' | head -1)"
         [ -n "$attest_job" ] || fail "job $wf_job uploads no digest attestation"
-        [ -n "$slot" ] || fail "job $wf_job names no digest artifact"
-        # A literal workflow expression, and suite names carry no spaces.
-        # shellcheck disable=SC2016,SC2013
-        case "$slot" in
-            *'${{ matrix.suite }}'*)
-                for suite in $(sed -n 's/^deb-\(.*\)	.*/\1/p' <"$attesting_set"); do
-                    printf '%s\t%s\n' \
-                        "$(printf '%s' "$slot" | sed "s/\${{ matrix.suite }}/$suite/")" \
-                        "$attest_job"
-                done
-                ;;
-            *) printf '%s\t%s\n' "$slot" "$attest_job" ;;
-        esac
+        [ -n "$name_pattern" ] || fail "job $wf_job names no digest artifact"
+        outputs="$(job_outputs_block "$wf_job" | grep -E '^attestation' || true)"
+        [ -n "$outputs" ] ||
+            fail "job $wf_job declares no attestation output; publish cannot bind its artifact to the job"
+        while IFS= read -r line; do
+            key="${line%%:*}"
+            expression="${line#*: }"
+            # Literal workflow expressions; nothing here is a shell expansion.
+            # shellcheck disable=SC2016
+            case "$key" in
+                attestation)
+                    [ "$expression" = '${{ steps.attest.outputs.sha256 }}' ] ||
+                        fail "job $wf_job output $key must be the attest step's sha256, not: $expression"
+                    printf '%s\t%s\t%s\n' "$name_pattern" "$attest_job" "$key"
+                    ;;
+                attestation-*)
+                    # A matrix job shares one outputs map across its legs. Each
+                    # leg fills only its own suite's key and leaves the others
+                    # empty, and the service does not record an empty value over
+                    # a set one.
+                    suite="${key#attestation-}"
+                    [ "$expression" = "\${{ matrix.suite == '$suite' && steps.attest.outputs.sha256 || '' }}" ] ||
+                        fail "job $wf_job output $key must be set only by the $suite leg, not: $expression"
+                    slot="$(printf '%s' "$name_pattern" | sed "s/\${{ matrix.suite }}/$suite/")"
+                    [ "$slot" != "$name_pattern" ] ||
+                        fail "job $wf_job declares a per-suite output but its artifact name carries no matrix.suite"
+                    printf '%s\t%s\t%s\n' "$slot" "$attest_job" "$key"
+                    ;;
+            esac
+        done <<<"$outputs"
     done
 }
 
 attesting_set="$(mktemp "${TMPDIR:-/tmp}/facelock-attesting.XXXXXX")"
 "$helper_path" expected-attestations false >"$attesting_set"
 diff <(workflow_attestations | LC_ALL=C sort) <(LC_ALL=C sort "$attesting_set") >/dev/null ||
-    fail "the pinned attesting set differs from the release workflow's attest-digests.sh call sites: $(diff <(workflow_attestations | LC_ALL=C sort) <(LC_ALL=C sort "$attesting_set") | tr '\n' ' ')"
+    fail "the pinned attesting set differs from the release workflow's attestation outputs: $(diff <(workflow_attestations | LC_ALL=C sort) <(LC_ALL=C sort "$attesting_set") | tr '\n' ' ')"
 rm -f "$attesting_set"
+
+# The bindings reach the helper through the environment and a file, never
+# through a shell line: a builder controls the text of its own output.
+[ "$(printf '%s\n' "$publish_statements" | grep -Ec '^ +[A-Z_]+: \$\{\{ toJSON\(needs\) \}\}$' || true)" = 1 ] ||
+    fail "the publish job must pass toJSON(needs) to the helper through exactly one env value"
+[ "$(printf '%s\n' "$publish_job" | grep -c 'toJSON(needs)' || true)" = 1 ] ||
+    fail "toJSON(needs) may appear in the publish job only as that env value"
+# shellcheck disable=SC2016
+printf '%s\n' "$publish_statements" | grep -Eq '^ +printf .%s\\n. "\$JOB_OUTPUTS" >job-outputs\.json$' ||
+    fail "the publish job must write job-outputs.json from the JOB_OUTPUTS env value"
+# shellcheck disable=SC2016
+needs_lines="$(printf '%s\n' "$publish_job" | grep -F '${{ needs.' || true)"
+while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    printf '%s\n' "$line" | grep -Eq '^ +[A-Za-z_-]+: \$\{\{ needs\.[a-z-]+\.outputs\.[a-z-]+ \}\}$' ||
+        fail "a needs value reaches a shell line of the publish job; pass it through env: $line"
+    case "$line" in
+        *' run: '*) fail "a needs value is interpolated into a run line of the publish job: $line" ;;
+    esac
+done <<<"$needs_lines"
 
 # ------------------------------------------------------------- helper: shape
 
@@ -378,7 +444,11 @@ build_artifacts() {
     printf 'rpm\n' >"$artifacts/release-rpm/facelock-debugsource-0.2.0-1.fc44.x86_64.rpm"
     printf 'apt\n' >"$artifacts/release-apt-repo/apt-repo.tar.gz"
     # The real emitter, so the attestation shape is the one the builders write.
+    # It records each document's digest as a step output; capture that here
+    # rather than in the CI step's own GITHUB_OUTPUT.
     local attest="$repo_root/.github/workflows/scripts/attest-digests.sh"
+    local -x GITHUB_OUTPUT="$work/github-output"
+    : >"$GITHUB_OUTPUT"
     "$attest" build "$artifacts/release-digests-build" \
         "$artifacts"/release-binaries/* >/dev/null
     "$attest" build-deb "$artifacts/release-digests-deb-trixie" \
@@ -402,6 +472,38 @@ build_artifacts() {
         --component-archive "onnxruntime=$work/onnxruntime-bundle.tar.xz" >/dev/null
     "$attest" prepare-cargo-vendor "$artifacts/release-digests-cargo-vendor" \
         --component-archive "cargo-vendor=$work/cargo-vendor-bundle.tar.xz" >/dev/null
+    diff <(sed -n 's/^sha256=//p' "$GITHUB_OUTPUT" | LC_ALL=C sort) \
+        <(for document in "$artifacts"/release-digests-*/digests.json; do
+              sha256sum "$document" | cut -d' ' -f1
+          done | LC_ALL=C sort) >/dev/null ||
+        fail "attest-digests.sh did not record each document's SHA-256 as its step output"
+    job_outputs_for "$job_outputs"
+}
+
+# What toJSON(needs) hands the publish job: every needed job's result and
+# outputs, the attestation output being the SHA-256 of each digests.json as the
+# tree stands now. A slot with no artifact is a job that was skipped.
+job_outputs="$work/job-outputs.json"
+job_outputs_for() {
+    "$helper_path" expected-attestations "${2:-false}" >"$work/attesting-spec"
+    python3 - "$artifacts" "$1" "$work/attesting-spec" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+artifacts, output, spec = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
+needs = {"metadata": {"result": "success", "outputs": {"cargo-version": "0.2.0"}}}
+for line in spec.read_text(encoding="utf-8").splitlines():
+    slot, job, key = line.split("\t")[:3]
+    document = artifacts / f"release-digests-{slot}" / "digests.json"
+    entry = needs.setdefault(job, {"result": "success", "outputs": {}})
+    if document.is_file():
+        entry["outputs"][key] = hashlib.sha256(document.read_bytes()).hexdigest()
+    elif not entry["outputs"]:
+        entry["result"] = "skipped"
+Path(output).write_text(json.dumps(needs, indent=2) + "\n", encoding="utf-8")
+PY
 }
 
 build_artifacts
@@ -417,7 +519,7 @@ if [ -e "$staged/facelock_0.2.0-1~deb13u1_amd64.manifest" ]; then
     fail "staging copied a file the allowlist does not name"
 fi
 
-"$helper_path" verify-digests "$artifacts" "$staged" "$work/actual-staged" false >/dev/null ||
+"$helper_path" verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false >/dev/null ||
     fail "the staged assets did not match the attestations in the same artifact tree"
 
 cat >"$artifacts/release-binaries/digests.json" <<'JSON'
@@ -425,7 +527,7 @@ cat >"$artifacts/release-binaries/digests.json" <<'JSON'
  "components": {"onnxruntime": {"version": "666", "library_sha256": "forged"}}}
 JSON
 assert_rejects "payload artifact claiming another builder's provenance" "inside a payload artifact" \
-    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
 build_artifacts
 
 rm -f "$artifacts/release-rpm/facelock-debugsource-0.2.0-1.fc44.x86_64.rpm"
@@ -576,18 +678,89 @@ echo "release artifacts case: rerun over a draft that already carries the manife
 attested_digest() { sha256sum "$staged/$1" | cut -d' ' -f1; }
 attestation() { printf '%s' "$artifacts/release-digests-$1/digests.json"; }
 
-"$helper_path" verify-digests "$artifacts" "$staged" "$work/actual-staged" false >/dev/null ||
+"$helper_path" verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false >/dev/null ||
     fail "assets matching their builder attestations were rejected"
+
+# --- every attestation is bound to the output its job recorded
+
+# The artifact store is shared and writable by every job in the run: a later
+# builder can replace an earlier builder's payload and its attestation with a
+# matching pair. The job output is the one record another job cannot rewrite,
+# so an attestation whose bytes are not the ones its job recorded is refused
+# before anything in it is read.
+python3 - "$(attestation build)" <<'PY'
+import json, sys
+path = sys.argv[1]
+document = json.load(open(path))
+open(path, "w").write(json.dumps(document, indent=4) + "\n")
+PY
+assert_rejects "attestation replaced after its job recorded it" "is not the document build recorded" \
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
+assert_rejects "replaced attestation reaching the manifest" "is not the document build recorded" \
+    manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
+    tyvsmith/facelock deadbeef "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" "$work/forged.json"
+build_artifacts
+
+unbind() {
+    python3 - "$job_outputs" "$work/job-outputs-$1.json" "$1" "$2" <<'PY'
+import json, sys
+source, target, job, value = sys.argv[1:5]
+needs = json.load(open(source))
+if value == "-":
+    del needs[job]["outputs"]
+else:
+    needs[job]["outputs"]["attestation"] = value
+open(target, "w").write(json.dumps(needs) + "\n")
+PY
+    printf '%s' "$work/job-outputs-$1.json"
+}
+assert_rejects "attesting job that recorded no output" "not bound to a job output" \
+    verify-digests "$artifacts" "$(unbind build -)" "$staged" "$work/actual-staged" false
+assert_rejects "job output that is not a digest" "not bound to a job output" \
+    verify-digests "$artifacts" "$(unbind build-rpm abc)" "$staged" "$work/actual-staged" false
+printf '[]\n' >"$work/job-outputs-list.json"
+assert_rejects "job outputs that are not an object" "is not a JSON object" \
+    verify-digests "$artifacts" "$work/job-outputs-list.json" "$staged" "$work/actual-staged" false
+printf '{"build": \n' >"$work/job-outputs-broken.json"
+assert_rejects "job outputs that are not JSON" "is not valid JSON" \
+    verify-digests "$artifacts" "$work/job-outputs-broken.json" "$staged" "$work/actual-staged" false
+
+# A prerelease skips publish-apt, so its slot has no artifact and no output.
+rm -rf "$artifacts/release-digests-apt" "$artifacts/release-apt-repo"
+job_outputs_for "$work/job-outputs-prerelease.json" true
+"$helper_path" expected 0.2.0 1 1 true builders >"$work/expected-prerelease-builders"
+rm -rf "$work/assets-prerelease"
+"$helper_path" stage "$work/expected-prerelease-builders" "$artifacts" "$work/assets-prerelease" \
+    >"$work/actual-prerelease"
+"$helper_path" verify-digests "$artifacts" "$work/job-outputs-prerelease.json" \
+    "$work/assets-prerelease" "$work/actual-prerelease" true >/dev/null ||
+    fail "a prerelease with the APT publisher skipped was rejected"
+echo "release artifacts case: prerelease without the skipped APT publisher accepted"
+build_artifacts
+
+# A document that is not a JSON object is an attestation error, not a crash.
+printf '{\n' >"$(attestation rpm)"
+job_outputs_for "$job_outputs"
+assert_rejects "attestation that is not JSON" "is not valid JSON" \
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
+assert_rejects "unparseable attestation reaching the manifest" "is not valid JSON" \
+    manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
+    tyvsmith/facelock deadbeef "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" "$work/forged.json"
+printf '[]\n' >"$(attestation rpm)"
+job_outputs_for "$job_outputs"
+assert_rejects "attestation that is not a JSON object" "is not a JSON object" \
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
+build_artifacts
 
 printf 'tampered\n' >"$staged/pam_facelock.so"
 assert_rejects "release asset mutated after its builder attested it" "does not match the digest" \
-    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
 cp "$artifacts/release-binaries/pam_facelock.so" "$staged/pam_facelock.so"
 
 printf 'smuggled\n' >"$staged/extra-asset"
 { cat "$work/actual-staged"; echo extra-asset; } >"$work/actual-unattested"
 assert_rejects "release asset no builder attested" "attested by no builder" \
-    verify-digests "$artifacts" "$staged" "$work/actual-unattested" false
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-unattested" false
 rm -f "$staged/extra-asset"
 
 # An attesting artifact may not claim an asset another one produced.
@@ -598,8 +771,9 @@ document = json.load(open(path))
 document["assets"]["pam_facelock.so"] = sys.argv[2]
 open(path, "w").write(json.dumps(document, indent=2) + "\n")
 PY
+job_outputs_for "$job_outputs"
 assert_rejects "two builders claiming one asset" "attested by more than one builder" \
-    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
 build_artifacts
 
 # --- the attesting set is pinned, not merely deduplicated
@@ -613,10 +787,10 @@ cat >"$artifacts/release-digests-zzz-supplychain/digests.json" <<'JSON'
  "components": {"onnxruntime": {"version": "666", "library_sha256": "forged"}}}
 JSON
 assert_rejects "extra digest artifact forging another job's provenance" "no builder attests as" \
-    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
 assert_rejects "extra digest artifact reaching the manifest" "no builder attests as" \
     manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
-    tyvsmith/facelock deadbeef "$artifacts" "$staged" "$work/actual-staged" "$work/forged.json"
+    tyvsmith/facelock deadbeef "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" "$work/forged.json"
 build_artifacts
 
 python3 - "$(attestation build)" <<'PY'
@@ -626,24 +800,25 @@ document = json.load(open(path))
 document["job"] = "build-deb"
 open(path, "w").write(json.dumps(document, indent=2) + "\n")
 PY
+job_outputs_for "$job_outputs"
 assert_rejects "attestation declaring a job that is not its slot" "belongs to" \
-    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
 build_artifacts
 
 rm -rf "$artifacts/release-digests-apt"
 assert_rejects "attesting job that did not attest" "no attestation from" \
-    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
 build_artifacts
 
 mkdir -p "$artifacts/release-digests-rpm/second"
 cp "$(attestation rpm)" "$artifacts/release-digests-rpm/second/digests.json"
 assert_rejects "attesting artifact holding two documents" "documents, expected one" \
-    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
 build_artifacts
 
 # A prerelease publishes no APT repository, so publish-apt attests nothing.
 assert_rejects "stable attestation set on a prerelease" "no builder attests as" \
-    verify-digests "$artifacts" "$staged" "$work/actual-staged" true
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" true
 
 # A payload artifact carrying an attestation is a builder claiming provenance
 # for work it did not do; the manifest would record its image and components.
@@ -652,10 +827,10 @@ cat >"$artifacts/release-binaries/digests.json" <<'JSON'
  "components": {"onnxruntime": {"version": "666", "library_sha256": "forged"}}}
 JSON
 assert_rejects "digest attestation planted in a payload artifact" "inside a payload artifact" \
-    verify-digests "$artifacts" "$staged" "$work/actual-staged" false
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
 assert_rejects "forged provenance reaching the manifest" "inside a payload artifact" \
     manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
-    tyvsmith/facelock deadbeef "$artifacts" "$staged" "$work/actual-staged" "$work/forged.json"
+    tyvsmith/facelock deadbeef "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" "$work/forged.json"
 build_artifacts
 
 # Two attestations claiming one provenance key is a contradiction, not a merge.
@@ -666,16 +841,17 @@ document = json.load(open(path))
 document.setdefault("components", {})["onnxruntime"] = {"version": "666"}
 open(path, "w").write(json.dumps(document, indent=2) + "\n")
 PY
+job_outputs_for "$job_outputs"
 assert_rejects "two attestations claiming one component" "claim the component" \
     manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
-    tyvsmith/facelock deadbeef "$artifacts" "$staged" "$work/actual-staged" "$work/forged.json"
+    tyvsmith/facelock deadbeef "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" "$work/forged.json"
 build_artifacts
 
 # --- the publication manifest
 
 manifest="$work/MANIFEST.json"
 "$helper_path" manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
-    tyvsmith/facelock deadbeef "$artifacts" "$staged" "$work/actual-staged" "$manifest" >/dev/null ||
+    tyvsmith/facelock deadbeef "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" "$manifest" >/dev/null ||
     fail "manifest generation failed for a complete release"
 
 python3 - "$manifest" "$(attested_digest facelock-x86_64-linux-gnu)" <<'PY' ||
@@ -699,7 +875,7 @@ PY
 rm -f "$staged/pam_facelock.so"
 assert_rejects "manifest over an asset that was never staged" "is not present" \
     manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
-    tyvsmith/facelock deadbeef "$artifacts" "$staged" "$work/actual-staged" "$manifest"
+    tyvsmith/facelock deadbeef "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" "$manifest"
 cp "$artifacts/release-binaries/pam_facelock.so" "$staged/pam_facelock.so"
 # ------------------------------------------------------------------ mutations
 
@@ -732,8 +908,14 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
         's/^    unexpected = sorted\(set\(present\) - set\(expected\)\)$/    unexpected = []/' \
         "extra digest artifact forging another job's provenance: helper accepted"
     assert_loader_mutation_rejected "attestations trusted to name their own job" \
-        's/^        if document.get\("job"\) != expected\[slot\]:$/        if False:/' \
+        's/^        if document.get\("job"\) != job:$/        if False:/' \
         "attestation declaring a job that is not its slot: helper accepted"
+    assert_loader_mutation_rejected "attestations not held to their job outputs" \
+        's/^        if actual != recorded:$/        if False:/' \
+        "attestation replaced after its job recorded it: helper accepted"
+    assert_loader_mutation_rejected "a missing job output tolerated" \
+        's/^        if not isinstance\(recorded, str\) or not DIGEST.fullmatch\(recorded\):$/        if False:/' \
+        "attesting job that recorded no output"
 
     assert_workflow_mutation_rejected() {
         local context="$1" expression="$2" needle="$3"
@@ -784,6 +966,18 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
     assert_workflow_mutation_rejected "no revalidation before the flip" \
         's|^( *)\$HELPER expected "\$VERSION" "\$DEBIAN_REVISION" "\$RPM_COUNTER" "\$PRERELEASE" final .*|\1: # final readback disabled|' \
         'must run PRERELEASE" final'
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "attestation left unbound to its job" \
+        '0,/^      attestation: \$\{\{ steps.attest.outputs.sha256 \}\}$/s///' \
+        "declares no attestation output"
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "one suite of the matrix left unbound" \
+        '/^      attestation-resolute: /d' \
+        "differs from the release workflow's attestation outputs"
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "job outputs not passed through env" \
+        's/^          JOB_OUTPUTS: \$\{\{ toJSON\(needs\) \}\}$/          JOB_OUTPUTS: fixed/' \
+        "through exactly one env value"
     assert_workflow_mutation_rejected "pages rebuild before publication" \
         's/^    needs: \[publish-apt, publish\]$/    needs: [publish-apt]/' \
         "trigger-pages must run after the release is published"
@@ -795,6 +989,20 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
         's/^      TAG: \$\{\{ github.ref_name \}\}$/      TAG: ${{ github.ref_name }}\n      TAG_TARGET: target_commitish/' \
         "publishing must not send a tag or target commitish"
 fi
+
+# The helper's Python runs from whatever directory the workflow is in; a module
+# planted there must not shadow the standard library.
+case "$helper_path" in
+    /*) helper_abs="$helper_path" ;;
+    *) helper_abs="$repo_root/$helper_path" ;;
+esac
+mkdir -p "$work/shadow"
+printf 'raise SystemExit("json shadowed from the working directory")\n' >"$work/shadow/json.py"
+[ "$(cd "$work/shadow" && "$helper_abs" release-id "$work/releases-listing.json" v0.2.0)" = 42 ] ||
+    fail "the release asset helper imported a module from its working directory"
+(cd "$work/shadow" && "$helper_abs" expected 0.2.0 1 1 false final >/dev/null) ||
+    fail "the release asset helper imported a module from its working directory"
+echo "release artifacts case: working-directory module shadowing ignored"
 
 # Loading the attestation module must not leave bytecode in the checkout: the
 # recipes that demand a clean tree run right after this gate.

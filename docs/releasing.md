@@ -134,6 +134,11 @@ deny-all.
 - holds every staged asset to the SHA-256 its builder attested. An asset that
   changed between its build and publication stops the release, as does one no
   builder attested or one two builders claim.
+- trusts an attestation only once it hashes to the job output its builder
+  recorded. Artifacts are shared, writable storage for every job in the run;
+  a job output belongs to the job that wrote it. An attestation that was
+  replaced after its job finished, or whose job recorded no output, is refused
+  by name.
 - creates the release as a draft carrying those assets, then writes
   `MANIFEST.json` over them, plus the source tarball digest, the pinned
   build-image digests, and the reviewed ONNX Runtime and Cargo-vendor component

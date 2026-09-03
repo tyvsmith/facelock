@@ -2367,6 +2367,19 @@ release until it does.
   artifact of its own, so an extra attestation, a missing one, or one claiming
   another job's identity stops the release rather than being merged into the
   manifest.
+- Every attestation hashes to the output its job recorded. Artifacts are
+  untrusted until bound to a job output: the artifact store is shared by every
+  job in the run and writable with any job's runtime token, so a builder that
+  runs later can replace an earlier builder's payload and attestation as a
+  matching pair. A job output is recorded by the Actions service under the job
+  that produced it and cannot be rewritten by another job. Each attesting job
+  records the SHA-256 of its `digests.json` as its `attestation` output
+  (`build-deb` records `attestation-<suite>`, each matrix leg setting only its
+  own); `publish` reads them through `toJSON(needs)`, passed by environment
+  and file rather than a shell line, and refuses by slot any attestation whose
+  bytes differ from the recorded value or whose job recorded no output, before
+  anything in the document is read. `verify-digests` and `manifest` share that
+  loader, so neither can skip it.
 - The tag has no published release. A release already published is refused
   before anything is written; the draft an interrupted run left behind is
   reused, so a failed run can be re-run. An asset on that draft whose canonical
