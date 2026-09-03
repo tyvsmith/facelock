@@ -282,7 +282,7 @@ facelock enroll --label "office"        # specific label
 facelock enroll --skip-setup-check      # enroll on a tree setup never marked complete
 ```
 
-Captures 3-10 frames over ~15 seconds. Requires exactly one face per frame. Re-enrolling with the same label replaces the previous model.
+Captures 3-10 frames over ~15 seconds. Requires exactly one face per frame. Re-enrolling with the same label replaces the previous model on success; a cancelled or failed re-enrollment leaves the previous model in place.
 
 Without `--skip-setup-check`, an install whose setup-complete marker is missing
 is offered `facelock setup` first and enrolls through it, since setup enrolls a

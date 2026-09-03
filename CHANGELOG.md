@@ -600,6 +600,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Enrollment persists atomically** (#308): the daemon and `facelock enroll`
+  now hold accepted embeddings in memory and write the model in one store
+  transaction after the minimum-capture and angle-diversity gates pass, with
+  sealing done first. Previously the model row was created on the first
+  accepted frame and embeddings were appended one by one, so a cancellation
+  after that frame (a killed CLI, a suspend, a caller that went away) left a
+  template behind that never passed the gates and could authenticate, and an
+  explicit re-enrollment under an existing label (`facelock enroll --label
+  <existing>`; default labels never collide) deleted the previous template
+  before capturing a single frame. A cancelled or failed enrollment, too few
+  frames at the deadline included, now leaves the store exactly as it was,
+  previous template and all. The store now refuses a model with fewer than
+  three embeddings. A partial row an earlier version left behind survives
+  the upgrade and still authenticates: `facelock list` shows models, not
+  embedding counts, so remove any model from an enrollment you remember
+  failing with `facelock remove <id>`, or `facelock clear` and re-enroll.
+
 - **Root refusal now precedes config-state errors** (#191): for the commands
   dispatched through the shared config parse (`enroll`, `remove`, `clear`,
   `list`, `test`, `preview`, `devices`, `bench`, `tpm …`, `audit`), the root

@@ -3009,6 +3009,29 @@ on first use if absent. `method = "none"` (plaintext) is **refused at enrollment
 `security.allow_plaintext = true`. Auth always degrades to password on a decrypt failure —
 never a lockout.
 
+**Enrollment atomicity (#308).** An enrollment writes to the store exactly once, at the
+end: after every accepted embedding has passed the minimum-capture and angle-diversity
+gates and, with encryption on, been sealed, one transaction removes the previous model
+under the same user and label and inserts the new model with all of its embeddings. Until
+that commit the accepted embeddings exist only in memory, inside the wiping guard, and
+every exit observed before the store write (a cancellation, including one that lands on
+the final frame; the deadline passing with too few frames; a rejected set; a sealing
+error; a storage error; a daemon crash) leaves the store exactly as it was: no model, no
+embeddings, and a previous same-label template still in place and still authenticating.
+A model row written by this version or later is therefore a complete template, and
+`facelock list` and `Authenticate` can never observe an attempt that did not finish; the
+store itself refuses to commit a model with fewer than `MIN_EMBEDDINGS_PER_MODEL` (3)
+embeddings, the same floor the capture loop enforces. Both are pre-commit guarantees.
+The cancel token is checked once more immediately before the store write, after sealing,
+so a caller that departs during finalization still gets `Cancelled` and an unchanged
+store; the commit is the one residual window. A cancellation or crash observed during or
+after the commit can leave the new model stored while the reply is lost (the daemon
+killed, the bus connection dropped, a client timeout between commit and reply), so a
+caller may find a valid template it reported as failed, whereas a caller that cancelled
+before the write is never surprised by one. No migration inspects rows written by earlier
+versions: a partial model the old flow left behind stays until `facelock remove` or
+`facelock clear` deletes it.
+
 **Camera hold semantics (ADR 008).** `device.camera_release_secs` (default **3**) is the
 number of seconds the **daemon** keeps the camera streaming **after a failed
 authentication** — the one ending a retry plausibly follows — so that retry skips the
