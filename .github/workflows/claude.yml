@@ -12,12 +12,53 @@ on:
 
 jobs:
   claude:
+    # Trusted authors only. Every event above is raised by whoever writes an
+    # issue, comment or review on a public repository, and this job carries
+    # CLAUDE_CODE_OAUTH_TOKEN plus an OIDC-capable context. The action checks
+    # write access itself, but only after the job has started with the secret
+    # in its environment; this gate keeps the job from being scheduled at all.
+    #   - author gate: the payload field that carries the author's association
+    #     for each event (`issues: assigned` gates on the issue author, not the
+    #     assigner). `contains(array, null)` is false, so a payload without the
+    #     field fails closed. COLLABORATOR includes read-only and triage
+    #     collaborators; the action still requires write access. MEMBER is
+    #     left out: it never occurs on a user-owned repository and would admit
+    #     every organisation member after a transfer.
+    #   - the two review events also refuse fork heads here. `issue_comment`
+    #     payloads carry no head repository, so a guard step below reads the
+    #     PR with the read-only github.token and fails before the action step
+    #     when the head is a fork.
+    #   - the gate decides who starts the job, not what reaches the model: a
+    #     stranger's issue body is still the prompt once a maintainer answers.
+    # Never switch this workflow to `pull_request_target`.
+    # test/check-workflow-policy.py pins this condition; change both together.
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      (github.event_name == 'issue_comment' &&
+       contains(github.event.comment.body, '@claude') &&
+       contains(fromJSON('["OWNER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' &&
+       contains(github.event.comment.body, '@claude') &&
+       contains(fromJSON('["OWNER","COLLABORATOR"]'), github.event.comment.author_association) &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'pull_request_review' &&
+       contains(github.event.review.body, '@claude') &&
+       contains(fromJSON('["OWNER","COLLABORATOR"]'), github.event.review.author_association) &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'issues' &&
+       (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
+       contains(fromJSON('["OWNER","COLLABORATOR"]'), github.event.issue.author_association))
     runs-on: ubuntu-latest
+    # `permissions:` scopes github.token only, and nothing here writes with it.
+    # The action exchanges this job's OIDC token for a short-lived Claude
+    # GitHub App installation token (src/github/token.ts at v1.0.201) that
+    # requests contents, pull-requests and issues as write plus the
+    # `additional_permissions` below, and hands that token to Claude as
+    # GITHUB_TOKEN. That exchange is why `id-token: write` stays although
+    # claude_code_oauth_token is supplied (it only covers the Claude API), and
+    # it is the scope's cost: anything running in this job can mint OIDC tokens
+    # for any audience, including the one that yields the write-capable App
+    # token. Everything else is `read`; test/check-workflow-policy.py refuses
+    # any other `write`.
     permissions:
       contents: read
       pull-requests: read
@@ -25,6 +66,24 @@ jobs:
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
     steps:
+      # issue_comment payloads carry no head repository, so the job-level `if:`
+      # above cannot see a fork PR. This step can, with the read-only
+      # github.token; when it fails the action step never runs, so neither the
+      # OAuth token nor the App-token exchange reaches a fork head.
+      # test/check-workflow-policy.py pins this step's position and `if:`.
+      - name: Refuse fork heads on pull request conversation comments
+        if: github.event_name == 'issue_comment' && github.event.issue.pull_request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          head="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.head.repo.full_name')"
+          if [ -z "$head" ] || [ "$head" != "$REPO" ]; then
+            echo "refusing: pull request head is '${head:-unknown}', not $REPO" >&2
+            exit 1
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

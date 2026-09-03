@@ -82,6 +82,10 @@ check-agent-docs base='':
     bash test/debian-postrm-purge.sh
     bash test/rpm-authselect-contract.sh
 
+# Pin the trust boundary of the comment-triggered Claude workflow (docs/security.md, CI Trust Boundary).
+check-workflow-policy:
+    python3 test/check-workflow-policy.py
+
 # Exercise Debian remove/purge policy below disposable fixed roots only.
 test-debian-postrm-purge:
     bash test/debian-postrm-purge.sh
@@ -98,7 +102,7 @@ check-package-names-live:
     python3 test/check-package-names-live.py
 
 # Run all checks (test + lint + format + audit + PAM standalone surface + agent docs)
-check: test lint fmt-check audit check-pam-standalone check-agent-docs test-source-install-daemon-lifecycle test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test test-legacy-system-assets test-locale-install-contract test-classify-changes test-arch-package-select
+check: test lint fmt-check audit check-pam-standalone check-agent-docs test-source-install-daemon-lifecycle test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test test-legacy-system-assets test-locale-install-contract test-classify-changes test-arch-package-select check-workflow-policy
 
 # The path filter that decides whether the packaging gates run on a pull
 # request. A pattern that stops matching fails nothing: it reports every deb,

@@ -207,6 +207,9 @@ jobs:
       - name: Verify agent docs still describe the tree
         run: just check-agent-docs "${{ github.event.pull_request.base.sha }}"
 
+      - name: Verify workflow trust policy
+        run: just check-workflow-policy
+
       - name: Verify source-install daemon lifecycle
         run: just test-source-install-daemon-lifecycle
 
