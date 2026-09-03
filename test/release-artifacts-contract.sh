@@ -187,6 +187,7 @@ printf '%s\n' "$publish_statements" | grep -Fq 'prerelease: ${{ needs.metadata.o
 for step in '$HELPER verify-tag ' '$HELPER stage expected-assets' \
     '$HELPER verify-digests artifacts job-outputs.json ' '$HELPER verify-creatable ' \
     'PRERELEASE" final' 'artifacts job-outputs.json assets actual-assets MANIFEST.json' \
+    'gh release upload "$TAG" MANIFEST.json' \
     '$HELPER verify-published releases.json "$TAG" MANIFEST.json' 'draft=false'; do
     printf '%s\n' "$publish_statements" | grep -Fq "$step" ||
         fail "the publish job must run ${step% } before the release becomes public"
@@ -1253,6 +1254,10 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
     assert_workflow_mutation_rejected "unverified builder attestations" \
         's|^( *)run: \$HELPER verify-digests .*|\1run: ": # verify-digests disabled"|' \
         'must run $HELPER verify-digests'
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "manifest upload skipped" \
+        's|^( *)run: gh release upload "\$TAG" MANIFEST\.json --clobber$|\1: # disabled|' \
+        'must run gh release upload "$TAG" MANIFEST.json'
     # shellcheck disable=SC2016
     assert_workflow_mutation_rejected "no revalidation before the flip" \
         's|^( *)\$HELPER expected "\$VERSION" "\$DEBIAN_REVISION" "\$RPM_COUNTER" "\$PRERELEASE" final .*|\1: # final readback disabled|' \

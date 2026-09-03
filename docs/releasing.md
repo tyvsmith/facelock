@@ -171,6 +171,9 @@ A builder's extra output fails the release closed: a canonically named file in
 an artifact the allowlist does not expect it from is refused at staging, and
 the failure says so. Re-running only the failed `publish` job keeps that
 artifact, so the remedy is fixing the builder and re-running all jobs.
+A partial re-run of a single `build-deb` leg can similarly leave the other
+suite's attestation unbound (`attestation deb-<suite> is not bound to a job
+output`); the remedy is the same, re-run all jobs.
 
 Two consequences for the maintainer:
 

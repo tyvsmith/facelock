@@ -139,8 +139,9 @@ gh release view v<X.Y.Z> --json assets --jq '.assets[].name'
 ```
 
 A release that stays a draft failed validation: read the `publish` job, fix the
-cause, and re-run the workflow. Re-running is safe; publishing the draft by hand
-is not, and `publish` refuses a tag that is already published.
+cause, and re-run the workflow. A re-run before publish succeeds is safe; one
+after success goes red at `verify-creatable` by design. Publishing the draft by
+hand is not safe, and `publish` refuses a tag that is already published.
 
 `publish-aur` and `publish-apt` push to external package repositories. A failure
 after those succeed is only partially recoverable — check them first when
