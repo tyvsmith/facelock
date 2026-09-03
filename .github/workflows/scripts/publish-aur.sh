@@ -42,7 +42,7 @@ MANIFEST_FILE="${FACELOCK_RELEASE_MANIFEST_FILE:-}"
 if [ -z "$MANIFEST_FILE" ]; then
   MANIFEST_FILE="$(mktemp)"
   trap 'rm -f "$MANIFEST_FILE"' EXIT
-  curl -fsSL "https://github.com/${REPO}/releases/download/v${VERSION}/MANIFEST.json" -o "$MANIFEST_FILE"
+  curl --proto '=https' --tlsv1.2 -fsSL "https://github.com/${REPO}/releases/download/v${VERSION}/MANIFEST.json" -o "$MANIFEST_FILE"
 fi
 manifest_sha256() {
   python3 - "$MANIFEST_FILE" "$1" <<'PY'
