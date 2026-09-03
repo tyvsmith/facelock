@@ -118,7 +118,8 @@ verify_assets() {
         for pattern in "${patterns[@]}"; do
             [[ "$name" =~ ^${pattern}$ ]] && matches=$((matches + 1))
         done
-        [ "$matches" -ne 0 ] || fail "unexpected release asset: $name"
+        [ "$matches" -ne 0 ] ||
+            fail "unexpected release asset: $name; an earlier run at another version leaves one behind, and it is removed with: gh release delete-asset \"\$TAG\" $name"
         [ "$matches" -eq 1 ] ||
             fail "allowlist overlap: $name matches $matches canonical names"
     done
@@ -314,8 +315,28 @@ from pathlib import Path
 
 digests_dir, assets_dir, actual_file = sys.argv[1:4]
 
+
+def attestations(root: str) -> list[Path]:
+    """Digest attestations, and only from the artifacts that carry them.
+
+    The publish job downloads the payload artifacts into the same tree. A
+    `digests.json` anywhere else is a builder claiming provenance for work it
+    did not do, so it stops the release rather than being skipped."""
+    base = Path(root)
+    smuggled = [
+        path
+        for path in sorted(base.rglob("digests.json"))
+        if not path.relative_to(base).parts[0].startswith("release-digests-")
+    ]
+    if smuggled:
+        raise SystemExit(
+            f"release assets: {smuggled[0]} is a digest attestation inside a payload artifact"
+        )
+    return sorted(base.glob("release-digests-*/**/digests.json"))
+
+
 attested: dict[str, list[tuple[str, str]]] = {}
-for path in sorted(Path(digests_dir).rglob("digests.json")):
+for path in attestations(digests_dir):
     document = json.loads(path.read_text(encoding="utf-8"))
     for name, digest in document.get("assets", {}).items():
         attested.setdefault(name, []).append((document.get("job", path.parent.name), digest))
@@ -364,9 +385,28 @@ from pathlib import Path
 (tag, version, commit, prerelease, repository, source_sha256,
  digests_dir, assets_dir, actual_file, output) = sys.argv[1:11]
 
+def attestations(root: str) -> list[Path]:
+    """Digest attestations, and only from the artifacts that carry them.
+
+    The publish job downloads the payload artifacts into the same tree. A
+    `digests.json` anywhere else is a builder claiming provenance for work it
+    did not do, so it stops the release rather than being skipped."""
+    base = Path(root)
+    smuggled = [
+        path
+        for path in sorted(base.rglob("digests.json"))
+        if not path.relative_to(base).parts[0].startswith("release-digests-")
+    ]
+    if smuggled:
+        raise SystemExit(
+            f"release assets: {smuggled[0]} is a digest attestation inside a payload artifact"
+        )
+    return sorted(base.glob("release-digests-*/**/digests.json"))
+
+
 build_images: dict[str, str] = {}
 components: dict[str, object] = {}
-for path in sorted(Path(digests_dir).rglob("digests.json")):
+for path in attestations(digests_dir):
     document = json.loads(path.read_text(encoding="utf-8"))
     job = document.get("job", path.parent.name)
     key = f"{job}:{document['suite']}" if document.get("suite") else job

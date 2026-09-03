@@ -143,12 +143,13 @@ test-legacy-system-assets:
 test-cargo-vendor-contract:
     bash test/cargo-vendor-contract.sh
 
-# The builders create a draft; the publish job holds every asset to the
-# canonical allowlist and to the digest its builder attested, writes
-# MANIFEST.json over all of them, and only then flips the draft. The workflow
-# runs on a tag and nowhere else, so its shape is proven by fixture and by
-# mutation, never by tagging. Cheap enough for `just check`; a gate that runs
-# only in release-preflight is invisible until the day it matters.
+# The builders produce workflow artifacts and never touch the release; the
+# publish job stages exactly the canonical assets out of them, holds each to
+# the digest its builder attested, writes MANIFEST.json over all of them, and
+# only then flips the draft it created. The workflow runs on a tag and nowhere
+# else, so its shape is proven by fixture and by mutation, never by tagging.
+# Cheap enough for `just check`; a gate that runs only in release-preflight is
+# invisible until the day it matters.
 
 # Static contract: the release publishes exactly once, after validation
 test-release-artifacts:

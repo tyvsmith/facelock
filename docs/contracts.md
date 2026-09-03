@@ -2361,7 +2361,9 @@ release until it does.
   builder, or by two, fails closed.
 - The tag has no published release. A release already published is refused
   before anything is written; the draft an interrupted run left behind is
-  reused. Re-running the workflow is therefore safe at any point.
+  reused, so a failed run can be re-run. An asset on that draft whose canonical
+  name changed in between, after a Debian revision or RPM counter bump, is
+  refused as unexpected and must be deleted from the draft by hand.
 
 The draft is created with those assets and the validated prerelease flag, and
 is flipped to published only after the draft's asset list is read back from the

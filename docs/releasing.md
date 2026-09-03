@@ -142,7 +142,11 @@ deny-all.
 - reads the draft back from the API, holds it to the allowlist a last time, and
   flips it to published once. A tag whose release is already published is
   refused before anything is written, so re-running the workflow after a
-  failure is safe and re-running it after success changes nothing.
+  failure is safe and re-running it after success changes nothing. One case
+  needs a hand: if the Debian revision or RPM counter changed between runs, the
+  draft still carries the asset built under the old name, and the readback
+  refuses it. The failure names the file and the command that removes it,
+  `gh release delete-asset`.
 
 Two consequences for the maintainer:
 

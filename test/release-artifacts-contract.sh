@@ -151,6 +151,16 @@ for need in "${builders[@]}"; do
 done
 requires_job publish build ||
     fail "the only job with a release step must depend on the builders it publishes"
+# The whole reason creation left `build`: the job that holds the publication
+# credential must not execute code this project does not own.
+publish_statements="$(printf '%s\n' "$publish_job" | grep -v '^[[:space:]]*#')"
+for toolchain in '(^|[^-A-Za-z])cargo[[:space:]]' 'rustup' 'rustc' 'rust-toolchain' \
+    'rpmbuild' 'dpkg-buildpackage' 'just[[:space:]]+build'; do
+    if printf '%s\n' "$publish_statements" | grep -Eq "$toolchain"; then
+        fail "the publish job must not compile or package anything ($toolchain); it holds the publication credential"
+    fi
+done
+
 printf '%s\n' "$publish_job" | grep -Eq '^[[:space:]]+draft: true[[:space:]]*$' ||
     fail "the publish job must create the GitHub release as a draft"
 # Literal workflow expressions; nothing here is a shell expansion.
@@ -314,7 +324,7 @@ assert_rejects "two assets claiming one canonical name" "more than one release a
 artifacts="$work/artifacts"
 build_artifacts() {
     rm -rf "$artifacts"
-    mkdir -p "$artifacts"/{release-binaries,release-deb-trixie,release-deb-resolute,release-rpm,release-apt-repo,release-digests-build}
+    mkdir -p "$artifacts"/{release-binaries,release-deb-trixie,release-deb-resolute,release-rpm,release-apt-repo}
     printf 'facelock\n' >"$artifacts/release-binaries/facelock-x86_64-linux-gnu"
     printf 'pam\n' >"$artifacts/release-binaries/pam_facelock.so"
     printf 'polkit\n' >"$artifacts/release-binaries/facelock-polkit-agent-x86_64-linux-gnu"
@@ -326,6 +336,21 @@ build_artifacts() {
     printf 'rpm\n' >"$artifacts/release-rpm/facelock-debuginfo-0.2.0-1.fc44.x86_64.rpm"
     printf 'rpm\n' >"$artifacts/release-rpm/facelock-debugsource-0.2.0-1.fc44.x86_64.rpm"
     printf 'apt\n' >"$artifacts/release-apt-repo/apt-repo.tar.gz"
+    # The real emitter, so the attestation shape is the one the builders write.
+    local attest="$repo_root/.github/workflows/scripts/attest-digests.sh"
+    "$attest" build "$artifacts/release-digests-build" \
+        "$artifacts"/release-binaries/* >/dev/null
+    "$attest" build-deb "$artifacts/release-digests-deb-trixie" \
+        --suite trixie --image 'docker.io/library/debian:13@sha256:34cd' \
+        "$artifacts"/release-deb-trixie/*.deb >/dev/null
+    "$attest" build-deb "$artifacts/release-digests-deb-resolute" \
+        --suite resolute --image 'docker.io/library/ubuntu:26.04@sha256:6df9' \
+        "$artifacts"/release-deb-resolute/*.deb >/dev/null
+    "$attest" build-rpm "$artifacts/release-digests-rpm" \
+        --image 'registry.fedoraproject.org/fedora:44@sha256:fc3e' \
+        "$artifacts"/release-rpm/*.rpm >/dev/null
+    "$attest" publish-apt "$artifacts/release-digests-apt" \
+        "$artifacts/release-apt-repo/apt-repo.tar.gz" >/dev/null
 }
 
 build_artifacts
@@ -340,6 +365,17 @@ diff <(canonical_assets | LC_ALL=C sort) <(LC_ALL=C sort "$work/actual-staged") 
 if [ -e "$staged/facelock_0.2.0-1~deb13u1_amd64.manifest" ]; then
     fail "staging copied a file the allowlist does not name"
 fi
+
+"$helper_path" verify-digests "$artifacts" "$staged" "$work/actual-staged" >/dev/null ||
+    fail "the staged assets did not match the attestations in the same artifact tree"
+
+cat >"$artifacts/release-binaries/digests.json" <<'JSON'
+{"job": "download-ort", "image": "evil.example/img@sha256:dead", "assets": {},
+ "components": {"onnxruntime": {"version": "666", "library_sha256": "forged"}}}
+JSON
+assert_rejects "payload artifact claiming another builder's provenance" "inside a payload artifact" \
+    verify-digests "$artifacts" "$staged" "$work/actual-staged"
+build_artifacts
 
 rm -f "$artifacts/release-rpm/facelock-debugsource-0.2.0-1.fc44.x86_64.rpm"
 assert_rejects "builder artifact missing a canonical asset" "no builder artifact provides" \
@@ -519,6 +555,20 @@ assert_rejects "release asset no builder attested" "attested by no builder" \
     verify-digests "$digests_dir" "$assets_dir" "$work/actual-unattested"
 rm -f "$assets_dir/extra-asset"
 
+# A payload artifact carrying an attestation is a builder claiming provenance
+# for work it did not do; the manifest would record its image and components.
+mkdir -p "$digests_dir/release-binaries"
+cat >"$digests_dir/release-binaries/digests.json" <<'JSON'
+{"job": "download-ort", "image": "evil.example/img@sha256:dead", "assets": {},
+ "components": {"onnxruntime": {"version": "666", "library_sha256": "forged"}}}
+JSON
+assert_rejects "digest attestation planted in a payload artifact" "inside a payload artifact" \
+    verify-digests "$digests_dir" "$assets_dir" "$work/actual-attested"
+assert_rejects "forged provenance reaching the manifest" "inside a payload artifact" \
+    manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
+    tyvsmith/facelock deadbeef "$digests_dir" "$assets_dir" "$work/actual-attested" "$work/forged.json"
+rm -rf "$digests_dir/release-binaries"
+
 mkdir -p "$digests_dir/release-digests-duplicate"
 cat >"$digests_dir/release-digests-duplicate/digests.json" <<JSON
 {"job": "other", "assets": {"pam_facelock.so": "$(asset_digest pam_facelock.so)"}}
@@ -604,6 +654,9 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
     assert_workflow_mutation_rejected "builder writing the release directly" \
         's|^      - name: Upload the APT repository artifact$|      - name: Upload the APT repository artifact\n        # uses: softprops/action-gh-release@0000|' \
         "builders produce artifacts only"
+    assert_workflow_mutation_rejected "compiling in the publishing job" \
+        's|^      - name: Verify the maintainer tag$|      - name: Rebuild\n        run: cargo build --release\n\n      - name: Verify the maintainer tag|' \
+        "must not compile or package anything"
     # shellcheck disable=SC2016
     assert_workflow_mutation_rejected "unverified tag" \
         '/\$HELPER verify-tag /d' \
