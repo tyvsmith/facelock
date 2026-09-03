@@ -16,6 +16,9 @@
 # --verify-live needs `gh` and network. It never downloads the asset: it asks
 # the release API what the pinned asset id is now and rejects a name, size or
 # digest that moved. A re-upload gets a new id, so a stale id is equally fatal.
+# The API's `digest` is nullable, so an asset it does not carry one for is
+# reported rather than refused — the lane image still checks the pinned SHA256
+# against the bytes it downloads.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -77,20 +80,47 @@ case "$field" in
         repository="$(read_lane repository)"
         tag="$(read_lane tag)"
         asset_id="$(read_lane asset_id)"
+        # `.digest // ""` because the field is nullable: GitHub has computed a
+        # SHA256 for every asset uploaded since June 2025, but an older asset
+        # can still answer null. Folded into the identity string, that null
+        # would be reported as "the pinned asset changed", which sends a
+        # maintainer looking for a substituted artifact that does not exist.
         live="$(gh api "repos/$repository/releases/tags/$tag" \
-            --jq ".assets[] | select(.id == $asset_id) | \"\(.name)\t\(.size)\t\(.digest)\"")"
+            --jq ".assets[] | select(.id == $asset_id) | \"\(.name)\t\(.size)\t\(.digest // \"\")\"")"
         [ -n "$live" ] || {
             echo "FAIL: release $tag no longer serves asset id $asset_id (re-uploaded or deleted)" >&2
             exit 1
         }
-        expected="$(read_lane name)	$(read_lane size)	sha256:$(read_lane sha256)"
-        [ "$live" = "$expected" ] || {
+        IFS=$'\t' read -r live_name live_size live_digest <<<"$live"
+        expected_name="$(read_lane name)"
+        expected_size="$(read_lane size)"
+        expected_digest="sha256:$(read_lane sha256)"
+        if [ "$live_name" != "$expected_name" ] || [ "$live_size" != "$expected_size" ]; then
             echo "FAIL: pinned asset $asset_id changed" >&2
-            echo "  expected: $expected" >&2
-            echo "  live:     $live" >&2
+            echo "  expected: $expected_name ($expected_size bytes)" >&2
+            echo "  live:     $live_name ($live_size bytes)" >&2
             exit 1
-        }
-        echo "predecessor $lane: asset $asset_id unchanged ($(read_lane name))"
+        fi
+        case "$live_digest" in
+            "" | null)
+                # Absence is not evidence of tampering, and refusing on it would
+                # make the pin gate unrunnable for an asset GitHub never
+                # digested. The digest is still enforced where it decides
+                # something: the lane image verifies the downloaded bytes
+                # against it before the predecessor is installed.
+                echo "NOTE: release $tag serves no digest for asset $asset_id;" \
+                    "name and size match, and the lane still verifies" \
+                    "$expected_digest against the downloaded bytes" >&2
+                ;;
+            "$expected_digest") ;;
+            *)
+                echo "FAIL: pinned asset $asset_id serves a different digest" >&2
+                echo "  expected: $expected_digest" >&2
+                echo "  live:     $live_digest" >&2
+                exit 1
+                ;;
+        esac
+        echo "predecessor $lane: asset $asset_id unchanged ($expected_name)"
         ;;
     *)
         read_lane "$field"

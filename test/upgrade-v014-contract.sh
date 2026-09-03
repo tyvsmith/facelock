@@ -216,6 +216,56 @@ for pair in "deb-trixie:deb" "rpm-fedora:rpm"; do
     done
 done
 
+# --- --verify-live judges a live asset the way the pin means it -----------
+#
+# The real thing needs `gh` and the network, so it never runs in `just check`
+# and its comparison logic is exactly the kind that rots unseen. Drive it
+# against a stub `gh` instead: what matters is which live answers are fatal
+# (a moved name, size or digest) and which are not (an asset GitHub carries no
+# digest for, which is null on the wire and must not read as a substitution).
+
+verify_live_stub() {
+    local answer="$1" stub_dir status=0
+    stub_dir="$(mktemp -d "${TMPDIR:-/tmp}/facelock-upgrade-gh-stub.XXXXXX")"
+    cat >"$stub_dir/gh" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "$answer"
+STUB
+    chmod +x "$stub_dir/gh"
+    PATH="$stub_dir:$PATH" bash "$repo_root/test/upgrade-v014-predecessor.sh" \
+        deb-trixie --verify-live >"$stub_dir/out" 2>&1 || status=$?
+    printf '%s\n' "$status"
+    cat "$stub_dir/out"
+    rm -rf "$stub_dir"
+}
+
+pinned_name="$(bash "$repo_root/test/upgrade-v014-predecessor.sh" deb-trixie name)"
+pinned_size="$(bash "$repo_root/test/upgrade-v014-predecessor.sh" deb-trixie size)"
+pinned_sha="$(bash "$repo_root/test/upgrade-v014-predecessor.sh" deb-trixie sha256)"
+tab="$(printf '\t')"
+
+assert_verify_live() {
+    local label="$1" answer="$2" want_status="$3" want_text="$4" result status
+    result="$(verify_live_stub "$answer")"
+    status="$(printf '%s\n' "$result" | head -1)"
+    [ "$status" = "$want_status" ] ||
+        fail "--verify-live on $label exited $status, expected $want_status"
+    printf '%s\n' "$result" | grep -Fq "$want_text" ||
+        fail "--verify-live on $label did not report '$want_text'"
+}
+
+assert_verify_live "the pinned asset" \
+    "$pinned_name$tab$pinned_size${tab}sha256:$pinned_sha" 0 "unchanged"
+assert_verify_live "an asset with no digest" \
+    "$pinned_name$tab$pinned_size$tab" 0 "serves no digest"
+assert_verify_live "a digest that moved" \
+    "$pinned_name$tab$pinned_size${tab}sha256:${pinned_sha//?/0}" 1 \
+    "serves a different digest"
+assert_verify_live "a size that moved" \
+    "$pinned_name$tab$((pinned_size + 1))${tab}sha256:$pinned_sha" 1 \
+    "pinned asset $(bash "$repo_root/test/upgrade-v014-predecessor.sh" deb-trixie asset_id) changed"
+assert_verify_live "a deleted asset" "" 1 "no longer serves asset id"
+
 # --- the candidate sorts above the predecessor ----------------------------
 
 candidate_version="$(bash "$repo_root/test/upgrade-v014-candidate-version.sh" version)" ||
