@@ -407,7 +407,11 @@ jobs:
           for prefix in '' debuginfo- debugsource-; do
             mapfile -t candidates < <(find . -maxdepth 1 -type f \
               -name "facelock-${prefix}${evr}.fc*.x86_64.rpm" -printf '%P\n' | LC_ALL=C sort)
-            test "${#candidates[@]}" -eq 1
+            if [ "${#candidates[@]}" -ne 1 ]; then
+              echo "expected exactly one facelock-${prefix}${evr}.fc*.x86_64.rpm, found ${#candidates[@]}:" >&2
+              printf '%s\n' "${candidates[@]}" >&2
+              exit 1
+            fi
             cp "${candidates[0]}" rpm-upload/
             if [ -z "$prefix" ]; then
               echo "rpm=${candidates[0]}" >> "$GITHUB_OUTPUT"
