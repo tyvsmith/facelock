@@ -129,6 +129,17 @@ if grep -nE 'grep -F[a-z]*q "\$\(sha256sum' "$lane" >/dev/null; then
     fail "the lane looks up a digest without proving the file exists; use assert_file_digest_in_snapshot"
 fi
 
+# The invariant snapshot must hash model file content, not just record name,
+# size and mode: an upgrade that rewrites a model at the same size and mode
+# would otherwise pass "preserve models" without the bytes ever being compared.
+# Deleting the hash line from snapshot_model_files must turn this rule red.
+model_snapshot_body="$(sed -n '/^snapshot_model_files() {/,/^}/p' "$lane")"
+[ -n "$model_snapshot_body" ] || fail "the lane defines no snapshot_model_files"
+printf '%s\n' "$model_snapshot_body" | grep -q 'sha256sum' ||
+    fail "snapshot_model_files does not hash model file content"
+grep -Eq '^[[:space:]]+snapshot_model_files$' "$lane" ||
+    fail "snapshot_invariant_state never calls snapshot_model_files"
+
 # The absent-marker lookup must be whole-line. One key path is a prefix of the
 # other, so an unanchored match reports a preserved key as a newly created one
 # and the "no replacement key" proof inverts.

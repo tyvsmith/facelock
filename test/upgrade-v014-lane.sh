@@ -595,9 +595,25 @@ snapshot_invariant_state() {
         "$PAM_PATH"; do
         snapshot_file "$path"
     done
-    find /var/lib/facelock/models -maxdepth 1 -type f -printf 'model|%f|%s|%m\n' |
-        LC_ALL=C sort
+    snapshot_model_files
     snapshot_rows
+}
+
+# Model files by content, not just name/size/mode. Size and mode alone let an
+# upgrade that rewrites a model file at the same size and permissions pass the
+# "preserve models" check without ever proving the bytes didn't change; the
+# sha256 closes that gap the same way snapshot_file does for the other
+# invariant files.
+snapshot_model_files() {
+    local name mpath
+    while IFS= read -r name; do
+        mpath="/var/lib/facelock/models/$name"
+        printf 'model|%s|%s|%s|%s\n' \
+            "$name" \
+            "$(LC_ALL=C stat -c '%s' -- "$mpath")" \
+            "$(LC_ALL=C stat -c '%a' -- "$mpath")" \
+            "$(sha256sum -- "$mpath" | cut -d' ' -f1)"
+    done < <(find /var/lib/facelock/models -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
 }
 
 # Row identity by content, not by file digest: the database file legitimately
