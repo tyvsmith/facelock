@@ -42,10 +42,44 @@ need `podman`; none in the routing table needs a camera.
 | `crates/pam-facelock/**`, `/etc/pam.d` handling | `just test-arch-pam` and `just check-pam-standalone` |
 | File layout, installed paths | `just test-arch-layout` |
 | D-Bus policy, daemon authorization, pre-flight exit codes, schema migrations | `just test-arch-camera-free` |
+| Store migrations, encryption keys, TPM sealing, maintainer scripts touching state | `just test-upgrade-v014` |
 
 `just test-deb` delegates to both exact supported-suite package gates. The
 remaining quick syntax-level check is `just test-rpm` (Fedora container), which
 is weaker than `test-rpm-pkg` because it does not install and boot.
+
+## Upgrading from what users already run
+
+`just test-upgrade-v014` is the only lane that installs a real published
+artifact. It downloads the v0.1.4 .deb and the v0.1.4 fc44 .rpm, pinned by asset
+id and SHA256 in `dist/release-matrix.json`, builds predecessor state with the
+**released** binary (plaintext rows, keyfile-encrypted rows, mixed rows, and two
+swtpm-sealed shapes), upgrades through apt or dnf to the locally built
+candidate, and then downgrades back.
+
+Run it after any change to store migrations, the encryption or TPM key paths, or
+a maintainer script that touches `/var/lib/facelock` or `/etc/facelock`. Those
+are the changes a fresh-install lane cannot see: every other packaging recipe
+starts from nothing, so a migration that destroys an upgraded database passes
+all of them.
+
+Two cheap halves run without podman and are worth knowing:
+
+- `just test-upgrade-v014-contract` catches a declared state shape or fault case
+  with no implementation, a proof function nothing calls, and a lane
+  Containerfile that grew its own digest. Seconds, no network.
+- `just test-upgrade-v014-pins` asks GitHub whether the pinned assets are still
+  the assets it serves. Needs `gh`, catches a re-uploaded predecessor.
+
+The full lane needs the reviewed ONNX models (`just link-models`) and has no
+partial-run opt-out: the rollback proof turns on the candidate daemon having
+opened and migrated the database first, and a daemon without models cannot
+start. A cached run is about twenty minutes; a cold one is considerably more,
+most of it building the candidate .deb from source.
+
+That runtime is why the lane is local-only by design: `packaging.yml` does not
+run it, and a nightly-only job is the follow-up. Run it yourself before pushing
+a change that reaches stored state.
 
 ## Which Fedora
 

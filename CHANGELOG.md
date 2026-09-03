@@ -622,6 +622,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path is refused by every creating and reading path, `--generate-key`
   included.
 
+
+- **An upgrade from v0.1.4 keeps face authentication switched on** (#231):
+  v0.1.4's `pam-auth-update` profile shipped `Default: yes`, so installing that
+  release enabled Facelock in `common-auth` without asking. The packaged profile
+  is `Default: no` now, which governs fresh installs only: upgrading does not
+  retire a profile an existing system already has enabled, and the released-
+  predecessor lane fails if an upgrade edits the global stack in either
+  direction. Disable it deliberately with `pam-auth-update` if you do not want
+  it.
+
+- **The Debian package declares its shared-library dependencies** (#231): the
+  package is built from `debian/control`, which uses `${shlibs:Depends}` so
+  dpkg-shlibdeps derives the list from the binary itself. v0.1.4 wrote its
+  control file with a hand-written `libpam-runtime, dbus` and never mentioned
+  libxkbcommon0, which the binary links, so that release could not start on a
+  minimal Debian 13 and `apt install -f` had nothing to repair.
+
 - **Enrollment persists atomically** (#308): the daemon and `facelock enroll`
   now hold accepted embeddings in memory and write the model in one store
   transaction after the minimum-capture and angle-diversity gates pass, with

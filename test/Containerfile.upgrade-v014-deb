@@ -1,0 +1,53 @@
+# Debian upgrade lane (#231, Track K): the released v0.1.4 .deb baked in, the
+# locally built candidate mounted at run time.
+#
+# BASE_IMAGE is the booted Debian runtime image test/build-deb-package-image.sh
+# produces — it already carries systemd, pamtester, python3 and the swtpm stack
+# this lane drives. Nothing about the candidate is fetched here.
+#
+# The predecessor pin arrives as build args rather than as a literal, because
+# dist/release-matrix.json is the single place that pin is reviewed;
+# test/check-release-matrix.py fails if a digest reappears in this file.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# Harness tooling, not a candidate dependency. The released v0.1.4 .deb
+# hand-wrote `Depends: libpam-runtime, dbus, libtss2-esys-3.0.2-0t64` and missed
+# libxkbcommon0, which its own binary links against, so v0.1.4's `facelock`
+# refuses to start on a clean Debian 13. The candidate uses ${shlibs:Depends}
+# and declares it. This lane builds predecessor state with the released binary,
+# so it has to supply what that release forgot to ask for.
+#
+# Nothing is masked by this: dependency resolution for the candidate is
+# test/deb-dependency-closure.sh's job on a pristine suite base, not this
+# lane's. The two Fedora lane images install libxkbcommon for the same reason.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libxkbcommon0 && \
+    rm -rf /var/lib/apt/lists/*
+
+ARG FACELOCK_PREDECESSOR_URL
+ARG FACELOCK_PREDECESSOR_SHA256
+ARG FACELOCK_PREDECESSOR_SIZE
+ARG FACELOCK_PREDECESSOR_VERSION
+ARG FACELOCK_CANDIDATE_VERSION
+
+# Size as well as digest: a truncated or proxy-rewritten fetch that still
+# happens to be some valid .deb is caught by the digest, and a fetch that
+# silently returned an error page is caught by the size before sha256sum has to
+# explain itself.
+RUN mkdir -p /artifacts && \
+    curl --proto '=https' --tlsv1.2 --output /artifacts/facelock-predecessor.deb \
+        -fsSL "$FACELOCK_PREDECESSOR_URL" && \
+    printf '%s  %s\n' "$FACELOCK_PREDECESSOR_SHA256" /artifacts/facelock-predecessor.deb \
+        | sha256sum -c - && \
+    test "$(stat -c %s /artifacts/facelock-predecessor.deb)" = "$FACELOCK_PREDECESSOR_SIZE" && \
+    test "$(dpkg-deb --field /artifacts/facelock-predecessor.deb Version)" \
+        = "$FACELOCK_PREDECESSOR_VERSION" && \
+    printf '%s\n' "$FACELOCK_PREDECESSOR_SHA256" > /artifacts/predecessor.sha256 && \
+    printf '%s\n' "$FACELOCK_PREDECESSOR_VERSION" > /artifacts/predecessor.version && \
+    printf '%s\n' "$FACELOCK_CANDIDATE_VERSION" > /artifacts/candidate.version
+
+COPY test/upgrade-v014-lane.sh /upgrade-v014-lane.sh
+RUN chmod +x /upgrade-v014-lane.sh
+
+CMD ["/lib/systemd/systemd"]

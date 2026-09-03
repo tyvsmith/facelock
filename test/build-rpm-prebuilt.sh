@@ -5,13 +5,22 @@ set -euo pipefail
 
 VERSION="${1:-0.0.0}"
 CHANNEL="${2:-direct}"
+# The Release field, without the dist tag. Callers that only have a stable
+# version leave it alone; a caller packaging a pre-release has to pass the
+# release pipeline's answer (`0.<counter>.alpha.N`), because RPM keeps the
+# pre-release in Release and rpmbuild will not accept a hyphen in Version.
+RPM_RELEASE="${3:-1}"
 case "$CHANNEL" in
     direct|copr) ;;
     *) echo "unknown RPM test channel: $CHANNEL" >&2; exit 2 ;;
 esac
+case "$VERSION" in
+    *-*) echo "RPM Version cannot carry a pre-release suffix: $VERSION" >&2; exit 2 ;;
+esac
 
 echo "=== Building RPM from pre-built binaries ==="
 echo "Version: ${VERSION}"
+echo "Release: ${RPM_RELEASE}%{?dist}"
 
 # Set up rpmbuild tree
 mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
@@ -20,7 +29,7 @@ mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 cp dist/facelock.spec ~/rpmbuild/SPECS/facelock.spec
 cp dist/rpm/facelock-authselect-retirement-guard ~/rpmbuild/SOURCES/facelock-authselect-retirement-guard
 sed -i "s|^Version:.*|Version:        ${VERSION}|" ~/rpmbuild/SPECS/facelock.spec
-sed -i "s|^Release:.*|Release:        1%{?dist}|" ~/rpmbuild/SPECS/facelock.spec
+sed -i "s|^Release:.*|Release:        ${RPM_RELEASE}%{?dist}|" ~/rpmbuild/SPECS/facelock.spec
 sed -i 's|^cargo build.*|true|g' ~/rpmbuild/SPECS/facelock.spec
 # Create source tarball INCLUDING target/release/ (pre-built binaries)
 tar --exclude=.git \

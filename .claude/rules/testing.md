@@ -19,6 +19,7 @@ paths:
 | 3d | Arch package from `dist/PKGBUILD` | `just test-arch-pkg` |
 | 3e | Fedora package lifecycle, every declared release | `just test-rpm-lanes` |
 | 3f | Fedora COPR path, rebuilt from source on system ORT | `just test-copr-lanes` |
+| 3g | Released v0.1.4 upgrade and rollback, deb and rpm | `just test-upgrade-v014` |
 | 3a | Arch container E2E, camera-free | `just test-arch-camera-free` |
 | 3b | Arch container E2E (daemon), needs a camera | `just test-arch-integration` |
 | 3c | Arch container E2E (oneshot), needs a camera | `just test-arch-oneshot` |

@@ -102,7 +102,7 @@ check-package-names-live:
     python3 test/check-package-names-live.py
 
 # Run all checks (test + lint + format + audit + PAM standalone surface + agent docs)
-check: test lint fmt-check audit check-pam-standalone check-agent-docs test-source-install-daemon-lifecycle test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test test-legacy-system-assets test-locale-install-contract test-classify-changes test-arch-package-select check-workflow-policy
+check: test lint fmt-check audit check-pam-standalone check-agent-docs test-source-install-daemon-lifecycle test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test test-legacy-system-assets test-locale-install-contract test-classify-changes test-arch-package-select check-workflow-policy test-upgrade-v014-contract
 
 # The path filter that decides whether the packaging gates run on a pull
 # request. A pattern that stops matching fails nothing: it reports every deb,
@@ -1207,6 +1207,35 @@ test-rpm-smoke release="45": (_fedora-lane-image release) _require-release-binar
 
 # Every declared Fedora release target at its declared lifecycle depth
 test-rpm-lanes: (test-rpm-pkg "43") (test-rpm-pkg "44") (test-rpm-smoke "45")
+
+# Released-predecessor upgrade lanes (#231) — container-free half, runs anywhere
+test-upgrade-v014-contract:
+    bash test/upgrade-v014-contract.sh
+
+# Confirm the pinned v0.1.4 assets are still the assets GitHub serves (needs gh)
+test-upgrade-v014-pins:
+    bash test/upgrade-v014-predecessor.sh deb-trixie --verify-live
+    bash test/upgrade-v014-predecessor.sh rpm-fedora --verify-live
+
+# Debian half: install the real v0.1.4 .deb, upgrade to the candidate, roll back
+test-upgrade-v014-deb: test-upgrade-v014-contract _require-models
+    #!/usr/bin/env bash
+    set -euo pipefail
+    artifact_dir="$(mktemp -d "${TMPDIR:-/tmp}/facelock-upgrade-v014-deb.XXXXXX")"
+    trap 'rm -rf -- "$artifact_dir"' EXIT
+    candidate="$artifact_dir/facelock-candidate.deb"
+    test/build-upgrade-v014-image.sh deb facelock-upgrade-v014-deb "$candidate"
+    test/run-upgrade-v014-systemd.sh deb facelock-upgrade-v014-deb "$candidate"
+
+# Fedora half: same proof against the released fc44 RPM
+test-upgrade-v014-rpm: test-upgrade-v014-contract _require-models _require-release-binaries
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test/build-upgrade-v014-image.sh rpm facelock-upgrade-v014-rpm
+    test/run-upgrade-v014-systemd.sh rpm facelock-upgrade-v014-rpm
+
+# Both released-predecessor upgrade lanes — the stable entrypoint for #231
+test-upgrade-v014: test-upgrade-v014-deb test-upgrade-v014-rpm
 
 # Packit config schema gate — runs the real `packit` in a digest-pinned Fedora container
 test-packit-config:

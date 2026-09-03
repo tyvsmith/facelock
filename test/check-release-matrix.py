@@ -1383,3 +1383,139 @@ for retired_recipe in ("just test-deb-pkg", "just test-deb-tpm-pkg"):
     require(retired_recipe not in packaging_skill, f"packaging skill retains {retired_recipe}")
 
 print("release matrix contract: OK")
+
+# ---------------------------------------------------------------------------
+# Released predecessors (#231, Track K)
+#
+# Separate block on purpose: everything above reasons about what this release
+# publishes, this one reasons about what an installed system is upgrading FROM.
+# The upgrade lanes (`just test-upgrade-v014`) download real GitHub release
+# assets, so the pin has to be strong enough that a re-uploaded or substituted
+# asset fails the lane instead of silently changing what was proven. Asset id
+# plus SHA256 plus byte size is that pin: the id survives a rename, the digest
+# survives an id reuse, and the size makes a truncated fetch loud.
+# ---------------------------------------------------------------------------
+predecessors = matrix.get("predecessors")
+require(isinstance(predecessors, dict), "release matrix must declare a predecessors block")
+require(
+    predecessors.get("repository") == "tyvsmith/facelock",
+    f"predecessors must pin this repository, got {predecessors.get('repository')!r}",
+)
+require(
+    isinstance(predecessors.get("reviewed_on"), str)
+    and re.fullmatch(r"\d{4}-\d{2}-\d{2}", predecessors["reviewed_on"]) is not None,
+    "predecessors.reviewed_on must be an ISO date",
+)
+require(
+    isinstance(predecessors.get("resolved_with"), str)
+    and "releases/tags/" in predecessors["resolved_with"],
+    "predecessors.resolved_with must name the release API query the pins came from",
+)
+
+predecessor_tags = sorted(key for key in predecessors if key.startswith("v"))
+require(
+    predecessor_tags == ["v0.1.4"],
+    f"predecessors must pin exactly the v0.1.4 release, got {predecessor_tags}",
+)
+
+declared_apt_suites = set(matrix["apt_suites"]) - {"compat"}
+declared_fedora_releases = {
+    target.split("-")[1]
+    for target in matrix["fedora"]["staging_copr_targets"]
+    if re.fullmatch(r"fedora-[1-9][0-9]*-.*", target)
+}
+
+for tag in predecessor_tags:
+    release = predecessors[tag]
+    require(release.get("tag") == tag, f"{tag} predecessor tag key and value disagree")
+    require(
+        isinstance(release.get("release_id"), int) and release["release_id"] > 0,
+        f"{tag} predecessor must pin a numeric GitHub release id",
+    )
+    require(
+        isinstance(release.get("published_at"), str) and release["published_at"].endswith("Z"),
+        f"{tag} predecessor must record the release publication timestamp",
+    )
+    upstream = release.get("upstream_version")
+    require(
+        isinstance(upstream, str) and tag == f"v{upstream}",
+        f"{tag} predecessor upstream_version must match its tag, got {upstream!r}",
+    )
+    require(
+        version_triple(upstream) <= version_triple(workspace_version()),
+        f"{tag} predecessor is not older than the workspace version {workspace_version()}",
+    )
+
+    lanes = release.get("lanes")
+    require(isinstance(lanes, dict) and lanes, f"{tag} predecessor must declare upgrade lanes")
+    require(
+        set(lanes) == {"deb-trixie", "rpm-fedora"},
+        f"{tag} predecessor lanes must be exactly the deb and rpm halves, got {sorted(lanes)}",
+    )
+    for lane_name, lane in lanes.items():
+        label = f"{tag} predecessor lane {lane_name}"
+        require(
+            isinstance(lane.get("asset_id"), int) and lane["asset_id"] > 0,
+            f"{label} must pin a numeric release asset id",
+        )
+        require(
+            isinstance(lane.get("asset_node_id"), str)
+            and lane["asset_node_id"].startswith("RA_"),
+            f"{label} must pin the asset node id alongside the numeric id",
+        )
+        require(
+            isinstance(lane.get("size"), int) and lane["size"] > 0,
+            f"{label} must pin the asset byte size",
+        )
+        digest = lane.get("sha256")
+        require(
+            isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) is not None,
+            f"{label} must pin a lowercase SHA256, got {digest!r}",
+        )
+        name = lane.get("name")
+        require(isinstance(name, str) and name, f"{label} must name the asset")
+        require(
+            lane.get("url")
+            == f"https://github.com/{predecessors['repository']}/releases/download/{tag}/{name}",
+            f"{label} url must be the canonical release download URL for {name}",
+        )
+        require(
+            isinstance(lane.get("package_version"), str) and lane["package_version"],
+            f"{label} must record the native package version it installs as",
+        )
+        require(
+            lane["package_version"].startswith(upstream),
+            f"{label} package version {lane['package_version']!r} is not a {upstream} build",
+        )
+    require(
+        lanes["deb-trixie"]["suite"] in declared_apt_suites,
+        f"{tag} deb predecessor names an undeclared APT suite: {lanes['deb-trixie']['suite']}",
+    )
+    require(
+        lanes["rpm-fedora"]["release"] in declared_fedora_releases,
+        f"{tag} rpm predecessor names an undeclared Fedora release: {lanes['rpm-fedora']['release']}",
+    )
+
+# The retired-authselect-profile fixture downloads the same released RPM from a
+# hardcoded pin that predates this block. Two pins for one artifact is one pin
+# too many, so they are held equal here rather than left to drift apart.
+authselect_rpm_digest = predecessors["v0.1.4"]["lanes"]["rpm-fedora"]["sha256"]
+for relative_path in ("test/Containerfile.rpm-authselect", "test/build-rpm-authselect-fixtures.sh"):
+    require(
+        authselect_rpm_digest in (ROOT / relative_path).read_text(),
+        f"{relative_path} pins a different v0.1.4 RPM digest than the release matrix",
+    )
+
+# The upgrade lanes must read the pin from here rather than carry their own.
+for relative_path in (
+    "test/Containerfile.upgrade-v014-deb",
+    "test/Containerfile.upgrade-v014-rpm",
+):
+    lane_source = (ROOT / relative_path).read_text()
+    embedded = re.findall(r"\b[0-9a-f]{64}\b", lane_source)
+    require(
+        not embedded,
+        f"{relative_path} hardcodes a digest instead of taking the release-matrix pin: {embedded}",
+    )
+
+print("released predecessor contract: OK")

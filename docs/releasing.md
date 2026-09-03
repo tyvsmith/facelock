@@ -702,3 +702,80 @@ Since facelock is a PAM module, broken releases can lock users out. Every releas
 6. Not change PAM auth semantics without explicit changelog entry
 5. Preserve `/etc/pam.d/sudo` backup on install (`/var/lib/facelock/pam-backups/sudo.<timestamp>`)
 6. Default to `PAM_IGNORE` on internal errors (fall through to password)
+
+### Upgrading from the last release
+
+`just test-upgrade-v014` proves that state written by v0.1.4 survives an upgrade
+to the candidate and a rollback back to v0.1.4. Two lanes, Debian trixie and
+Fedora 44, each install the real published artifact rather than a synthesized
+older build of the candidate.
+
+**What the lanes pin.** `dist/release-matrix.json` carries a `predecessors` block
+holding the GitHub release id, the asset id, the SHA256 and the byte size of
+each predecessor artifact. The lane Containerfiles take those as build args and
+carry no digest of their own, so one review changes the pin everywhere.
+`just test-upgrade-v014-pins` asks the release API whether those assets are still
+the assets it serves, which is how a re-uploaded or substituted predecessor gets
+caught before a lane silently proves something about a different file.
+
+**What the lane images carry.** Each image installs the runtime libraries the
+released binary needs before the predecessor goes on. v0.1.4 wrote its Debian
+control file by hand and never declared libxkbcommon0, which its own binary
+links, so that release cannot start on a minimal Debian 13 at all. The candidate
+is built from `debian/control` and derives the list with `${shlibs:Depends}`.
+Nothing is masked by supplying it: candidate dependency resolution belongs to
+`test/deb-dependency-closure.sh` on a pristine suite base.
+
+**What the lanes build.** Predecessor state comes from the released v0.1.4
+binary, never from the candidate: plaintext rows, keyfile-encrypted rows, mixed
+rows, and two swtpm-sealed shapes, one PCR-bound and one not. Each shape also
+carries a modified config, the reviewed models, an enrollment marker, an audit
+log and a hand-wired PAM service, because v0.1.4 has no `facelock pam`
+subcommand and that is the shape a real upgrade finds.
+
+**What each lane proves after the upgrade.** The V5 database reaches V6 with
+legacy rows at `device_id = NULL`. A known embedding still decrypts to the exact
+plaintext it was enrolled as, which a file hash cannot show: a preserved key and
+a preserved ciphertext nobody can open any more hash identically. No key
+artifact is replaced and none appears that was not there before. Modes converge
+to ADR 010 without content changing. The enrollment marker keeps its owner and
+mode and its content is reconciled against the database rather than preserved
+byte for byte — the one piece of state the upgrade is supposed to rewrite
+(#137). The administrator's PAM service is byte-identical, a correct password
+still authenticates, and a wrong one still fails.
+
+**Version ordering on a development tree.** Until `just release` bumps the
+workspace, the candidate .deb built from the tree is `0.1.4-1~deb13u1`, which
+sorts *below* the published `0.1.4-1`. The lanes build the same payload as an
+upgrade-test version instead, and every run prints the version it chose and why.
+Once the workspace version sorts above 0.1.4 the re-versioning stops and
+`FACELOCK_UPGRADE_TEST_VERSION` becomes a no-op: the lane installs the shipped
+version exactly. The native comparator inside the container decides either way,
+so a lane can never quietly become a downgrade test. Whatever version it lands
+on is spelled by `scripts/release-versions.sh`, the same file the release
+workflow uses, so a pre-release candidate reaches the lane as
+`0.2.0~alpha.3-1~deb13u1` rather than in a Cargo spelling neither packager
+would ever ship. The RPM release counter it passes is local to the lane, not
+the series counter from "Prerelease identity conversions" above: the lane's
+only ordering requirement is against the published predecessor, never against
+a previously published prerelease.
+
+**Upgraders from v0.1.4 already have face authentication enabled.** That
+release's `pam-auth-update` profile shipped `Default: yes`, so installing it
+switched Facelock on in `common-auth`. The packaged profile is `Default: no`
+now, which applies to fresh installs; an upgrade leaves the global stack exactly
+as it found it, and the lane fails if it is edited in either direction. Removing
+an enabled profile would take face authentication away from someone using it, so
+the lane treats that as the more dangerous direction, not a clean result.
+
+**Where it runs.** Locally, by design: a cached run is about twenty minutes and
+a cold one considerably more, so `packaging.yml` does not carry it and a
+nightly-only job is the follow-up. `just check` runs the container-free contract
+(`just test-upgrade-v014-contract`), so a broken lane definition still fails
+every pull request.
+
+**Rollback.** The candidate daemon starts and migrates the database before the
+downgrade, so the predecessor is handed the file production would hand it. V6
+has no down-migration and the schema stays at 6 after the package rolls back.
+See `docs/contracts.md` for what that does and does not guarantee.
+

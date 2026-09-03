@@ -88,6 +88,39 @@
       "production_copr_requires_stable_tagged_config": true
     }
   },
+  "predecessors": {
+    "reviewed_on": "2026-09-02",
+    "resolved_with": "gh api repos/tyvsmith/facelock/releases/tags/v0.1.4",
+    "repository": "tyvsmith/facelock",
+    "v0.1.4": {
+      "tag": "v0.1.4",
+      "release_id": 332190914,
+      "published_at": "2026-05-31T18:54:26Z",
+      "upstream_version": "0.1.4",
+      "lanes": {
+        "deb-trixie": {
+          "suite": "trixie",
+          "asset_id": 434624113,
+          "asset_node_id": "RA_kwDORmgtH84Z59Zx",
+          "name": "facelock_0.1.4-1_amd64.deb",
+          "url": "https://github.com/tyvsmith/facelock/releases/download/v0.1.4/facelock_0.1.4-1_amd64.deb",
+          "sha256": "58bda7490c94b224a2ed3903c6204150cf317786d397569968a2511226ed17d8",
+          "size": 10975164,
+          "package_version": "0.1.4-1"
+        },
+        "rpm-fedora": {
+          "release": "44",
+          "asset_id": 434633109,
+          "asset_node_id": "RA_kwDORmgtH84Z5_mV",
+          "name": "facelock-0.1.4-1.fc44.x86_64.rpm",
+          "url": "https://github.com/tyvsmith/facelock/releases/download/v0.1.4/facelock-0.1.4-1.fc44.x86_64.rpm",
+          "sha256": "e8d3858adbf001676cc1d25171702c396e6ed22dd2a8c4f0d064a8c2febb3a0b",
+          "size": 12568681,
+          "package_version": "0.1.4-1.fc44"
+        }
+      }
+    }
+  },
   "platforms": [
     {
       "id": "debian-13",
