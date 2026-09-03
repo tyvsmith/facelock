@@ -600,6 +600,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A lost encryption key is never replaced automatically** (#231): the
+  encrypt-by-default keyfile is now created only for a database that holds no
+  encrypted template. On a system whose key artifact went missing, facelock had
+  been writing a fresh key over rows encrypted under the old one; those rows
+  were already unreadable, but the replacement made the loss permanent, because
+  a later restore of the real key no longer matched what had since been
+  written. Every writer of that key now makes the same decision — the daemon,
+  `facelock auth` and the other one-shot commands, `facelock setup`'s automatic
+  encryption policy, and `facelock encrypt` with and without `--generate-key`.
+  A refusal names the encryption method that wrote the rows at risk, the
+  artifact to restore, and `facelock clear` as the deliberate destructive
+  alternative; restoring the key lifts it at the next enrollment attempt with
+  no daemon restart. Enrollment fails closed while it stands, authentication
+  still falls through to the password prompt, a user whose own templates are
+  plaintext keeps authenticating, and the auth path reports the missing key
+  instead of calling the database corrupt. Key creation is now an `O_EXCL`
+  write to a temporary flushed and moved into place with
+  `renameat2(RENAME_NOREPLACE)`, so concurrent daemons resolve to one key and
+  no reader sees a partial one, and a symlink standing at the key path is
+  refused by the reading path as well as the creating one.
+
 - **Enrollment persists atomically** (#308): the daemon and `facelock enroll`
   now hold accepted embeddings in memory and write the model in one store
   transaction after the minimum-capture and angle-diversity gates pass, with

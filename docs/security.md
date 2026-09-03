@@ -561,10 +561,54 @@ Face embeddings are **biometric data**. Unlike passwords, they cannot be changed
 
 Face templates are **encrypted at rest by default** (`encryption.method = "keyfile"`, finding
 #8). Embeddings are AES-256-GCM encrypted with a 256-bit key held in a key file
-(`keyfile`) or a TPM-sealed key (`tpm`). The keyfile is auto-generated at mode `0600` on
-first use if absent, in a single `open(2)` create-at-mode (no create-then-`chmod` window —
-finding #11). The TPM method seals the AES key at rest; it is unsealed at daemon startup and
-held in memory.
+(`keyfile`) or a TPM-sealed key (`tpm`). The TPM method seals the AES key at rest; it is
+unsealed at daemon startup and held in memory.
+
+**The keyfile is created for a database that holds no encrypted template, and only then**
+(#231). "Encrypted" is decided by each stored blob's own version byte, not by the `sealed`
+column, which cannot tell a TPM-sealed row from a keyfile-sealed one. A missing key over
+encrypted rows is refused: those rows are unreadable either way, but writing a replacement
+makes a later restore of the real key useless, and that is the one loss facelock can still
+prevent. A store that *cannot be asked* counts as encrypted rows existing — "no rows" and
+"no answer" are different facts, and only the first authorizes writing a key. Every writer
+of that key goes through the same gate: the daemon, `facelock auth` and the other one-shot
+commands, `facelock setup`'s automatic policy, and both branches of `facelock encrypt`
+(`--generate-key` included, which replaces a live key rather than creating one).
+
+Creation is atomic and never destructive. The 32 bytes are written to an `O_EXCL |
+O_NOFOLLOW` temporary beside the key at mode `0600` in a single `open(2)` create-at-mode
+(no create-then-`chmod` window — finding #11), flushed, then moved onto the key path with
+`renameat2(RENAME_NOREPLACE)` and the parent directory flushed. Two daemons starting at
+once therefore resolve to one key rather than each overwriting the other's, and no reader
+ever observes the key path holding a partial file. A **symlink at the key path is its own
+refusal** on every path, creating and reading alike: the reader opens `O_NOFOLLOW`, so a
+planted link is never followed to whatever it names.
+
+**What a refusal does.** Enrollment fails closed — facelock will not store a biometric
+template as plaintext because encryption is unavailable. Authentication is unaffected and
+keeps falling through to the password prompt, and a user whose own templates are plaintext
+still authenticates normally even while another user's encrypted row holds the refusal
+open. The auth path reports the missing key, never "the database is corrupt".
+
+**Recovery** is to restore the key artifact for the method that wrote the rows —
+`encryption.key_path` for `keyfile`, `encryption.sealed_key_path` for `tpm` — from backup.
+No restart is needed: the daemon re-reads the key on the next enrollment attempt, so a
+restore lifts the refusal live. The destructive alternative, for an operator who has no
+backup, is `facelock clear` followed by re-enrollment.
+
+**Known limits.**
+
+- The gate asks the database named by `storage.db_path`. A configuration that points at the
+  wrong path finds an empty database, correctly concludes nothing would be orphaned, and
+  mints a key. `facelock setup`'s interactive `--encryption` choices carry a stricter guard
+  (`handle_orphan_models_before_keygen`, which refuses on *any* stored model and offers to
+  clear); the automatic policy does not, because on a genuine fresh install there is
+  nothing to distinguish it from.
+- Under `ProtectSystem=strict` the shipped daemon unit cannot write `/etc/facelock` at all,
+  so it cannot create `/etc/facelock/encryption.key`: on that unit the key is created by
+  installation or by a privileged `facelock setup` / `facelock encrypt` run, and the daemon
+  only ever reads it. A daemon that finds no key refuses enrollment as above rather than
+  falling back to plaintext.
 
 Plaintext storage (`method = "none"`) is an explicit opt-out: enrollment **refuses** to write
 plaintext biometric templates unless `security.allow_plaintext = true`, and warns prominently
