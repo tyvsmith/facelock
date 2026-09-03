@@ -892,13 +892,17 @@ assert_key_refusal() {
         install -m0600 "$saved" /etc/facelock/encryption.key
         fail "the daemon stopped serving on a $variant key (exit $status)"
     }
-    # Matches the refusal, not one release's phrasing of it. The security
-    # review that owns this message has already moved it once, from "refusing
-    # to write a replacement key" to "refusing to write an encryption key at
-    # <path>", and this lane is stacked under that work. Pinning the sentence
-    # would make the harness red on wording; requiring the daemon to say it is
-    # refusing to write or mint a key keeps the assertion.
-    grep -qiE 'refus[a-z]* to (write|mint)[^.]*key|could not be created/read' "$output" || {
+    # Assert what the message has to *contain*, not how it opens. The two
+    # variants reach the operator by different routes -- a missing key raises
+    # "refusing to write an encryption key at <path>", a malformed one raises
+    # "keyfile could not be read: ... must be exactly 32 bytes, got 9" -- but
+    # both carry the same tail from `key_policy::encrypted_rows_at_risk`, and
+    # that tail is the actual contract: say which rows are at risk and how to
+    # get them back. Pinning the opening clause made this red on wording when
+    # the message was reworded, while a daemon that logged the opening and
+    # nothing else would have passed.
+    grep -qE 'row\(s\) are (software-encrypted|TPM-sealed)' "$output" &&
+        grep -qF 'facelock clear' "$output" || {
         tail -20 "$output" >&2
         install -m0600 "$saved" /etc/facelock/encryption.key
         fail "the daemon did not report the $variant key over encrypted rows"
