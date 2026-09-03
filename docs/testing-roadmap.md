@@ -175,7 +175,7 @@ production-ready in the justfile install recipe.
 
 | Format | Location | Status |
 |--------|----------|--------|
-| Raw binaries | `release.yml` | Released. Triggered on `v*` tags. Uploads `facelock-x86_64-linux-gnu`, `pam_facelock.so`, SHA256SUMS to GitHub Releases. |
+| Raw binaries | `release.yml` | Released. Triggered on `v*` tags. `build` uploads `facelock-x86_64-linux-gnu`, `pam_facelock.so`, and the polkit agent as workflow artifacts; the `publish` job stages them into a draft GitHub Release and publishes it with `MANIFEST.json` once every asset validates. |
 | `.deb` | `release.yml` (build-deb job) | Released. Two suite-specific `.deb` artifacts for trixie and resolute are built in CI and uploaded to GitHub Release. Stable releases publish the matching signed APT suites at `tysmith.me/facelock/apt`. |
 | `.rpm` | `release.yml` (build-rpm job) | Released. Built in CI for the GitHub Release asset. COPR builds from source via Packit (`tyvsmith/facelock`) per `releasing.md`. |
 | PKGBUILD (Arch) | `dist/PKGBUILD` | Released. Automated via tag CI; published to AUR (`facelock`, `facelock-git`). References `facelock.install` file. `just test-arch-pkg` builds and installs it. |

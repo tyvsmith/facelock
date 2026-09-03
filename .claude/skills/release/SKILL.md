@@ -118,18 +118,30 @@ Only after explicit confirmation. No AI attribution in the commit or tag message
 
 ## Step 6: Watch the publish
 
-The `v*` tag triggers `.github/workflows/release.yml`, which has 10 jobs:
+The `v*` tag triggers `.github/workflows/release.yml`, which has 11 jobs:
 
-```
+```text
 metadata · build · download-ort · prepare-cargo-vendor
 build-deb · build-rpm · build-nix
-publish-aur · publish-apt · trigger-pages
+publish-apt · publish · publish-aur · trigger-pages
 ```
+
+Every builder produces workflow artifacts and nothing else. `publish` is the
+only job that touches the release: it verifies the tag, stages exactly the
+canonical assets out of those artifacts, holds each one to the digest its
+builder attested, creates the release as a **draft**, writes `MANIFEST.json`,
+and flips the draft to published exactly once. Until it runs, no release exists
+and Packit has seen nothing.
 
 ```bash
 gh run watch
 gh release view v<X.Y.Z> --json assets --jq '.assets[].name'
 ```
+
+A release that stays a draft failed validation: read the `publish` job, fix the
+cause, and re-run the workflow. A re-run before publish succeeds is safe; one
+after success goes red at `verify-creatable` by design. Publishing the draft by
+hand is not safe, and `publish` refuses a tag that is already published.
 
 `publish-aur` and `publish-apt` push to external package repositories. A failure
 after those succeed is only partially recoverable — check them first when

@@ -5,6 +5,7 @@ VERSION="${1:?Usage: publish-aur.sh <VERSION> <CHECKSUM>}"
 CHECKSUM="${2:?Usage: publish-aur.sh <VERSION> <CHECKSUM>}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../../scripts/release-versions.sh
+# shellcheck disable=SC1091
 source "$SCRIPT_DIR/../../../scripts/release-versions.sh"
 release_validate_cargo_version "$VERSION"
 if release_is_prerelease "$VERSION"; then
@@ -29,6 +30,47 @@ if [ -z "${AUR_SSH_KEY:-}" ]; then
   exit 0
 fi
 
+# Per-binary checksums for facelock-bin come from the release manifest the
+# publish job generates over every published asset (#235). This job runs after
+# publication, so the manifest is the released, validated digest of each binary.
+# They are read and validated before anything touches SSH, so a bad manifest
+# stops here. FACELOCK_RELEASE_MANIFEST_FILE lets the contract test feed one
+# in without the network.
+# GITHUB_REPOSITORY is set by GitHub Actions; fall back to the canonical repo for local runs.
+REPO="${GITHUB_REPOSITORY:-tyvsmith/facelock}"
+MANIFEST_FILE="${FACELOCK_RELEASE_MANIFEST_FILE:-}"
+if [ -z "$MANIFEST_FILE" ]; then
+  MANIFEST_FILE="$(mktemp)"
+  trap 'rm -f "$MANIFEST_FILE"' EXIT
+  curl --proto '=https' --tlsv1.2 -fsSL "https://github.com/${REPO}/releases/download/v${VERSION}/MANIFEST.json" -o "$MANIFEST_FILE"
+fi
+manifest_sha256() {
+  python3 - "$MANIFEST_FILE" "$1" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+for asset in manifest.get("assets", []):
+    if asset.get("name") == sys.argv[2]:
+        print(asset["sha256"])
+        break
+PY
+}
+SHA_FACELOCK="$(manifest_sha256 facelock-x86_64-linux-gnu)"
+SHA_PAM="$(manifest_sha256 pam_facelock.so)"
+SHA_POLKIT="$(manifest_sha256 facelock-polkit-agent-x86_64-linux-gnu)"
+: "${SHA_FACELOCK:?missing facelock binary checksum in the release MANIFEST.json}"
+: "${SHA_PAM:?missing pam_facelock.so checksum in the release MANIFEST.json}"
+: "${SHA_POLKIT:?missing polkit agent checksum in the release MANIFEST.json}"
+# Each one pins a published binary for every facelock-bin consumer; a value
+# that is not a SHA-256 must never reach a published recipe.
+for binary_digest in SHA_FACELOCK SHA_PAM SHA_POLKIT; do
+  if ! [[ "${!binary_digest}" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "refusing to publish: $binary_digest from the release MANIFEST.json is not a plausible SHA-256: ${!binary_digest}" >&2
+    exit 1
+  fi
+done
+
 # Set up SSH for AUR
 mkdir -p ~/.ssh
 echo "$AUR_SSH_KEY" > ~/.ssh/aur
@@ -39,19 +81,6 @@ chmod 600 ~/.ssh/aur
   echo "  User aur"
 } >> ~/.ssh/config
 ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
-
-# Per-binary checksums for facelock-bin come from the Release SHA256SUMS file.
-# GITHUB_REPOSITORY is set by GitHub Actions; fall back to the canonical repo for local runs.
-REPO="${GITHUB_REPOSITORY:-tyvsmith/facelock}"
-SHA_FILE="$(mktemp)"
-trap 'rm -f "$SHA_FILE"' EXIT
-curl -fsSL "https://github.com/${REPO}/releases/download/v${VERSION}/SHA256SUMS" -o "$SHA_FILE"
-SHA_FACELOCK=$(awk '/[[:space:]]facelock-x86_64-linux-gnu$/{print $1}' "$SHA_FILE")
-SHA_PAM=$(awk '/[[:space:]]pam_facelock\.so$/{print $1}' "$SHA_FILE")
-SHA_POLKIT=$(awk '/[[:space:]]facelock-polkit-agent-x86_64-linux-gnu$/{print $1}' "$SHA_FILE")
-: "${SHA_FACELOCK:?missing facelock binary checksum in Release SHA256SUMS}"
-: "${SHA_PAM:?missing pam_facelock.so checksum in Release SHA256SUMS}"
-: "${SHA_POLKIT:?missing polkit agent checksum in Release SHA256SUMS}"
 
 RUNNER_UID="$(id -u)"
 RUNNER_GID="$(id -g)"

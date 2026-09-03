@@ -2317,6 +2317,106 @@ the artifacts are maintainer-trust records: preflight checks their shape and the
 binding to HEAD and the matrix, not that a real lane produced them. A forged
 record is a deliberate act, not the slip this gate exists to catch.
 
+### Direct release publication
+
+Builders in `.github/workflows/release.yml` produce workflow artifacts and
+never touch the release. They hold `contents: read` under a deny-all workflow
+default, and none of them may reference the publication credential or a
+release-writing step. `publish` is the only job that writes the release, the
+only one holding `contents: write` and `RELEASE_PAT`, and the only one that
+compiles nothing. It runs after every builder and validator; a tag has no
+release until it does.
+
+`publish` requires all of, in order:
+
+- The tag exists, equals the tag the validated version derives, and points at
+  the commit the workflow built. An annotated tag is peeled on both sides. A
+  tag carrying a PGP or SSH signature must verify. Publication reads the tag;
+  it never creates, moves, or replaces one, and it never sends a tag name or
+  target commitish.
+- Exactly the canonical assets can be staged out of the builders' artifacts, no
+  more and no fewer:
+
+| Asset | Produced by |
+|-------|-------------|
+| `facelock-x86_64-linux-gnu` | `build` |
+| `pam_facelock.so` | `build` |
+| `facelock-polkit-agent-x86_64-linux-gnu` | `build` |
+| `facelock_<debian-version>_<architecture>.deb`, one per published suite | `build-deb` |
+| `facelock-<rpm-version>-<rpm-release>.fc<N>.x86_64.rpm` | `build-rpm` |
+| `facelock-debuginfo-<rpm-version>-<rpm-release>.fc<N>.x86_64.rpm` | `build-rpm` |
+| `facelock-debugsource-<rpm-version>-<rpm-release>.fc<N>.x86_64.rpm` | `build-rpm` |
+| `apt-repo.tar.gz`, stable releases only | `publish-apt` |
+| `MANIFEST.json` | `publish` |
+
+  The Debian and RPM names come from the validated version, Debian revision,
+  and RPM counter, so an artifact built from any other identity has no
+  canonical name and is never staged. `build-rpm` selects each of its three
+  packages by that identity and validates the payload package. A duplicate
+  name, an unmatched asset, a canonical name two artifacts claim, or a canonical
+  name no artifact provides each fail closed. A canonically named file in an
+  artifact other than its producer's is a builder's extra output; the release
+  fails closed on it, and the failure names the remedy: fix the builder and
+  re-run all jobs, since re-running only the failed job keeps the artifact.
+- Every staged asset matches the SHA-256 its builder attested. Each builder
+  writes a `release-digests-<slot>` artifact naming what it produced, the image
+  it produced it in, and the components it consumed. An asset attested by no
+  builder, or by two, fails closed, and so does a build image or component two
+  attestations claim.
+- The attesting set is exactly the slots the workflow uploads: `build`,
+  `onnxruntime`, `cargo-vendor`, one `deb-<suite>` per published suite, `rpm`,
+  and, on a stable release, `apt`. Each artifact holds one document declaring
+  the job that slot belongs to. Anything running in a builder can upload an
+  artifact of its own, so an extra attestation, a missing one, or one claiming
+  another job's identity stops the release rather than being merged into the
+  manifest.
+- Each slot declares exactly the provenance the release expects of it. An
+  attestation is a self-report, so the suite a slot fills, the image
+  `dist/release-matrix.json` pins for it, and the component names it may
+  carry are held by `publish` and compared exactly: a swapped image, an
+  invented suite, an added or missing component, or a field the release has no
+  rule for is refused. The matrix is an input publication cannot do without;
+  a matrix that cannot be read, or that names no Debian suite, stops the
+  release rather than shortening the allowlist.
+- Every attestation hashes to the output its job recorded. Artifacts are
+  untrusted until bound to a job output: the artifact store is shared by every
+  job in the run and writable with any job's runtime token, so a builder that
+  runs later can replace an earlier builder's payload and attestation as a
+  matching pair. A job output is recorded by the Actions service under the job
+  that produced it and cannot be rewritten by another job. Each attesting job
+  records the SHA-256 of its `digests.json` as its `attestation` output
+  (`build-deb` records `attestation-<suite>`, each matrix leg setting only its
+  own); `publish` reads them through `toJSON(needs)`, passed by environment
+  and file rather than a shell line, and refuses by slot any attestation whose
+  bytes differ from the recorded value or whose job recorded no output, before
+  anything in the document is read. `verify-digests` and `manifest` share that
+  loader, so neither can skip it.
+- The tag has no published release. A release already published is refused
+  before anything is written; the draft an interrupted run left behind is
+  reused, so a failed run can be re-run. An asset on that draft whose canonical
+  name changed in between, after a Debian revision or RPM counter bump, is
+  refused as unexpected and must be deleted from the draft by hand. Two
+  releases for one tag are refused with the `gh api --method DELETE` command
+  that removes the extra one.
+
+The workflow runs once at a time per tag: `concurrency` is keyed by the ref
+and never cancels the run in progress, so a second run queues rather than
+passing the checks above beside the first. `build-nix` gates publication
+through its flake evaluation; its `nix build` step is advisory.
+
+The draft is created with those assets and the validated prerelease flag, and
+is flipped to published only after the draft's asset list is read back from the
+API and held to the allowlist a second time, `MANIFEST.json` now included, and
+each published asset's size, and digest where the API exposes one, is held to
+`MANIFEST.json`, the uploaded manifest to the file the job wrote.
+
+`MANIFEST.json` covers the release: the tag, version, commit, and prerelease
+flag; the source tarball URL and digest; the pinned build-image digests; the
+reviewed ONNX Runtime and Cargo-vendor component digests; and the name, size,
+and SHA-256 of every other asset. It replaces the `SHA256SUMS` file that
+covered three binaries and was written before the packages existed.
+`facelock-bin` takes its per-binary checksums from it.
+
 ### Debian source and binary package contract
 
 Trixie package builds use the official Trixie Backports `cargo` and `rustc`;

@@ -84,22 +84,118 @@ git push origin main --tags
 
 The `.github/workflows/release.yml` workflow:
 
-1. Builds release binaries and creates a GitHub Release
-2. Prepares the pinned ONNX Runtime and lock-bound Cargo-vendor source
+1. Validates the tag against the checked-in release identity and target matrix
+2. Builds release binaries and uploads them as workflow artifacts
+3. Prepares the pinned ONNX Runtime and lock-bound Cargo-vendor source
    components with their reviewed manifests and checksums
-3. Builds two suite-specific TPM-enabled `.deb` packages for trixie and resolute
-4. Builds the direct `.rpm` package in the pinned Fedora 44 container and validates contents
-5. Validates Nix flake evaluation
-6. Publishes stable releases to AUR — `facelock`, `facelock-bin`, and `facelock-git` — if `AUR_SSH_KEY` is configured
+4. Builds two suite-specific TPM-enabled `.deb` packages for trixie and resolute
+5. Builds the direct `.rpm` package in the pinned Fedora 44 container and validates contents
+6. Validates Nix flake evaluation
 7. Publishes stable releases to the signed, codenamed APT suites, and to the `main` and `legacy` compatibility suites until 0.3.0, if the APT signing secrets are configured
-8. Triggers GitHub Pages rebuild to include updated APT repo
+8. Verifies the tag, assembles and validates every asset, writes `MANIFEST.json`, and publishes the release exactly once
+9. Publishes stable releases to AUR — `facelock`, `facelock-bin`, and `facelock-git` — if `AUR_SSH_KEY` is configured
+10. Triggers GitHub Pages rebuild to include updated APT repo
 
 Validated prerelease tags set the GitHub Release `prerelease` output and upload
 direct artifacts, but skip stable APT and all AUR publication. The workflow
 guards use the validated release identity rather than substring matching.
 
 COPR (Fedora) is **not** built by `release.yml`. It is handled by [Packit](https://packit.dev),
-which reacts to the GitHub Release published in step 1. See the COPR section below.
+which reacts to the release the `publish` job makes public in step 8. A draft
+raises no release event, so nothing downstream fires until validation passes.
+See the COPR section below.
+
+#### Builders build, publish publishes
+
+No builder writes to the release. Each one uploads a workflow artifact and a
+digest attestation naming what it produced, the image it produced it in, and
+the components it consumed. Until the `publish` job runs, the tag has no
+release at all: nothing is public and no downstream automation has seen
+anything.
+
+That split is the point. Every builder compiles or packages code this project
+does not own, from every dependency's `build.rs` to `rpmbuild` and
+`dpkg-buildpackage`. A builder holding the publication credential is a builder
+that can publish whatever it likes. `publish` compiles nothing, so it is the
+only job that holds `RELEASE_PAT` and the only one with `contents: write`;
+every other job holds `contents: read`, and the workflow's own default is
+deny-all.
+
+`publish` runs after every builder and validator, and it:
+
+- verifies the tag exists, names the validated version, and points at the built
+  commit; where the tag carries a signature it must verify. The job reads the
+  tag and never creates, moves, or replaces one.
+- stages exactly the canonical assets out of the builders' artifacts. The
+  allowlist is derived from the validated version, Debian revision, and RPM
+  counter, so an artifact built from another identity has no canonical name and
+  a file a builder added beside the one it was asked to produce is never
+  staged.
+- holds every staged asset to the SHA-256 its builder attested. An asset that
+  changed between its build and publication stops the release, as does one no
+  builder attested or one two builders claim.
+- holds each attestation to the provenance its slot may declare: the suite,
+  the image `dist/release-matrix.json` pins, and the component names. A
+  builder cannot report another image or an extra component into
+  `MANIFEST.json`; a matrix the job cannot read stops the release instead of
+  shortening the allowlist.
+- trusts an attestation only once it hashes to the job output its builder
+  recorded. Artifacts are shared, writable storage for every job in the run;
+  a job output belongs to the job that wrote it. An attestation that was
+  replaced after its job finished, or whose job recorded no output, is refused
+  by name.
+- creates the release as a draft carrying those assets, then writes
+  `MANIFEST.json` over them, plus the source tarball digest, the pinned
+  build-image digests, and the reviewed ONNX Runtime and Cargo-vendor component
+  digests. It replaces the three-binary `SHA256SUMS` file, which covered a
+  fraction of the release and was written before most of it existed.
+- reads the draft back from the API, holds it to the allowlist a last time,
+  holds each published asset's size, and digest where the API exposes one, to
+  `MANIFEST.json` and the uploaded manifest to the file it wrote, and flips
+  the draft to published once. A tag whose release is already published is
+  refused before anything is written, so re-running the workflow after a
+  failure is safe; re-running it after success goes red by design, at
+  `verify-creatable`, with nothing written. One case needs a hand: if the
+  Debian revision or RPM counter changed between runs, the draft still carries
+  the asset built under the old name, and the readback refuses it. The
+  failure names the file and the command that removes it,
+  `gh release delete-asset`.
+
+The workflow runs once at a time per tag (`concurrency` keyed by the ref,
+never cancelling the run in progress), so a re-run started while a run is
+inside `publish` queues behind it instead of racing it. Two drafts for one
+tag, which only a race could leave behind, are refused with the
+`gh api --method DELETE` command that removes the extra one.
+
+A builder's extra output fails the release closed: a canonically named file in
+an artifact the allowlist does not expect it from is refused at staging, and
+the failure says so. Re-running only the failed `publish` job keeps that
+artifact, so the remedy is fixing the builder and re-running all jobs.
+A partial re-run of a single `build-deb` leg can similarly leave the other
+suite's attestation unbound (`attestation deb-<suite> is not bound to a job
+output`); the remedy is the same, re-run all jobs.
+
+Two consequences for the maintainer:
+
+- **`RELEASE_PAT` is required.** It is now the only credential that can write
+  the release, so an unset secret fails the `publish` job.
+  `just release-preflight` checks for it, and fails when it cannot check:
+  without `gh`, or unauthenticated, the check is reported as unchecked and
+  preflight does not pass.
+- **A signed tag must be verifiable on the runner.** Importing the maintainer's
+  public key is release infrastructure tracked by #235; until it lands, an
+  unsigned tag is accepted and a signed one that the runner cannot verify stops
+  the release.
+
+Every job in the graph gates publication, `build-nix` included: its flake
+evaluation is deterministic against `flake.lock` and must pass, while its
+`nix build` step is advisory because the build depends on nixpkgs state. An
+evaluation failure means the release stays a draft; fix the flake and re-run
+the failed jobs, never tag again.
+
+`test/release-artifacts-contract.sh` (`just test-release-artifacts`) proves this
+shape by fixture and by mutation. The workflow itself runs only on a tag, so
+the gate never tags anything to test it.
 
 #### Debian package channels
 

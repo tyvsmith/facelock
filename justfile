@@ -102,7 +102,7 @@ check-package-names-live:
     python3 test/check-package-names-live.py
 
 # Run all checks (test + lint + format + audit + PAM standalone surface + agent docs)
-check: test lint fmt-check audit check-pam-standalone check-agent-docs test-source-install-daemon-lifecycle test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test test-legacy-system-assets test-locale-install-contract test-classify-changes test-arch-package-select check-workflow-policy test-upgrade-v014-contract
+check: test lint fmt-check audit check-pam-standalone check-agent-docs test-source-install-daemon-lifecycle test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test test-legacy-system-assets test-locale-install-contract test-classify-changes test-arch-package-select check-workflow-policy test-upgrade-v014-contract test-release-artifacts
 
 # The path filter that decides whether the packaging gates run on a pull
 # request. A pattern that stops matching fails nothing: it reports every deb,
@@ -142,6 +142,18 @@ test-legacy-system-assets:
 # Prove the deterministic, exact Cargo source component used by Debian builds.
 test-cargo-vendor-contract:
     bash test/cargo-vendor-contract.sh
+
+# The builders produce workflow artifacts and never touch the release; the
+# publish job stages exactly the canonical assets out of them, holds each to
+# the digest its builder attested, writes MANIFEST.json over all of them, and
+# only then flips the draft it created. The workflow runs on a tag and nowhere
+# else, so its shape is proven by fixture and by mutation, never by tagging.
+# Cheap enough for `just check`; a gate that runs only in release-preflight is
+# invisible until the day it matters.
+
+# Static contract: the release publishes exactly once, after validation
+test-release-artifacts:
+    bash test/release-artifacts-contract.sh
 
 # Static Debian source/metadata/release-consumer contract.
 test-deb-source-contract:
@@ -1517,6 +1529,7 @@ release-preflight tag='':
         test/release-version-contract.sh \
         test/check-release-matrix.py \
         test/check-live-release-channels.py \
+        test/release-artifacts-contract.sh \
         scripts/release-attestation.py \
         .github/workflows/release.yml; do
         if [ -f "$f" ]; then
@@ -1536,6 +1549,7 @@ release-preflight tag='':
     release_check_metadata "$TAG" || failed=1
     bash test/release-version-contract.sh || failed=1
     RELEASE_MATRIX_VERSION="$VERSION" python3 test/check-release-matrix.py || failed=1
+    bash test/release-artifacts-contract.sh || failed=1
     python3 test/check-live-release-channels.py || failed=1
     python3 test/check-live-release-channels.py --channel staging || failed=1
 
@@ -1547,6 +1561,24 @@ release-preflight tag='':
         echo "Mode: stable release — stable APT/AUR secrets and a production COPR release job are required"
     fi
     echo "Note: COPR builds are handled by Packit (.packit.yaml) — no secret required."
+
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        # Every builder holds contents: read, so RELEASE_PAT is the only
+        # credential that can create or publish the release -- for a prerelease
+        # as much as for a stable one. Without it the tag builds and publishes
+        # nothing (#235).
+        if gh secret list | grep -q '^RELEASE_PAT\b'; then
+            echo "OK: RELEASE_PAT configured"
+        else
+            echo "MISSING: RELEASE_PAT — the release workflow cannot write the release"
+            failed=1
+        fi
+    else
+        # A check that could not be made is not a pass: without the secret
+        # the tag builds and publishes nothing.
+        echo "UNCHECKED: RELEASE_PAT — gh is missing or not authenticated, so the secret cannot be verified"
+        failed=1
+    fi
 
     if [ "$prerelease" -eq 1 ]; then
         echo "SKIP: prerelease preflight does not access stable publication secrets"
