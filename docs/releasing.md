@@ -718,6 +718,14 @@ carry no digest of their own, so one review changes the pin everywhere.
 the assets it serves, which is how a re-uploaded or substituted predecessor gets
 caught before a lane silently proves something about a different file.
 
+**What the lane images carry.** Each image installs the runtime libraries the
+released binary needs before the predecessor goes on. v0.1.4 wrote its Debian
+control file by hand and never declared libxkbcommon0, which its own binary
+links, so that release cannot start on a minimal Debian 13 at all. The candidate
+is built from `debian/control` and derives the list with `${shlibs:Depends}`.
+Nothing is masked by supplying it: candidate dependency resolution belongs to
+`test/deb-dependency-closure.sh` on a pristine suite base.
+
 **What the lanes build.** Predecessor state comes from the released v0.1.4
 binary, never from the candidate: plaintext rows, keyfile-encrypted rows, mixed
 rows, and two swtpm-sealed shapes, one PCR-bound and one not. Each shape also
