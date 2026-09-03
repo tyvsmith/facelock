@@ -82,6 +82,21 @@ def string_map(value: object, description: str) -> dict[str, str]:
     return dict(value)
 
 
+def chroot_authority(value: object, channel: str) -> set[str]:
+    """A channel's required_supported_chroots, validated before it becomes a
+    set: a non-empty list of non-empty strings with no duplicates. Used for
+    both COPR channels the release matrix declares."""
+    require(
+        isinstance(value, list) and value and all(isinstance(item, str) and item for item in value),
+        f"release matrix {channel} COPR required_supported_chroots must be a non-empty list of non-empty strings: {value!r}",
+    )
+    require(
+        len(value) == len(set(value)),
+        f"release matrix {channel} COPR required_supported_chroots must not contain duplicate chroots: {value!r}",
+    )
+    return set(value)
+
+
 def channel_authority() -> tuple[str, str, set[str]]:
     """The production identity no attestation may claim, plus the staging one
     and the chroots it is allowed to serve."""
@@ -91,9 +106,10 @@ def channel_authority() -> tuple[str, str, set[str]]:
         production = f"{channels['production']['owner']}/{channels['production']['project']}"
         staging = channels["staging"]
         staging_identity = f"{staging['owner']}/{staging['project']}"
-        staging_chroots = set(staging["required_supported_chroots"])
+        staging_required_chroots = staging["required_supported_chroots"]
     except (KeyError, TypeError) as error:
         fail(f"release matrix has no complete COPR channel authority: {error}")
+    staging_chroots = chroot_authority(staging_required_chroots, "staging")
     return production, staging_identity, staging_chroots
 
 

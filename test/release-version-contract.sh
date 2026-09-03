@@ -1532,6 +1532,46 @@ case "$attestation_output" in
 esac
 echo "release attestation case: undeclared staging COPR chroot rejected"
 
+# channel_authority() reads copr_channels.staging.required_supported_chroots
+# straight out of dist/release-matrix.json and turns it into a set: a
+# duplicated or non-string entry there must fail closed rather than silently
+# deduplicate into a weaker authority.
+attestation_matrix_case_index=0
+assert_attestation_matrix_rejected() {
+    local context="$1"
+    local expression="$2"
+    local diagnostic="$3"
+    local case_root="$attestation_root/matrix-case-$attestation_matrix_case_index"
+    local output
+    attestation_matrix_case_index=$((attestation_matrix_case_index + 1))
+    mkdir -p "$case_root/scripts" "$case_root/dist"
+    cp "$attestation_script" "$case_root/scripts/"
+    sed "$expression" "$repo_root/dist/release-matrix.json" > "$case_root/dist/release-matrix.json"
+    if cmp -s "$repo_root/dist/release-matrix.json" "$case_root/dist/release-matrix.json"; then
+        fail "attestation matrix fixture did not change the release matrix: $context"
+    fi
+    if output=$(python3 "$case_root/scripts/release-attestation.py" validate \
+        --attestation "$attestation_root/attestation.json" \
+        --expect "$attestation_root/expect.json" \
+        --now 2026-09-01T12:00:00Z 2>&1); then
+        fail "release attestation validator accepted $context"
+    fi
+    case "$output" in
+        *"$diagnostic"*) ;;
+        *) fail "release attestation validator rejected $context for another reason: $output" ;;
+    esac
+    echo "release attestation case: $context rejected"
+}
+
+assert_attestation_matrix_rejected \
+    "staging COPR chroot authority duplicated" \
+    '/"project": "facelock-testing"/,/"provisioned"/{/"fedora-44-x86_64"/p}' \
+    "must not contain duplicate chroots"
+assert_attestation_matrix_rejected \
+    "staging COPR chroot authority holds a non-string entry" \
+    '/"project": "facelock-testing"/,/"provisioned"/s/"fedora-44-x86_64"/44/' \
+    "must be a non-empty list of non-empty strings"
+
 # Render fails closed: an input missing a required binding cannot become a
 # document that validate would then have to reject.
 attestation_bad_input="$attestation_root/bad-input.json"
