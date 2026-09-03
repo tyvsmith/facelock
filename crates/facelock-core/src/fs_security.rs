@@ -68,6 +68,34 @@ pub fn create_truncate_file(path: &Path, mode: u32) -> io::Result<File> {
     Ok(file)
 }
 
+/// [`create_truncate_file`], refusing to follow a symlink at `path`.
+///
+/// `create_truncate_file` has to stay willing to follow one — some of its
+/// callers legitimately write through a symlinked config path — so it cannot
+/// grow `O_NOFOLLOW` itself. A caller that has already judged `path` (a
+/// symlink pre-check for the clearer refusal message) and truncates in place
+/// rather than staging-and-renaming wants this one instead: without it, a
+/// link planted in the gap between that check and the open is followed, and
+/// the "truncate in place" write lands wherever the link points.
+pub fn create_truncate_file_nofollow(path: &Path, mode: u32) -> io::Result<File> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+
+    #[cfg(unix)]
+    {
+        options.mode(mode);
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+
+    let file = options.open(path)?;
+    ensure_mode(path, mode)?;
+    Ok(file)
+}
+
 /// Create `path` exclusively, never following a symlink and never truncating
 /// an existing file.
 ///
@@ -400,6 +428,40 @@ mod tests {
     }
 
     #[cfg(unix)]
+    /// The gap `create_truncate_file_nofollow` exists to close: a plain
+    /// `create_truncate_file` would follow a symlink planted between a
+    /// caller's own pre-check and this open, truncating whatever it points
+    /// at. `O_NOFOLLOW` on an existing symlink is `ELOOP`, not the plain
+    /// `AlreadyExists` `create_new_file`'s `O_EXCL` reports for the same
+    /// shape — and either way the target is never reached.
+    #[test]
+    fn create_truncate_file_nofollow_refuses_a_symlink_leaving_the_target_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("elsewhere");
+        fs::write(&target, b"not a key").unwrap();
+        let link = dir.path().join("secret");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = create_truncate_file_nofollow(&link, 0o600).unwrap_err();
+        assert_eq!(
+            error.raw_os_error(),
+            Some(libc::ELOOP),
+            "O_NOFOLLOW on an existing symlink is ELOOP: {error}"
+        );
+        assert_eq!(
+            fs::read(&target).unwrap(),
+            b"not a key",
+            "the truncate must never reach the link's target"
+        );
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the refusal must not remove the link it found"
+        );
+    }
+
     #[test]
     fn open_no_follow_refuses_a_symlink_and_is_symlink_says_why() {
         let dir = tempfile::tempdir().unwrap();

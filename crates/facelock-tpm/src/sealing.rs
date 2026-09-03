@@ -836,7 +836,7 @@ impl SoftwareSealer {
     pub fn from_key_file(path: &std::path::Path) -> Result<Self> {
         use std::io::Read;
 
-        let mut file = facelock_core::fs_security::open_no_follow(path).map_err(|e| {
+        let file = facelock_core::fs_security::open_no_follow(path).map_err(|e| {
             if facelock_core::fs_security::is_symlink(path) {
                 FacelockError::Encryption(symlink_key_refusal(path))
             } else {
@@ -846,15 +846,30 @@ impl SoftwareSealer {
                 ))
             }
         })?;
-        let mut data = zeroize::Zeroizing::new(Vec::with_capacity(AES_KEY_SIZE));
-        file.read_to_end(&mut data).map_err(|e| {
-            FacelockError::Encryption(format!("failed to read key file {}: {e}", path.display()))
-        })?;
+        // Bounded read: a valid key file is never more than `AES_KEY_SIZE`
+        // bytes, so `key_path` pointed at something else — a log file, a
+        // misconfigured path — must not be read into memory in full before
+        // the length check below gets to run. One byte past the expected
+        // size is enough to know the file is too big without reading the
+        // rest of it.
+        let mut data = zeroize::Zeroizing::new(Vec::with_capacity(AES_KEY_SIZE + 1));
+        file.take((AES_KEY_SIZE + 1) as u64)
+            .read_to_end(&mut data)
+            .map_err(|e| {
+                FacelockError::Encryption(format!(
+                    "failed to read key file {}: {e}",
+                    path.display()
+                ))
+            })?;
         if data.len() != AES_KEY_SIZE {
+            let got = if data.len() > AES_KEY_SIZE {
+                format!("more than {AES_KEY_SIZE}")
+            } else {
+                data.len().to_string()
+            };
             return Err(FacelockError::Encryption(format!(
-                "key file {} must be exactly {AES_KEY_SIZE} bytes, got {}",
-                path.display(),
-                data.len()
+                "key file {} must be exactly {AES_KEY_SIZE} bytes, got {got}",
+                path.display()
             )));
         }
         let mut key = [0u8; AES_KEY_SIZE];
@@ -870,15 +885,16 @@ impl SoftwareSealer {
     /// Generate a new random 256-bit key and write it to a file at 0600.
     ///
     /// The file is created at mode 0600 in the same `open(2)` that creates it
-    /// (via `fs_security::create_truncate_file`), so it is never momentarily
-    /// world/group-readable — closing the create-then-`chmod` TOCTOU window
-    /// (finding #11). The key material is flushed to disk with `sync_all` and
-    /// zeroized from memory before returning.
+    /// (via `fs_security::create_truncate_file_nofollow`), so it is never
+    /// momentarily world/group-readable — closing the create-then-`chmod`
+    /// TOCTOU window (finding #11). The key material is flushed to disk with
+    /// `sync_all` and zeroized from memory before returning.
     ///
-    /// Refuses a symlink at `path` up front: `create_truncate_file` opens
-    /// with `O_NOFOLLOW`, so the symlink case would otherwise surface as a
-    /// generic I/O failure rather than the refusal every other key writer
-    /// gives.
+    /// Refuses a symlink at `path` up front, for a clearer message than the
+    /// generic I/O failure `open`'s `ELOOP` would otherwise surface as. The
+    /// open itself is `create_truncate_file_nofollow`, which carries its own
+    /// `O_NOFOLLOW` — the pre-check alone would leave a link planted in the
+    /// gap between it and the open free to be followed.
     pub fn generate_key_file(path: &std::path::Path) -> Result<()> {
         use rand::Rng;
         use std::io::Write;
@@ -892,13 +908,17 @@ impl SoftwareSealer {
         rand::rng().fill_bytes(&mut key);
 
         let write_result = (|| -> Result<()> {
-            let mut file =
-                facelock_core::fs_security::create_truncate_file(path, 0o600).map_err(|e| {
+            let mut file = facelock_core::fs_security::create_truncate_file_nofollow(path, 0o600)
+                .map_err(|e| {
+                if facelock_core::fs_security::is_symlink(path) {
+                    FacelockError::Encryption(symlink_key_refusal(path))
+                } else {
                     FacelockError::Encryption(format!(
                         "failed to create key file {}: {e}",
                         path.display()
                     ))
-                })?;
+                }
+            })?;
             file.write_all(&key)
                 .and_then(|()| file.sync_all())
                 .map_err(|e| {
@@ -1493,6 +1513,50 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A key file is never legitimately larger than 32 bytes. Before this,
+    /// `from_key_file` `read_to_end`'d the whole thing before checking the
+    /// length — unbounded if `key_path` pointed at something huge. The read
+    /// must stop a byte past the expected size, so the error can never report
+    /// the file's true (unread) length.
+    #[test]
+    fn software_sealer_from_key_file_oversized_is_refused_without_reading_it_all() {
+        let dir = std::env::temp_dir().join("facelock_key_oversized_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let key_path = dir.join("oversized.key");
+        std::fs::write(&key_path, [0u8; 64]).unwrap(); // 64 bytes instead of 32
+
+        let err = SoftwareSealer::from_key_file(&key_path)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("32"),
+            "error should mention the expected size: {err}"
+        );
+        assert!(
+            !err.contains("64"),
+            "the true (unread) length must never appear — the bounded read \
+             cannot know it: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn software_sealer_from_key_file_exact_size_still_loads() {
+        let dir = std::env::temp_dir().join("facelock_key_exact_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let key_path = dir.join("exact.key");
+        std::fs::write(&key_path, [0x7Au8; AES_KEY_SIZE]).unwrap();
+
+        SoftwareSealer::from_key_file(&key_path).unwrap();
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn software_sealer_from_key_file_missing() {
         let result = SoftwareSealer::from_key_file(std::path::Path::new("/nonexistent/key.file"));
@@ -1880,8 +1944,10 @@ mod tests {
 
         // `--generate-key` and `setup --encryption keyfile` both call this
         // primitive directly, not `create_key_file_exclusive`. It must refuse
-        // the symlink itself rather than relying on `O_NOFOLLOW` inside
-        // `create_truncate_file` to surface as a generic I/O error.
+        // the symlink itself, with the clearer message the pre-check gives —
+        // `create_truncate_file_nofollow`'s own `O_NOFOLLOW` is the backstop
+        // for a link planted after this check runs, exercised directly on
+        // the primitive in facelock-core's own tests (ELOOP).
         let error = SoftwareSealer::generate_key_file(&key_path)
             .unwrap_err()
             .to_string();
