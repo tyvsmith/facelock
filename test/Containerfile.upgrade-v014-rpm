@@ -21,7 +21,14 @@ ARG FACELOCK_CANDIDATE_VERSION
 #
 # `--with bundled_ort` matches the base image's own build, so the candidate
 # carries the same reviewed runtime the host binaries were linked against.
-RUN dnf -y remove facelock && \
+# The base image leaves /etc/pam.d/facelock-test referencing pam_facelock.so,
+# and the candidate's %preun refuses removal while any PAM service does
+# ("... is an administrator-managed PAM reference"). That guard is deliberate
+# and pkg-validate.sh tests it; getting past it means dropping the reference
+# first, which is what pkg-validate.sh:647 does before its own removal tests.
+# This lane writes its own PAM service and never uses that one.
+RUN rm -f /etc/pam.d/facelock-test && \
+    dnf -y remove facelock && \
     rm -f /facelock-test-package.rpm /facelock-test-upgrade.rpm && \
     cd /build && \
     /run-networkless.sh bash /build/test/build-rpm-prebuilt.sh "$FACELOCK_CANDIDATE_VERSION" direct && \

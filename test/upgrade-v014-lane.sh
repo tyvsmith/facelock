@@ -174,6 +174,15 @@ ensure_system_bus() {
 # daemon. A foreground `facelock daemon` started afterwards cannot claim
 # org.facelock.Daemon and exits non-zero -- which reads exactly like the daemon
 # refusing to serve, and is not.
+# The candidate refuses to be uninstalled while a PAM service still references
+# pam_facelock.so, so the reference goes first. The predecessor has no such
+# guard, which is why the Debian half never needed this: after a rollback it is
+# always v0.1.4 that gets removed.
+remove_installed_package() {
+    rm -f "$PAM_PATH"
+    pkg_remove
+}
+
 stop_packaged_daemon() {
     [ -d /run/systemd/system ] || return 0
     systemctl stop facelock-daemon.service >>"$LOG" 2>&1 || true
@@ -918,7 +927,7 @@ run_shape() {
     case_name="$shape"
     log "$FAMILY upgrade shape: $shape"
 
-    if pkg_is_installed; then pkg_remove; fi
+    if pkg_is_installed; then remove_installed_package; fi
     wipe_state
     pkg_install "$PREDECESSOR" || fail "the pinned predecessor did not install"
     ensure_system_bus
@@ -1344,7 +1353,7 @@ done
 # The faults run against the candidate, so install it once more and leave it in
 # place: a fault case is about the candidate's migration, not the predecessor's.
 case_name="fault-setup"
-if pkg_is_installed; then pkg_remove; fi
+if pkg_is_installed; then remove_installed_package; fi
 wipe_state
 pkg_install "$CANDIDATE" || fail "the candidate did not install for the fault matrix"
 ensure_system_bus
