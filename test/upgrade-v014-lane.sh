@@ -345,7 +345,11 @@ seed_common_state() {
     stage_models
     printf '%s\n' upgrade-lane-payload >/var/lib/facelock/models/upgrade-lane.payload
     chmod 0644 /var/lib/facelock/models/upgrade-lane.payload
-    printf '%s\n' '{"models":1,"updated":"2026-01-01T00:00:00Z"}' \
+    # Deliberately stale: v0.1.4 shipped no enrollment markers, so an upgraded
+    # system's marker either does not exist or describes a database it has since
+    # diverged from. The candidate daemon reconciles it at startup (#137), and
+    # `assert_enrollment_marker_reconciled` is what proves it did.
+    printf '%s\n' '{"models":0,"updated":"2020-01-01T00:00:00Z"}' \
         >/var/lib/facelock/enrolled/testuser
     chown testuser:testuser /var/lib/facelock/enrolled/testuser
     chmod 0600 /var/lib/facelock/enrolled/testuser
@@ -499,7 +503,6 @@ snapshot_invariant_state() {
         /etc/facelock/encryption.key \
         /etc/facelock/encryption.key.sealed \
         /var/lib/facelock/models/upgrade-lane.payload \
-        /var/lib/facelock/enrolled/testuser \
         /var/lib/facelock/setup.complete \
         /var/log/facelock/audit.jsonl \
         /var/log/facelock/snapshots/upgrade-lane.jpg \
@@ -599,6 +602,74 @@ PY
     assert_eq "$KNOWN_EMBEDDING_SHA256" "$digest" \
         "known embedding plaintext recovered after the upgrade"
     rm -rf "$probe"
+}
+
+# The enrollment marker is the one piece of state an upgrade is *supposed* to
+# rewrite. `facelock is-enrolled` reads it, v0.1.4 never wrote one, and a marker
+# left describing a database it has diverged from answers "not enrolled" for a
+# user whose face authentication works (#137). So the contract is not byte
+# identity, which would happily preserve a marker that lies. It is that the
+# marker still exists, is still the user's own private file, and now agrees with
+# the database.
+assert_enrollment_marker_reconciled() {
+    local marker=/var/lib/facelock/enrolled/testuser expected
+    expected="$(sqlite_query "SELECT COUNT(*) FROM face_models WHERE user = 'testuser'")"
+    python3 - "$marker" "$(id -u testuser)" "$(id -g testuser)" "$expected" <<'MARKER_PY'
+import datetime
+import json
+import os
+import stat
+import sys
+
+path, expected_uid, expected_gid, expected_models = (
+    sys.argv[1],
+    int(sys.argv[2]),
+    int(sys.argv[3]),
+    int(sys.argv[4]),
+)
+
+descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+try:
+    info = os.fstat(descriptor)
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise SystemExit(f"enrollment marker is not a single-link regular file: {path}")
+    if stat.S_IMODE(info.st_mode) != 0o600:
+        raise SystemExit(
+            f"enrollment marker mode is {stat.S_IMODE(info.st_mode):o}, expected 600"
+        )
+    if (info.st_uid, info.st_gid) != (expected_uid, expected_gid):
+        raise SystemExit(
+            f"enrollment marker owner is {info.st_uid}:{info.st_gid}, "
+            f"expected {expected_uid}:{expected_gid}"
+        )
+    with os.fdopen(descriptor, encoding="utf-8") as handle:
+        descriptor = -1
+        marker = json.load(handle)
+finally:
+    if descriptor >= 0:
+        os.close(descriptor)
+
+if set(marker) != {"models", "updated"}:
+    raise SystemExit(f"enrollment marker has unexpected fields: {sorted(marker)!r}")
+if type(marker["models"]) is not int or marker["models"] != expected_models:
+    raise SystemExit(
+        f"enrollment marker says {marker['models']!r} models, "
+        f"the database holds {expected_models}"
+    )
+updated = marker["updated"]
+try:
+    parsed = datetime.datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
+except (TypeError, ValueError) as error:
+    raise SystemExit(f"enrollment marker timestamp is invalid: {updated!r}") from error
+if parsed.tzinfo is None:
+    raise SystemExit(f"enrollment marker timestamp has no timezone: {updated!r}")
+# The fixture is stamped 2020; anything at or before that means nothing
+# reconciled it and the assertion above passed only by luck.
+if parsed <= datetime.datetime(2020, 1, 2, tzinfo=datetime.timezone.utc):
+    raise SystemExit(
+        f"enrollment marker was never reconciled: still stamped {updated!r}"
+    )
+MARKER_PY
 }
 
 assert_key_artifacts_preserved() {
@@ -797,6 +868,7 @@ run_shape() {
 
     assert_schema_v6_with_null_device_id
     assert_known_embedding_decrypts "$shape"
+    assert_enrollment_marker_reconciled
     assert_key_artifacts_preserved "$STATE_ROOT/$shape.before"
     assert_adr010_modes
     assert_pam_path_intact "$STATE_ROOT/$shape.before"

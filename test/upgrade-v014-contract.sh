@@ -90,6 +90,7 @@ run_shape_body="$(sed -n '/^run_shape() {/,/^}/p' "$lane")"
 for proof in \
     assert_schema_v6_with_null_device_id \
     assert_known_embedding_decrypts \
+    assert_enrollment_marker_reconciled \
     assert_key_artifacts_preserved \
     assert_adr010_modes \
     assert_pam_path_intact \
