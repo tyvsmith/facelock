@@ -107,6 +107,40 @@ case "$family" in
             echo "usage: build-upgrade-v014-image.sh rpm <image>" >&2
             exit 2
         }
+        # The Fedora lane packages host-built binaries rather than compiling in
+        # the container, so binaries that are not this checkout make the lane
+        # test something else. That is not hypothetical: a green Debian half and
+        # a red Fedora half once turned out to be one lane running the rebased
+        # daemon and the other running binaries from eight days earlier.
+        #
+        # Only the opt-out path needs policing. When the recipe builds them
+        # itself, cargo's dependency tracking is authoritative and an mtime
+        # comparison here only invents failures -- libpam_facelock.so does not
+        # depend on the daemon's sources, so cargo rightly leaves it alone when
+        # only those change.
+        if [ "${FACELOCK_RELEASE_BINARIES_PREBUILT:-0}" = 1 ]; then
+            newest_source="$(git -C "$repo_root" ls-files -z -- \
+                '*.rs' 'Cargo.toml' 'Cargo.lock' |
+                xargs -0 stat -c %Y | sort -n | tail -1)"
+            for binary in facelock facelock-polkit-agent libpam_facelock.so; do
+                built="$(stat -c %Y "$repo_root/target/release/$binary" 2>/dev/null || echo 0)"
+                [ "$built" -ge "$newest_source" ] || {
+                    cat >&2 <<EOF
+ERROR: target/release/$binary is older than the workspace source.
+
+FACELOCK_RELEASE_BINARIES_PREBUILT=1 says these binaries are ready to package,
+and the Fedora lane packages them as-is, so the lane would test code that is not
+this checkout. Rebuild them:
+
+  just build-release
+
+or unset FACELOCK_RELEASE_BINARIES_PREBUILT and let the recipe do it.
+EOF
+                    exit 1
+                }
+            done
+        fi
+
         release="$(bash "$repo_root/test/upgrade-v014-predecessor.sh" rpm-fedora release)"
         base_fedora="$(bash "$repo_root/test/fedora-lane-image.sh" "$release")"
         ort_version="$(

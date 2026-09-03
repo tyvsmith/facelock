@@ -136,6 +136,12 @@ if grep -n 'grep -Fq "absent|' "$lane" >/dev/null; then
     fail "the lane matches absent markers unanchored; use grep -Fxq"
 fi
 
+# The Fedora lane packages host-built binaries, so it can test code that is not
+# this checkout. The freshness guard in the image builder is the only thing that
+# notices, and a green run without it means nothing.
+grep -q 'is older than the workspace source' "$repo_root/test/build-upgrade-v014-image.sh" ||
+    fail "the Fedora lane no longer refuses release binaries older than the source"
+
 # The concurrent-key case has to separate O_EXCL from O_TRUNC. One key file on
 # disk is true under both, so counting the racers that logged a creation is the
 # assertion that carries the claim, and it must not quietly disappear.
