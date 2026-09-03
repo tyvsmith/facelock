@@ -157,6 +157,28 @@ case "$FAMILY" in
         ;;
 esac
 
+# The bus the daemon needs, and the daemon that would otherwise be holding it.
+#
+# dbus arrives as a dependency of the facelock transaction, so its socket unit
+# was never started at boot and /run/dbus/system_bus_socket does not exist until
+# something starts it. deb-package-lifecycle.sh's assert_system_bus_available
+# does the same thing for the same reason.
+ensure_system_bus() {
+    [ -d /run/systemd/system ] || return 0
+    systemctl start dbus.socket >>"$LOG" 2>&1 || true
+    [ -S /run/dbus/system_bus_socket ] ||
+        fail "system bus socket is missing after a package transaction"
+}
+
+# pamtester reaches pam_facelock.so, which can D-Bus-activate the packaged
+# daemon. A foreground `facelock daemon` started afterwards cannot claim
+# org.facelock.Daemon and exits non-zero -- which reads exactly like the daemon
+# refusing to serve, and is not.
+stop_packaged_daemon() {
+    [ -d /run/systemd/system ] || return 0
+    systemctl stop facelock-daemon.service >>"$LOG" 2>&1 || true
+}
+
 # --- pinned-artifact preconditions ----------------------------------------
 
 assert_pinned_artifacts() {
@@ -719,6 +741,7 @@ assert_no_replacement_key_over_encrypted_state() {
         *) return 0 ;;
     esac
     local saved="$STATE_ROOT/key.saved" output=/tmp/facelock-replacement-key.log status=0
+    stop_packaged_daemon
     cp /etc/facelock/encryption.key "$saved"
     rm -f /etc/facelock/encryption.key
 
@@ -834,6 +857,7 @@ assert_real_password_behavior() {
 # written to". So the daemon runs for real before the downgrade.
 open_database_with_candidate_daemon() {
     local output=/tmp/facelock-candidate-daemon.log pid
+    stop_packaged_daemon
     RUST_LOG=warn facelock daemon >"$output" 2>&1 &
     pid=$!
     for _ in $(seq 1 120); do
@@ -856,6 +880,7 @@ assert_downgrade_usable() {
         fail "the package manager refused to downgrade to the pinned predecessor"
     assert_eq "$(cat "$PREDECESSOR_VERSION_FILE")" "$(pkg_installed_version)" \
         "installed version after downgrade"
+    ensure_system_bus
 
     # V6 has no down-migration. The predecessor must still open the database
     # the candidate migrated and count its rows. `tpm status` is the readback
@@ -896,6 +921,7 @@ run_shape() {
     if pkg_is_installed; then pkg_remove; fi
     wipe_state
     pkg_install "$PREDECESSOR" || fail "the pinned predecessor did not install"
+    ensure_system_bus
     assert_eq "$(cat "$PREDECESSOR_VERSION_FILE")" "$(pkg_installed_version)" \
         "installed predecessor version"
 
@@ -907,6 +933,7 @@ run_shape() {
     pkg_upgrade "$CANDIDATE" || fail "the native upgrade to the candidate failed"
     assert_eq "$(cat "$CANDIDATE_VERSION_FILE")" "$(pkg_installed_version)" \
         "installed candidate version after upgrade"
+    ensure_system_bus
     assert_swtpm_state_untouched
 
     open_database_with_candidate_daemon
@@ -1019,6 +1046,7 @@ EOF
 # and `$target/daemon.log` says which.
 run_fault_daemon() {
     local target="$1" seconds="${2:-30}" status=0
+    stop_packaged_daemon
     RUST_LOG="${RUST_LOG:-warn}" timeout --foreground "$seconds" \
         facelock --config "$target/config.toml" daemon \
         >"$target/daemon.log" 2>&1 || status=$?
@@ -1246,6 +1274,7 @@ fault_concurrent_key_creation() {
     # A plaintext-only legacy database with no key artifact: the one state where
     # creating the default key is allowed at all.
     [ ! -e "$target/encryption.key" ] || fail "the concurrent fixture already has a key"
+    stop_packaged_daemon
 
     for _ in $(seq 1 8); do
         (
@@ -1302,6 +1331,8 @@ case_name="fault-setup"
 if pkg_is_installed; then pkg_remove; fi
 wipe_state
 pkg_install "$CANDIDATE" || fail "the candidate did not install for the fault matrix"
+ensure_system_bus
+stop_packaged_daemon
 install -d -m0755 /var/lib/facelock/models
 if [ -d /facelock-test-models ]; then
     for model in /facelock-test-models/*.onnx; do
