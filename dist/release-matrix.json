@@ -66,8 +66,15 @@
     "staging": {
       "owner": "tyvsmith",
       "project": "facelock-testing",
+      "api_url": "https://copr.fedorainfracloud.org/api_3/project?ownername=tyvsmith&projectname=facelock-testing",
+      "required_supported_chroots": [
+        "fedora-43-x86_64",
+        "fedora-44-x86_64",
+        "fedora-45-x86_64"
+      ],
       "provisioning_issue": 236,
-      "managed_by_this_change": false
+      "managed_by_this_change": false,
+      "provisioned": false
     }
   },
   "arch": {

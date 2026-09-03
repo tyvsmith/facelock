@@ -1517,6 +1517,7 @@ release-preflight tag='':
         test/release-version-contract.sh \
         test/check-release-matrix.py \
         test/check-live-release-channels.py \
+        scripts/release-attestation.py \
         .github/workflows/release.yml; do
         if [ -f "$f" ]; then
             echo "OK: $f"
@@ -1536,6 +1537,7 @@ release-preflight tag='':
     bash test/release-version-contract.sh || failed=1
     RELEASE_MATRIX_VERSION="$VERSION" python3 test/check-release-matrix.py || failed=1
     python3 test/check-live-release-channels.py || failed=1
+    python3 test/check-live-release-channels.py --channel staging || failed=1
 
     echo ""
     echo "== GitHub release secret checks =="

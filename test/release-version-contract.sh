@@ -339,11 +339,32 @@ case "$apt_guard_output" in
     *) fail "APT publisher did not consume the mutated central resolute suffix: $apt_guard_output" ;;
 esac
 
-sed -i 's/"trigger": "ignore"/"trigger": "release"/' "$matrix_root/.packit.yaml"
+# Both Packit jobs sit on "trigger": "ignore", so this restores the release
+# trigger on the production job by project rather than by text.
+python3 - "$matrix_root/.packit.yaml" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+config = json.loads(path.read_text())
+restored = 0
+for job in config["jobs"]:
+    if job.get("project") == "facelock":
+        job["trigger"] = "release"
+        restored += 1
+if restored != 1:
+    raise SystemExit(f"expected exactly one production Packit job to restore, found {restored}")
+path.write_text(json.dumps(config, indent=2) + "\n")
+PY
 env -u RELEASE_MATRIX_VERSION python3 "$matrix_root/test/check-release-matrix.py"
-if RELEASE_MATRIX_VERSION=0.2.0-alpha.1 python3 "$matrix_root/test/check-release-matrix.py" >/dev/null 2>&1; then
+if prerelease_packit_output=$(RELEASE_MATRIX_VERSION=0.2.0-alpha.1 python3 "$matrix_root/test/check-release-matrix.py" 2>&1); then
     fail "release matrix checker accepted a production COPR release job for a prerelease identity"
 fi
+case "$prerelease_packit_output" in
+    *"prerelease-tagged Packit config must not select a release-triggered production COPR job"*) ;;
+    *) fail "release matrix checker rejected the prerelease production job for another reason: $prerelease_packit_output" ;;
+esac
 RELEASE_MATRIX_VERSION=0.2.0 python3 "$matrix_root/test/check-release-matrix.py"
 
 matrix_mutation_index=0
@@ -655,14 +676,61 @@ assert_extra_packit_job_rejected() {
     echo "release matrix Packit case: $context rejected"
 }
 
+# The staging job is declared in .packit.yaml, so a staging case replaces it
+# rather than appending a second one; appending is its own rejection case.
+replace_packit_staging_job() {
+    python3 - "$1" "$2" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+config = json.loads(path.read_text())
+jobs = config["jobs"]
+indexes = [index for index, job in enumerate(jobs) if job.get("project") == "facelock-testing"]
+if len(indexes) != 1:
+    raise SystemExit(f"expected exactly one staging Packit job to replace, found {len(indexes)}")
+jobs[indexes[0]] = json.loads(sys.argv[2])
+path.write_text(json.dumps(config, indent=2) + "\n")
+PY
+}
+
+packit_staging_job_index=0
+assert_staging_packit_job_rejected() {
+    local context="$1"
+    local job_json="$2"
+    local diagnostic="$3"
+    local mutation_root="$tmp_root/packit-staging-job-$packit_staging_job_index"
+    local checker_output
+    packit_staging_job_index=$((packit_staging_job_index + 1))
+    cp -R "$matrix_root" "$mutation_root"
+    replace_packit_staging_job "$mutation_root/.packit.yaml" "$job_json"
+    if checker_output=$(RELEASE_MATRIX_VERSION=0.2.0 python3 "$mutation_root/test/check-release-matrix.py" 2>&1); then
+        printf '%s\n' "$checker_output"
+        fail "release matrix checker accepted a bad staging Packit job: $context"
+    fi
+    case "$checker_output" in
+        *"$diagnostic"*) ;;
+        *) fail "release matrix checker rejected $context for another reason: $checker_output" ;;
+    esac
+    echo "release matrix Packit case: $context rejected"
+}
+
 valid_packit_staging_root="$tmp_root/packit-valid-staging"
 cp -R "$matrix_root" "$valid_packit_staging_root"
-append_packit_job \
+replace_packit_staging_job \
     "$valid_packit_staging_root/.packit.yaml" \
-    '{"job":"copr_build","trigger":"pull_request","owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
+    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-45-x86_64","fedora-43-x86_64","fedora-44-x86_64"]}'
 RELEASE_MATRIX_VERSION=0.2.0 python3 "$valid_packit_staging_root/test/check-release-matrix.py" >/dev/null
 echo "release matrix Packit case: exact facelock-testing staging targets accepted"
 
+assert_extra_packit_job_rejected \
+    "second facelock-testing staging job" \
+    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
+
+assert_extra_packit_job_rejected \
+    "third copr_build job with allowlisted targets" \
+    '{"job":"copr_build","trigger":"ignore","owner":"tyvsmith","project":"facelock-scratch","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
 assert_extra_packit_job_rejected \
     "canonical Rawhide target outside production and staging" \
     '{"job":"copr_build","trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-rawhide"]}'
@@ -675,15 +743,17 @@ assert_extra_packit_job_rejected \
 assert_extra_packit_job_rejected \
     "architecture-suffixed mutable alias" \
     '{"job":"copr_build","trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-development-aarch64"]}'
-assert_extra_packit_job_rejected \
+assert_staging_packit_job_rejected \
     "facelock-testing Rawhide target" \
-    '{"job":"copr_build","trigger":"pull_request","owner":"tyvsmith","project":"facelock-testing","targets":["fedora-rawhide-x86_64"]}'
+    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-rawhide-x86_64"]}' \
+    "targets Rawhide"
 assert_extra_packit_job_rejected \
     "Rawhide target outside production and staging" \
     '{"job":"copr_build","trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-rawhide-x86_64"]}'
-assert_extra_packit_job_rejected \
+assert_staging_packit_job_rejected \
     "facelock-testing incomplete staging targets" \
-    '{"job":"copr_build","trigger":"pull_request","owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64"]}'
+    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64"]}' \
+    "Packit staging COPR targets drifted"
 assert_extra_packit_job_rejected \
     "duplicate targets outside production and staging" \
     '{"job":"copr_build","trigger":"pull_request","owner":"tyvsmith","project":"facelock-scratch","targets":["fedora-43-x86_64","fedora-43-x86_64"]}'
@@ -906,6 +976,148 @@ assert_matrix_mutation_rejected \
     ".packit.yaml" \
     's/"fedora-45-x86_64"/"fedora-rawhide-x86_64"/'
 
+# Staging COPR publication (#236). The project is not provisioned, so every
+# guard here is config shape: the Packit job that will build into it, the
+# checked-in authority it must agree with, and the fact that neither may reach
+# Rawhide or the production project.
+assert_matrix_mutation_rejected \
+    "production COPR granted a provisioning switch" \
+    "dist/release-matrix.json" \
+    's/"prerelease_publication": false/"provisioned": true, "prerelease_publication": false/' \
+    "production COPR must not declare a provisioning switch"
+assert_matrix_mutation_rejected \
+    "staging COPR api_url pointed at the production project" \
+    "dist/release-matrix.json" \
+    's@projectname=facelock-testing@projectname=facelock@' \
+    "staging COPR public API drifted"
+assert_matrix_mutation_rejected \
+    "staging COPR required supported chroot missing" \
+    "dist/release-matrix.json" \
+    '/"project": "facelock-testing"/,/"provisioned"/s/^        "fedora-43-x86_64",$//' \
+    "staging COPR required supported chroots drifted"
+assert_matrix_mutation_rejected \
+    "staging COPR granted an optional experimental chroot" \
+    "dist/release-matrix.json" \
+    's/"provisioned": false/"optional_experimental_chroots": ["fedora-rawhide-x86_64"], "provisioned": false/' \
+    "staging COPR must not declare optional experimental chroots"
+assert_staging_packit_job_rejected \
+    "Packit staging job deleted" \
+    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-retired","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    "Packit must define exactly one staging COPR job"
+assert_staging_packit_job_rejected \
+    "Packit staging job made release-triggered" \
+    '{"job":"copr_build","trigger":"release","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    "Packit staging COPR trigger"
+assert_staging_packit_job_rejected \
+    "Packit staging job made automatic" \
+    '{"job":"copr_build","trigger":"ignore","manual_trigger":false,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    "Packit staging COPR job must stay manually triggered"
+assert_staging_packit_job_rejected \
+    "Packit staging job owner drifted" \
+    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"packit","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    "Packit staging COPR owner"
+
+# The staging trigger and copr_channels.staging.provisioned move together. An
+# unprovisioned project must not be the target of every pull request's Packit
+# run, and a provisioned one that stays hand-dispatched is a gate nobody runs.
+staging_pairing_index=0
+assert_staging_provisioning_pair_rejected() {
+    local context="$1"
+    local matrix_expression="$2"
+    local staging_job_json="$3"
+    local diagnostic="$4"
+    local mutation_root="$tmp_root/staging-pairing-$staging_pairing_index"
+    local checker_output
+    staging_pairing_index=$((staging_pairing_index + 1))
+    cp -R "$matrix_root" "$mutation_root"
+    if [ -n "$matrix_expression" ]; then
+        sed -i "$matrix_expression" "$mutation_root/dist/release-matrix.json"
+    fi
+    if [ -n "$staging_job_json" ]; then
+        replace_packit_staging_job "$mutation_root/.packit.yaml" "$staging_job_json"
+    fi
+    if checker_output=$(RELEASE_MATRIX_VERSION=0.2.0 python3 "$mutation_root/test/check-release-matrix.py" 2>&1); then
+        fail "release matrix checker accepted drift: $context"
+    fi
+    case "$checker_output" in
+        *"$diagnostic"*) ;;
+        *) fail "release matrix checker rejected $context for another reason: $checker_output" ;;
+    esac
+    echo "release matrix staging pairing case: $context rejected"
+}
+
+assert_staging_provisioning_pair_rejected \
+    "unprovisioned staging job triggered by pull requests" \
+    "" \
+    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    "must be 'ignore' while copr_channels.staging.provisioned is False"
+assert_staging_provisioning_pair_rejected \
+    "provisioned staging left on the manual trigger" \
+    's/"provisioned": false/"provisioned": true/' \
+    "" \
+    "must be 'pull_request' while copr_channels.staging.provisioned is True"
+assert_staging_provisioning_pair_rejected \
+    "staging claimed as provisioned with its pull-request trigger restored" \
+    's/"provisioned": false/"provisioned": true/' \
+    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    "staging COPR provisioning must stay unclaimed"
+
+# Provisioning is three edits, and docs/releasing.md says so: flip the switch,
+# move the staging job to the pull-request trigger, and retire the pin that
+# keeps the switch unclaimed. The pairing cases above prove no two of them pass
+# alone; this proves the three together do, so the procedure is reachable.
+provisioned_root="$tmp_root/matrix-staging-provisioned"
+cp -R "$matrix_root" "$provisioned_root"
+sed -i 's/"provisioned": false/"provisioned": true/' "$provisioned_root/dist/release-matrix.json"
+replace_packit_staging_job \
+    "$provisioned_root/.packit.yaml" \
+    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
+python3 - "$provisioned_root/test/check-release-matrix.py" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+content = path.read_text()
+pin = """require(
+    staging_provisioned is False,
+    "staging COPR provisioning must stay unclaimed until issue #236 creates the project",
+)
+"""
+if pin not in content:
+    raise SystemExit("the unclaimed-provisioning pin is not the block the provisioning procedure retires")
+path.write_text(content.replace(pin, "", 1))
+PY
+if provisioned_output=$(RELEASE_MATRIX_VERSION=0.2.0 python3 "$provisioned_root/test/check-release-matrix.py" 2>&1); then
+    echo "release matrix staging pairing case: the three provisioning edits together accepted"
+else
+    fail "release matrix checker rejected the documented provisioning procedure: $provisioned_output"
+fi
+assert_matrix_mutation_rejected \
+    "staging channel comparison dropped from CI" \
+    ".github/workflows/ci.yml" \
+    's/--channel staging/--channel production/' \
+    "CI does not compare the staging release channel"
+assert_matrix_mutation_rejected \
+    "staging channel comparison dropped from release preflight" \
+    "justfile" \
+    's@check-live-release-channels.py --channel staging@check-live-release-channels.py --channel none@' \
+    "release preflight does not compare the staging release channel"
+assert_matrix_mutation_rejected \
+    "pre-tag attestation renderer dropped from release preflight" \
+    "justfile" \
+    's@scripts/release-attestation.py@scripts/release-attestation-disabled.py@' \
+    "release preflight does not require the pre-tag release attestation"
+assert_matrix_mutation_rejected \
+    "release guide stops naming the staging COPR project" \
+    "docs/releasing.md" \
+    's@tyvsmith/facelock-testing@tyvsmith/facelock-staging@g' \
+    "docs/releasing.md omits the staging publication claim"
+assert_matrix_mutation_rejected \
+    "contract stops naming the staging provisioning switch" \
+    "docs/contracts.md" \
+    's/copr_channels.staging.provisioned/copr_channels.staging.enabled/' \
+    "docs/contracts.md omits the staging publication claim"
+
 live_copr_supported_only="$tmp_root/live-copr-supported-only.json"
 live_copr_supported_with_rawhide="$tmp_root/live-copr-supported-with-rawhide.json"
 live_copr_missing_supported="$tmp_root/live-copr-missing-supported.json"
@@ -991,6 +1203,387 @@ if python3 "$repo_root/test/check-live-release-channels.py" --response-file "$li
 fi
 echo "release channel case: wrong-project rejected"
 echo "release channel case: Rawhide-in-Packit-targets rejected"
+
+# Staging (#236). The project does not exist yet, so the unprovisioned run must
+# report that and touch no network; check-release-matrix.py pins
+# copr_channels.staging.provisioned to false, which is what keeps this offline.
+staging_copr_supported_only="$tmp_root/staging-copr-supported-only.json"
+staging_copr_missing_supported="$tmp_root/staging-copr-missing-supported.json"
+staging_copr_rawhide_extra="$tmp_root/staging-copr-rawhide-extra.json"
+staging_copr_wrong_project="$tmp_root/staging-copr-wrong-project.json"
+cat > "$staging_copr_supported_only" <<'JSON'
+{
+  "ownername": "tyvsmith",
+  "name": "facelock-testing",
+  "full_name": "tyvsmith/facelock-testing",
+  "chroot_repos": {
+    "fedora-43-x86_64": "https://example.invalid/43/",
+    "fedora-44-x86_64": "https://example.invalid/44/",
+    "fedora-45-x86_64": "https://example.invalid/45/"
+  }
+}
+JSON
+cat > "$staging_copr_missing_supported" <<'JSON'
+{
+  "ownername": "tyvsmith",
+  "name": "facelock-testing",
+  "full_name": "tyvsmith/facelock-testing",
+  "chroot_repos": {
+    "fedora-43-x86_64": "https://example.invalid/43/",
+    "fedora-44-x86_64": "https://example.invalid/44/"
+  }
+}
+JSON
+cat > "$staging_copr_rawhide_extra" <<'JSON'
+{
+  "ownername": "tyvsmith",
+  "name": "facelock-testing",
+  "full_name": "tyvsmith/facelock-testing",
+  "chroot_repos": {
+    "fedora-43-x86_64": "https://example.invalid/43/",
+    "fedora-44-x86_64": "https://example.invalid/44/",
+    "fedora-45-x86_64": "https://example.invalid/45/",
+    "fedora-rawhide-x86_64": "https://example.invalid/rawhide/"
+  }
+}
+JSON
+cat > "$staging_copr_wrong_project" <<'JSON'
+{
+  "ownername": "tyvsmith",
+  "name": "facelock",
+  "full_name": "tyvsmith/facelock",
+  "chroot_repos": {
+    "fedora-43-x86_64": "https://example.invalid/43/",
+    "fedora-44-x86_64": "https://example.invalid/44/",
+    "fedora-45-x86_64": "https://example.invalid/45/"
+  }
+}
+JSON
+python3 "$repo_root/test/check-live-release-channels.py" --channel production \
+    --response-file "$live_copr_supported_only" >/dev/null
+echo "release channel case: explicit production channel accepted"
+staging_unprovisioned_output=$(python3 "$repo_root/test/check-live-release-channels.py" --channel staging)
+case "$staging_unprovisioned_output" in
+    *"staging COPR tyvsmith/facelock-testing is not provisioned"*) ;;
+    *) fail "live staging checker did not report the unprovisioned project: $staging_unprovisioned_output" ;;
+esac
+echo "release channel case: staging not provisioned reported"
+python3 "$repo_root/test/check-live-release-channels.py" --channel staging \
+    --response-file "$staging_copr_supported_only" >/dev/null
+echo "release channel case: staging supported-only accepted"
+if python3 "$repo_root/test/check-live-release-channels.py" --channel staging \
+    --response-file "$staging_copr_missing_supported" >/dev/null 2>&1; then
+    fail "live staging checker accepted a missing supported staging chroot"
+fi
+echo "release channel case: staging missing-supported rejected"
+if python3 "$repo_root/test/check-live-release-channels.py" --channel staging \
+    --response-file "$staging_copr_rawhide_extra" >/dev/null 2>&1; then
+    fail "live staging checker accepted Rawhide as a staging chroot"
+fi
+echo "release channel case: staging Rawhide-extra rejected"
+if python3 "$repo_root/test/check-live-release-channels.py" --channel staging \
+    --response-file "$staging_copr_wrong_project" >/dev/null 2>&1; then
+    fail "live staging checker accepted the production project identity"
+fi
+echo "release channel case: staging wrong-project rejected"
+if python3 "$repo_root/test/check-live-release-channels.py" --channel nonsense \
+    --response-file "$staging_copr_supported_only" >/dev/null 2>&1; then
+    fail "live channel checker accepted an undeclared channel"
+fi
+echo "release channel case: undeclared channel rejected"
+
+# The checker trusts dist/release-matrix.json, so it fails on an authority that
+# lost the distinction between required and optional chroots rather than
+# quietly defaulting one side to empty.
+live_channel_authority_case() {
+    local context="$1"
+    local expression="$2"
+    local channel="$3"
+    local diagnostic="$4"
+    local case_root="$tmp_root/live-channel-authority-$channel"
+    local output
+    rm -rf "$case_root"
+    mkdir -p "$case_root/dist" "$case_root/test"
+    cp "$repo_root/test/check-live-release-channels.py" "$case_root/test/"
+    sed "$expression" "$repo_root/dist/release-matrix.json" > "$case_root/dist/release-matrix.json"
+    if cmp -s "$repo_root/dist/release-matrix.json" "$case_root/dist/release-matrix.json"; then
+        fail "live channel authority fixture did not change the matrix: $context"
+    fi
+    if output=$(python3 "$case_root/test/check-live-release-channels.py" --channel "$channel" \
+        --response-file "$live_copr_supported_only" 2>&1); then
+        fail "live channel checker accepted $context"
+    fi
+    case "$output" in
+        *"$diagnostic"*) ;;
+        *) fail "live channel checker rejected $context for another reason: $output" ;;
+    esac
+    echo "release channel case: $context rejected"
+}
+
+# Production carries no provisioning switch, so it must query on every run. The
+# authority here points at a closed local port: the checker has to report a
+# failed read rather than skipping, and nothing reaches COPR to prove it.
+live_offline_root="$tmp_root/live-channel-offline"
+mkdir -p "$live_offline_root/dist" "$live_offline_root/test"
+cp "$repo_root/test/check-live-release-channels.py" "$live_offline_root/test/"
+sed 's@"api_url": "https://copr.fedorainfracloud.org/api_3/project?ownername=tyvsmith&projectname=facelock"@"api_url": "http://127.0.0.1:1/"@' \
+    "$repo_root/dist/release-matrix.json" > "$live_offline_root/dist/release-matrix.json"
+if cmp -s "$repo_root/dist/release-matrix.json" "$live_offline_root/dist/release-matrix.json"; then
+    fail "live channel offline fixture did not repoint the production API"
+fi
+if live_offline_output=$(python3 "$live_offline_root/test/check-live-release-channels.py" 2>&1); then
+    fail "live channel checker skipped the production query instead of performing it: $live_offline_output"
+fi
+case "$live_offline_output" in
+    *"cannot read the public production COPR API"*) ;;
+    *) fail "live channel checker did not report a failed production query: $live_offline_output" ;;
+esac
+echo "release channel case: production queries its authority on every run"
+
+live_channel_authority_case \
+    "production authority without optional experimental chroots" \
+    's/"optional_experimental_chroots"/"retired_experimental_chroots"/' \
+    production \
+    "omits its optional experimental chroots"
+live_channel_authority_case \
+    "staging authority granted optional experimental chroots" \
+    's/"provisioned": false/"optional_experimental_chroots": ["fedora-rawhide-x86_64"], "provisioned": false/' \
+    staging \
+    "must declare no optional experimental chroots"
+
+# Pre-tag staging attestation (#236, Track M2 task 5). The document binds the
+# candidate commit, the EVRs each channel serves, artifact and repository
+# digests, signing identities, and how fresh the repository metadata was. Every
+# case here is a fixture: nothing contacts COPR or an APT endpoint.
+attestation_root="$tmp_root/attestation"
+attestation_script="$repo_root/scripts/release-attestation.py"
+attestation_commit=3f0a1c2d4e5b6f708192a3b4c5d6e7f809a1b2c3
+mkdir -p "$attestation_root"
+cat > "$attestation_root/inputs.json" <<'JSON'
+{
+  "candidate_commit": "3f0a1c2d4e5b6f708192a3b4c5d6e7f809a1b2c3",
+  "release_version": "0.2.0-alpha.1",
+  "channels": {
+    "staging-copr": {
+      "identity": "tyvsmith/facelock-testing",
+      "served_evrs": {
+        "fedora-45-x86_64": "0:0.2.0-0.1.alpha.1.fc45",
+        "fedora-43-x86_64": "0:0.2.0-0.1.alpha.1.fc43",
+        "fedora-44-x86_64": "0:0.2.0-0.1.alpha.1.fc44"
+      },
+      "repository_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "metadata_refreshed_at": "2026-09-01T11:30:00Z",
+      "signing_key_fingerprint": "AAAABBBBCCCCDDDDEEEEFFFF00001111222233FF"
+    },
+    "staging-apt": {
+      "identity": "https://staging.invalid/facelock/apt/",
+      "served_evrs": {
+        "trixie": "0.2.0~alpha.1-1~deb13u1",
+        "resolute": "0.2.0~alpha.1-1~ubuntu26.04.1"
+      },
+      "repository_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "metadata_refreshed_at": "2026-09-01T11:45:00Z",
+      "signing_key_fingerprint": "99998888777766665555444433332222111100AA"
+    }
+  },
+  "artifacts": {
+    "facelock-0.2.0-0.1.alpha.1.fc43.x86_64.rpm": {
+      "channel": "staging-copr",
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "facelock_0.2.0~alpha.1-1~deb13u1_amd64.deb": {
+      "channel": "staging-apt",
+      "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    }
+  }
+}
+JSON
+cat > "$attestation_root/expect.json" <<'JSON'
+{
+  "candidate_commit": "3f0a1c2d4e5b6f708192a3b4c5d6e7f809a1b2c3",
+  "release_version": "0.2.0-alpha.1",
+  "metadata_max_age_seconds": 3600,
+  "channels": {
+    "staging-copr": {
+      "identity": "tyvsmith/facelock-testing",
+      "served_evrs": {
+        "fedora-43-x86_64": "0:0.2.0-0.1.alpha.1.fc43",
+        "fedora-44-x86_64": "0:0.2.0-0.1.alpha.1.fc44",
+        "fedora-45-x86_64": "0:0.2.0-0.1.alpha.1.fc45"
+      },
+      "repository_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "signing_key_fingerprint": "AAAABBBBCCCCDDDDEEEEFFFF00001111222233FF"
+    },
+    "staging-apt": {
+      "identity": "https://staging.invalid/facelock/apt/",
+      "served_evrs": {
+        "trixie": "0.2.0~alpha.1-1~deb13u1",
+        "resolute": "0.2.0~alpha.1-1~ubuntu26.04.1"
+      },
+      "repository_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "signing_key_fingerprint": "99998888777766665555444433332222111100AA"
+    }
+  },
+  "artifacts": {
+    "facelock-0.2.0-0.1.alpha.1.fc43.x86_64.rpm": {
+      "channel": "staging-copr",
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "facelock_0.2.0~alpha.1-1~deb13u1_amd64.deb": {
+      "channel": "staging-apt",
+      "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    }
+  }
+}
+JSON
+python3 "$attestation_script" render \
+    --input "$attestation_root/inputs.json" \
+    --output "$attestation_root/attestation.json" >/dev/null
+python3 "$attestation_script" render \
+    --input "$attestation_root/inputs.json" \
+    --output "$attestation_root/attestation-again.json" >/dev/null
+if ! cmp -s "$attestation_root/attestation.json" "$attestation_root/attestation-again.json"; then
+    fail "release attestation render is not deterministic"
+fi
+echo "release attestation case: render is deterministic"
+python3 "$attestation_script" validate \
+    --attestation "$attestation_root/attestation.json" \
+    --expect "$attestation_root/expect.json" \
+    --now 2026-09-01T12:00:00Z >/dev/null
+echo "release attestation case: valid document accepted"
+
+attestation_case_index=0
+assert_attestation_rejected() {
+    local context="$1"
+    local expression="$2"
+    local diagnostic="$3"
+    local case_root="$attestation_root/case-$attestation_case_index"
+    local output
+    attestation_case_index=$((attestation_case_index + 1))
+    mkdir -p "$case_root"
+    sed "$expression" "$attestation_root/attestation.json" > "$case_root/attestation.json"
+    if cmp -s "$attestation_root/attestation.json" "$case_root/attestation.json"; then
+        fail "attestation fixture did not change the document: $context"
+    fi
+    if output=$(python3 "$attestation_script" validate \
+        --attestation "$case_root/attestation.json" \
+        --expect "$attestation_root/expect.json" \
+        --now 2026-09-01T12:00:00Z 2>&1); then
+        fail "release attestation validator accepted $context"
+    fi
+    case "$output" in
+        *"$diagnostic"*) ;;
+        *) fail "release attestation validator rejected $context for another reason: $output" ;;
+    esac
+    echo "release attestation case: $context rejected"
+}
+
+assert_attestation_rejected \
+    "wrong candidate commit" \
+    "s/$attestation_commit/9d8c7b6a5f4e3d2c1b0a99887766554433221100/" \
+    "candidate commit drifted"
+assert_attestation_rejected \
+    "served EVR mismatch" \
+    's/0:0.2.0-0.1.alpha.1.fc43/0:0.2.0-0.2.alpha.1.fc43/' \
+    "served EVR drifted"
+assert_attestation_rejected \
+    "artifact digest mismatch" \
+    's/sha256:3333333333333333333333333333333333333333333333333333333333333333/sha256:5555555555555555555555555555555555555555555555555555555555555555/' \
+    "x86_64.rpm digest drifted"
+assert_attestation_rejected \
+    "repository digest mismatch" \
+    's/sha256:1111111111111111111111111111111111111111111111111111111111111111/sha256:6666666666666666666666666666666666666666666666666666666666666666/' \
+    "repository digest drifted"
+assert_attestation_rejected \
+    "stale repository metadata" \
+    's/2026-09-01T11:30:00Z/2026-09-01T09:00:00Z/' \
+    "metadata is stale"
+assert_attestation_rejected \
+    "metadata refreshed after the attestation was checked" \
+    's/2026-09-01T11:30:00Z/2026-09-01T12:30:00Z/' \
+    "metadata timestamp is in the future"
+assert_attestation_rejected \
+    "signing key fingerprint drifted" \
+    's/AAAABBBBCCCCDDDDEEEEFFFF00001111222233FF/AAAABBBBCCCCDDDDEEEEFFFF000011112222AAAA/' \
+    "signing key fingerprint drifted"
+assert_attestation_rejected \
+    "staging channel repointed at the production COPR project" \
+    's@"tyvsmith/facelock-testing"@"tyvsmith/facelock"@' \
+    "must never attest the production COPR project"
+
+# The staging COPR channel is bound to the checked-in chroot authority, so an
+# attestation that serves a target the matrix does not declare fails even when
+# the expectation file agrees with it.
+attestation_unknown_target="$attestation_root/unknown-target"
+mkdir -p "$attestation_unknown_target"
+sed 's/fedora-45-x86_64/fedora-rawhide-x86_64/g' \
+    "$attestation_root/attestation.json" > "$attestation_unknown_target/attestation.json"
+sed 's/fedora-45-x86_64/fedora-rawhide-x86_64/g' \
+    "$attestation_root/expect.json" > "$attestation_unknown_target/expect.json"
+if attestation_output=$(python3 "$attestation_script" validate \
+    --attestation "$attestation_unknown_target/attestation.json" \
+    --expect "$attestation_unknown_target/expect.json" \
+    --now 2026-09-01T12:00:00Z 2>&1); then
+    fail "release attestation validator accepted an undeclared staging COPR chroot"
+fi
+case "$attestation_output" in
+    *"staging COPR chroot authority"*) ;;
+    *) fail "release attestation validator rejected the undeclared chroot for another reason: $attestation_output" ;;
+esac
+echo "release attestation case: undeclared staging COPR chroot rejected"
+
+# channel_authority() reads copr_channels.staging.required_supported_chroots
+# straight out of dist/release-matrix.json and turns it into a set: a
+# duplicated or non-string entry there must fail closed rather than silently
+# deduplicate into a weaker authority.
+attestation_matrix_case_index=0
+assert_attestation_matrix_rejected() {
+    local context="$1"
+    local expression="$2"
+    local diagnostic="$3"
+    local case_root="$attestation_root/matrix-case-$attestation_matrix_case_index"
+    local output
+    attestation_matrix_case_index=$((attestation_matrix_case_index + 1))
+    mkdir -p "$case_root/scripts" "$case_root/dist"
+    cp "$attestation_script" "$case_root/scripts/"
+    sed "$expression" "$repo_root/dist/release-matrix.json" > "$case_root/dist/release-matrix.json"
+    if cmp -s "$repo_root/dist/release-matrix.json" "$case_root/dist/release-matrix.json"; then
+        fail "attestation matrix fixture did not change the release matrix: $context"
+    fi
+    if output=$(python3 "$case_root/scripts/release-attestation.py" validate \
+        --attestation "$attestation_root/attestation.json" \
+        --expect "$attestation_root/expect.json" \
+        --now 2026-09-01T12:00:00Z 2>&1); then
+        fail "release attestation validator accepted $context"
+    fi
+    case "$output" in
+        *"$diagnostic"*) ;;
+        *) fail "release attestation validator rejected $context for another reason: $output" ;;
+    esac
+    echo "release attestation case: $context rejected"
+}
+
+assert_attestation_matrix_rejected \
+    "staging COPR chroot authority duplicated" \
+    '/"project": "facelock-testing"/,/"provisioned"/{/"fedora-44-x86_64"/p}' \
+    "must not contain duplicate chroots"
+assert_attestation_matrix_rejected \
+    "staging COPR chroot authority holds a non-string entry" \
+    '/"project": "facelock-testing"/,/"provisioned"/s/"fedora-44-x86_64"/44/' \
+    "must be a non-empty list of non-empty strings"
+
+# Render fails closed: an input missing a required binding cannot become a
+# document that validate would then have to reject.
+attestation_bad_input="$attestation_root/bad-input.json"
+sed '/"candidate_commit"/d' "$attestation_root/inputs.json" > "$attestation_bad_input"
+if attestation_output=$(python3 "$attestation_script" render --input "$attestation_bad_input" 2>&1); then
+    fail "release attestation render accepted an input without a candidate commit"
+fi
+case "$attestation_output" in
+    *"candidate_commit"*) ;;
+    *) fail "release attestation render rejected the incomplete input for another reason: $attestation_output" ;;
+esac
+echo "release attestation case: incomplete render input rejected"
 
 prerelease_deb="$tmp_root/facelock-prerelease.deb"
 : > "$prerelease_deb"

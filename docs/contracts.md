@@ -2138,6 +2138,38 @@ Rawhide-only failure is not alpha-blocking, and its smoke result is not alpha
 acceptance or release evidence. Promotion requires a separately reviewed
 amendment and full Fedora gates.
 
+The staging channel is `tyvsmith/facelock-testing`. `.packit.yaml` declares
+exactly one `copr_build` job for it; a release-triggered staging job is
+rejected, as is a second one. Its chroots equal the supported set exactly:
+staging declares no optional experimental chroot, so Rawhide there is drift
+rather than a permitted experiment.
+
+`copr_channels.staging.provisioned` and the staging job's trigger are one
+contract. While `provisioned` is false the job must carry `trigger: ignore` and
+is dispatched by hand; when it is true the job must carry
+`trigger: pull_request`. Either value alone fails the release matrix contract,
+so the project cannot be declared live without the job that builds into it, and
+the job cannot chase a project that does not exist. A third assertion holds
+`provisioned` false until issue #236 creates the project, so provisioning is
+three reviewed edits: the switch, the trigger, and retiring that assertion.
+While the switch is false, `test/check-live-release-channels.py --channel
+staging` reports `not provisioned` and contacts nothing.
+
+Only an explicit `provisioned: false` skips a channel. `copr_channels.production`
+declares no such switch and must never grow one, so the production comparison
+always queries its authority.
+
+A pre-tag attestation binds the candidate commit to the EVRs each channel
+serves, the artifact and repository digests, the signing key fingerprints, and
+how fresh each channel's repository metadata was.
+`scripts/release-attestation.py` renders and validates that document. No channel
+in it may carry the production COPR identity, and a channel carrying the staging
+COPR identity must serve exactly the declared staging chroots. The expectation
+file the validator compares against, `metadata_max_age_seconds` included, is
+reviewed release input produced with the release, not a value the attested
+channels supply; the validator checks that it is a positive integer and does not
+bound how loose a freshness window a reviewer may approve.
+
 Issue #236 owns pre-tag and post-publication proof that optional Rawhide serves
 no alpha or candidate build. This contract does not provision, publish to, or
 otherwise mutate COPR or Packit infrastructure.

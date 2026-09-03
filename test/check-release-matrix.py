@@ -151,9 +151,45 @@ require(
     "production COPR authority must separate required supported and optional experimental chroots",
 )
 require(production_copr.get("prerelease_publication") is False, "production COPR must exclude prereleases")
+# Production has no provisioning switch and must never grow one. The switch is
+# what makes test/check-live-release-channels.py skip a channel, and production
+# is the channel that must always be queried.
+require(
+    "provisioned" not in production_copr,
+    "production COPR must not declare a provisioning switch",
+)
+require(staging_copr.get("owner") == "tyvsmith", "staging COPR owner drifted")
 require(staging_copr.get("project") == "facelock-testing", "staging COPR identity drifted")
+require(
+    staging_copr.get("api_url")
+    == "https://copr.fedorainfracloud.org/api_3/project?ownername=tyvsmith&projectname=facelock-testing",
+    "staging COPR public API drifted",
+)
+require_string_set(
+    staging_copr.get("required_supported_chroots"),
+    expected_copr_targets,
+    "staging COPR required supported chroots",
+)
+# Staging equals the supported set exactly. Production tolerates Rawhide as an
+# optional experimental chroot; staging has no such allowance, so an extra
+# chroot there is drift rather than a permitted experiment.
+require(
+    "optional_experimental_chroots" not in staging_copr,
+    "staging COPR must not declare optional experimental chroots",
+)
 require(staging_copr.get("provisioning_issue") == 236, "staging COPR provisioning must remain owned by issue #236")
 require(staging_copr.get("managed_by_this_change") is False, "issue #234 cannot provision staging COPR")
+# `provisioned` is the maintainer's switch. It gates two things at once: it is
+# the only thing that lets test/check-live-release-channels.py query the staging
+# project, and it decides which trigger the staging Packit job may carry. While
+# it is false that checker reports "not provisioned" and touches no network,
+# which is what keeps the staging fixtures in release-version-contract.sh
+# offline. The trigger half is checked with the Packit jobs below.
+require(
+    isinstance(staging_copr.get("provisioned"), bool),
+    f"staging COPR provisioned must be a boolean: {staging_copr.get('provisioned')!r}",
+)
+staging_provisioned = staging_copr["provisioned"]
 staging_copr_targets = require_string_set(
     matrix.get("fedora", {}).get("staging_copr_targets"),
     expected_copr_targets,
@@ -349,6 +385,14 @@ for job_index, job in enumerate(packit_jobs):
     )
     targets = set(target_list)
     require(len(target_list) == len(targets), f"{target_description} must be unique")
+    # Rawhide is experimental everywhere and a release target nowhere. The
+    # allowlist below already excludes it; naming it first is what makes the
+    # diagnostic say so instead of "undeclared target".
+    rawhide_targets = {"fedora-rawhide", "fedora-rawhide-x86_64"} & targets
+    require(
+        not rawhide_targets,
+        f"Packit copr_build job {job_index} targets Rawhide: {sorted(rawhide_targets)}",
+    )
     undeclared_targets = targets - packit_release_targets
     require(
         not undeclared_targets,
@@ -359,6 +403,52 @@ for job_index, job in enumerate(packit_jobs):
             targets == staging_copr_targets,
             f"Packit staging COPR targets drifted: {sorted(targets)}",
         )
+# The staging job is what will build a candidate commit into facelock-testing
+# once #236 provisions it. It must exist now so its shape is reviewed before
+# the project does, and it must stay pull-request/manual: a release trigger
+# would make a tag publish into staging without any of the wave 4 proof.
+staging_jobs = [
+    job
+    for job in packit_jobs
+    if isinstance(job, dict)
+    and job.get("job") == "copr_build"
+    and job.get("project") == staging_copr["project"]
+]
+require(len(staging_jobs) == 1, f"Packit must define exactly one staging COPR job, found {len(staging_jobs)}")
+staging_job = staging_jobs[0]
+require(
+    staging_job.get("owner") == staging_copr["owner"],
+    "Packit staging COPR owner disagrees with the release matrix",
+)
+# The trigger tracks provisioning. Until the project exists, `ignore` keeps the
+# job hand-dispatched (`/packit build`), because a pull-request trigger would
+# aim every pull request's Packit run at a project that answers 404. Once the
+# maintainer creates it they flip `provisioned` and the trigger together, and
+# this pairing is what stops one moving without the other.
+expected_staging_trigger = "pull_request" if staging_provisioned else "ignore"
+require(
+    staging_job.get("trigger") == expected_staging_trigger,
+    f"Packit staging COPR trigger must be {expected_staging_trigger!r} while "
+    f"copr_channels.staging.provisioned is {staging_provisioned}, got {staging_job.get('trigger')!r}",
+)
+require(
+    staging_job.get("manual_trigger") is True,
+    "Packit staging COPR job must stay manually triggered",
+)
+require(
+    staging_provisioned is False,
+    "staging COPR provisioning must stay unclaimed until issue #236 creates the project",
+)
+# Two COPR projects exist and no more. Without a bound, a job aimed at a third
+# project passes every check above simply by choosing allowlisted targets, and
+# the allowlist stops constraining where builds land. Counted after the staging
+# and per-job checks so a malformed job still reports what is wrong with it
+# rather than only that there are too many.
+copr_jobs = [job for job in packit_jobs if isinstance(job, dict) and job.get("job") == "copr_build"]
+require(
+    len(copr_jobs) == 2,
+    f"Packit must define exactly two copr_build jobs, production and staging, found {len(copr_jobs)}",
+)
 production_jobs = [
     job
     for job in packit_jobs
@@ -383,7 +473,7 @@ if release_version is not None and "-" not in release_version:
 elif release_version is not None:
     require(
         production_trigger == "ignore",
-        "prerelease-tagged Packit config can select a release-triggered production COPR job",
+        "prerelease-tagged Packit config must not select a release-triggered production COPR job",
     )
 packit_target_list = production_job.get("targets")
 require(
@@ -605,6 +695,37 @@ require(
 live_channel_command = "python3 test/check-live-release-channels.py"
 require(live_channel_command in ci_workflow, "CI does not compare live release channels with the checked-in authority")
 require(live_channel_command in justfile, "release preflight does not compare live release channels with the checked-in authority")
+# Staging is unprovisioned, so this run reports "not provisioned" and stops.
+# It is wired now anyway: the flag is what turns the checked-in staging
+# authority into a gate the day #236 creates the project, and an unwired flag
+# is the failure mode this file exists to catch.
+staging_channel_command = f"{live_channel_command} --channel staging"
+require(staging_channel_command in ci_workflow, "CI does not compare the staging release channel")
+require(staging_channel_command in justfile, "release preflight does not compare the staging release channel")
+require(
+    "scripts/release-attestation.py" in justfile,
+    "release preflight does not require the pre-tag release attestation renderer",
+)
+# The staging channel and the attestation are contracts, not just scripts: a
+# reader has to be able to find out that staging exists, that it is not
+# provisioned yet, and what flipping that switch turns on.
+staging_doc_claims = {
+    "docs/releasing.md": (
+        "tyvsmith/facelock-testing",
+        "--channel staging",
+        "scripts/release-attestation.py",
+    ),
+    "docs/contracts.md": (
+        "tyvsmith/facelock-testing",
+        "copr_channels.staging.provisioned",
+        "scripts/release-attestation.py",
+        "metadata_max_age_seconds",
+    ),
+}
+for relative_path, claims in staging_doc_claims.items():
+    content = (ROOT / relative_path).read_text()
+    for claim in claims:
+        require(claim in content, f"{relative_path} omits the staging publication claim: {claim}")
 require("ARCH_SNAPSHOT" not in justfile, "unused ARCH_SNAPSHOT signaling remains")
 
 # Fedora lifecycle lanes take their base image from this matrix rather than
