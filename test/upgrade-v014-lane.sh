@@ -699,8 +699,11 @@ assert_key_artifacts_preserved() {
     local before="$1" path
     # Nothing appeared that was not there before. A replacement key written
     # beside the real one is the failure this catches.
+    # -x, not a bare -F: "encryption.key" is a prefix of "encryption.key.sealed",
+    # so an unanchored match finds the sealed path's absent line and reports a
+    # key that was there all along as newly created.
     for path in /etc/facelock/encryption.key /etc/facelock/encryption.key.sealed; do
-        if grep -Fq "absent|$path" "$before" && [ -e "$path" ]; then
+        if grep -Fxq "absent|$path" "$before" && [ -e "$path" ]; then
             fail "the upgrade created a key artifact that did not exist before: $path"
         fi
     done

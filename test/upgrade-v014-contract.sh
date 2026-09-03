@@ -113,6 +113,13 @@ for proof in pkg_downgrade assert_real_password_behavior assert_swtpm_state_unto
         fail "assert_downgrade_usable never calls $proof"
 done
 
+# The absent-marker lookup must be whole-line. One key path is a prefix of the
+# other, so an unanchored match reports a preserved key as a newly created one
+# and the "no replacement key" proof inverts.
+if grep -n 'grep -Fq "absent|' "$lane" >/dev/null; then
+    fail "the lane matches absent markers unanchored; use grep -Fxq"
+fi
+
 # --- one known-embedding fixture, one digest ------------------------------
 
 lane_digest="$(sed -n 's/^KNOWN_EMBEDDING_SHA256=\([0-9a-f]\{64\}\)$/\1/p' "$lane")"
