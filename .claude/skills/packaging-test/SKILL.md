@@ -74,8 +74,12 @@ Two cheap halves run without podman and are worth knowing:
 The full lane needs the reviewed ONNX models (`just link-models`) and has no
 partial-run opt-out: the rollback proof turns on the candidate daemon having
 opened and migrated the database first, and a daemon without models cannot
-start. It takes the better part of an hour, most of it building the candidate
-.deb from source.
+start. A cached run is about twenty minutes; a cold one is considerably more,
+most of it building the candidate .deb from source.
+
+That runtime is why the lane is local-only by design: `packaging.yml` does not
+run it, and a nightly-only job is the follow-up. Run it yourself before pushing
+a change that reaches stored state.
 
 ## Which Fedora
 

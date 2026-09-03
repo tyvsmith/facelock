@@ -759,6 +759,12 @@ as it found it, and the lane fails if it is edited in either direction. Removing
 an enabled profile would take face authentication away from someone using it, so
 the lane treats that as the more dangerous direction, not a clean result.
 
+**Where it runs.** Locally, by design: a cached run is about twenty minutes and
+a cold one considerably more, so `packaging.yml` does not carry it and a
+nightly-only job is the follow-up. `just check` runs the container-free contract
+(`just test-upgrade-v014-contract`), so a broken lane definition still fails
+every pull request.
+
 **Rollback.** The candidate daemon starts and migrates the database before the
 downgrade, so the predecessor is handed the file production would hand it. V6
 has no down-migration and the schema stays at 6 after the package rolls back.

@@ -1218,7 +1218,7 @@ test-upgrade-v014-pins:
     bash test/upgrade-v014-predecessor.sh rpm-fedora --verify-live
 
 # Debian half: install the real v0.1.4 .deb, upgrade to the candidate, roll back
-test-upgrade-v014-deb: test-upgrade-v014-contract (_require-models "1")
+test-upgrade-v014-deb: test-upgrade-v014-contract _require-models
     #!/usr/bin/env bash
     set -euo pipefail
     artifact_dir="$(mktemp -d "${TMPDIR:-/tmp}/facelock-upgrade-v014-deb.XXXXXX")"
@@ -1228,7 +1228,7 @@ test-upgrade-v014-deb: test-upgrade-v014-contract (_require-models "1")
     test/run-upgrade-v014-systemd.sh deb facelock-upgrade-v014-deb "$candidate"
 
 # Fedora half: same proof against the released fc44 RPM
-test-upgrade-v014-rpm: test-upgrade-v014-contract (_require-models "1") _require-release-binaries
+test-upgrade-v014-rpm: test-upgrade-v014-contract _require-models _require-release-binaries
     #!/usr/bin/env bash
     set -euo pipefail
     test/build-upgrade-v014-image.sh rpm facelock-upgrade-v014-rpm

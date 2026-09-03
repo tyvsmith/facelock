@@ -94,6 +94,7 @@ for proof in \
     assert_key_artifacts_preserved \
     assert_adr010_modes \
     record_pam_enabled_state \
+    record_adr010_modes \
     assert_pam_path_intact \
     assert_real_password_behavior \
     assert_no_replacement_key_over_encrypted_state \
@@ -106,6 +107,13 @@ for proof in \
         fail "run_shape never calls $proof, so no shape proves it"
 done
 
+# Both key-refusal variants stay. "Malformed" is the case an operator actually
+# hits, and it was absent from the first version of this lane.
+for variant in missing malformed; do
+    grep -q "assert_key_refusal \"\$shape\" $variant" "$lane" ||
+        fail "the lane no longer exercises a $variant key over encrypted rows"
+done
+
 # The rollback half has its own acceptance bullets; same rule.
 downgrade_body="$(sed -n '/^assert_downgrade_usable() {/,/^}/p' "$lane")"
 for proof in pkg_downgrade assert_real_password_behavior assert_swtpm_state_untouched; do
@@ -113,12 +121,26 @@ for proof in pkg_downgrade assert_real_password_behavior assert_swtpm_state_unto
         fail "assert_downgrade_usable never calls $proof"
 done
 
+# A snapshot digest lookup must prove the file exists first. `sha256sum` on a
+# missing path prints nothing, and grep with an empty pattern matches every
+# line, so the unguarded shape passes loudest exactly when the file is gone.
+# assert_file_digest_in_snapshot is the guarded form.
+if grep -nE 'grep -F[a-z]*q "\$\(sha256sum' "$lane" >/dev/null; then
+    fail "the lane looks up a digest without proving the file exists; use assert_file_digest_in_snapshot"
+fi
+
 # The absent-marker lookup must be whole-line. One key path is a prefix of the
 # other, so an unanchored match reports a preserved key as a newly created one
 # and the "no replacement key" proof inverts.
 if grep -n 'grep -Fq "absent|' "$lane" >/dev/null; then
     fail "the lane matches absent markers unanchored; use grep -Fxq"
 fi
+
+# The concurrent-key case has to separate O_EXCL from O_TRUNC. One key file on
+# disk is true under both, so counting the racers that logged a creation is the
+# assertion that carries the claim, and it must not quietly disappear.
+grep -q 'racers that created the key' "$lane" ||
+    fail "the concurrent-key case no longer counts how many racers created the key"
 
 # --- one known-embedding fixture, one digest ------------------------------
 
@@ -128,6 +150,20 @@ lifecycle_digest="$(grep -oE '"[0-9a-f]{64}"' "$repo_root/test/deb-package-lifec
     tr -d '"' | head -1)"
 [ "$lane_digest" = "$lifecycle_digest" ] ||
     fail "known-embedding digest drifted from the Debian lifecycle gate: $lane_digest vs $lifecycle_digest"
+
+# The decryption proof must name the model it reads. Scanning for "the first
+# 2048-byte blob" finds the mixed shape's plaintext copy of the same fixture, so
+# a decrypt that did nothing would pass.
+grep -Eq '^shape_probe_label\(\)' "$lane" ||
+    fail "the lane defines no shape_probe_label"
+for caller in assert_known_embedding_decrypts assert_downgrade_usable; do
+    body="$(sed -n "/^$caller() {/,/^}/p" "$lane")"
+    [ -n "$body" ] || fail "$caller not found in the lane harness"
+    printf '%s\n' "$body" | grep -q probe_known_embedding_digest ||
+        fail "$caller does not compare the known embedding's plaintext digest"
+    printf '%s\n' "$body" | grep -Eq 'shape_probe_label "\$shape"' ||
+        fail "$caller does not pin the row it reads to the shape's model label"
+done
 
 # --- the lane Containerfiles take the pin, never carry one ----------------
 

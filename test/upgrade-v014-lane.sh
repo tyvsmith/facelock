@@ -378,12 +378,34 @@ stage_models() {
         fail "no reviewed ONNX models staged at /facelock-test-models"
 }
 
+# The layout v0.1.4 leaves behind. Its postinst runs systemd-sysusers and
+# systemd-tmpfiles and then chowns the state directories to root:facelock 0750
+# (models to root:root 0755); ADR 010 retired that group and tightened those
+# modes. Seeding the new modes here, as this lane first did, meant the upgrade
+# had nothing to tighten and every mode assertion passed on state the lane had
+# already put in the right shape.
+#
+# `pam-backups` is deliberately absent: it is new-layout, and the candidate's
+# postinst has to create it.
+seed_legacy_layout() {
+    local legacy_group=root
+    if getent group facelock >/dev/null 2>&1; then
+        legacy_group=facelock
+    fi
+    install -d /var/lib/facelock /var/lib/facelock/models \
+        /var/log/facelock /var/log/facelock/snapshots
+    chown "root:$legacy_group" /var/lib/facelock /var/log/facelock \
+        /var/log/facelock/snapshots
+    chmod 0750 /var/lib/facelock /var/log/facelock /var/log/facelock/snapshots
+    chown root:root /var/lib/facelock/models
+    chmod 0755 /var/lib/facelock/models
+    # Holds the enrollment marker, so it has to exist; created loose so the
+    # tightening to 0711 is exercised too.
+    install -d -m0750 /var/lib/facelock/enrolled
+}
+
 seed_common_state() {
-    install -d -m0711 /var/lib/facelock
-    install -d -m0755 /var/lib/facelock/models
-    install -d -m0711 /var/lib/facelock/enrolled
-    install -d -m0700 /var/lib/facelock/pam-backups /var/log/facelock
-    install -d -m0700 /var/log/facelock/snapshots
+    seed_legacy_layout
 
     # The reviewed models the candidate daemon has to load, plus a payload of
     # this lane's own: an upgrade has no business touching either, and both
@@ -629,40 +651,94 @@ PY
         "legacy rows left with a non-NULL device_id"
 }
 
+# Which model's first embedding is the known fixture for a given shape. The
+# mixed shape is why this exists: it holds an encrypted model and a plaintext
+# one, both carrying the known blob, so "the first 2048-byte blob" would find
+# the plaintext copy and a decrypt that did nothing would pass.
+shape_probe_label() {
+    case "$1" in
+        plaintext) echo plaintext ;;
+        keyfile) echo keyfile ;;
+        mixed) echo encrypted-half ;;
+        tpm-pcr-unbound | tpm-pcr-bound) echo tpm ;;
+        *) fail "no probe label for shape: $1" ;;
+    esac
+}
+
+# SQLite's online backup API, not `cp`. A live WAL means the file on disk is not
+# the whole database, and a checkpoint landing mid-copy turns the probe into a
+# corruption failure that has nothing to do with what is under test.
+copy_database_for_probe() {
+    local destination="$1"
+    python3 - /var/lib/facelock/facelock.db "$destination" <<'PROBE_COPY_PY'
+import sqlite3
+import sys
+
+source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+target = sqlite3.connect(sys.argv[2])
+with target:
+    source.backup(target)
+target.close()
+source.close()
+PROBE_COPY_PY
+}
+
+# The blob stored against one model's first embedding, as a digest. Fails
+# loudly if the row is missing or is not a raw 512-float embedding, so a blob
+# left encrypted is a failure rather than a digest that happens not to match.
+probe_known_embedding_digest() {
+    local probe_db="$1" label="$2"
+    python3 - "$probe_db" "$label" <<'PROBE_DIGEST_PY'
+import hashlib
+import sqlite3
+import sys
+
+connection = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+row = connection.execute(
+    "SELECT fe.embedding FROM face_embeddings AS fe "
+    "JOIN face_models AS fm ON fm.id = fe.model_id "
+    "WHERE fm.label = ? ORDER BY fe.id LIMIT 1",
+    (sys.argv[2],),
+).fetchone()
+connection.close()
+if row is None:
+    raise SystemExit(f"no embedding row for model label {sys.argv[2]!r}")
+blob = row[0]
+if len(blob) != 2048:
+    raise SystemExit(
+        f"embedding for {sys.argv[2]!r} is {len(blob)} bytes, not a decrypted "
+        "512-float embedding"
+    )
+print(hashlib.sha256(blob).hexdigest())
+PROBE_DIGEST_PY
+}
+
+# Stage a copy of the live database plus a config pointing at it, so a decrypt
+# run for evidence never touches the state under test.
+stage_probe() {
+    local probe="$1"
+    rm -rf "$probe"
+    install -d -m0700 "$probe"
+    copy_database_for_probe "$probe/probe.db"
+    sed "s|^db_path = .*|db_path = \"$probe/probe.db\"|" \
+        /etc/facelock/config.toml >"$probe/config.toml"
+}
+
 # The proof a file hash cannot give: take the blob the released binary wrote,
 # decrypt it with the candidate and the preserved key, and compare the
 # plaintext to the digest this lane pinned before any of it was encrypted.
 assert_known_embedding_decrypts() {
-    local shape="$1" probe=/tmp/facelock-decrypt-probe
-    rm -rf "$probe"
-    install -d -m0700 "$probe"
-    cp /var/lib/facelock/facelock.db "$probe/probe.db"
-    sed "s|^db_path = .*|db_path = \"$probe/probe.db\"|" \
-        /etc/facelock/config.toml >"$probe/config.toml"
+    local shape="$1" probe=/tmp/facelock-decrypt-probe label digest
+    label="$(shape_probe_label "$shape")"
+    stage_probe "$probe"
 
     if [ "$shape" != plaintext ]; then
         facelock --config "$probe/config.toml" tpm decrypt >>"$LOG" 2>&1 ||
             fail "the candidate could not decrypt rows the released binary encrypted"
     fi
 
-    local digest
-    digest="$(python3 - "$probe/probe.db" <<'PY'
-import hashlib
-import sqlite3
-import sys
-
-connection = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
-blobs = [
-    row[0]
-    for row in connection.execute(
-        "SELECT fe.embedding FROM face_embeddings AS fe "
-        "JOIN face_models AS fm ON fm.id = fe.model_id ORDER BY fm.label, fe.id"
-    )
-]
-connection.close()
-print(next((hashlib.sha256(b).hexdigest() for b in blobs if len(b) == 2048), "none"))
-PY
-)"
+    digest="$(probe_known_embedding_digest "$probe/probe.db" "$label")" ||
+        fail "the known embedding for '$label' was not recoverable after the upgrade"
     assert_eq "$KNOWN_EMBEDDING_SHA256" "$digest" \
         "known embedding plaintext recovered after the upgrade"
     rm -rf "$probe"
@@ -751,50 +827,87 @@ assert_key_artifacts_preserved() {
 }
 
 # The candidate must refuse to write a replacement key when encrypted rows are
-# present and the key artifact is gone — the upgrade-day failure that turns a
-# recoverable backup restore into permanent loss.
+# present and the key artifact is missing or unusable -- the upgrade-day failure
+# that turns a recoverable backup restore into permanent loss.
+#
+# Two shapes carry a plaintext keyfile over encrypted rows and so can have that
+# key taken away: `keyfile` and `mixed`. The others are skipped for a reason,
+# not for coverage: `plaintext` has no encrypted row to protect and is the one
+# state where creating a key is allowed, and the TPM shapes keep their key
+# sealed rather than on disk, so removing the plaintext artifact would prove
+# nothing about the key actually in use. TPM unseal failure is
+# test/tpm-pcr-e2e.sh's subject.
 assert_no_replacement_key_over_encrypted_state() {
     local shape="$1"
     case "$shape" in
         keyfile | mixed) ;;
         *) return 0 ;;
     esac
-    local saved="$STATE_ROOT/key.saved" output=/tmp/facelock-replacement-key.log status=0
-    stop_packaged_daemon
+    local saved="$STATE_ROOT/key.saved"
     cp /etc/facelock/encryption.key "$saved"
-    rm -f /etc/facelock/encryption.key
 
-    # The daemon must keep running: refusing to write a key must not turn an
-    # authentication that already falls through to password into a lockout.
-    # Exit 124 is the timeout firing on a daemon that is still up.
-    RUST_LOG=warn timeout --foreground 30 facelock daemon >"$output" 2>&1 || status=$?
-    if [ -e /etc/facelock/encryption.key ]; then
-        install -m0600 "$saved" /etc/facelock/encryption.key
-        fail "the candidate wrote a replacement key over encrypted rows"
-    fi
-    [ "$status" = 124 ] || {
-        tail -20 "$output" >&2
-        install -m0600 "$saved" /etc/facelock/encryption.key
-        fail "the daemon stopped serving when its key went missing (exit $status)"
-    }
-    grep -qi 'refusing to write a replacement key' "$output" || {
-        tail -20 "$output" >&2
-        install -m0600 "$saved" /etc/facelock/encryption.key
-        fail "the refusal did not name the missing key over encrypted rows"
-    }
+    # Missing, then malformed. "Malformed" is the case an operator actually
+    # hits: a truncated key from a half-finished restore or a filled disk looks
+    # present, and a replacement written over it is just as final as one
+    # written over nothing.
+    assert_key_refusal "$shape" missing "$saved"
+    assert_key_refusal "$shape" malformed "$saved"
 
     install -m0600 "$saved" /etc/facelock/encryption.key
     rm -f "$saved"
 }
 
-# ADR 010 modes. The packaged scriptlets tighten these on an upgrade from a
-# release that predates the layout; content must be untouched while they do.
-assert_adr010_modes() {
-    local expected path
-    while read -r expected path; do
-        [ -e "$path" ] || continue
-        assert_eq "$expected" "$(stat -c '%a:%u:%g' "$path")" "ADR 010 metadata for $path"
-    done <<'EOF'
+assert_key_refusal() {
+    local shape="$1" variant="$2" saved="$3"
+    local output="/tmp/facelock-replacement-key-$variant.log" status=0
+    stop_packaged_daemon
+    case "$variant" in
+        missing) rm -f /etc/facelock/encryption.key ;;
+        malformed)
+            printf 'not-a-key' >/etc/facelock/encryption.key
+            chmod 0600 /etc/facelock/encryption.key
+            ;;
+        *) fail "unknown key-refusal variant: $variant" ;;
+    esac
+
+    # The daemon must keep running: refusing to write a key must not turn an
+    # authentication that already falls through to password into a lockout.
+    # Exit 124 is the timeout firing on a daemon that is still up.
+    RUST_LOG=warn timeout --foreground 30 facelock daemon >"$output" 2>&1 || status=$?
+
+    # The key must be exactly as this function left it. Anything else means the
+    # daemon wrote over it.
+    local now="absent"
+    if [ -e /etc/facelock/encryption.key ]; then
+        now="$(stat -c %s /etc/facelock/encryption.key)"
+    fi
+    local want="absent"
+    [ "$variant" = malformed ] && want=9
+    [ "$now" = "$want" ] || {
+        install -m0600 "$saved" /etc/facelock/encryption.key
+        fail "the candidate replaced a $variant key over encrypted rows (size now $now)"
+    }
+    [ "$status" = 124 ] || {
+        tail -20 "$output" >&2
+        install -m0600 "$saved" /etc/facelock/encryption.key
+        fail "the daemon stopped serving on a $variant key (exit $status)"
+    }
+    grep -qiE 'refusing to write a replacement key|could not be created/read' "$output" || {
+        tail -20 "$output" >&2
+        install -m0600 "$saved" /etc/facelock/encryption.key
+        fail "the daemon did not report the $variant key over encrypted rows"
+    }
+    # Password still works with the key unusable: that fall-through is the whole
+    # reason refusing to write a replacement is the safe choice.
+    assert_real_password_behavior
+    install -m0600 "$saved" /etc/facelock/encryption.key
+    pass "$shape refuses a replacement over a $variant key and keeps serving"
+}
+
+# The paths ADR 010 governs and the mode each must end up at. Read by both the
+# pre-upgrade recording and the post-upgrade assertion, so the two cannot drift.
+adr010_expectations() {
+    cat <<'EOF'
 711:0:0 /var/lib/facelock
 755:0:0 /var/lib/facelock/models
 711:0:0 /var/lib/facelock/enrolled
@@ -804,22 +917,54 @@ assert_adr010_modes() {
 600:0:0 /var/lib/facelock/facelock.db
 600:0:0 /var/log/facelock/audit.jsonl
 EOF
+}
+
+record_adr010_modes() {
+    local shape="$1" expected path
+    : >"$STATE_ROOT/$shape.modes"
+    while read -r expected path; do
+        if [ -e "$path" ]; then
+            printf '%s %s\n' "$(stat -c '%a:%u:%g' "$path")" "$path" \
+                >>"$STATE_ROOT/$shape.modes"
+        else
+            printf 'absent %s\n' "$path" >>"$STATE_ROOT/$shape.modes"
+        fi
+    done < <(adr010_expectations)
+}
+
+# ADR 010 modes. The packaged scriptlets tighten these on an upgrade from a
+# release that predates the layout; content must be untouched while they do.
+#
+# Every path is required to exist afterwards. A `continue` on a missing path
+# made all of this optional, and `pam-backups` in particular only exists
+# because the candidate's postinst creates it -- so its absence is the failure
+# this is here to catch, not a case to skip.
+assert_adr010_modes() {
+    local shape="$1" expected path actual before tightened=0
+    while read -r expected path; do
+        [ -e "$path" ] ||
+            fail "ADR 010 path missing after the upgrade: $path"
+        actual="$(stat -c '%a:%u:%g' "$path")"
+        assert_eq "$expected" "$actual" "ADR 010 metadata for $path"
+        before="$(awk -v p="$path" '$2 == p {print $1}' "$STATE_ROOT/$shape.modes")"
+        if [ -n "$before" ] && [ "$before" != "$expected" ]; then
+            tightened=$((tightened + 1))
+        fi
+    done < <(adr010_expectations)
+
+    # At least one path has to have actually moved. If the predecessor already
+    # left everything at the ADR 010 values, this lane is asserting nothing
+    # about the upgrade and the legacy seeding above has silently stopped
+    # working.
+    [ "$tightened" -gt 0 ] ||
+        fail "no ADR 010 path changed across the upgrade: nothing was tightened"
+
     # ADR 010 retired the group outright; an upgrade from a release that had
     # one must remove it rather than leave a group owning nothing.
     ! getent group facelock >/dev/null 2>&1 ||
         fail "the retired facelock group survived the upgrade"
 }
 
-# v0.1.4's pam-configs profile shipped `Default: yes`, so installing that
-# release ran pam-auth-update --package and turned face authentication on in
-# common-auth without anyone asking. The candidate ships `Default: no`.
-#
-# So the contract an upgrade has to meet is not "facelock is absent from the
-# global stack" -- on a v0.1.4 system it is present, and removing it would
-# silently take face authentication away from someone using it. It is that the
-# upgrade leaves the stack exactly as it found it, in either direction. The
-# byte comparison lives in the invariant snapshot; this records the verdict in
-# a form a reader of the log can act on.
 record_pam_enabled_state() {
     local shape="$1"
     pam_enabled_state >"$STATE_ROOT/$shape.pam-enabled"
@@ -833,10 +978,23 @@ pam_enabled_state() {
     fi
 }
 
+# `grep -F "$(sha256sum "$path")"` matches every line of the snapshot when the
+# file is gone, because sha256sum prints nothing and the empty pattern matches.
+# So the file has to be proved present before its digest is looked up.
+assert_file_digest_in_snapshot() {
+    local path="$1" snapshot="$2" description="$3" line
+    [ -f "$path" ] && [ ! -L "$path" ] ||
+        fail "$description: $path is missing or is not a regular file"
+    line="$(sha256sum -- "$path")"
+    [ -n "$line" ] || fail "$description: could not digest $path"
+    grep -Fxq -- "$line" "$snapshot" ||
+        fail "$description: $path changed"
+}
+
 assert_pam_path_intact() {
     local before="$1" shape="$2"
-    grep -Fq "$(sha256sum "$PAM_PATH")" "$before" ||
-        fail "the upgrade rewrote the administrator's PAM service: $PAM_PATH"
+    assert_file_digest_in_snapshot "$PAM_PATH" "$before" \
+        "the upgrade rewrote the administrator's PAM service"
     assert_eq "$(cat "$STATE_ROOT/$shape.pam-enabled")" "$(pam_enabled_state)" \
         "whether Facelock is enabled in $GLOBAL_PAM across the upgrade"
     case "$FAMILY" in
@@ -923,7 +1081,7 @@ MARKER_COUNT_PY
 # --- rollback --------------------------------------------------------------
 
 assert_downgrade_usable() {
-    local shape="$1" probe=/tmp/facelock-rollback-probe
+    local shape="$1" probe=/tmp/facelock-rollback-probe label digest
     case_name="$shape-downgrade"
 
     record_swtpm_state
@@ -933,24 +1091,28 @@ assert_downgrade_usable() {
         "installed version after downgrade"
     ensure_system_bus
 
-    # V6 has no down-migration. The predecessor must still open the database
-    # the candidate migrated and count its rows. `tpm status` is the readback
-    # rather than `list`, which in v0.1.4 is a D-Bus call to a daemon this
-    # phase deliberately does not run.
+    # V6 has no down-migration. The predecessor must still open the database the
+    # candidate migrated and read its enrollment state. `tpm status` is the
+    # readback rather than `list`, which in v0.1.4 is a D-Bus call to a daemon
+    # this phase deliberately does not run.
     released_facelock tpm status >>"$LOG" 2>&1 ||
-        fail "the released binary could not read the V6 database after rollback"
+        fail "the released binary could not open the V6 database after rollback"
     assert_eq 6 "$(schema_version)" "schema version is not rolled back by a package downgrade"
 
+    # The rollback claim is that the old binary can still *read the templates*,
+    # so it decrypts the known embedding and the plaintext is compared. An exit
+    # code alone would pass on a decrypt that quietly did nothing.
+    label="$(shape_probe_label "$shape")"
+    stage_probe "$probe"
     if [ "$shape" != plaintext ]; then
-        rm -rf "$probe"
-        install -d -m0700 "$probe"
-        cp /var/lib/facelock/facelock.db "$probe/probe.db"
-        sed "s|^db_path = .*|db_path = \"$probe/probe.db\"|" \
-            /etc/facelock/config.toml >"$probe/config.toml"
         released_facelock --config "$probe/config.toml" decrypt >>"$LOG" 2>&1 ||
             fail "the released binary could not decrypt its own rows after rollback"
-        rm -rf "$probe"
     fi
+    digest="$(probe_known_embedding_digest "$probe/probe.db" "$label")" ||
+        fail "the known embedding for '$label' was not recoverable after rollback"
+    assert_eq "$KNOWN_EMBEDDING_SHA256" "$digest" \
+        "known embedding plaintext recovered by the released binary after rollback"
+    rm -rf "$probe"
 
     assert_real_password_behavior
     assert_swtpm_state_untouched
@@ -981,6 +1143,7 @@ run_shape() {
 
     record_swtpm_state
     record_pam_enabled_state "$shape"
+    record_adr010_modes "$shape"
     pkg_upgrade "$CANDIDATE" || fail "the native upgrade to the candidate failed"
     assert_eq "$(cat "$CANDIDATE_VERSION_FILE")" "$(pkg_installed_version)" \
         "installed candidate version after upgrade"
@@ -999,7 +1162,7 @@ run_shape() {
     assert_known_embedding_decrypts "$shape"
     assert_enrollment_marker_reconciled
     assert_key_artifacts_preserved "$STATE_ROOT/$shape.before"
-    assert_adr010_modes
+    assert_adr010_modes "$shape"
     assert_pam_path_intact "$STATE_ROOT/$shape.before" "$shape"
     assert_real_password_behavior
     assert_no_replacement_key_over_encrypted_state "$shape"
@@ -1336,18 +1499,21 @@ FAULT_CORRUPT_PY
 
 fault_concurrent_key_creation() {
     case_name="fault-concurrent-key-creation"
-    local target="$FAULT_ROOT/concurrent" keys
+    local target="$FAULT_ROOT/concurrent" keys creators digest
     seed_fault_database "$target"
     # A plaintext-only legacy database with no key artifact: the one state where
     # creating the default key is allowed at all.
     [ ! -e "$target/encryption.key" ] || fail "the concurrent fixture already has a key"
     stop_packaged_daemon
 
-    for _ in $(seq 1 8); do
+    # RUST_LOG=info so the creation line is emitted, and one log per racer so
+    # the count below cannot be confused by interleaved writes.
+    local index
+    for index in $(seq 1 8); do
         (
-            RUST_LOG=warn timeout --foreground 40 \
+            RUST_LOG=info timeout --foreground 40 \
                 facelock --config "$target/config.toml" daemon \
-                >>"$target/daemon.log" 2>&1 || true
+                >"$target/race-$index.log" 2>&1 || true
         ) &
     done
     wait
@@ -1357,12 +1523,24 @@ fault_concurrent_key_creation() {
     assert_eq 32 "$(stat -c %s "$target/encryption.key")" "concurrently created key size"
     assert_eq "600:0:0" "$(stat -c '%a:%u:%g' "$target/encryption.key")" \
         "concurrently created key metadata"
-    # Exactly one winner. O_EXCL is what makes that true: with O_TRUNC the last
-    # writer replaces the key the first one's rows were sealed under, and a
-    # reader in between gets a half-written key.
     keys="$(find "$target" -maxdepth 1 -name 'encryption.key*' | wc -l)"
     assert_eq 1 "$keys" "key artifacts after a concurrent creation race"
-    pass "concurrent key creation resolves to exactly one key"
+
+    # The assertion that actually separates O_EXCL from O_TRUNC. One key file on
+    # disk is true either way: with O_TRUNC every racer creates and writes,
+    # each overwriting the last, and the file count stays one. With O_EXCL
+    # exactly one racer creates it and the other seven are told AlreadyExists
+    # and read what the winner wrote, so exactly one of them logs the creation.
+    creators="$(cat "$target"/race-*.log | grep -c 'generated encryption key' || true)"
+    assert_eq 1 "$creators" "racers that created the key"
+
+    # And the winner's bytes are the bytes that survive: a later start must read
+    # the existing key, never replace it.
+    digest="$(sha256sum "$target/encryption.key" | cut -d' ' -f1)"
+    run_fault_daemon "$target" 20 >/dev/null
+    assert_eq "$digest" "$(sha256sum "$target/encryption.key" | cut -d' ' -f1)" \
+        "the existing key survived a later daemon start"
+    pass "concurrent key creation resolves to exactly one key, written once"
 }
 
 run_faults() {
