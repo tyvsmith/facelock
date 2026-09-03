@@ -1633,6 +1633,32 @@ case "$output" in
     *) fail "packaging evidence did not say HEAD is unresolvable: $output" ;;
 esac
 
+# A real APT suite missing platform_id (not the compat block, which carries
+# none) is refused with a diagnostic, not a KeyError (#320 added `compat`
+# alongside the real suites).
+platform_id_root="$tmp_root/platform-id-root"
+mkdir -p "$platform_id_root/test" "$platform_id_root/dist"
+cp "$repo_root/test/packaging-evidence.py" "$platform_id_root/test/"
+python3 - "$repo_root/dist/release-matrix.json" "$platform_id_root/dist/release-matrix.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    matrix = json.load(handle)
+del matrix["apt_suites"]["trixie"]["platform_id"]
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    json.dump(matrix, handle)
+PY
+if output=$(python3 "$platform_id_root/test/packaging-evidence.py" validate --commit "$evidence_head" "$tmp_root/evidence-good.json" 2>&1); then
+    fail "packaging evidence accepted a release matrix APT suite missing platform_id"
+fi
+case "$output" in
+    *Traceback*) fail "packaging evidence crashed on an APT suite missing platform_id: $output" ;;
+    *"trixie has no platform_id"*) ;;
+    *) fail "packaging evidence did not name the APT suite missing platform_id: $output" ;;
+esac
+echo "packaging evidence case: APT suite missing platform_id refused"
+
 if output=$(evidence_validate "$tmp_root/evidence-missing.json" 2>&1); then
     fail "packaging evidence accepted a missing marker"
 fi

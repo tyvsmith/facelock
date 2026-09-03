@@ -130,9 +130,14 @@ def required_lanes(matrix: dict) -> dict[str, dict[str, str]]:
     """
     lanes: dict[str, dict[str, str]] = {}
     rows = [row for row in matrix.get("platforms", []) if eligible(row)]
-    suite_by_platform = {
-        suite["platform_id"]: name for name, suite in matrix.get("apt_suites", {}).items()
-    }
+    suite_by_platform: dict[str, str] = {}
+    for name, suite in matrix.get("apt_suites", {}).items():
+        if name == "compat":
+            continue
+        platform_id = suite.get("platform_id")
+        if platform_id is None:
+            raise EvidenceError(f"APT suite {name} has no platform_id in the release matrix")
+        suite_by_platform[platform_id] = name
     for row in rows:
         platform_id = row.get("id", "")
         if row.get("channel") == "staged APT/direct deb":

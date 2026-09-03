@@ -118,7 +118,7 @@ the question is "does a fresh install work", a dev shell when iterating.
 - Name which packaging recipe you ran; if none, say so
 - Report camera-gated tests as not run, never as passed
 - A green pull request only proves packaging if the `packaging.yml` jobs ran rather than reporting skipped
-- `just test-packaging-matrix` is the whole gate in one command (30-60+ minutes), and it writes the lane evidence `just release-preflight` validates; a `FACELOCK_ALLOW_MISSING_MODELS=1` run is refused, never recorded
+- `just test-packaging-matrix` is the whole gate in one command (30-60+ minutes), and it writes the lane evidence `just release-preflight` validates; a `FACELOCK_ALLOW_MISSING_MODELS=1` run is a diagnostic — it writes its `partial` per-lane records, but the marker is withheld
 
 ## Cost
 
