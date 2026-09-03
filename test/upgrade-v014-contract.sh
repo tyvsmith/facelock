@@ -163,10 +163,16 @@ grep -q 'racers that created the key' "$lane" ||
 
 lane_digest="$(sed -n 's/^KNOWN_EMBEDDING_SHA256=\([0-9a-f]\{64\}\)$/\1/p' "$lane")"
 [ -n "$lane_digest" ] || fail "the lane pins no known-embedding digest"
+# `|| true` because an empty grep exits 1, and under `set -e` that ends this
+# script before either branch below runs: the gate would report nothing at all
+# about the one thing this section exists to compare.
 lifecycle_digest="$(grep -oE '"[0-9a-f]{64}"' "$repo_root/test/deb-package-lifecycle.sh" |
-    tr -d '"' | head -1)"
-[ "$lane_digest" = "$lifecycle_digest" ] ||
+    tr -d '"' | head -1)" || true
+if [ -z "$lifecycle_digest" ]; then
+    fail "test/deb-package-lifecycle.sh pins no known-embedding digest to compare against"
+elif [ "$lane_digest" != "$lifecycle_digest" ]; then
     fail "known-embedding digest drifted from the Debian lifecycle gate: $lane_digest vs $lifecycle_digest"
+fi
 
 # The decryption proof must name the model it reads. Scanning for "the first
 # 2048-byte blob" finds the mixed shape's plaintext copy of the same fixture, so
