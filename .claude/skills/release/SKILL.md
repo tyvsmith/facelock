@@ -120,7 +120,7 @@ Only after explicit confirmation. No AI attribution in the commit or tag message
 
 The `v*` tag triggers `.github/workflows/release.yml`, which has 11 jobs:
 
-```
+```text
 metadata · build · download-ort · prepare-cargo-vendor
 build-deb · build-rpm · build-nix
 publish-apt · publish · publish-aur · trigger-pages
