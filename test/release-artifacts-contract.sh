@@ -10,6 +10,10 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Resolved before the cd below: the mutation re-invocations pass this to bash
+# explicitly, so they still find this script regardless of the directory (the
+# repo root, or test/) the outer run started from.
+self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 cd "$repo_root"
 workflow_path="${FACELOCK_RELEASE_WORKFLOW:-.github/workflows/release.yml}"
 helper_path="${FACELOCK_RELEASE_ASSETS:-.github/workflows/scripts/release-assets.sh}"
@@ -319,7 +323,7 @@ workflow_attestations() {
             sed -n 's/^ *name: release-digests-\(.*\)$/\1/p' | head -1)"
         [ -n "$attest_job" ] || fail "job $wf_job uploads no digest attestation"
         [ -n "$name_pattern" ] || fail "job $wf_job names no digest artifact"
-        suite_arg="$(printf '%s\n' "$call" | sed -n "s/.*--suite '\([^']*\)'.*/\1/p")"
+        suite_arg="$(printf '%s\n' "$call" | sed -n "s/.*--suite ['\"]\([^'\"]*\)['\"].*/\1/p")"
         image_arg="$(printf '%s\n' "$call" | sed -n "s/.*--image ['\"]\([^'\"]*\)['\"].*/\1/p")"
         components="$(printf '%s\n' "$call" | grep -oE -- '--component(-archive)? [a-z-]+=' |
             sed 's/.* //; s/=$//' | LC_ALL=C sort -u | paste -sd, -)"
@@ -661,6 +665,23 @@ cp "$artifacts/release-binaries/pam_facelock.so" "$artifacts/release-rpm/pam_fac
 # failure says what to do: re-running only the failed job keeps the artifact.
 assert_rejects "two builders providing one canonical asset" "fix the builder and re-run all jobs" \
     stage "$builders_expected" "$artifacts" "$work/assets-ambiguous"
+build_artifacts
+
+# A symlink lets a builder point a canonical name at bytes it does not own,
+# including bytes outside the artifact tree entirely; staging must refuse it
+# rather than follow it and copy the link target.
+printf 'forged\n' >"$work/forged-pam-facelock.so"
+rm -f "$artifacts/release-binaries/pam_facelock.so"
+ln -s "$work/forged-pam-facelock.so" "$artifacts/release-binaries/pam_facelock.so"
+assert_rejects "symlink standing in for a canonical asset" "refusing to stage a symlink" \
+    stage "$builders_expected" "$artifacts" "$work/assets-symlink"
+build_artifacts
+
+# A symlink to a directory is still a symlink; the walk must refuse it on
+# sight rather than recurse through it looking for more files to stage.
+ln -s "$artifacts/release-rpm" "$artifacts/release-binaries/sneaky-dir"
+assert_rejects "symlink to a directory under artifacts" "refusing to stage a symlink" \
+    stage "$builders_expected" "$artifacts" "$work/assets-symlink-dir"
 build_artifacts
 
 # --- the maintainer tag
@@ -1149,7 +1170,7 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
             fail "$context mutation did not change the attestation loader"
         fi
         local output
-        if output="$(FACELOCK_RELEASE_ATTESTATIONS="$mutant" bash "$0" 2>&1)"; then
+        if output="$(FACELOCK_RELEASE_ATTESTATIONS="$mutant" bash "$self" 2>&1)"; then
             fail "release artifacts contract accepted $context"
         fi
         printf '%s\n' "$output" | grep -Fq "$needle" ||
@@ -1193,7 +1214,7 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
             fail "$context mutation did not change the release asset helper"
         fi
         local output
-        if output="$(FACELOCK_RELEASE_ASSETS="$mutant" bash "$0" 2>&1)"; then
+        if output="$(FACELOCK_RELEASE_ASSETS="$mutant" bash "$self" 2>&1)"; then
             fail "release artifacts contract accepted $context"
         fi
         printf '%s\n' "$output" | grep -Fq "$needle" ||
@@ -1218,7 +1239,7 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
             fail "$context mutation did not change the workflow"
         fi
         local output
-        if output="$(FACELOCK_RELEASE_WORKFLOW="$mutated" bash "$0" 2>&1)"; then
+        if output="$(FACELOCK_RELEASE_WORKFLOW="$mutated" bash "$self" 2>&1)"; then
             fail "release artifacts contract accepted $context"
         fi
         printf '%s\n' "$output" | grep -Fq "$needle" ||
@@ -1297,6 +1318,19 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
     assert_workflow_mutation_rejected "tag rewritten at publication" \
         's/^      TAG: \$\{\{ github.ref_name \}\}$/      TAG: ${{ github.ref_name }}\n      TAG_TARGET: target_commitish/' \
         "publishing must not send a tag or target commitish"
+
+    # Quote style is not semantics: a double-quoted --suite value must parse
+    # the same as the single-quoted one the workflow uses today, so extraction
+    # cannot silently go blind the day someone swaps the quoting.
+    suite_double_quoted="$mutation_root/release-suite-double-quoted.yml"
+    sed -E 's/--suite .(\$\{\{ matrix\.suite \}\})./--suite "\1"/' \
+        "$workflow_path" >"$suite_double_quoted"
+    cmp -s "$workflow_path" "$suite_double_quoted" &&
+        fail "double-quoted suite mutation did not change the workflow"
+    if ! output="$(FACELOCK_RELEASE_WORKFLOW="$suite_double_quoted" bash "$self" 2>&1)"; then
+        fail "release artifacts contract rejected a double-quoted --suite value: $output"
+    fi
+    echo "release artifacts mutation: double-quoted --suite value accepted"
 fi
 
 # The helper's Python runs from whatever directory the workflow is in; a module
