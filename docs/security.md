@@ -634,12 +634,14 @@ diagnostic is logged before decryption, so that failed load still names the NULL
 *Turning it off.* Setting `bind_device_aad = false` (or switching `encryption.method` to
 `"none"`) over a store sealed under the flag is the mirror image: every hard-bound template
 stops decrypting, because the AAD it was sealed under is no longer supplied. `facelock list`
-and `facelock status` keep reporting those rows as bound (they carry a device id), and
-`facelock tpm decrypt` fails on the first of them. The decrypt error names the way back:
-re-enable the flag, or re-enroll. The refusal message's `= false` remedy says the same, since
-it changes new enrollments only. `facelock tpm encrypt` refuses to run while the flag is on:
-it re-seals rows from a query that carries no device id and would manufacture id-bearing rows
-with no AAD.
+and `facelock status` keep reporting those rows as bound (they carry a device id). `facelock
+tpm decrypt` does not support hard-bound templates: `run_decrypt` unseals without device AAD,
+so it can never recover them, flag on or off. The way back for a hard-bound row is
+re-enabling the flag (authentication resumes) or re-enrolling; a plaintext export of
+hard-bound rows is not available (tracked as a follow-up). The refusal message's `= false`
+remedy says the same, since it changes new enrollments only. `facelock tpm encrypt` refuses
+to run while the flag is on: it re-seals rows from a query that carries no device id and
+would manufacture id-bearing rows with no AAD.
 
 **TPM PCR binding is implemented and enforced when enabled; it is opt-in by default
 (`tpm.pcr_binding`, finding #5).** With `tpm.pcr_binding = true`, the sealed key object is

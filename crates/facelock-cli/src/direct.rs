@@ -311,7 +311,6 @@ pub fn enroll(config: &Config, user: &str, label: &str) -> anyhow::Result<(u32, 
         .ensure_enroll_encryption_allowed()
         .map_err(|m| anyhow::anyhow!(m))?;
 
-    let store = open_store(config)?;
     let mut camera = open_camera(config)?;
     // The enrolling camera's own identity — asked of the camera that records
     // the template, and judged against the binding policy before the first
@@ -319,6 +318,7 @@ pub fn enroll(config: &Config, user: &str, label: &str) -> anyhow::Result<(u32, 
     let fingerprint = &camera.capabilities().fingerprint;
     config.ensure_enrollment_binding_allowed(fingerprint)?;
     let device_id = fingerprint.canonical_for_storage();
+    let store = open_store(config)?;
     let mut engine = load_engine(config)?;
 
     // Initialize sealer if encryption is configured
