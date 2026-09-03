@@ -161,16 +161,21 @@ for toolchain in '(^|[^-A-Za-z])cargo[[:space:]]' 'rustup' 'rustc' 'rust-toolcha
     fi
 done
 
-printf '%s\n' "$publish_job" | grep -Eq '^[[:space:]]+draft: true[[:space:]]*$' ||
+# Every step assertion reads the comment-stripped statements: a step that was
+# commented out, or replaced by `: # disabled`, must not pass as present.
+printf '%s\n' "$publish_statements" | grep -Eq '^[[:space:]]+draft: true[[:space:]]*$' ||
     fail "the publish job must create the GitHub release as a draft"
 # Literal workflow expressions; nothing here is a shell expansion.
 # shellcheck disable=SC2016
-printf '%s\n' "$publish_job" | grep -Fq 'prerelease: ${{ needs.metadata.outputs.prerelease }}' ||
+printf '%s\n' "$publish_statements" | grep -Fq 'prerelease: ${{ needs.metadata.outputs.prerelease }}' ||
     fail "the draft must carry the validated prerelease identity"
-for step in 'verify-tag' 'stage expected-assets' 'verify-digests' 'verify-creatable' \
-    'PRERELEASE" final' 'MANIFEST.json' 'draft=false'; do
-    printf '%s\n' "$publish_job" | grep -Fq "$step" ||
-        fail "the publish job must run $step before the release becomes public"
+# The helper invocations are matched with their trailing space so that a
+# `verify-digests-disabled` lookalike cannot stand in for the real call.
+# shellcheck disable=SC2016
+for step in '$HELPER verify-tag ' '$HELPER stage expected-assets' '$HELPER verify-digests ' \
+    '$HELPER verify-creatable ' 'PRERELEASE" final' 'MANIFEST.json' 'draft=false'; do
+    printf '%s\n' "$publish_statements" | grep -Fq "$step" ||
+        fail "the publish job must run ${step% } before the release becomes public"
 done
 
 # Every release write goes through the dedicated publication credential.
@@ -257,9 +262,12 @@ rm -f "$attesting_set"
 git_command='git([[:space:]]+-C[[:space:]]+[^[:space:]]+)?[[:space:]]+'
 grep -Eq "${git_command}tag[[:space:]]+-v" "$helper_path" ||
     fail "tag verification must verify a present signature with git tag -v"
-if grep -Eq "${git_command}tag[[:space:]]+(-[afsm]|[^-])" "$helper_path"; then
-    fail "the release asset helper must never create or move a tag"
-fi
+# Allowlist, not blocklist: the only `git tag` the helper may run is a
+# verification. Anything else (create, delete, move, list) is refused.
+other_tag_commands="$(grep -E "${git_command}tag([[:space:]]|$)" "$helper_path" |
+    grep -Ev "${git_command}tag[[:space:]]+(-v|--verify)([[:space:]]|$)" || true)"
+[ -z "$other_tag_commands" ] ||
+    fail "the release asset helper may only run git tag -v; found: $other_tag_commands"
 if grep -Eq "${git_command}push" "$helper_path"; then
     fail "the release asset helper must never push"
 fi
@@ -757,21 +765,24 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
         's/^      - name: Build release$/      - name: Build release\n        env:\n          TOKEN: ${{ secrets.RELEASE_PAT }}/' \
         "builders produce artifacts only"
     assert_workflow_mutation_rejected "builder writing the release directly" \
-        's|^      - name: Upload the APT repository artifact$|      - name: Upload the APT repository artifact\n        # uses: softprops/action-gh-release@0000|' \
+        's|^      - name: Upload the APT repository artifact$|      - name: Write the release\n        uses: softprops/action-gh-release@0000\n\n      - name: Upload the APT repository artifact|' \
         "builders produce artifacts only"
     assert_workflow_mutation_rejected "compiling in the publishing job" \
         's|^      - name: Verify the maintainer tag$|      - name: Rebuild\n        run: cargo build --release\n\n      - name: Verify the maintainer tag|' \
         "must not compile or package anything"
+    # Neutralized, not deleted: the step stays in place as a no-op with its
+    # old text in a comment, which is what a careless edit leaves behind.
     # shellcheck disable=SC2016
     assert_workflow_mutation_rejected "unverified tag" \
-        '/\$HELPER verify-tag /d' \
-        "must run verify-tag"
+        's|^( *)\$HELPER verify-tag .*|\1: # verify-tag disabled|' \
+        'must run $HELPER verify-tag'
     # shellcheck disable=SC2016
     assert_workflow_mutation_rejected "unverified builder attestations" \
-        '/\$HELPER verify-digests /d' \
-        "must run verify-digests"
+        's|^( *)run: \$HELPER verify-digests .*|\1run: ": # verify-digests disabled"|' \
+        'must run $HELPER verify-digests'
+    # shellcheck disable=SC2016
     assert_workflow_mutation_rejected "no revalidation before the flip" \
-        '/PRERELEASE" final/d' \
+        's|^( *)\$HELPER expected "\$VERSION" "\$DEBIAN_REVISION" "\$RPM_COUNTER" "\$PRERELEASE" final .*|\1: # final readback disabled|' \
         'must run PRERELEASE" final'
     assert_workflow_mutation_rejected "pages rebuild before publication" \
         's/^    needs: \[publish-apt, publish\]$/    needs: [publish-apt]/' \
