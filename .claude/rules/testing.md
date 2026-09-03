@@ -18,6 +18,7 @@ paths:
 | 3c | Arch container E2E (oneshot) | `just test-arch-oneshot` |
 | 3d | Arch package from `dist/PKGBUILD` | `just test-arch-pkg` |
 | 3e | Fedora package lifecycle, every declared release | `just test-rpm-lanes` |
+| 3f | Fedora COPR path, rebuilt from source on system ORT | `just test-copr-lanes` |
 | 3a | Arch container E2E, camera-free | `just test-arch-camera-free` |
 | 3b | Arch container E2E (daemon), needs a camera | `just test-arch-integration` |
 | 3c | Arch container E2E (oneshot), needs a camera | `just test-arch-oneshot` |
@@ -25,6 +26,14 @@ paths:
 | 5 | Host PAM | After tiers 3-4, with root shell backup |
 
 **Never** install `pam_facelock.so` or edit `/etc/pam.d/*` on the host until container tests pass.
+
+Tier 3f is not a duplicate of 3e. 3e builds the direct `.rpm` from host
+binaries with a bundled ONNX Runtime; 3f rebuilds the package from source in a
+mock chroot and runs it against Fedora's system ONNX Runtime, which is the path
+Packit publishes to COPR. The release gate requires both, and a direct-RPM
+record cannot satisfy a COPR target. The COPR lanes never run on a pull request
+-- mock needs a privileged container -- so only the nightly, a
+`workflow_dispatch`, or a local run covers them.
 
 Fedora recipes take a release and default to 44 (`just test-rpm-pkg 43`). Tier 3e
 covers all three declared targets at the depth `dist/release-matrix.json` gives

@@ -28,7 +28,7 @@ and release secrets. Fix every `MISSING` before continuing.
 
 It also needs complete packaging evidence at this commit: the
 `packaging-evidence-*` artifacts of a successful `packaging.yml` run, or a
-local `just test-packaging-matrix` (30-60+ minutes, needs the ONNX models).
+local `just test-packaging-matrix` (about 1 h 45 min measured on 2026-09-02, needs the ONNX models).
 Dispatch the workflow only from the exact commit preflight will validate, with
 nothing uncommitted:
 

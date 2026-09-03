@@ -99,6 +99,20 @@ else
   echo "FAIL: pinned-model real ORT session smoke did not pass"; RESULT=1
 fi
 
+# The lifecycle lanes (`just test-copr-pkg` / `just test-copr-smoke`) mount a
+# writable /out and take the mock-built RPM back to the host, so the exact
+# artifact this chroot produced can be installed in a booted systemd container
+# and put through the same validation the direct-RPM lanes run. `just test-copr`
+# mounts nothing and is unaffected.
+if [ -d /out ]; then
+  section "Export the mock-built RPM"
+  if cp "$BIN_RPM" /out/facelock.rpm && chmod 0644 /out/facelock.rpm; then
+    echo "exported $(basename "$BIN_RPM") to /out/facelock.rpm"
+  else
+    echo "FAIL: could not export the built RPM to /out"; RESULT=1
+  fi
+fi
+
 section "Install test"
 if dnf install -y "$BIN_RPM"; then
   if rpm -q onnxruntime >/dev/null; then echo "onnxruntime pulled by dnf: OK"; else echo "FAIL: onnxruntime not pulled"; RESULT=1; fi

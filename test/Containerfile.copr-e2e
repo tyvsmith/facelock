@@ -1,0 +1,116 @@
+# COPR lifecycle image — install the RPM mock built from source and boot it.
+#
+# test/Containerfile.copr builds the package the way COPR does: Packit SRPM,
+# mock rebuild in a clean chroot, no bundled ONNX Runtime. That container is
+# privileged and disposable, so the lane exports the built RPM to
+# target/copr-lane/facelock.rpm and this image installs it for the same booted
+# lifecycle validation the direct-RPM lanes run.
+#
+# The difference from test/Containerfile.rpm-e2e is the whole point of the lane:
+# nothing here is built from host binaries and nothing bundles ONNX Runtime.
+# `dnf install` resolves the package's own `Requires: onnxruntime`, so what the
+# validation exercises is Fedora's system runtime, which is what the release
+# matrix declares for every Packit/COPR target.
+#
+# Base image comes from dist/release-matrix.json via
+# test/fedora-lane-image.sh, which is where the digest pin and the Fedora
+# EOL gate live. No default: a build without --build-arg must fail, not
+# silently pick a release.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# The same runtime and harness dependencies test/Containerfile.rpm-e2e installs:
+# dbus-daemon for the D-Bus and polkit boundary checks, binutils for the PAM
+# symbol assertions, gettext for the packaged catalogs, strace for the
+# pamtester diagnostics in rpm-service-pam-lifecycle.sh.
+# The Cisco OpenH264 repo Fedora enables by default is a single unpinned host
+# with no mirrors (ciscobinary.openh264.org). Nothing here needs a codec, and a
+# packaging gate that fails when that one host is unreachable reports a network
+# outage as a packaging regression. --disablerepo only covers this transaction;
+# the pamtester toolchain install, the package install below that resolves
+# `Requires: onnxruntime`, and the rpm-build install for the upgrade fixture
+# each run their own `dnf` transaction and would still contact the repo for
+# metadata. Disabling it in the repo file itself persists across every later
+# layer in this image; the flag stays as belt-and-braces on this one.
+RUN for repo in /etc/yum.repos.d/*openh264*.repo; do [ -e "$repo" ] && sed -i 's/^enabled=1/enabled=0/' "$repo"; done; true \
+    && dnf -y install --disablerepo='*openh264*' \
+        pam authselect dbus dbus-daemon rpm systemd binutils gettext \
+        glibc libxkbcommon tpm2-tss ca-certificates openssl-libs python3 util-linux strace \
+    && dnf clean all
+
+# Build pamtester from source (not in Fedora repos)
+COPY test/install-pamtester.sh /tmp/install-pamtester.sh
+RUN dnf -y install gcc gcc-c++ pam-devel make curl && \
+    sh /tmp/install-pamtester.sh && \
+    rm -f /tmp/install-pamtester.sh && \
+    dnf -y remove gcc gcc-c++ pam-devel make && dnf clean all
+
+# Test user for the PAM assertions. The 0400 shadow mode is the same container
+# fixture accommodation test/Containerfile.rpm-e2e documents: pam_unix 1.7+
+# verifies through setuid unix_chkpwd, which cannot read a mode-0000 shadow
+# under rootless podman.
+RUN useradd -m testuser && echo "testuser:test" | chpasswd && chmod 0400 /etc/shadow
+
+COPY .github/workflows/scripts/validate-rpm.sh /validate-rpm.sh
+COPY test/pkg-validate.sh /pkg-validate.sh
+COPY test/polkit-agent-validate.sh /polkit-agent-validate.sh
+COPY test/rpm-service-pam-lifecycle.sh /rpm-service-pam-lifecycle.sh
+COPY test/rpm-config-lifecycle.sh /rpm-config-lifecycle.sh
+COPY test/rpm-runtime-smoke.sh /rpm-runtime-smoke.sh
+COPY test/pam.d/facelock-test /etc/pam.d/facelock-test
+RUN chmod +x /validate-rpm.sh /pkg-validate.sh /polkit-agent-validate.sh \
+    /rpm-service-pam-lifecycle.sh /rpm-config-lifecycle.sh /rpm-runtime-smoke.sh
+
+# The exact artifact under test, mock built from source by the stage before
+# this one. Installing it here rather than mounting it at run time is what lets
+# pkg-validate.sh see an installed package the moment systemd has booted, and
+# what leaves /facelock-test-package.rpm on disk for its reinstall assertions.
+COPY target/copr-lane/facelock.rpm /facelock-test-package.rpm
+RUN /validate-rpm.sh /facelock-test-package.rpm copr \
+    && dnf install -y /facelock-test-package.rpm \
+    && rpm -q facelock onnxruntime \
+    && ! rpm -q onnxruntime-devel \
+    && dnf clean all
+
+# The %config(noreplace) upgrade lifecycle needs a second, higher-versioned
+# package whose only payload difference is the config file. A second mock
+# source rebuild would cost another full workspace compile for an assertion
+# about rpm's file flags, so this is a re-versioned repack of the payload mock
+# just built: the binaries come out of the installed package, the spec is the
+# same dist/facelock.spec (only its cargo lines no-oped, which the direct lane
+# already does for 0.0.0 -> 0.0.1), and the bundled_ort bcond stays off so the
+# artifact keeps the COPR shape. It is a fixture, not a second COPR build, and
+# it is not byte-identical to one.
+WORKDIR /build
+COPY Cargo.toml Cargo.lock LICENSE-MIT LICENSE-APACHE /build/
+COPY config/ /build/config/
+COPY systemd/ /build/systemd/
+COPY dbus/ /build/dbus/
+COPY dist/ /build/dist/
+COPY po/ /build/po/
+COPY scripts/install-locale-catalogs.sh /build/scripts/install-locale-catalogs.sh
+COPY test/build-rpm-prebuilt.sh /build/test/build-rpm-prebuilt.sh
+COPY .github/workflows/scripts/run-networkless.sh /run-networkless.sh
+RUN dnf -y install rpm-build && dnf clean all && \
+    chmod +x /build/test/build-rpm-prebuilt.sh /run-networkless.sh && \
+    mkdir -p /build/target/release && \
+    cp /usr/bin/facelock /build/target/release/facelock && \
+    cp /usr/bin/facelock-polkit-agent /build/target/release/facelock-polkit-agent && \
+    cp "$(rpm -ql facelock | grep security/pam_facelock.so)" \
+        /build/target/release/libpam_facelock.so && \
+    baseline="$(rpm -qp --queryformat '%{VERSION}' /facelock-test-package.rpm)" && \
+    cp /build/config/facelock.toml /tmp/facelock.toml.baseline && \
+    printf '\n# packaged-only-in-facelock-upgrade-rpm\n' >> /build/config/facelock.toml && \
+    /run-networkless.sh bash /build/test/build-rpm-prebuilt.sh "${baseline}.1" copr && \
+    RPM_FILE="$(find . -maxdepth 1 -name '*.rpm' -print -quit)" && \
+    cp "$RPM_FILE" /facelock-test-upgrade.rpm && \
+    /validate-rpm.sh /facelock-test-upgrade.rpm copr && \
+    cp /tmp/facelock.toml.baseline /build/config/facelock.toml && \
+    rm -rf ~/rpmbuild ./*.rpm /tmp/facelock.toml.baseline /build/target && \
+    cmp /build/config/facelock.toml /etc/facelock/config.toml
+
+# rpm-config-lifecycle.sh proves the version ordering by outcome: it upgrades
+# to this package and asserts the new packaged bytes landed, which cannot
+# happen unless `<baseline>.1` outranks `<baseline>`.
+
+CMD ["/pkg-validate.sh"]

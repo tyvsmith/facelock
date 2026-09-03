@@ -1222,6 +1222,58 @@ test-copr release="44": (_fedora-lane-image release)
     podman run --privileged --rm -e COPR_CHROOT=fedora-{{ release }}-x86_64 \
         -v "$PWD:/repo:ro" facelock-copr-test-f{{ release }}
 
+# The COPR lifecycle lanes below are the same source rebuild plus what
+# test-copr never did: install the artifact it produced and boot it. Stage one
+# is `mock` in a privileged container, so it exports the built RPM to
+# target/copr-lane/ (gitignored, and re-included in .dockerignore) rather than
+# validating in place. Stage two installs exactly that file, which is what
+# makes the lane's evidence a claim about the mock-built package and not about
+# a second build that happens to come from the same tree.
+#
+# Serial by construction: the staging path is one file, so two COPR lanes must
+# not run at once.
+_copr-mock-rpm release: (_fedora-lane-image release)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    image="$(bash test/fedora-lane-image.sh '{{ release }}')"
+    podman build --build-arg "BASE_IMAGE=$image" \
+        -t facelock-copr-test-f{{ release }} -f test/Containerfile.copr .
+    rm -rf -- target/copr-lane
+    mkdir -p target/copr-lane
+    podman run --privileged --rm -e COPR_CHROOT=fedora-{{ release }}-x86_64 \
+        -v "$PWD:/repo:ro" -v "$PWD/target/copr-lane:/out:z" \
+        facelock-copr-test-f{{ release }}
+    [ -f target/copr-lane/facelock.rpm ] || {
+        echo "error: the Fedora {{ release }} source rebuild exported no RPM" >&2
+        exit 1
+    }
+
+# Needs models/*.onnx for the same reason test-rpm-pkg does: the validation
+# starts the daemon under the hardened unit and reads what it holds.
+
+# COPR lifecycle lane — mock source rebuild, then the booted package lifecycle
+test-copr-pkg release="44": (_require-models "1") (_copr-mock-rpm release)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    image="$(bash test/fedora-lane-image.sh '{{ release }}')"
+    podman build --build-arg "BASE_IMAGE=$image" \
+        -t facelock-copr-pkg-f{{ release }} -f test/Containerfile.copr-e2e .
+    PACKAGING_LANE='test-copr-pkg-{{ release }} target=fedora-{{ release }} channel=copr build_origin=mock-source-rebuild runtime_policy=system-ort depth=full' \
+        test/run-pkg-validate-systemd.sh facelock-copr-pkg-f{{ release }}
+
+# Branched-release COPR lane — mock source rebuild, then the runtime smoke
+test-copr-smoke release="45": (_copr-mock-rpm release)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    image="$(bash test/fedora-lane-image.sh '{{ release }}')"
+    podman build --build-arg "BASE_IMAGE=$image" \
+        -t facelock-copr-smoke-f{{ release }} -f test/Containerfile.copr-e2e .
+    PACKAGING_LANE='test-copr-smoke-{{ release }} target=fedora-{{ release }} channel=copr build_origin=mock-source-rebuild runtime_policy=system-ort depth=smoke' \
+        bash test/run-rpm-smoke-systemd.sh facelock-copr-smoke-f{{ release }}
+
+# Every Packit/COPR release target rebuilt from source at its declared depth
+test-copr-lanes: (test-copr-pkg "43") (test-copr-pkg "44") (test-copr-smoke "45")
+
 # Dev shell — interactive .deb container with host models for fast iteration (requires camera)
 test-deb-dev-shell:
     #!/usr/bin/env bash
@@ -1566,7 +1618,7 @@ release-preflight tag='':
         echo "MISSING: no complete packaging evidence for $HEAD_SHA (reasons above)"
         echo "  Run the matrix in CI against this commit, then re-run preflight:"
         echo "    gh workflow run packaging.yml --ref $(git rev-parse --abbrev-ref HEAD)"
-        echo "  Or run every lane locally (30-60+ minutes, needs podman and the ONNX models):"
+        echo "  Or run every lane locally (about 1 h 45 min measured on 2026-09-02, needs podman and the ONNX models):"
         echo "    just test-packaging-matrix"
         failed=1
     fi
@@ -1606,10 +1658,12 @@ _packaging-evidence-reset:
     date -u +%Y-%m-%dT%H:%M:%SZ > .packaging-evidence/started-at
 
 # The same lanes `.github/workflows/packaging.yml` runs, in one command, for a
-# maintainer without CI in reach (#229). It is 30-60+ minutes and needs podman
-# plus the ONNX models; CI is the faster path, and `just release-preflight`
-# accepts a green run of that workflow at HEAD through the evidence artifacts
-# its lanes upload, validated the same way as this record.
+# maintainer without CI in reach (#229). It needs podman and the ONNX models
+# and takes about 1 h 45 min measured on 2026-09-02 (COPR lanes 31, 23 and
+# 20 min), because each rebuilds the workspace from source inside mock. CI is
+# the faster path, and `just release-preflight` accepts a green run of that
+# workflow at HEAD through the evidence artifacts its lanes upload, validated
+# the same way as this record.
 #
 # Clean tree first, for the same reason the camera tiers demand one: a record
 # that names a commit the lanes did not actually build is worse than no record.
@@ -1620,7 +1674,7 @@ _packaging-evidence-reset:
 # never records.
 
 # Every packaging lane the release gate requires, recorded for release-preflight
-test-packaging-matrix: _require-clean-tree _packaging-evidence-reset test-release-matrix test-arch-pkg test-deb test-rpm-lanes
+test-packaging-matrix: _require-clean-tree _packaging-evidence-reset test-release-matrix test-arch-pkg test-deb test-rpm-lanes test-copr-lanes
     #!/usr/bin/env bash
     set -euo pipefail
     commit="$(git rev-parse HEAD)"

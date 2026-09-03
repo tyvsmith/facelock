@@ -290,7 +290,9 @@ cp "$repo_root/test/Containerfile.rpm-e2e" "$matrix_root/test/"
 # assert anything (#229 wired this recipe into CI, which is how that surfaced).
 cp "$repo_root/test/Containerfile.rpm-authselect" "$matrix_root/test/"
 cp "$repo_root/test/Containerfile.copr" "$matrix_root/test/"
+cp "$repo_root/test/Containerfile.copr-e2e" "$matrix_root/test/"
 cp "$repo_root/test/Containerfile.fedora" "$matrix_root/test/"
+cp "$repo_root/.dockerignore" "$matrix_root/"
 cp "$repo_root/test/fedora-lane-image.sh" "$matrix_root/test/"
 cp "$repo_root/.github/workflows/packaging.yml" "$matrix_root/.github/workflows/"
 cp "$repo_root/test/copr-build.sh" "$matrix_root/test/"
@@ -690,6 +692,10 @@ assert_matrix_mutation_rejected \
     "RPM service-scoped PAM lifecycle omitted from package fixture" \
     "test/Containerfile.rpm-e2e" \
     's@COPY test/rpm-service-pam-lifecycle.sh /rpm-service-pam-lifecycle.sh@COPY test/rpm-service-pam-lifecycle.sh /rpm-service-pam-lifecycle-disabled.sh@'
+assert_matrix_mutation_rejected \
+    "COPR lifecycle image not persistently disabling the Cisco OpenH264 repo" \
+    "test/Containerfile.copr-e2e" \
+    's/\*openh264\*/\*nomatch\*/'
 # The variable is literal fixture text inside the sed expression.
 # shellcheck disable=SC2016
 assert_matrix_mutation_rejected \
@@ -1350,13 +1356,18 @@ case "${1:-}" in
         detached=0
         models=nomodels
         image=""
+        out=""
         while [ $# -gt 0 ]; do
             case "$1" in
                 -d) detached=1; shift ;;
                 -v)
-                    case "$2" in *:/facelock-test-models:*) models=models ;; esac
+                    case "$2" in
+                        *:/facelock-test-models:*) models=models ;;
+                        *:/out:*) out="${2%%:*}" ;;
+                    esac
                     shift 2 ;;
-                --security-opt|-w) shift 2 ;;
+                # Two-token options, or the value is read as the image name.
+                -e|--security-opt|-w) shift 2 ;;
                 -*) shift ;;
                 *) image="$1"; break ;;
             esac
@@ -1368,6 +1379,10 @@ case "${1:-}" in
         case "$image" in
             facelock-arch-pkg-*)
                 printf 'RESULTS_JSON: {"pass":29,"fail":0,"skip":0,"allowed_skip":0,"mandatory_skip":0,"models_present":true}\n' ;;
+            facelock-copr-test-*)
+                # The mock source rebuild hands its RPM back through /out.
+                [ -n "$out" ] || { echo "copr build with no /out mount" >&2; exit 1; }
+                : >"$out/facelock.rpm" ;;
         esac
         exit 0 ;;
     exec)
@@ -1391,7 +1406,16 @@ case "${1:-}" in
             test)
                 case "${2:-} ${3:-}" in
                     "-x /deb-package-lifecycle.sh") [ "$format" = deb ] ;;
-                    "-x /rpm-service-pam-lifecycle.sh"|"-x /rpm-config-lifecycle.sh") [ "$format" = rpm ] ;;
+                    "-x /rpm-service-pam-lifecycle.sh") [ "$format" = rpm ] ;;
+                    # Both RPM images carry the config-upgrade stage. The
+                    # override drops it from the COPR image so the runner's
+                    # depth downgrade can be exercised.
+                    "-x /rpm-config-lifecycle.sh")
+                        case "$cid" in
+                            stub-facelock-copr-*)
+                                [ "${STUB_COPR_WITHOUT_CONFIG_LIFECYCLE:-0}" != 1 ] ;;
+                            *) [ "$format" = rpm ] ;;
+                        esac ;;
                     *) exit 1 ;;
                 esac ;;
             /pkg-validate.sh)
@@ -1437,7 +1461,7 @@ run_packaging_matrix >"$tmp_root/evidence-complete.log" 2>&1 ||
 validate_output=$(evidence_validate "$evidence_root/.packaging-matrix-verified" 2>&1) ||
     fail "release preflight refused the marker a complete matrix run wrote: $validate_output"
 case "$validate_output" in
-    *"6 lanes"*) ;;
+    *"9 lanes"*) ;;
     *) fail "validate accepted the marker without summarising it: $validate_output" ;;
 esac
 python3 - "$evidence_root/.packaging-matrix-verified" "$evidence_head" <<'PY'
@@ -1452,6 +1476,9 @@ assert marker["tree_clean"] is True
 assert marker["started_at"] and marker["finished_at"] and marker["started_at"] <= marker["finished_at"]
 expected = [
     "test-arch-pkg",
+    "test-copr-pkg-43",
+    "test-copr-pkg-44",
+    "test-copr-smoke-45",
     "test-deb-resolute-pkg",
     "test-deb-trixie-pkg",
     "test-rpm-pkg-43",
@@ -1474,6 +1501,19 @@ assert lanes["test-rpm-pkg-43"]["runtime_policy"] == "bundled-ort"
 assert lanes["test-rpm-smoke-45"]["depth"] == "smoke"
 assert lanes["test-arch-pkg"]["channel"] == "aur"
 assert lanes["test-arch-pkg"]["runtime_policy"] == "system-ort"
+# #230: every declared Packit/COPR target carries its own record, built from
+# source in mock and run against Fedora's system ONNX Runtime. Same target as
+# the direct-RPM lane beside it, different channel, origin and runtime.
+for release in ("43", "44"):
+    copr = lanes[f"test-copr-pkg-{release}"]
+    assert copr["target"] == f"fedora-{release}", copr
+    assert copr["channel"] == "copr", copr
+    assert copr["build_origin"] == "mock-source-rebuild", copr
+    assert copr["runtime_policy"] == "system-ort", copr
+    assert copr["depth"] == "full", copr
+    assert lanes[f"test-rpm-pkg-{release}"]["target"] == copr["target"], release
+assert lanes["test-copr-smoke-45"]["channel"] == "copr"
+assert lanes["test-copr-smoke-45"]["depth"] == "smoke"
 PY
 cp "$evidence_root/.packaging-matrix-verified" "$tmp_root/evidence-good.json"
 cp -R "$evidence_root/.packaging-evidence" "$tmp_root/evidence-good-records"
@@ -1533,6 +1573,28 @@ with open(sys.argv[1], encoding="utf-8") as handle:
 assert lane["status"] == "fail", lane
 PY
 
+# A lane whose image cannot run every stage its declared depth names records
+# what it actually ran. `partial` is a depth the release matrix requires of
+# nothing, so the aggregate refuses it rather than accepting a short lifecycle
+# as a full one (#230).
+if run_packaging_matrix STUB_COPR_WITHOUT_CONFIG_LIFECYCLE=1 >"$tmp_root/evidence-short-depth.log" 2>&1; then
+    fail "test-packaging-matrix recorded a COPR lane that skipped the config lifecycle"
+fi
+[ ! -e "$evidence_root/.packaging-matrix-verified" ] ||
+    fail "the short-depth run left a marker behind"
+grep -q 'rpm-config-lifecycle.sh' "$tmp_root/evidence-short-depth.log" ||
+    fail "the short-depth run did not name the stage it could not run: $(cat "$tmp_root/evidence-short-depth.log")"
+grep -q "depth is 'partial'" "$tmp_root/evidence-short-depth.log" ||
+    fail "the short-depth refusal did not name the depth: $(cat "$tmp_root/evidence-short-depth.log")"
+python3 - "$evidence_root/.packaging-evidence/test-copr-pkg-43.json" <<'DEPTH'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    lane = json.load(handle)
+assert lane["depth"] == "partial", lane
+DEPTH
+
 evidence_case_index=0
 assert_evidence_refused() {
     local context="$1"
@@ -1585,6 +1647,19 @@ assert_evidence_refused "lane record from another commit" \
     'lanes["test-rpm-smoke-45"]["commit"] = "0" * 40' "commit"
 assert_evidence_refused "direct RPM record claiming another channel" \
     'lanes["test-rpm-pkg-43"]["channel"] = "copr"' "channel"
+# #230's core refusal: the direct-RPM lanes prove a bundled-runtime package
+# built from host binaries, so their success can never stand in for the COPR
+# delivery path the release matrix declares for the same Fedora target.
+assert_evidence_refused "direct RPM record offered as the COPR lane" \
+    'marker["lanes"] = [lane for lane in marker["lanes"] if lane["name"] != "test-copr-pkg-44"] + [{**lanes["test-rpm-pkg-44"], "name": "test-copr-pkg-44"}]' \
+    "channel"
+assert_evidence_refused "COPR record built from host binaries" \
+    'lanes["test-copr-pkg-43"]["build_origin"] = "host-binaries"' "build_origin"
+assert_evidence_refused "COPR record run against a bundled runtime" \
+    'lanes["test-copr-pkg-43"]["runtime_policy"] = "bundled-ort"' "runtime_policy"
+assert_evidence_refused "missing COPR lane record" \
+    'marker["lanes"] = [lane for lane in marker["lanes"] if lane["name"] != "test-copr-smoke-45"]' \
+    "test-copr-smoke-45"
 assert_evidence_refused "lane depth downgraded" \
     'lanes["test-rpm-pkg-44"]["depth"] = "smoke"' "depth"
 assert_evidence_refused "duplicate lane records" \

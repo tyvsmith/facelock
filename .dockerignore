@@ -4,6 +4,9 @@ target/
 !target/release/facelock
 !target/release/libpam_facelock.so
 !target/release/facelock-polkit-agent
+# The COPR lifecycle lanes stage the RPM mock built from source here, so
+# test/Containerfile.copr-e2e can install the exact artifact under test.
+!target/copr-lane/facelock.rpm
 
 # Git history not needed in containers
 .git/

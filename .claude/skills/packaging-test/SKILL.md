@@ -16,8 +16,11 @@ evidence at HEAD: the `packaging-evidence-*` artifacts a green run uploads, or
 the record a local `just test-packaging-matrix` writes.
 
 Two consequences for you. A green pull request says nothing about packaging
-unless those jobs ran on it, so check rather than assume. COPR and the APT repo
-are still local-only: nothing gates them until a release tag fires `release.yml`.
+unless those jobs ran on it, so check rather than assume. The COPR lanes go
+further: they never run on a pull request at all, because mock needs a
+privileged container. Only the nightly and a `workflow_dispatch` run them. The
+APT repo is still local-only: nothing gates it until a release tag fires
+`release.yml`.
 
 Running the right recipe yourself is still the fast way to find out. All of them
 need `podman`; none in the routing table needs a camera.
@@ -32,7 +35,8 @@ need `podman`; none in the routing table needs a camera.
 | TPM packaging or `facelock-tpm` build features | `just test-deb-trixie-pkg` and `just test-deb-resolute-pkg` |
 | `dist/PKGBUILD*`, `dist/facelock.install`, `dist/facelock-pam-remove.hook` | `just test-arch-pkg` |
 | `.packit.yaml` schema only | `just test-packit-config` — real `packit` in a pinned Fedora container, seconds |
-| `.packit.yaml` semantics, or anything COPR consumes | `just test-copr` — slow, opt-in, Packit SRPM plus a mock from-source rebuild |
+| `.packit.yaml` semantics, or anything COPR consumes | `just test-copr-pkg 44` — the mock from-source rebuild plus the booted lifecycle it produces (`just test-copr` is the build half alone) |
+| `dist/facelock.spec` `%build`/`%check`, or a new runtime dependency | `just test-copr-lanes` — the direct `.rpm` lanes stage host binaries and never compile from the spec |
 | APT repo generation, `publish-apt` workflow, `dist/apt/**` | `just test-apt-repo` — the real publisher, signing, and a clean APT client for every suite, in the pinned trixie container |
 | `systemd/`, `dbus/`, `polkit/`, install paths | both Debian suite recipes or `just test-rpm-pkg` — all validate under booted systemd |
 | `crates/pam-facelock/**`, `/etc/pam.d` handling | `just test-arch-pam` and `just check-pam-standalone` |
@@ -52,6 +56,14 @@ behave differently across releases (dnf/rpm behavior, scriptlets, dependency
 resolution, systemd or SELinux versions). It runs 43 and 44 at full lifecycle
 depth and branched 45 at build plus runtime smoke, which is the depth the matrix
 gives each one.
+
+There are two Fedora channels, not one, and neither proves the other.
+`test-rpm-lanes` builds the direct `.rpm` from host binaries around a bundled
+ONNX Runtime. `just test-copr-lanes` builds what COPR would publish: the Packit
+SRPM rebuilt from source in a mock chroot, installed so the package's own
+`Requires: onnxruntime` resolves against Fedora's system runtime, then booted
+for the same validation. The release gate requires both, and the evidence
+validator refuses a direct-RPM record offered as a COPR target's evidence.
 
 Never add a Rawhide lane. Rawhide is optional and experimental in the matrix and
 cannot substitute for a Fedora 43, 44 or 45 result. Lane images come from the
@@ -118,11 +130,13 @@ the question is "does a fresh install work", a dev shell when iterating.
 - Name which packaging recipe you ran; if none, say so
 - Report camera-gated tests as not run, never as passed
 - A green pull request only proves packaging if the `packaging.yml` jobs ran rather than reporting skipped
-- `just test-packaging-matrix` is the whole gate in one command (30-60+ minutes), and it writes the lane evidence `just release-preflight` validates; a `FACELOCK_ALLOW_MISSING_MODELS=1` run is a diagnostic — it writes its `partial` per-lane records, but the marker is withheld
+- `just test-packaging-matrix` is the whole gate in one command (about 1 h 45 min measured on 2026-09-02 — COPR lanes 31, 23 and 20 min — because each rebuilds the workspace inside mock), and it writes the lane evidence `just release-preflight` validates; a `FACELOCK_ALLOW_MISSING_MODELS=1` run is a diagnostic — it writes its `partial` per-lane records, but the marker is withheld
 
 ## Cost
 
-`test-copr` and `test-arch-pkg` are slow and opt-in: both compile the workspace
-from source inside the container. The Debian and Fedora `-pkg` recipes boot a
+`test-copr`, the `test-copr-*` lanes and `test-arch-pkg` are the slow ones: all
+compile the workspace from source inside the container, and the COPR lanes also
+run the spec's `%check` inside the mock chroot. They share one staging path, so
+never run two COPR lanes at once. The Debian and Fedora `-pkg` recipes boot a
 container under systemd. Run the narrowest recipe the routing table allows
 rather than the whole set.
