@@ -1996,7 +1996,43 @@ fn a_failed_compare_set_load_is_not_cached() {
     );
 }
 
-// --- #231 Track K task 7: a missing key over encrypted rows is never replaced ---
+// --- #231: a missing key over encrypted rows is never replaced ---
+
+/// A template row as a real system holds one: version byte, nonce, ciphertext
+/// and tag, 2077 bytes. Short `[0x02; 96]` stand-ins pass the version-byte
+/// check but not the load path, so they cannot show what an operator actually
+/// sees when the key behind them is gone.
+fn software_encrypted_row() -> Vec<u8> {
+    facelock_tpm::SoftwareSealer::from_key([0x11u8; 32])
+        .seal_embedding(&[0.5f32; 512])
+        .unwrap()
+}
+
+fn keyfile_handler(
+    key_path: &Path,
+    db_path: &Path,
+    store: FaceStore,
+) -> facelock_daemon::handler::Handler<MockCamera, MockFaceEngine> {
+    use facelock_daemon::handler::Handler;
+    use facelock_daemon::rate_limit::RateLimiter;
+
+    let mut config = test_config();
+    config.encryption.method = facelock_core::config::EncryptionMethod::Keyfile;
+    config.encryption.key_path = key_path.display().to_string();
+    config.storage.db_path = db_path.display().to_string();
+
+    let factory: MockCameraFactory = Box::new(move |_cfg| Ok(MockCamera::bright(64, 64, 5)));
+    Handler::new(
+        config,
+        MockFaceEngine::no_faces(),
+        store,
+        RateLimiter::new(5, 60),
+        CameraCaps::default(),
+        Some(factory),
+        None,
+    )
+    .unwrap()
+}
 
 /// The encrypt-by-default auto-generation exists so a keyfile default actually
 /// encrypts on a fresh system. On an upgraded system whose key artifact went
@@ -2007,35 +2043,22 @@ fn a_failed_compare_set_load_is_not_cached() {
 /// had since written.
 #[test]
 fn missing_key_over_encrypted_rows_is_never_replaced() {
-    use facelock_daemon::handler::Handler;
-    use facelock_daemon::rate_limit::RateLimiter;
-
     let dir = tempfile::tempdir().unwrap();
     let key_path = dir.path().join("encryption.key");
     let db_path = temp_db_path("missing-key-encrypted-rows");
-    let mut config = test_config();
-    config.encryption.method = facelock_core::config::EncryptionMethod::Keyfile;
-    config.encryption.key_path = key_path.display().to_string();
-    config.storage.db_path = db_path.display().to_string();
 
-    // A row that was encrypted under a key this system no longer has.
     let store = FaceStore::create(&db_path).unwrap();
     store
-        .add_model_raw("alice", "front", &[0x02u8; 96], true, "embedder")
+        .add_model_raw(
+            "alice",
+            "front",
+            &software_encrypted_row(),
+            true,
+            "embedder",
+        )
         .unwrap();
 
-    let factory: MockCameraFactory = Box::new(move |_cfg| Ok(MockCamera::bright(64, 64, 5)));
-    let mut handler = Handler::new(
-        config,
-        MockFaceEngine::no_faces(),
-        store,
-        RateLimiter::new(5, 60),
-        CameraCaps::default(),
-        Some(factory),
-        None,
-    )
-    .unwrap();
-
+    let mut handler = keyfile_handler(&key_path, &db_path, store);
     assert!(
         !key_path.exists(),
         "a replacement key was written over encrypted rows: {}",
@@ -2050,8 +2073,8 @@ fn missing_key_over_encrypted_rows_is_never_replaced() {
         label: "second".to_string(),
     }) {
         DaemonResponse::Error { message } => assert!(
-            message.contains("encrypted") && message.contains("key"),
-            "refusal must name the missing key over encrypted rows: {message}"
+            message.contains("software-encrypted") && message.contains("facelock clear"),
+            "refusal must name what is at risk and the remedy: {message}"
         ),
         other => panic!("enroll must be refused while the key is missing, got: {other:?}"),
     }
@@ -2064,39 +2087,160 @@ fn missing_key_over_encrypted_rows_is_never_replaced() {
 /// encrypting new enrollments, which is the finding it was added for.
 #[test]
 fn missing_key_over_plaintext_only_rows_is_still_created() {
-    use facelock_daemon::handler::Handler;
-    use facelock_daemon::rate_limit::RateLimiter;
-
     let dir = tempfile::tempdir().unwrap();
     let key_path = dir.path().join("encryption.key");
     let db_path = temp_db_path("missing-key-plaintext-rows");
-    let mut config = test_config();
-    config.encryption.method = facelock_core::config::EncryptionMethod::Keyfile;
-    config.encryption.key_path = key_path.display().to_string();
-    config.storage.db_path = db_path.display().to_string();
 
     let store = FaceStore::create(&db_path).unwrap();
     store
         .add_model_raw("alice", "front", &[0u8; 2048], false, "embedder")
         .unwrap();
 
-    let factory: MockCameraFactory = Box::new(move |_cfg| Ok(MockCamera::bright(64, 64, 5)));
-    let _handler = Handler::new(
-        config,
-        MockFaceEngine::no_faces(),
-        store,
-        RateLimiter::new(5, 60),
-        CameraCaps::default(),
-        Some(factory),
-        None,
-    )
-    .unwrap();
+    let _handler = keyfile_handler(&key_path, &db_path, store);
 
     assert!(
         key_path.exists(),
         "a plaintext-only legacy database must still get its default key"
     );
     assert_eq!(std::fs::metadata(&key_path).unwrap().len(), 32);
+
+    cleanup_db(&db_path);
+}
+
+/// Authentication in the refusal state must not report the database as
+/// corrupt. With no sealer the load used to take the plaintext fast path,
+/// which handed a 2077-byte encrypted blob to a caller expecting 2048 raw
+/// bytes; the store answered "invalid embedding blob size — the database is
+/// corrupt", and the operator whose key merely went missing was told to
+/// replace the one file still holding their enrollments.
+///
+/// The response stays an error, which the PAM module maps to `PAM_IGNORE`:
+/// no match, no rate-limit charge, and the password prompt behind it. That is
+/// the no-lockout contract, unchanged.
+#[test]
+fn authenticate_in_the_refusal_state_names_the_key_not_corruption() {
+    let dir = tempfile::tempdir().unwrap();
+    let key_path = dir.path().join("encryption.key");
+    let db_path = temp_db_path("refusal-auth-message");
+
+    let store = FaceStore::create(&db_path).unwrap();
+    store
+        .add_model_raw(
+            "alice",
+            "front",
+            &software_encrypted_row(),
+            true,
+            "embedder",
+        )
+        .unwrap();
+
+    let mut handler = keyfile_handler(&key_path, &db_path, store);
+    let response = handler.handle_authenticate(
+        "alice".to_string(),
+        AuthIntent::Authenticate,
+        &CancelToken::new(),
+    );
+
+    match response {
+        DaemonResponse::Error { message } => {
+            assert!(
+                !message.contains("corrupt"),
+                "a missing key is not a corrupt database: {message}"
+            );
+            assert!(
+                message.contains("facelock clear") && message.contains("software-encrypted"),
+                "the auth path must carry the refusal: {message}"
+            );
+        }
+        DaemonResponse::AuthResult(result) => {
+            assert!(!result.matched, "nothing may authenticate without the key");
+        }
+        other => panic!("unexpected authenticate response: {other:?}"),
+    }
+
+    cleanup_db(&db_path);
+}
+
+/// The refusal is global to the store — one user's encrypted row triggers it —
+/// but a user whose own templates are plaintext must keep authenticating.
+#[test]
+fn a_plaintext_user_still_loads_while_the_sealer_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let key_path = dir.path().join("encryption.key");
+    let db_path = temp_db_path("refusal-plaintext-user");
+
+    let store = FaceStore::create(&db_path).unwrap();
+    store
+        .add_model_raw("bob", "front", &software_encrypted_row(), true, "embedder")
+        .unwrap();
+    store
+        .add_model("alice", "front", &[0.25f32; 512], "embedder")
+        .unwrap();
+
+    let mut handler = keyfile_handler(&key_path, &db_path, store);
+    // `MockFaceEngine::no_faces` means the scan finds nobody, so the outcome
+    // is a clean no-match; what matters is that the *load* succeeded rather
+    // than erroring out from under her.
+    let response = handler.handle_authenticate(
+        "alice".to_string(),
+        AuthIntent::Authenticate,
+        &CancelToken::new(),
+    );
+    assert!(
+        !matches!(response, DaemonResponse::Error { .. }),
+        "alice's compare set must still load: {response:?}"
+    );
+
+    cleanup_db(&db_path);
+}
+
+/// The refusal tells the operator to restore the key artifact. Deciding once
+/// at construction meant they restored it, did exactly what they were told,
+/// and were told the same thing again — with `facelock clear` as the message's
+/// next suggestion, which destroys the enrollments the restore just saved.
+#[test]
+fn restoring_the_key_lifts_the_refusal_without_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let key_path = dir.path().join("encryption.key");
+    let db_path = temp_db_path("refusal-restore");
+
+    let real_key = [0x11u8; 32];
+    let store = FaceStore::create(&db_path).unwrap();
+    store
+        .add_model_raw(
+            "alice",
+            "front",
+            &software_encrypted_row(),
+            true,
+            "embedder",
+        )
+        .unwrap();
+
+    let mut handler = keyfile_handler(&key_path, &db_path, store);
+    match handler.handle(DaemonRequest::Enroll {
+        user: "alice".to_string(),
+        label: "second".to_string(),
+    }) {
+        DaemonResponse::Error { message } => assert!(message.contains("facelock clear")),
+        other => panic!("expected the refusal, got: {other:?}"),
+    }
+
+    // The operator restores the key from backup, exactly as instructed.
+    std::fs::write(&key_path, real_key).unwrap();
+
+    // The enrollment that follows gets past the encryption gate. It still
+    // fails — `MockFaceEngine::no_faces` never captures a face — but on
+    // capture, not on a stale decision from before the restore.
+    match handler.handle(DaemonRequest::Enroll {
+        user: "alice".to_string(),
+        label: "second".to_string(),
+    }) {
+        DaemonResponse::Error { message } => assert!(
+            message.contains("no face"),
+            "the restored key must lift the refusal and let capture run: {message}"
+        ),
+        other => panic!("unexpected post-restore enroll response: {other:?}"),
+    }
 
     cleanup_db(&db_path);
 }
