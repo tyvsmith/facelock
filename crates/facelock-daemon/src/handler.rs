@@ -909,7 +909,7 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                         "the configured encryption sealer could not be initialized".to_string()
                     });
                     let message = format!(
-                        "refusing to enroll: {cause}. Storing your face would otherwise fall \
+                        "refusing to enroll: {cause} Storing your face would otherwise fall \
                          back to plaintext. Fix the keyfile path/permissions (or set \
                          encryption.method = \"none\" with security.allow_plaintext = true to \
                          intentionally store plaintext)."
@@ -1149,6 +1149,12 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         intent: AuthIntent,
         cancel: &CancelToken,
     ) -> DaemonResponse {
+        // An operator who restored the key artifact the refusal named gets a
+        // real compare on the next authentication attempt, not just the next
+        // enrollment — this is one `lstat` while the refusal holds, and a
+        // no-op once it doesn't.
+        self.refresh_software_sealer();
+
         // A storage failure here must surface as an error, never fold into an
         // empty model list (C3, issue #105): empty `models` means an empty
         // device-allowed set, a guaranteed "no match", and a rate-limit charge

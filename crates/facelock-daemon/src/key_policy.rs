@@ -130,7 +130,8 @@ pub fn encrypted_rows_at_risk(store: &FaceStore, config: &Config) -> Option<Stri
         "{}. A new key cannot read them, and writing one makes a later restore of the \
          original useless. Restore the key artifacts for the encryption method that \
          wrote those rows, or clear the encrypted enrollments with `facelock clear` and \
-         enrol again. The daemon re-checks the key on the next enrollment attempt.",
+         enrol again. The daemon re-checks the key on the next authentication or \
+         enrollment attempt.",
         found.join("; ")
     ))
 }

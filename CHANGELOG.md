@@ -611,15 +611,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   encryption policy, and `facelock encrypt` with and without `--generate-key`.
   A refusal names the encryption method that wrote the rows at risk, the
   artifact to restore, and `facelock clear` as the deliberate destructive
-  alternative; restoring the key lifts it at the next enrollment attempt with
-  no daemon restart. Enrollment fails closed while it stands, authentication
-  still falls through to the password prompt, a user whose own templates are
-  plaintext keeps authenticating, and the auth path reports the missing key
-  instead of calling the database corrupt. Key creation is now an `O_EXCL`
-  write to a temporary flushed and moved into place with
-  `renameat2(RENAME_NOREPLACE)`, so concurrent daemons resolve to one key and
-  no reader sees a partial one, and a symlink standing at the key path is
-  refused by the reading path as well as the creating one.
+  alternative; restoring the key lifts it live on the next authentication or
+  enrollment attempt, no daemon restart. Enrollment fails closed while it
+  stands, authentication still falls through to the password prompt, a user
+  whose own templates are plaintext keeps authenticating, and the auth path
+  reports the missing key instead of calling the database corrupt. Key
+  creation is now an `O_EXCL` write to a temporary flushed and moved into
+  place with `renameat2(RENAME_NOREPLACE)`, so concurrent daemons resolve to
+  one key and no reader sees a partial one, and a symlink standing at the key
+  path is refused by every creating and reading path, `--generate-key`
+  included.
 
 - **Enrollment persists atomically** (#308): the daemon and `facelock enroll`
   now hold accepted embeddings in memory and write the model in one store

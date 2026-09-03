@@ -874,10 +874,19 @@ impl SoftwareSealer {
     /// world/group-readable — closing the create-then-`chmod` TOCTOU window
     /// (finding #11). The key material is flushed to disk with `sync_all` and
     /// zeroized from memory before returning.
+    ///
+    /// Refuses a symlink at `path` up front: `create_truncate_file` opens
+    /// with `O_NOFOLLOW`, so the symlink case would otherwise surface as a
+    /// generic I/O failure rather than the refusal every other key writer
+    /// gives.
     pub fn generate_key_file(path: &std::path::Path) -> Result<()> {
         use rand::Rng;
         use std::io::Write;
         use zeroize::Zeroize;
+
+        if facelock_core::fs_security::is_symlink(path) {
+            return Err(FacelockError::Encryption(symlink_key_refusal(path)));
+        }
 
         let mut key = [0u8; AES_KEY_SIZE];
         rand::rng().fill_bytes(&mut key);
@@ -1859,6 +1868,35 @@ mod tests {
             "a link at the key path is its own refusal, not an I/O failure: {error}"
         );
         assert_eq!(std::fs::read(&target).unwrap(), b"not a key");
+    }
+
+    #[test]
+    fn generate_key_file_refuses_a_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("elsewhere.key");
+        std::fs::write(&target, b"not a key").unwrap();
+        let key_path = dir.path().join("encryption.key");
+        std::os::unix::fs::symlink(&target, &key_path).unwrap();
+
+        // `--generate-key` and `setup --encryption keyfile` both call this
+        // primitive directly, not `create_key_file_exclusive`. It must refuse
+        // the symlink itself rather than relying on `O_NOFOLLOW` inside
+        // `create_truncate_file` to surface as a generic I/O error.
+        let error = SoftwareSealer::generate_key_file(&key_path)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("symlink"),
+            "a link at the key path is its own refusal, not an I/O failure: {error}"
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"not a key");
+        assert!(
+            std::fs::symlink_metadata(&key_path)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the refusal must not remove the link it found"
+        );
     }
 
     /// A symlink that resolves is the shape that used to slip through every

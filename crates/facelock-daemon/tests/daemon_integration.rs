@@ -2288,3 +2288,59 @@ fn restoring_the_key_lifts_the_refusal_without_a_restart() {
 
     cleanup_db(&db_path);
 }
+
+/// The restore-lifts-the-refusal fix above only ran `refresh_software_sealer`
+/// from the `Enroll` arm. Authentication went through
+/// `handle_authenticate_prechecked` instead, so a key restored by an operator
+/// still refused every authentication until the daemon was enrolled into or
+/// restarted — the one thing "restore the key artifact" was supposed to fix
+/// without either.
+#[test]
+fn restoring_the_key_lifts_the_refusal_for_authentication() {
+    let dir = tempfile::tempdir().unwrap();
+    let key_path = dir.path().join("encryption.key");
+    let db_path = temp_db_path("refusal-restore-auth");
+
+    let real_key = [0x11u8; 32];
+    let store = FaceStore::create(&db_path).unwrap();
+    store
+        .add_model_raw(
+            "alice",
+            "front",
+            &software_encrypted_row(),
+            true,
+            "embedder",
+        )
+        .unwrap();
+
+    let mut handler = keyfile_handler(&key_path, &db_path, store);
+    match handler.handle_authenticate(
+        "alice".to_string(),
+        AuthIntent::Authenticate,
+        &CancelToken::new(),
+    ) {
+        DaemonResponse::Error { message } => assert!(
+            message.contains("software-encrypted") && message.contains("facelock clear"),
+            "must start in the refusal state: {message}"
+        ),
+        other => panic!("expected the refusal, got: {other:?}"),
+    }
+
+    // The operator restores the key from backup, exactly as instructed.
+    std::fs::write(&key_path, real_key).unwrap();
+
+    // No enrollment, no restart: the very next authenticate call must get a
+    // real compare against alice's decrypted templates rather than the stale
+    // refusal from before the restore.
+    let response = handler.handle_authenticate(
+        "alice".to_string(),
+        AuthIntent::Authenticate,
+        &CancelToken::new(),
+    );
+    assert!(
+        !matches!(response, DaemonResponse::Error { .. }),
+        "the restored key must lift the refusal for authentication too: {response:?}"
+    );
+
+    cleanup_db(&db_path);
+}

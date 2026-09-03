@@ -3139,8 +3139,8 @@ encrypted rows, naming `facelock clear` as the deliberate destructive step.
 A refusal fails enrollment closed and leaves authentication alone: the auth path reads raw
 rows, serves the templates it can decrypt, reports the missing key rather than store
 corruption for those it cannot, and still falls through to the password prompt. Restoring
-the key artifact lifts the refusal at the next enrollment attempt without restarting the
-daemon.
+the key artifact lifts the refusal at the next authentication or enrollment attempt without
+restarting the daemon.
 
 **Enrollment atomicity (#308).** An enrollment writes to the store exactly once, at the
 end: after every accepted embedding has passed the minimum-capture and angle-diversity
