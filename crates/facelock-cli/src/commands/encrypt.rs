@@ -180,7 +180,11 @@ pub fn run_encrypt(config: &Config, generate_key: bool) -> Result<()> {
     // For non-generate runs, if method is keyfile and key doesn't exist,
     // generate it — through the gate shared with the daemon, the one-shot path
     // and `facelock setup`.
-    if config.encryption.method != EncryptionMethod::Tpm {
+    // Keyfile only. `tpm` keeps its key sealed elsewhere, and `none` has no
+    // reader for a key file at all — minting one there left a live AES key on
+    // disk for a plaintext database, seconds before `obtain_sealer` refused
+    // the run for having no encryption method configured.
+    if config.encryption.method == EncryptionMethod::Keyfile {
         let key_path = Path::new(&config.encryption.key_path);
         let decision = facelock_daemon::key_policy::ensure_encrypt_by_default_key(&store, config);
         if let Some(refusal) = decision.refusal() {
@@ -507,6 +511,33 @@ mod key_gate_tests {
         assert!(
             elapsed >= Duration::from_millis(100),
             "the key was written while another writer held the store: {elapsed:?}"
+        );
+        cleanup(&db_path);
+    }
+
+    /// `method = "none"` has no reader for a key file: the implicit branch
+    /// used to mint one for a plaintext database and then fail the run at
+    /// `obtain_sealer`, leaving a live AES key on disk that nothing had asked
+    /// for and nothing would use.
+    #[test]
+    fn the_implicit_branch_mints_no_key_for_method_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        let db_path = temp_db("method-none");
+        {
+            let store = FaceStore::create(&db_path).unwrap();
+            store
+                .add_model("alice", "front", &[0.5f32; 512], "e")
+                .unwrap();
+        }
+        let mut config = config_for(&key_path, &db_path);
+        config.encryption.method = facelock_core::config::EncryptionMethod::None;
+
+        let error = format!("{:#}", super::run_encrypt(&config, false).unwrap_err());
+        assert!(error.contains("no encryption method configured"), "{error}");
+        assert!(
+            !key_path.exists(),
+            "a key was minted for a plaintext database"
         );
         cleanup(&db_path);
     }

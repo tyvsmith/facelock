@@ -581,7 +581,9 @@ store transaction of its own, so it either commits before the check looks — wh
 refusal sees it — or waits until the key is in place. Without that section a plain read
 would not even observe the commit: under WAL it reads the snapshot it opened on. A store
 that cannot be locked is a refusal on the same reasoning as one that cannot be queried, and
-says which of the two happened.
+says which of the two happened. Automatic creation is further restricted to `method =
+"keyfile"`, the only method that reads the file; `--generate-key` still mints one under
+`none`, which is how an operator bootstraps a key before switching the method over.
 
 Creation is atomic and never destructive. The 32 bytes are written to an `O_EXCL |
 O_NOFOLLOW` temporary beside the key at mode `0600` in a single `open(2)` create-at-mode

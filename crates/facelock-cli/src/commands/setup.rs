@@ -1730,6 +1730,24 @@ mod orphan_guard_tests {
         assert_eq!(std::fs::metadata(&key_path).unwrap().len(), 32);
     }
 
+    /// The policy runs while the config still says `method = "none"` — that
+    /// is the only state that reaches it — and the shared gate mints only for
+    /// `keyfile`. Asking it about the method the config is about to hold is
+    /// what keeps the automatic policy able to create the key at all.
+    #[test]
+    fn the_auto_policy_mints_while_the_config_still_says_none() {
+        use facelock_core::config::EncryptionMethod;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("facelock.db");
+        let key_path = dir.path().join("encryption.key");
+        let mut config = config_with_key(&db_path, &key_path);
+        config.encryption.method = EncryptionMethod::None;
+
+        assert!(keygen_refusal(&config).unwrap().is_none());
+        assert_eq!(std::fs::metadata(&key_path).unwrap().len(), 32);
+    }
+
     /// A fresh install: no database yet, so nothing to orphan — and the probe
     /// must not bring one into being at whatever path the config names.
     #[test]
@@ -2720,8 +2738,14 @@ fn keygen_refusal(config: &Config) -> anyhow::Result<Option<String>> {
             config.storage.db_path
         ),
     };
+    // The gate mints only for `method = "keyfile"`, and the caller reaches
+    // here precisely because the method is still `none` — it is about to
+    // write `keyfile` a few lines later. Ask the gate the question it will be
+    // answering, not the one the config still says.
+    let mut as_keyfile = config.clone();
+    as_keyfile.encryption.method = facelock_core::config::EncryptionMethod::Keyfile;
     Ok(
-        facelock_daemon::key_policy::ensure_encrypt_by_default_key(&store, config)
+        facelock_daemon::key_policy::ensure_encrypt_by_default_key(&store, &as_keyfile)
             .refusal()
             .map(str::to_string),
     )

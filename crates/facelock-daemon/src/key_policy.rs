@@ -36,6 +36,10 @@ pub enum KeyfileDecision {
     Present,
     /// This call created the key file.
     Created,
+    /// The configured method keeps no key file — `tpm` seals its key, `none`
+    /// stores templates in plaintext — so there was nothing to create. Not a
+    /// refusal: nothing was wrong, and nothing was written either.
+    NotApplicable,
     /// No key was written. The string says why, which artifact is missing, and
     /// what the operator can do about it.
     Refused(String),
@@ -47,7 +51,9 @@ impl KeyfileDecision {
     pub fn refusal(&self) -> Option<&str> {
         match self {
             KeyfileDecision::Refused(message) => Some(message),
-            KeyfileDecision::Present | KeyfileDecision::Created => None,
+            KeyfileDecision::Present
+            | KeyfileDecision::Created
+            | KeyfileDecision::NotApplicable => None,
         }
     }
 }
@@ -136,8 +142,8 @@ pub fn encrypted_rows_at_risk(store: &FaceStore, config: &Config) -> Option<Stri
     ))
 }
 
-/// Create the encrypt-by-default key file if — and only if — the database
-/// holds no encrypted template.
+/// Create the encrypt-by-default key file if — and only if — the configured
+/// method is `keyfile` and the database holds no encrypted template.
 ///
 /// This is the gate the daemon and the one-shot path run before reading the
 /// key. It is consulted *unconditionally*, not only when the key looks absent:
@@ -150,6 +156,17 @@ pub fn encrypted_rows_at_risk(store: &FaceStore, config: &Config) -> Option<Stri
 /// locked is a refusal, on the same "cannot tell" reasoning as a store that
 /// cannot be queried.
 pub fn ensure_encrypt_by_default_key(store: &FaceStore, config: &Config) -> KeyfileDecision {
+    // Only the keyfile method has a key file to create. `none` stores
+    // templates in plaintext and `tpm` seals its key elsewhere, so minting
+    // `encryption.key_path` for either leaves a live AES key on disk that
+    // nothing reads — and, for `none`, one whose reader refuses it a moment
+    // later anyway. The guard lives here rather than at each call site for
+    // the reason the module exists: a rule wired into one writer is not a
+    // rule.
+    if config.encryption.method != EncryptionMethod::Keyfile {
+        return KeyfileDecision::NotApplicable;
+    }
+
     let key_path = Path::new(&config.encryption.key_path);
 
     // A key that is already there means this call writes nothing, and nothing
@@ -345,6 +362,34 @@ mod tests {
             (1, 0),
             "the flag is still set"
         );
+    }
+
+    /// The gate mints the key file for the one method that reads it. Under
+    /// `none` the branch that used to run here left a live AES key at
+    /// `key_path` for a plaintext database, which the sealer then refused
+    /// anyway; under `tpm` the key that matters is the sealed one.
+    #[test]
+    fn a_method_that_keeps_no_key_file_creates_nothing() {
+        for method in ["none", "tpm"] {
+            let dir = tempfile::tempdir().unwrap();
+            let key_path = dir.path().join("encryption.key");
+            let config = Config::parse(&format!(
+                "[encryption]\nmethod = \"{method}\"\nkey_path = \"{}\"\n",
+                key_path.display()
+            ))
+            .unwrap();
+            let store = FaceStore::open_memory().unwrap();
+
+            let decision = ensure_encrypt_by_default_key(&store, &config);
+            assert!(
+                matches!(decision, KeyfileDecision::NotApplicable),
+                "method {method}: {decision:?}"
+            );
+            assert!(
+                !key_path.exists(),
+                "method {method} minted a key file nothing reads"
+            );
+        }
     }
 
     /// The auth path runs this gate before every read of the key, so the

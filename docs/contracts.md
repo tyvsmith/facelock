@@ -3128,7 +3128,9 @@ absent **and the database holds no encrypted template**, and never otherwise. En
 decided by each blob's version byte, not the `sealed` column. A store that cannot be
 queried counts as encrypted rows existing, and so does one that cannot be locked: the row
 check and the key write run inside one exclusive store transaction, which serializes them
-against the single transaction an enrollment commits its template in. Creation is an `O_EXCL | O_NOFOLLOW` write to a
+against the single transaction an enrollment commits its template in. Automatic creation
+happens only for `method = "keyfile"`; `--generate-key` is the explicit way to mint a key
+before switching the method to it. Creation is an `O_EXCL | O_NOFOLLOW` write to a
 temporary beside the key, flushed, then `renameat2(RENAME_NOREPLACE)` onto the key path
 with the parent directory flushed: concurrent creators resolve to exactly one key, an
 existing key is never truncated, and the key path never holds a partial file. A **symlink
