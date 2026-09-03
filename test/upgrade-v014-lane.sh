@@ -917,6 +917,7 @@ assert_key_refusal() {
     # get them back. Pinning the opening clause made this red on wording when
     # the message was reworded, while a daemon that logged the opening and
     # nothing else would have passed.
+    # shellcheck disable=SC2015 # deliberate: either grep failing takes the block
     grep -qE 'row\(s\) are (software-encrypted|TPM-sealed)' "$output" &&
         grep -qF 'facelock clear' "$output" || {
         tail -20 "$output" >&2

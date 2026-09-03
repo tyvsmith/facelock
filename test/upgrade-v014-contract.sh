@@ -184,6 +184,7 @@ for caller in assert_known_embedding_decrypts assert_downgrade_usable; do
     [ -n "$body" ] || fail "$caller not found in the lane harness"
     printf '%s\n' "$body" | grep -q probe_known_embedding_digest ||
         fail "$caller does not compare the known embedding's plaintext digest"
+    # shellcheck disable=SC2016 # the lane's own `"$shape"` is the literal sought
     printf '%s\n' "$body" | grep -Eq 'shape_probe_label "\$shape"' ||
         fail "$caller does not pin the row it reads to the shape's model label"
 done
