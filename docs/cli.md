@@ -8,7 +8,7 @@ The following flags are accepted by every subcommand (declared `global = true`):
 
 | Flag | Description |
 |------|-------------|
-| `-c`, `--config <PATH>` | Override the config file path. Takes precedence over `FACELOCK_CONFIG`. The packaged daemon reads only the default file, so under a non-default path `enroll` and `test` use direct camera access and `setup --systemd` refuses; a symlink or `..` spelling of the default counts as the default (see [facelock setup](#facelock-setup)). |
+| `-c`, `--config <PATH>` | Override the config file path. Takes precedence over `FACELOCK_CONFIG`. The packaged daemon reads only the default file, so under a non-default path `enroll` and `test` use direct camera access and `setup --systemd` refuses, except `--disable`, which stays allowed since stopping the packaged unit reads no config file; a symlink or `..` spelling of the default counts as the default (see [facelock setup](#facelock-setup)). |
 | `-q`, `--quiet` | Suppress stdout: informational text, and on commands whose stdout is the payload, the payload too. Errors (stderr), prompts and exit codes are unaffected. |
 | `-v`, `--verbose` | Raise diagnostic verbosity on stderr, one level per repeat. The CLI starts at `warn`, `daemon run` at `info`. `RUST_LOG` overrides it. |
 

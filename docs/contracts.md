@@ -148,8 +148,9 @@ The invariants it pins:
   command re-declares them. `facelock daemon -c X` and `facelock -c X daemon`
   are equivalent, as are `facelock is-enrolled --quiet` and
   `facelock --quiet is-enrolled`. A non-default `--config` makes `setup
-  --systemd` refuse and routes every backend-using command direct (see
-  "facelock setup Flag Composition" and "Operating Modes")
+  --systemd` refuse — except `--disable`, which stays allowed since stopping
+  the packaged unit reads no config file — and routes every backend-using
+  command direct (see "facelock setup Flag Composition" and "Operating Modes")
 - `--verbose` counts its repeats, one level per `-v` from the program's own
   starting level (`warn` for the CLI, `info` for `daemon run`). `RUST_LOG`
   outranks it
