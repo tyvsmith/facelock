@@ -737,10 +737,11 @@ fails.
 **Version ordering on a development tree.** Until `just release` bumps the
 workspace, the candidate .deb built from the tree is `0.1.4-1~deb13u1`, which
 sorts *below* the published `0.1.4-1`. The lanes build the same payload as an
-upgrade-test version instead and print a note saying so. Bumping the workspace
-past 0.1.4 removes the note, and the lane then tests the shipped version exactly.
-The native comparator inside the container decides either way, so a lane can
-never quietly become a downgrade test.
+upgrade-test version instead, and every run prints the version it chose and why.
+Once the workspace version sorts above 0.1.4 the re-versioning stops and
+`FACELOCK_UPGRADE_TEST_VERSION` becomes a no-op: the lane installs the shipped
+version exactly. The native comparator inside the container decides either way,
+so a lane can never quietly become a downgrade test.
 
 **Rollback.** The candidate daemon starts and migrates the database before the
 downgrade, so the predecessor is handed the file production would hand it. V6

@@ -19,14 +19,30 @@ family="${1:?usage: build-upgrade-v014-image.sh <deb|rpm> <image> [candidate-out
 image="${2:?usage: build-upgrade-v014-image.sh <deb|rpm> <image> [candidate-output]}"
 
 candidate_version="$(bash "$repo_root/test/upgrade-v014-candidate-version.sh" version)"
+workspace_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_root/Cargo.toml" | head -1)"
+predecessor_version="$(bash "$repo_root/test/upgrade-v014-predecessor.sh" \
+    "$([ "$family" = deb ] && echo deb-trixie || echo rpm-fedora)" upstream_version)"
+
+# Always say which version the candidate is built as and why. A lane that
+# silently re-versions is a lane whose result nobody can interpret later.
 if [ "$(bash "$repo_root/test/upgrade-v014-candidate-version.sh" restamped)" = true ]; then
-    workspace_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_root/Cargo.toml" | head -1)"
     cat >&2 <<EOF
-NOTE: the workspace is at $workspace_version, which does not sort above the
-      pinned v0.1.4 predecessor. The candidate payload is built and versioned as
-      $candidate_version so this stays an upgrade lane rather than a downgrade.
-      Bumping the workspace past 0.1.4 makes this note go away and the lane test
-      the shipped version exactly.
+NOTE: candidate version $candidate_version (re-versioned).
+      The workspace is at $workspace_version, which does not sort above the
+      pinned v$predecessor_version predecessor, so the candidate payload is built
+      and versioned as $candidate_version to keep this an upgrade rather than a
+      downgrade. Override with FACELOCK_UPGRADE_TEST_VERSION. Once the workspace
+      version sorts above $predecessor_version this re-versioning stops happening
+      and the override does nothing: the lane then installs the shipped version
+      exactly. The native package comparator inside the container decides either
+      way, so a wrong value here fails the lane rather than passing quietly.
+EOF
+else
+    cat >&2 <<EOF
+NOTE: candidate version $candidate_version (as built).
+      The workspace version already sorts above the pinned v$predecessor_version
+      predecessor, so the lane installs the candidate exactly as it ships and
+      FACELOCK_UPGRADE_TEST_VERSION is ignored.
 EOF
 fi
 
