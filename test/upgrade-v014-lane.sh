@@ -1204,7 +1204,7 @@ FAULT_HOLDER_PY
 
 fault_corrupt_database() {
     case_name="fault-corrupt-database"
-    local target="$FAULT_ROOT/corrupt" inode status
+    local target="$FAULT_ROOT/corrupt" inode rows status
     seed_fault_database "$target"
 
     # Repoint face_models at a page of the wrong btree type: the database still
@@ -1253,18 +1253,34 @@ FAULT_CORRUPT_PY
         "fault injection did not make face_models unreadable"
     inode="$(fault_inode "$target")"
 
+    rows="$(fault_row_count "$target")"
     status="$(run_fault_daemon "$target" 45)"
-    [ "$status" != 124 ] || {
+
+    # The daemon is required to keep serving. Exiting on a corrupt database
+    # would take D-Bus activation down with it, and a PAM module that cannot
+    # reach the daemon is one step from a machine nobody can log into. Falling
+    # through to password with the corruption reported is the safe direction,
+    # so it is asserted rather than merely tolerated.
+    [ "$status" = 124 ] || {
         tail -20 "$target/daemon.log" >&2
-        fail "the daemon served a database whose enrollment table cannot be read"
+        fail "the daemon stopped serving on a corrupt database (exit $status)"
+    }
+    # Reported, not swallowed. A daemon that silently treats an unreadable
+    # enrollment table as "nobody is enrolled" is how a corrupt database turns
+    # into a quiet, permanent loss of face authentication.
+    grep -Eqi 'corrupt|malformed' "$target/daemon.log" || {
+        tail -20 "$target/daemon.log" >&2
+        fail "the daemon never named the corruption it hit"
     }
     assert_eq "$inode" "$(fault_inode "$target")" \
-        "the corrupt database was replaced instead of refused"
+        "the corrupt database was replaced instead of left alone"
     # Anything that "repaired" the database by recreating it would leave
     # face_models readable again. It must not be.
     assert_eq unreadable "$(fault_face_models_readable "$target")" \
         "the corrupt database was silently rebuilt"
-    pass "a corrupt database is refused, never reset"
+    assert_eq "$rows" "$(fault_row_count "$target")" \
+        "embedding rows after a corrupt-database start"
+    pass "a corrupt database is reported and left alone, never reset"
 }
 
 fault_concurrent_key_creation() {
