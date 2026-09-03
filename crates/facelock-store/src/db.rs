@@ -631,6 +631,43 @@ impl FaceStore {
         Ok((sealed, unsealed))
     }
 
+    /// The version byte and byte length of every stored embedding blob.
+    ///
+    /// Returns one `(first_byte, len)` per row; `first_byte` is `None` for an
+    /// empty blob.
+    ///
+    /// This exists so a caller can classify rows by *encryption shape* — how
+    /// many templates are software-encrypted, how many TPM-sealed — without
+    /// reading templates. [`Self::count_sealed`] cannot answer that question:
+    /// the `sealed` column is one bit that every method sets, so a TPM system
+    /// and a keyfile system look identical through it, and a row whose flag
+    /// outlived its ciphertext looks encrypted when it is not. The blob's own
+    /// version byte is the fact. Selecting whole rows to reach that byte would
+    /// pull every plaintext biometric template into the caller's memory,
+    /// outside the wiping discipline the read paths keep; SQLite does the
+    /// projection instead.
+    pub fn embedding_blob_shapes(&self) -> Result<Vec<(Option<u8>, usize)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT substr(embedding, 1, 1), length(embedding) FROM face_embeddings")
+            .map_err(|e| self.err(e))?;
+        let rows = stmt
+            .query_map([], |row| {
+                // `substr` over a zero-length blob is NULL, not an empty
+                // blob — the one row shape that would otherwise turn a
+                // classification query into a type error.
+                let head: Option<Vec<u8>> = row.get(0)?;
+                let len: i64 = row.get(1)?;
+                Ok((
+                    head.as_deref().and_then(<[u8]>::first).copied(),
+                    len.max(0) as usize,
+                ))
+            })
+            .map_err(|e| self.err(e))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| self.err(e))
+    }
+
     /// Get all embeddings (all users) as raw bytes with sealed flag.
     /// Returns (embedding_id, model_user, raw_bytes, sealed) tuples.
     #[allow(clippy::type_complexity)]
@@ -1103,6 +1140,32 @@ mod tests {
         let (s, u) = store.count_sealed().unwrap();
         assert_eq!(s, 1);
         assert_eq!(u, 2);
+    }
+
+    #[test]
+    fn embedding_blob_shapes_report_the_version_byte_not_the_sealed_flag() {
+        let store = FaceStore::open_memory().unwrap();
+        // A flag that outlived its ciphertext: sealed = 1 over a plaintext
+        // 2048-byte template. `count_sealed` calls this encrypted; the blob
+        // says otherwise, and a caller deciding whether a new key would
+        // orphan anything needs the blob's answer.
+        store
+            .add_model_raw("alice", "stale-flag", &[0u8; 2048], true, "e")
+            .unwrap();
+        store
+            .add_model_raw("bob", "software", &[0x02u8; 96], true, "e")
+            .unwrap();
+        store
+            .add_model_raw("carol", "empty", &[], true, "e")
+            .unwrap();
+
+        let mut shapes = store.embedding_blob_shapes().unwrap();
+        shapes.sort();
+        assert_eq!(
+            shapes,
+            vec![(None, 0), (Some(0x00), 2048), (Some(0x02), 96)]
+        );
+        assert_eq!(store.count_sealed().unwrap(), (3, 0));
     }
 
     #[test]
