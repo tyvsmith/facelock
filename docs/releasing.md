@@ -751,7 +751,11 @@ upgrade-test version instead, and every run prints the version it chose and why.
 Once the workspace version sorts above 0.1.4 the re-versioning stops and
 `FACELOCK_UPGRADE_TEST_VERSION` becomes a no-op: the lane installs the shipped
 version exactly. The native comparator inside the container decides either way,
-so a lane can never quietly become a downgrade test.
+so a lane can never quietly become a downgrade test. Whatever version it lands
+on is spelled by `scripts/release-versions.sh`, the same file the release
+workflow uses, so a pre-release candidate reaches the lane as
+`0.2.0~alpha.3-1~deb13u1` and as `Version: 0.2.0` / `Release: 0.1.alpha.3`
+rather than in a Cargo spelling neither packager would ever ship.
 
 **Upgraders from v0.1.4 already have face authentication enabled.** That
 release's `pam-auth-update` profile shipped `Default: yes`, so installing it

@@ -272,6 +272,83 @@ candidate_version="$(bash "$repo_root/test/upgrade-v014-candidate-version.sh" ve
     fail "the candidate version does not resolve"
 [ -n "$candidate_version" ] || fail "the candidate version is empty"
 
+# --- and is spelled the way each packager spells it ------------------------
+#
+# The candidate version is a Cargo version, and `0.2.0-alpha.3` is legal there:
+# test/check-release-matrix.py accepts -alpha.N, -beta.N and -rc.N in the
+# workspace version. Neither packager accepts it as written. Debian spells it
+# `0.2.0~alpha.3-1~deb13u1`; RPM refuses a hyphen in Version at all and splits
+# it into `Version: 0.2.0` / `Release: 0.1.alpha.3`. Splicing the Cargo form
+# into a package version installs something that never ships -- and in Debian
+# it sorts *above* the real release, so the lane's own upgrade guard stays
+# quiet while it proves the wrong thing.
+
+builder="$repo_root/test/build-upgrade-v014-image.sh"
+# shellcheck disable=SC2016 # the builder's own source line is the literal sought
+grep -Fq 'source "$repo_root/scripts/release-versions.sh"' "$builder" ||
+    fail "the image builder no longer derives packaging versions from scripts/release-versions.sh"
+for helper in release_debian_version release_rpm_version release_rpm_release; do
+    grep -Fq "$helper" "$builder" || fail "the image builder no longer calls $helper"
+done
+# shellcheck disable=SC2016 # the retired splice is the literal sought
+if grep -Fq '${target#*-}' "$builder"; then
+    fail "the image builder still cuts the Debian revision at the first hyphen"
+fi
+for arg in FACELOCK_CANDIDATE_RPM_VERSION FACELOCK_CANDIDATE_RPM_RELEASE; do
+    grep -Eq "^ARG $arg\$" "$repo_root/test/Containerfile.upgrade-v014-rpm" ||
+        fail "test/Containerfile.upgrade-v014-rpm does not take $arg as a build arg"
+done
+# shellcheck disable=SC2016 # the helper's own default is the literal sought
+grep -Fq 'RPM_RELEASE="${3:-1}"' "$repo_root/test/build-rpm-prebuilt.sh" ||
+    fail "test/build-rpm-prebuilt.sh no longer takes an RPM Release field"
+
+# shellcheck source=/dev/null
+source "$repo_root/scripts/release-versions.sh"
+
+predecessor_deb="$(bash "$repo_root/test/upgrade-v014-predecessor.sh" deb-trixie package_version)"
+predecessor_rpm="$(bash "$repo_root/test/upgrade-v014-predecessor.sh" rpm-fedora package_version)"
+
+assert_version() {
+    local expected="$1" actual="$2" context="$3"
+    [ "$actual" = "$expected" ] || fail "$context: expected '$expected', got '$actual'"
+}
+
+for probe in \
+    "0.2.0|0.2.0-1~deb13u1|0.2.0|1" \
+    "0.2.0-alpha.3|0.2.0~alpha.3-1~deb13u1|0.2.0|0.1.alpha.3"; do
+    IFS='|' read -r probe_version want_deb want_rpm_version want_rpm_release <<<"$probe"
+    assert_version "$want_deb" "$(release_debian_version "$probe_version" 1 trixie)" \
+        "Debian version for candidate $probe_version"
+    assert_version "$want_rpm_version" "$(release_rpm_version "$probe_version")" \
+        "RPM Version for candidate $probe_version"
+    assert_version "$want_rpm_release" "$(release_rpm_release "$probe_version" 1)" \
+        "RPM Release for candidate $probe_version"
+
+    # The native comparators are the authority the lane defers to, so ask them
+    # here too where they happen to be installed. A host without them still
+    # gets every string above checked; it just does not get the ordering half.
+    if command -v dpkg >/dev/null 2>&1; then
+        dpkg --compare-versions "$want_deb" gt "$predecessor_deb" ||
+            fail "$want_deb does not sort above the pinned predecessor $predecessor_deb"
+    else
+        dpkg_absent=1
+    fi
+    if command -v rpmdev-vercmp >/dev/null 2>&1; then
+        # rpmdev-vercmp exits 11 when the first argument is the newer one.
+        vercmp_status=0
+        rpmdev-vercmp "$want_rpm_version-$want_rpm_release" "$predecessor_rpm" \
+            >/dev/null 2>&1 || vercmp_status=$?
+        [ "$vercmp_status" -eq 11 ] ||
+            fail "$want_rpm_version-$want_rpm_release does not sort above the pinned predecessor $predecessor_rpm"
+    else
+        rpmdev_absent=1
+    fi
+done
+[ -z "${dpkg_absent:-}" ] ||
+    echo "NOTE: dpkg is not installed; the Debian ordering half was not run" >&2
+[ -z "${rpmdev_absent:-}" ] ||
+    echo "NOTE: rpmdev-vercmp is not installed; the RPM ordering half was not run" >&2
+
 # --- the entrypoints stay wired -------------------------------------------
 
 justfile="$repo_root/justfile"

@@ -13,7 +13,8 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
-ARG FACELOCK_CANDIDATE_VERSION
+ARG FACELOCK_CANDIDATE_RPM_VERSION
+ARG FACELOCK_CANDIDATE_RPM_RELEASE
 
 # The base image installs its own 0.0.0 fixture package. Remove it: this lane
 # starts from the released predecessor, and a leftover install would make the
@@ -31,12 +32,15 @@ RUN rm -f /etc/pam.d/facelock-test && \
     dnf -y remove facelock && \
     rm -f /facelock-test-package.rpm /facelock-test-upgrade.rpm && \
     cd /build && \
-    /run-networkless.sh bash /build/test/build-rpm-prebuilt.sh "$FACELOCK_CANDIDATE_VERSION" direct && \
+    /run-networkless.sh bash /build/test/build-rpm-prebuilt.sh \
+        "$FACELOCK_CANDIDATE_RPM_VERSION" direct "$FACELOCK_CANDIDATE_RPM_RELEASE" && \
     mkdir -p /artifacts && \
     cp "$(find /build -maxdepth 1 -name 'facelock-*.rpm' -print -quit)" \
         /artifacts/facelock-candidate.rpm && \
     test "$(rpm -qp --qf '%{VERSION}' /artifacts/facelock-candidate.rpm)" \
-        = "$FACELOCK_CANDIDATE_VERSION" && \
+        = "$FACELOCK_CANDIDATE_RPM_VERSION" && \
+    candidate_release="$(rpm -qp --qf '%{RELEASE}' /artifacts/facelock-candidate.rpm)" && \
+    test "${candidate_release%.fc*}" = "$FACELOCK_CANDIDATE_RPM_RELEASE" && \
     printf '%s\n' "$(rpm -qp --qf '%{VERSION}-%{RELEASE}' /artifacts/facelock-candidate.rpm)" \
         > /artifacts/candidate.version && \
     rm -rf ~/rpmbuild /build/*.rpm

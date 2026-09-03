@@ -15,6 +15,15 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The candidate version is a Cargo version, and neither packager spells one the
+# way Cargo does. `0.2.0-alpha.3` is `0.2.0~alpha.3-1~deb13u1` to dpkg and
+# `Version: 0.2.0` / `Release: 0.1.alpha.3` to rpm; the hyphenated form is not
+# a version either would ever ship, and the Debian one sorts *above* the real
+# release, so the "is this an upgrade" guard below would not notice it. Derive
+# both from the same file the release pipeline derives them from rather than
+# splicing strings here.
+# shellcheck source=/dev/null
+source "$repo_root/scripts/release-versions.sh"
 family="${1:?usage: build-upgrade-v014-image.sh <deb|rpm> <image> [candidate-output]}"
 image="${2:?usage: build-upgrade-v014-image.sh <deb|rpm> <image> [candidate-output]}"
 
@@ -73,16 +82,25 @@ case "$family" in
         # archive is the assembler's own, byte for byte.
         built_version="$(podman run --rm -v "$raw_candidate:/work:Z" "$base_image" \
             dpkg-deb --field /work/facelock.deb Version)"
+
+        # The revision comes from the package the assembler just built rather
+        # than from a constant here, so the two cannot drift apart; the suite
+        # is trixie because that is what this lane asked for above. Everything
+        # after the last hyphen is the Debian revision, and the suite suffix
+        # rides on it -- splitting at the *first* hyphen loses that the moment
+        # the upstream version carries one.
+        built_revision="${built_version##*-}"
+        lane_version="$(release_debian_version "$candidate_version" \
+            "${built_revision%%\~*}" trixie)"
         podman run --rm -v "$raw_candidate:/work:Z" \
-            -e "CANDIDATE_VERSION=$candidate_version" "$base_image" \
+            -e "LANE_VERSION=$lane_version" "$base_image" \
             bash -euo pipefail -c '
                 target="$(dpkg-deb --field /work/facelock.deb Version)"
-                lane="$CANDIDATE_VERSION-${target#*-}"
-                if [ "$target" = "$lane" ]; then
+                if [ "$target" = "$LANE_VERSION" ]; then
                     cp /work/facelock.deb /work/candidate.deb
                 else
                     dpkg-deb --raw-extract /work/facelock.deb /work/root
-                    sed -i -E "s/^Version:.*/Version: $lane/" /work/root/DEBIAN/control
+                    sed -i -E "s/^Version:.*/Version: $LANE_VERSION/" /work/root/DEBIAN/control
                     dpkg-deb --build --root-owner-group /work/root /work/candidate.deb >/dev/null
                 fi
                 dpkg --compare-versions "$(dpkg-deb --field /work/candidate.deb Version)" \
@@ -90,7 +108,11 @@ case "$family" in
                     [ "$(dpkg-deb --field /work/candidate.deb Version)" = "$target" ]
                 dpkg-deb --field /work/candidate.deb Version > /work/candidate.version
             '
-        lane_version="$(cat "$raw_candidate/candidate.version")"
+        stamped_version="$(cat "$raw_candidate/candidate.version")"
+        [ "$stamped_version" = "$lane_version" ] || {
+            echo "re-stamped candidate reports $stamped_version, expected $lane_version" >&2
+            exit 1
+        }
         echo "candidate .deb: $built_version -> $lane_version"
 
         mapfile -t pin_args < <(predecessor_build_args deb-trixie)
@@ -156,10 +178,17 @@ EOF
         podman build --build-arg "BASE_IMAGE=$base_fedora" \
             --build-arg "ORT_VERSION=$ort_version" \
             -t "$base_image" -f "$repo_root/test/Containerfile.rpm-e2e" "$repo_root"
+        # RPM has nowhere to put a pre-release inside Version: rpmbuild rejects
+        # a hyphen there outright, and the release pipeline puts the base
+        # version in Version and the pre-release in Release instead. Counter 1
+        # matches what `just release` writes for the first build of a version.
+        rpm_version="$(release_rpm_version "$candidate_version")"
+        rpm_release="$(release_rpm_release "$candidate_version" 1)"
         mapfile -t pin_args < <(predecessor_build_args rpm-fedora)
         podman build \
             --build-arg "BASE_IMAGE=$base_image" \
-            --build-arg "FACELOCK_CANDIDATE_VERSION=$candidate_version" \
+            --build-arg "FACELOCK_CANDIDATE_RPM_VERSION=$rpm_version" \
+            --build-arg "FACELOCK_CANDIDATE_RPM_RELEASE=$rpm_release" \
             "${pin_args[@]}" \
             -t "$image" -f "$repo_root/test/Containerfile.upgrade-v014-rpm" "$repo_root"
         ;;
