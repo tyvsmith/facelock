@@ -100,12 +100,21 @@ assert_eq() {
 
 case "$FAMILY" in
     deb)
-        pkg_install() { apt-get install -y --no-install-recommends "$1" >>"$LOG" 2>&1; }
-        pkg_upgrade() { apt-get install -y --no-install-recommends "$1" >>"$LOG" 2>&1; }
-        pkg_downgrade() {
-            apt-get install -y --no-install-recommends --allow-downgrades "$1" >>"$LOG" 2>&1
+        # `apt-get update` before every transaction, the same as
+        # test/deb-package-lifecycle.sh:162. The runtime image ends with
+        # `rm -rf /var/lib/apt/lists/*`, so without it APT knows about no
+        # archive at all and the candidate's own `Depends: dbus` is
+        # "not installable" rather than merely absent.
+        apt_transaction() {
+            DEBIAN_FRONTEND=noninteractive apt-get update >>"$LOG" 2>&1
+            DEBIAN_FRONTEND=noninteractive apt-get "$@" >>"$LOG" 2>&1
         }
-        pkg_remove() { apt-get remove -y facelock >>"$LOG" 2>&1; }
+        pkg_install() { apt_transaction install -y --no-install-recommends "$1"; }
+        pkg_upgrade() { apt_transaction install -y --no-install-recommends "$1"; }
+        pkg_downgrade() {
+            apt_transaction install -y --no-install-recommends --allow-downgrades "$1"
+        }
+        pkg_remove() { apt_transaction remove -y facelock; }
         pkg_installed_version() { dpkg-query -W -f='${Version}' facelock 2>/dev/null; }
         pkg_is_installed() { [ "$(dpkg-query -W -f='${Status}' facelock 2>/dev/null)" = "install ok installed" ]; }
         pkg_version_gt() { dpkg --compare-versions "$1" gt "$2"; }
