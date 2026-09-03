@@ -1668,6 +1668,97 @@ mod orphan_guard_tests {
             "models present must keep the existing prompt/bail path: {chain}"
         );
     }
+
+    // --- The automatic policy's own gate (#231) ---
+    //
+    // `handle_orphan_models_before_keygen` guards the explicit `--encryption`
+    // choices, and asks a stricter question than the daemon's: *any* model,
+    // with an offer to clear. `setup_encryption_auto` is reached by
+    // `run_non_interactive` with no flag at all — the command `debian/postinst`
+    // tells operators to run — and had no guard whatever. It now shares the
+    // daemon's gate, which is the one that can distinguish rows a new key
+    // would orphan from rows it would not.
+
+    fn config_with_key(db_path: &Path, key_path: &Path) -> Config {
+        let mut config = config_with_db(db_path);
+        config.encryption.key_path = key_path.to_string_lossy().into_owned();
+        config
+    }
+
+    #[test]
+    fn the_auto_policy_refuses_to_mint_over_encrypted_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("facelock.db");
+        let key_path = dir.path().join("encryption.key");
+        {
+            let store = facelock_store::FaceStore::create(&db_path).unwrap();
+            let sealed = facelock_tpm::SoftwareSealer::from_key([0x11u8; 32])
+                .seal_embedding(&[0.5f32; 512])
+                .unwrap();
+            store
+                .add_model_raw("alice", "front", &sealed, true, "embedder")
+                .unwrap();
+        }
+
+        let refusal = keygen_refusal(&config_with_key(&db_path, &key_path))
+            .unwrap()
+            .expect("the auto policy must refuse over encrypted rows");
+        assert!(
+            refusal.contains("software-encrypted") && refusal.contains("facelock clear"),
+            "{refusal}"
+        );
+        assert!(!key_path.exists(), "a replacement key was written");
+    }
+
+    #[test]
+    fn the_auto_policy_still_mints_for_a_plaintext_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("facelock.db");
+        let key_path = dir.path().join("encryption.key");
+        {
+            let store = facelock_store::FaceStore::create(&db_path).unwrap();
+            store
+                .add_model("alice", "front", &[0.5f32; 512], "embedder")
+                .unwrap();
+        }
+
+        assert!(
+            keygen_refusal(&config_with_key(&db_path, &key_path))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(std::fs::metadata(&key_path).unwrap().len(), 32);
+    }
+
+    /// A fresh install: no database yet, so nothing to orphan — and the probe
+    /// must not bring one into being at whatever path the config names.
+    #[test]
+    fn the_auto_policy_mints_on_a_fresh_install_without_creating_a_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("facelock.db");
+        let key_path = dir.path().join("encryption.key");
+
+        assert!(
+            keygen_refusal(&config_with_key(&db_path, &key_path))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(std::fs::metadata(&key_path).unwrap().len(), 32);
+        assert!(!db_path.exists(), "the key gate must not create a database");
+    }
+
+    #[test]
+    fn the_auto_policy_refuses_when_the_database_cannot_be_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("facelock.db");
+        let key_path = dir.path().join("encryption.key");
+        std::fs::write(&db_path, b"not a sqlite database").unwrap();
+
+        let err = keygen_refusal(&config_with_key(&db_path, &key_path)).unwrap_err();
+        let chain = format!("{err:#}");
+        assert!(chain.contains("could not be read"), "{chain}");
+        assert!(!key_path.exists());
+    }
 }
 
 fn wizard_encryption_setup(theme: &ColorfulTheme, config: &mut Config) -> anyhow::Result<()> {
@@ -2602,6 +2693,40 @@ fn run_non_interactive(plan: &SetupPlan) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Run the shared key gate for a setup path that is about to mint the
+/// encrypt-by-default key file, returning the refusal if there is one.
+///
+/// `open_existing`, never `create`: a database that is not there yet holds no
+/// templates to orphan, and the probe must not create one to prove it. Every
+/// other failure class means facelock cannot tell, which is a refusal.
+fn keygen_refusal(config: &Config) -> anyhow::Result<Option<String>> {
+    // An absent database holds no template to orphan, and the probe must not
+    // create one to prove it — but the rest of the gate (the symlink check,
+    // the exclusive create) still has to run, and an empty store is exactly
+    // what an absent database is.
+    let absent_store;
+    let store = match crate::direct::open_store_existing(config) {
+        Ok(store) => store,
+        Err(facelock_store::StoreError::Absent { .. }) => {
+            absent_store = facelock_store::FaceStore::open_memory()
+                .context("failed to open an empty store for the key gate")?;
+            absent_store
+        }
+        Err(e) => bail!(
+            "refusing to generate a new encryption key: the face database at {} could \
+             not be read ({e}), so facelock cannot tell whether existing templates \
+             would be orphaned. Fix access to it and re-run, or clear models first \
+             with: sudo facelock clear",
+            config.storage.db_path
+        ),
+    };
+    Ok(
+        facelock_daemon::key_policy::ensure_encrypt_by_default_key(&store, config)
+            .refusal()
+            .map(str::to_string),
+    )
+}
+
 /// Auto-configure encryption in non-interactive mode.
 /// Prefers TPM-sealed key if TPM is available, falls back to keyfile.
 fn setup_encryption_auto(config: &Config) -> anyhow::Result<()> {
@@ -2645,11 +2770,20 @@ fn setup_encryption_auto(config: &Config) -> anyhow::Result<()> {
         }
     }
 
-    // Fall back to keyfile
+    // Fall back to keyfile. Through the gate shared with the daemon, the
+    // one-shot path and `facelock encrypt`, so no writer of this key can drift
+    // on when a replacement may be written over encrypted templates (#231).
+    // `handle_orphan_models_before_keygen` still guards the interactive
+    // `--encryption` choices with a stricter question (any model at all, with
+    // an offer to clear); this is the backstop for the automatic policy, which
+    // `run_non_interactive` reaches with no flag at all — the command
+    // `debian/postinst` tells operators to run.
     let key_path = Path::new(&config.encryption.key_path);
-    if !key_path.exists() {
-        facelock_tpm::SoftwareSealer::generate_key_file(key_path)
-            .context("failed to generate encryption key")?;
+    let existed = key_path.exists();
+    if let Some(refusal) = keygen_refusal(config)? {
+        bail!("{refusal}");
+    }
+    if !existed && key_path.exists() {
         Terminal.info(&SetupMessage::GeneratedKeyfileAt {
             path: key_path.display().to_string(),
         });

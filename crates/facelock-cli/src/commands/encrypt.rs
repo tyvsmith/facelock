@@ -36,10 +36,41 @@ fn obtain_sealer(config: &Config) -> Result<facelock_tpm::SoftwareSealer> {
     }
 }
 
+/// The refusal that stops any key writer here from orphaning stored templates,
+/// or `None` when nothing is at risk.
+///
+/// `open_existing`, never `create`: a database that is simply not there yet
+/// has no templates to orphan, and probing must not bring one into being at
+/// whatever path a typo'd config names. Every other failure class is "facelock
+/// cannot tell", which the shared gate turns into a refusal.
+fn key_replacement_refusal(config: &Config) -> Result<Option<String>> {
+    match crate::direct::open_store_existing(config) {
+        Ok(store) => Ok(facelock_daemon::key_policy::key_creation_refusal(
+            &store, config,
+        )),
+        Err(facelock_store::StoreError::Absent { .. }) => Ok(None),
+        Err(e) => Ok(Some(format!(
+            "refusing to write an encryption key: the face database at {} could not be \
+             read ({e}), so facelock cannot tell whether existing templates would be \
+             orphaned. Fix access to it and retry, or clear the enrollments with \
+             `facelock clear`.",
+            config.storage.db_path
+        ))),
+    }
+}
+
 pub fn run_encrypt(config: &Config, generate_key: bool) -> Result<()> {
     // Root is established by `main`'s `require_root_for` gate (C6) before
     // `tpm::run` dispatches here.
     if generate_key {
+        // `--generate-key` is an explicit request to *replace* the key, which
+        // is exactly the act that makes rows written under the old one
+        // permanently unrecoverable. It is allowed on a database with nothing
+        // encrypted in it, and otherwise refused with `facelock clear` named
+        // as the destructive step the operator can take deliberately (#231).
+        if let Some(refusal) = key_replacement_refusal(config)? {
+            bail!("{refusal}");
+        }
         match config.encryption.method {
             EncryptionMethod::Tpm => {
                 #[cfg(feature = "tpm")]
@@ -98,23 +129,37 @@ pub fn run_encrypt(config: &Config, generate_key: bool) -> Result<()> {
         );
     }
 
-    // For non-generate runs, if method is keyfile and key doesn't exist, generate it
-    let key_path = Path::new(&config.encryption.key_path);
-    if config.encryption.method != EncryptionMethod::Tpm && !key_path.exists() {
-        println!("Generating encryption key at {}...", key_path.display());
-        facelock_tpm::SoftwareSealer::generate_key_file(key_path)
-            .context("failed to generate encryption key")?;
-        println!("Key generated (permissions: 0600 root-only).");
-        println!("Proceeding to encrypt embeddings...");
-    }
-
-    let sealer = obtain_sealer(config).context("failed to obtain encryption sealer")?;
-
     // `open_existing`, never `create`: nothing to encrypt or decrypt means a
     // missing database is an error to report, not a file to bring into being
     // at whatever path a typo'd config names.
+    //
+    // Opened *before* any key is written. This command is the one the setup
+    // hint points operators at when encryption looks broken, so it is the one
+    // they run on a system whose key artifact has gone missing — and it used
+    // to mint a replacement over their encrypted rows and then report
+    // "Nothing to do", which is the ratchet the daemon refusal exists to
+    // prevent, reachable from a single privileged command.
     let store = FaceStore::open_existing(Path::new(&config.storage.db_path))
         .context("failed to open face database")?;
+
+    // For non-generate runs, if method is keyfile and key doesn't exist,
+    // generate it — through the gate shared with the daemon, the one-shot path
+    // and `facelock setup`.
+    if config.encryption.method != EncryptionMethod::Tpm {
+        let key_path = Path::new(&config.encryption.key_path);
+        let existed = key_path.exists();
+        if let Some(refusal) =
+            facelock_daemon::key_policy::ensure_encrypt_by_default_key(&store, config).refusal()
+        {
+            bail!("{refusal}");
+        }
+        if !existed {
+            println!("Generated encryption key at {}.", key_path.display());
+            println!("Proceeding to encrypt embeddings...");
+        }
+    }
+
+    let sealer = obtain_sealer(config).context("failed to obtain encryption sealer")?;
 
     let all = store
         .get_all_embeddings_raw()
@@ -250,6 +295,144 @@ pub fn run_decrypt(config: &Config) -> Result<()> {
 
     println!("Decrypted {decrypted_count} embedding(s) successfully.");
     Ok(())
+}
+
+#[cfg(test)]
+mod key_gate_tests {
+    use facelock_core::config::Config;
+    use facelock_store::FaceStore;
+
+    fn temp_db(name: &str) -> std::path::PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "facelock-encrypt-{name}-{}-{unique}.db",
+            std::process::id()
+        ))
+    }
+
+    fn cleanup(path: &std::path::Path) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+        let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+    }
+
+    fn config_for(key_path: &std::path::Path, db_path: &std::path::Path) -> Config {
+        Config::parse(&format!(
+            "[encryption]\nmethod = \"keyfile\"\nkey_path = \"{}\"\n\
+             [storage]\ndb_path = \"{}\"\n",
+            key_path.display(),
+            db_path.display()
+        ))
+        .unwrap()
+    }
+
+    fn row_sealed_under(key: [u8; 32]) -> Vec<u8> {
+        facelock_tpm::SoftwareSealer::from_key(key)
+            .seal_embedding(&[0.5f32; 512])
+            .unwrap()
+    }
+
+    /// `message/setup.rs` points operators at this command by name when
+    /// encryption looks broken, so it is the command they run on a system
+    /// whose key artifact went missing — and it used to mint a replacement
+    /// over their encrypted rows and report "Nothing to do". One privileged
+    /// command reached the exact ratchet the daemon refusal exists to prevent.
+    #[test]
+    fn encrypt_refuses_to_mint_a_replacement_key_over_encrypted_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        let db_path = temp_db("mint-hole");
+        {
+            let store = FaceStore::create(&db_path).unwrap();
+            store
+                .add_model_raw("alice", "front", &row_sealed_under([0x11; 32]), true, "e")
+                .unwrap();
+        }
+
+        let error = format!(
+            "{:#}",
+            super::run_encrypt(&config_for(&key_path, &db_path), false).unwrap_err()
+        );
+        assert!(
+            error.contains("software-encrypted") && error.contains("facelock clear"),
+            "the refusal must name what is at risk and the remedy: {error}"
+        );
+        assert!(!key_path.exists(), "a replacement key was written");
+        cleanup(&db_path);
+    }
+
+    /// `--generate-key` truncates in place, which is right when an operator
+    /// asked for a new key and catastrophic when rows were written under the
+    /// old one. It stays allowed on a database with nothing encrypted in it.
+    #[test]
+    fn generate_key_refuses_to_truncate_a_live_key_over_encrypted_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        let db_path = temp_db("generate-key");
+        facelock_tpm::SoftwareSealer::generate_key_file(&key_path).unwrap();
+        let before = std::fs::read(&key_path).unwrap();
+        {
+            let store = FaceStore::create(&db_path).unwrap();
+            store
+                .add_model_raw("alice", "front", &row_sealed_under([0x11; 32]), true, "e")
+                .unwrap();
+        }
+
+        let error = format!(
+            "{:#}",
+            super::run_encrypt(&config_for(&key_path, &db_path), true).unwrap_err()
+        );
+        assert!(error.contains("facelock clear"), "{error}");
+        assert_eq!(
+            std::fs::read(&key_path).unwrap(),
+            before,
+            "the live key was overwritten in place"
+        );
+        cleanup(&db_path);
+    }
+
+    #[test]
+    fn generate_key_still_works_when_nothing_is_encrypted() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        let db_path = temp_db("generate-key-clean");
+        {
+            let store = FaceStore::create(&db_path).unwrap();
+            store
+                .add_model("alice", "front", &[0.5f32; 512], "e")
+                .unwrap();
+        }
+
+        super::run_encrypt(&config_for(&key_path, &db_path), true).unwrap();
+        assert_eq!(std::fs::metadata(&key_path).unwrap().len(), 32);
+        cleanup(&db_path);
+    }
+
+    /// The command's own job still works: a plaintext database gets its key
+    /// minted and its rows encrypted.
+    #[test]
+    fn encrypt_still_mints_a_key_for_a_plaintext_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        let db_path = temp_db("plaintext");
+        {
+            let store = FaceStore::create(&db_path).unwrap();
+            store
+                .add_model("alice", "front", &[0.5f32; 512], "e")
+                .unwrap();
+        }
+
+        super::run_encrypt(&config_for(&key_path, &db_path), false).unwrap();
+        assert_eq!(std::fs::metadata(&key_path).unwrap().len(), 32);
+
+        let store = FaceStore::open_existing(&db_path).unwrap();
+        let (sealed, unsealed) = store.count_sealed().unwrap();
+        assert_eq!((sealed, unsealed), (1, 0));
+        cleanup(&db_path);
+    }
 }
 
 #[cfg(test)]
