@@ -3,10 +3,11 @@ name: Packaging
 # Every .deb, .rpm and Arch gate used to be local-only, invoked by hand, for a
 # release that ships through four channels (#229). This is where they run.
 #
-# Three schedules, because the full matrix runs for hours and most pull
-# requests touch no packaging:
+# Three schedules, because the full matrix takes about 1 h 45 min (measured
+# 2026-09-02) and most pull requests touch no packaging:
 #
-#   pull request   path-filtered by the `changes` job below
+#   pull request   path-filtered by the `changes` job below, and never the
+#                  copr job -- mock needs a privileged container
 #   nightly        the whole matrix, unfiltered
 #   release        `just release-preflight` refuses to pass without a green
 #                  run of this workflow at the release commit

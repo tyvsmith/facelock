@@ -145,9 +145,7 @@ fi
 # stages downgrade the recorded depth to `partial`, which the release matrix
 # requires of nothing and the aggregate therefore refuses.
 missing_stages=()
-if podman exec "$cid" test -x /deb-package-lifecycle.sh; then
-    :
-else
+if ! podman exec "$cid" test -x /deb-package-lifecycle.sh; then
     for stage in /rpm-service-pam-lifecycle.sh /rpm-config-lifecycle.sh; do
         podman exec "$cid" test -x "$stage" || missing_stages+=("$stage")
     done

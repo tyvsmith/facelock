@@ -730,8 +730,10 @@ for fedora_release in sorted(copr_lanes_by_release):
         ),
         f"release matrix declares no system-ORT Fedora {fedora_release} row for its COPR lane",
     )
+test_packaging_matrix_recipe = re.search(r"(?m)^test-packaging-matrix:[^\n]*$", justfile)
+require(test_packaging_matrix_recipe is not None, "justfile omits the test-packaging-matrix recipe")
 require(
-    "test-copr-lanes" in re.search(r"(?m)^test-packaging-matrix:[^\n]*$", justfile).group(0),
+    "test-copr-lanes" in test_packaging_matrix_recipe.group(0),
     "just test-packaging-matrix does not run the COPR lifecycle lanes",
 )
 # The packaging workflow runs the same Fedora lanes as `just test-rpm-lanes`,

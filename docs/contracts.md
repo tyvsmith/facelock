@@ -2204,7 +2204,7 @@ Lane claims use a fixed vocabulary. `channel`: `apt`, `direct-rpm`, `aur`,
 `.dsc` rebuild), `host-binaries` (release binaries staged from
 `target/release`), `makepkg-source-build`, `mock-source-rebuild` (Packit SRPM
 rebuilt from source in a mock chroot). `runtime_policy`: `bundled-ort`,
-`system-ort`. `depth`: `full`, `smoke`.
+`system-ort`. `depth`: `full`, `smoke`, `partial`.
 `status`: `pass`; `partial` for an exit 0 with an allowed skip or without
 models; `fail` for a non-zero exit, a failed assertion, or a mandatory skip.
 The counters are assertion counts by class, and `skip` equals
@@ -2228,9 +2228,11 @@ binaries and a bundled ONNX Runtime. The COPR lane
 would publish: a Packit SRPM rebuilt from source in a mock chroot, installed
 with `dnf` so the package's own `Requires: onnxruntime` resolves against
 Fedora's system runtime, then booted for the same validation. A COPR lane is
-required for a target only while some platform row for that release declares
-`system ORT`; the artifact is checked against the COPR channel rules
-(`validate-rpm.sh <rpm> copr`), which fail if a bundled runtime rode along.
+required for every Packit release target: `test/packaging-evidence.py` raises
+`EvidenceError` and refuses the aggregate outright if no platform row for that
+release declares `system ORT`, rather than treating the lane as optional. The
+artifact is checked against the COPR channel rules (`validate-rpm.sh <rpm>
+copr`), which fail if a bundled runtime rode along.
 Because the validator compares every lane attribute against what the matrix
 requires, a direct-RPM record offered as a COPR target's evidence is refused on
 `channel`, and a COPR record built from host binaries or run against a bundled
@@ -2466,9 +2468,10 @@ payload, and reject the inverse missing dependency/payload.
 Track D validates only direct/COPR build success, real ORT runtime
 initialization, and the intended payload and dependency policy. It supplies no
 clean-install, upgrade, erase, rollback, served-repository, availability,
-alpha-acceptance, or release evidence. Issue #230 owns exact-artifact package
-lifecycle proof; issue #236 owns staging and production repository publication
-and served-version proof.
+alpha-acceptance, or release evidence. The two-Fedora-lanes contract under
+"Packaging matrix evidence" above owns exact-artifact package lifecycle proof;
+issue #236 owns staging and production repository publication and
+served-version proof.
 
 Optional experimental Rawhide may attempt only the separately digest-pinned,
 best-effort system-ORT build/session smoke. It is non-release and non-gating,

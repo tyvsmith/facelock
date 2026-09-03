@@ -295,14 +295,17 @@ gates, every declared Fedora lane, the Arch package built from the real
 checksum-verifies the ONNX models first, through `.github/actions/fetch-models`,
 so the daemon-start assertions execute instead of being counted as skipped.
 
-Three schedules, because the full matrix runs for hours and most pull
-requests touch no packaging:
+Three schedules, because the full matrix takes about 1 h 45 min (measured
+2026-09-02) and most pull requests touch no packaging:
 
 | When | Lanes | Filtered |
 |---|---|---|
-| Pull request | all | yes, only when the diff reaches a package |
+| Pull request | all but `copr` | yes, only when the diff reaches a package |
 | Nightly, 07:00 UTC | all | no |
 | `just release-preflight` | evidence of a green run at HEAD | no |
+
+The `copr` job never runs on a pull request regardless of the filter above --
+mock needs a privileged container.
 
 The pull-request filter is a `changes` job running
 `.github/workflows/scripts/classify-changes.sh`, which classifies the merge-base
