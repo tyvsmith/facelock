@@ -370,10 +370,11 @@ pub fn enroll(config: &Config, user: &str, label: &str) -> anyhow::Result<(u32, 
             "the configured encryption sealer could not be initialized".to_string()
         });
         bail!(
-            "refusing to enroll: {cause} Storing your face would otherwise fall back to \
+            "refusing to enroll: {} Storing your face would otherwise fall back to \
              plaintext. Fix the keyfile path/permissions (or set encryption.method = \
              \"none\" with security.allow_plaintext = true to intentionally store \
-             plaintext)."
+             plaintext).",
+            facelock_daemon::key_policy::sentence(&cause)
         );
     }
 

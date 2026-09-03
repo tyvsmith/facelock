@@ -893,7 +893,7 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                     return DaemonResponse::Error { message };
                 }
                 // An operator who restored the key artifact the refusal named
-                // gets to enrol, without restarting the daemon to prove it.
+                // gets to enroll, without restarting the daemon to prove it.
                 self.refresh_software_sealer();
                 // Fail CLOSED: an encryption method is configured but its sealer
                 // could not be initialized (e.g. keyfile IO/permission error).
@@ -909,10 +909,11 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                         "the configured encryption sealer could not be initialized".to_string()
                     });
                     let message = format!(
-                        "refusing to enroll: {cause} Storing your face would otherwise fall \
+                        "refusing to enroll: {} Storing your face would otherwise fall \
                          back to plaintext. Fix the keyfile path/permissions (or set \
                          encryption.method = \"none\" with security.allow_plaintext = true to \
-                         intentionally store plaintext)."
+                         intentionally store plaintext).",
+                        crate::key_policy::sentence(&cause)
                     );
                     warn!(user, "enroll refused (encryption unavailable): {message}");
                     return DaemonResponse::Error { message };

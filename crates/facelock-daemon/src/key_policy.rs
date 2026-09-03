@@ -130,7 +130,7 @@ pub fn encrypted_rows_at_risk(store: &FaceStore, config: &Config) -> Option<Stri
         "{}. A new key cannot read them, and writing one makes a later restore of the \
          original useless. Restore the key artifacts for the encryption method that \
          wrote those rows, or clear the encrypted enrollments with `facelock clear` and \
-         enrol again. The daemon re-checks the key on the next authentication or \
+         enroll again. The daemon re-checks the key on the next authentication or \
          enrollment attempt.",
         found.join("; ")
     ))
@@ -183,6 +183,21 @@ pub fn ensure_encrypt_by_default_key(store: &FaceStore, config: &Config) -> Keyf
             "no encryption key could be created at {}: {e}",
             key_path.display()
         )),
+    }
+}
+
+/// `cause`, ended as a sentence — a period appended unless it already ends
+/// with `.`, `!` or `?`.
+///
+/// The enroll refusal splices a cause into `"{cause} {next sentence}"`. Some
+/// causes are hand-written with a trailing period; others — an `io::Error`'s
+/// `Display`, `"the configured encryption sealer could not be initialized"` —
+/// are not, and without this the two sentences ran together with no
+/// punctuation between them at all.
+pub fn sentence(cause: &str) -> String {
+    match cause.chars().next_back() {
+        Some('.') | Some('!') | Some('?') => cause.to_string(),
+        _ => format!("{cause}."),
     }
 }
 
@@ -348,6 +363,27 @@ mod tests {
         let decision = ensure_encrypt_by_default_key(&store, &config);
         let refusal = decision.refusal().expect("a link is a refusal");
         assert!(refusal.contains("symlink"), "{refusal}");
+    }
+
+    #[test]
+    fn sentence_appends_a_period_when_the_cause_has_no_terminal_punctuation() {
+        // The two fallback causes at the enroll refusal sites (#231 round 1):
+        // a bare constant and an `io::Error` `Display`, neither punctuated.
+        assert_eq!(
+            sentence("the configured encryption sealer could not be initialized"),
+            "the configured encryption sealer could not be initialized."
+        );
+        assert_eq!(
+            sentence("keyfile could not be read: No such file or directory (os error 2)"),
+            "keyfile could not be read: No such file or directory (os error 2)."
+        );
+    }
+
+    #[test]
+    fn sentence_leaves_existing_terminal_punctuation_alone() {
+        assert_eq!(sentence("already refused."), "already refused.");
+        assert_eq!(sentence("already refused!"), "already refused!");
+        assert_eq!(sentence("already refused?"), "already refused?");
     }
 
     /// A store that cannot be asked is not a store that answered "nothing to
