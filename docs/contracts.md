@@ -2367,6 +2367,14 @@ release until it does.
   artifact of its own, so an extra attestation, a missing one, or one claiming
   another job's identity stops the release rather than being merged into the
   manifest.
+- Each slot declares exactly the provenance the release expects of it. An
+  attestation is a self-report, so the suite a slot fills, the image
+  `dist/release-matrix.json` pins for it, and the component names it may
+  carry are held by `publish` and compared exactly: a swapped image, an
+  invented suite, an added or missing component, or a field the release has no
+  rule for is refused. The matrix is an input publication cannot do without;
+  a matrix that cannot be read, or that names no Debian suite, stops the
+  release rather than shortening the allowlist.
 - Every attestation hashes to the output its job recorded. Artifacts are
   untrusted until bound to a job output: the artifact store is shared by every
   job in the run and writable with any job's runtime token, so a builder that

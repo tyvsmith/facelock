@@ -251,20 +251,39 @@ attest_step() {
     '
 }
 
+# The image one matrix leg builds in, from the job's `include:` list.
+matrix_image() {
+    job_body "$1" | awk -v suite="$2" '
+        /^          - suite: / { current = $3 }
+        current == suite && /^            image: / { sub(/^            image: /, ""); print; exit }
+    '
+}
+
+# Each slot's expected provenance is what its attest-digests.sh call site
+# declares: the suite, the image, and the component names. The helper pins the
+# same values from dist/release-matrix.json, so a slot cannot report an image
+# or a component the release did not build with.
 workflow_attestations() {
-    local wf_job body step attest_job name_pattern outputs line key expression suite slot
+    local wf_job body step call attest_job name_pattern outputs line key expression suite slot
+    local suite_arg image_arg components image
     for wf_job in build download-ort prepare-cargo-vendor build-deb build-rpm publish-apt; do
         body="$(job_body "$wf_job")"
         step="$(attest_step "$wf_job")"
         [ -n "$step" ] || fail "job $wf_job runs no attest-digests.sh step"
         printf '%s\n' "$step" | grep -Eq '^        id: attest$' ||
             fail "job $wf_job must give its attestation step the id attest so its digest can be a job output"
-        attest_job="$(printf '%s\n' "$step" |
+        # The call with its line continuations joined.
+        call="$(printf '%s\n' "$step" | sed -e ':a' -e '/\\$/N; s/\\\n//; ta' | grep -F 'attest-digests.sh')"
+        attest_job="$(printf '%s\n' "$call" |
             sed -n 's|.*attest-digests\.sh \([a-z-]*\) .*|\1|p' | head -1)"
         name_pattern="$(printf '%s\n' "$body" |
             sed -n 's/^ *name: release-digests-\(.*\)$/\1/p' | head -1)"
         [ -n "$attest_job" ] || fail "job $wf_job uploads no digest attestation"
         [ -n "$name_pattern" ] || fail "job $wf_job names no digest artifact"
+        suite_arg="$(printf '%s\n' "$call" | sed -n "s/.*--suite '\([^']*\)'.*/\1/p")"
+        image_arg="$(printf '%s\n' "$call" | sed -n "s/.*--image ['\"]\([^'\"]*\)['\"].*/\1/p")"
+        components="$(printf '%s\n' "$call" | grep -oE -- '--component(-archive)? [a-z-]+=' |
+            sed 's/.* //; s/=$//' | LC_ALL=C sort -u | paste -sd, -)"
         outputs="$(job_outputs_block "$wf_job" | grep -E '^attestation' || true)"
         [ -n "$outputs" ] ||
             fail "job $wf_job declares no attestation output; publish cannot bind its artifact to the job"
@@ -277,7 +296,13 @@ workflow_attestations() {
                 attestation)
                     [ "$expression" = '${{ steps.attest.outputs.sha256 }}' ] ||
                         fail "job $wf_job output $key must be the attest step's sha256, not: $expression"
-                    printf '%s\t%s\t%s\n' "$name_pattern" "$attest_job" "$key"
+                    [ -z "$suite_arg" ] || fail "job $wf_job attests a suite but is not a matrix job"
+                    image="$image_arg"
+                    if [ "$image" = '$BUILD_IMAGE' ]; then
+                        image="$(printf '%s\n' "$body" | awk '/^      BUILD_IMAGE: /{ sub(/^      BUILD_IMAGE: /, ""); print; exit }')"
+                    fi
+                    printf '%s\t%s\t%s\t-\t%s\t%s\n' "$name_pattern" "$attest_job" "$key" \
+                        "${image:--}" "${components:--}"
                     ;;
                 attestation-*)
                     # A matrix job shares one outputs map across its legs. Each
@@ -290,7 +315,14 @@ workflow_attestations() {
                     slot="$(printf '%s' "$name_pattern" | sed "s/\${{ matrix.suite }}/$suite/")"
                     [ "$slot" != "$name_pattern" ] ||
                         fail "job $wf_job declares a per-suite output but its artifact name carries no matrix.suite"
-                    printf '%s\t%s\t%s\n' "$slot" "$attest_job" "$key"
+                    [ "$suite_arg" = '${{ matrix.suite }}' ] ||
+                        fail "job $wf_job must attest the matrix suite, not: $suite_arg"
+                    [ "$image_arg" = '${{ matrix.image }}' ] ||
+                        fail "job $wf_job must attest the matrix image, not: $image_arg"
+                    image="$(matrix_image "$wf_job" "$suite")"
+                    [ -n "$image" ] || fail "job $wf_job pins no image for the $suite leg"
+                    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$slot" "$attest_job" "$key" "$suite" \
+                        "$image" "${components:--}"
                     ;;
             esac
         done <<<"$outputs"
@@ -390,6 +422,24 @@ if grep -q 'MANIFEST' "$builders_expected"; then
     fail "the builder-stage allowlist must not expect the manifest the publish job adds"
 fi
 
+# --- the release matrix is an input the allowlist cannot do without
+
+# A matrix that cannot be read must stop the allowlist, not shorten it: with
+# the Debian entries silently dropped, every other check would still pass.
+printf '{"apt_suites": \n' >"$work/matrix-broken.json"
+python3 - "$work/matrix-compat-only.json" <<'PY'
+import json, sys
+json.dump({"apt_suites": {"compat": {"main": {"source": "trixie"}}}, "platforms": []}, open(sys.argv[1], "w"))
+PY
+FACELOCK_RELEASE_MATRIX="$work/matrix-broken.json" assert_rejects "allowlist from an unreadable matrix" \
+    "cannot read the Debian suites" expected 0.2.0 1 1 false final
+FACELOCK_RELEASE_MATRIX="$work/matrix-compat-only.json" assert_rejects "allowlist from a matrix with no suite" \
+    "names no Debian suite" expected 0.2.0 1 1 false final
+FACELOCK_RELEASE_MATRIX="$work/matrix-broken.json" assert_rejects "attesting set from an unreadable matrix" \
+    "cannot read the Debian suites" expected-attestations false
+FACELOCK_RELEASE_MATRIX="$work/matrix-compat-only.json" assert_rejects "attesting set from a matrix with no suite" \
+    "names no Debian suite" expected-attestations false
+
 # --- allowlist enforcement
 
 canonical_assets() {
@@ -429,6 +479,12 @@ assert_rejects "two assets claiming one canonical name" "more than one release a
 # --- staging out of the builders' artifacts
 
 artifacts="$work/artifacts"
+# The image the release pins for one slot, so the fixture attests what the
+# loader now requires.
+"$helper_path" expected-attestations false >"$work/attesting-spec-stable"
+image_of() {
+    awk -F'\t' -v slot="$1" '$1 == slot { print $5 }' "$work/attesting-spec-stable"
+}
 build_artifacts() {
     rm -rf "$artifacts"
     mkdir -p "$artifacts"/{release-binaries,release-deb-trixie,release-deb-resolute,release-rpm,release-apt-repo}
@@ -452,13 +508,13 @@ build_artifacts() {
     "$attest" build "$artifacts/release-digests-build" \
         "$artifacts"/release-binaries/* >/dev/null
     "$attest" build-deb "$artifacts/release-digests-deb-trixie" \
-        --suite trixie --image 'docker.io/library/debian:13@sha256:34cd' \
+        --suite trixie --image "$(image_of deb-trixie)" \
         "$artifacts"/release-deb-trixie/*.deb >/dev/null
     "$attest" build-deb "$artifacts/release-digests-deb-resolute" \
-        --suite resolute --image 'docker.io/library/ubuntu:26.04@sha256:6df9' \
+        --suite resolute --image "$(image_of deb-resolute)" \
         "$artifacts"/release-deb-resolute/*.deb >/dev/null
     "$attest" build-rpm "$artifacts/release-digests-rpm" \
-        --image 'registry.fedoraproject.org/fedora:44@sha256:fc3e' \
+        --image "$(image_of rpm)" \
         "$artifacts"/release-rpm/*.rpm >/dev/null
     "$attest" publish-apt "$artifacts/release-digests-apt" \
         "$artifacts/release-apt-repo/apt-repo.tar.gz" >/dev/null
@@ -833,7 +889,60 @@ assert_rejects "forged provenance reaching the manifest" "inside a payload artif
     tyvsmith/facelock deadbeef "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" "$work/forged.json"
 build_artifacts
 
-# Two attestations claiming one provenance key is a contradiction, not a merge.
+# --- each slot declares exactly the provenance the release expects of it
+
+# An attestation is a self-report. Without a pin, a compromised builder in its
+# own slot could record another image, invent a suite so the pinned image is
+# never recorded under its key, or add component keys the release never built
+# with; the manifest would carry all of it with every asset digest intact.
+restate() {
+    python3 - "$(attestation "$1")" "$2" <<'PY'
+import json, sys
+path, change = sys.argv[1], json.loads(sys.argv[2])
+document = json.load(open(path))
+for key, value in change.items():
+    if value is None:
+        document.pop(key, None)
+    else:
+        document[key] = value
+open(path, "w").write(json.dumps(document, indent=2) + "\n")
+PY
+    job_outputs_for "$job_outputs"
+}
+restate rpm '{"image": "registry.fedoraproject.org/fedora:44@sha256:dead"}'
+assert_rejects "attestation swapping its build image" "declares the build image" \
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
+assert_rejects "swapped build image reaching the manifest" "declares the build image" \
+    manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
+    tyvsmith/facelock deadbeef "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" "$work/forged.json"
+build_artifacts
+restate rpm '{"suite": "reproducible"}'
+assert_rejects "attestation inventing a suite" "declares suite" \
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
+build_artifacts
+restate deb-trixie '{"suite": "resolute"}'
+assert_rejects "attestation claiming another suite" "declares suite" \
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
+build_artifacts
+restate rpm '{"components": {"sbom": {"sha256": "forged"}}}'
+assert_rejects "attestation adding a component" "declares components" \
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
+build_artifacts
+restate onnxruntime '{"components": null}'
+assert_rejects "attestation omitting its component" "declares components" \
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
+build_artifacts
+restate build '{"image": "docker.io/library/ubuntu:24.04@sha256:dead"}'
+assert_rejects "attestation declaring an image its slot has none of" "declares the build image" \
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
+build_artifacts
+restate build '{"toolchain": {"rustc": "1.95.0"}}'
+assert_rejects "attestation declaring a field the release does not record" "declares keys" \
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
+build_artifacts
+
+# Two attestations claiming one provenance key is a contradiction, not a merge;
+# the per-slot pin refuses the second claim before the collision is reached.
 python3 - "$(attestation cargo-vendor)" <<'PY'
 import json, sys
 path = sys.argv[1]
@@ -842,7 +951,7 @@ document.setdefault("components", {})["onnxruntime"] = {"version": "666"}
 open(path, "w").write(json.dumps(document, indent=2) + "\n")
 PY
 job_outputs_for "$job_outputs"
-assert_rejects "two attestations claiming one component" "claim the component" \
+assert_rejects "two attestations claiming one component" "declares components" \
     manifest v0.2.0 0.2.0 0000000000000000000000000000000000000000 false \
     tyvsmith/facelock deadbeef "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" "$work/forged.json"
 build_artifacts
@@ -916,6 +1025,45 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
     assert_loader_mutation_rejected "a missing job output tolerated" \
         's/^        if not isinstance\(recorded, str\) or not DIGEST.fullmatch\(recorded\):$/        if False:/' \
         "attesting job that recorded no output"
+    assert_loader_mutation_rejected "build images taken from the attestation" \
+        's/^        if document.get\("image"\) != image:$/        if False:/' \
+        "attestation swapping its build image: helper accepted"
+    assert_loader_mutation_rejected "component keys taken from the attestation" \
+        's/^        if sorted\(document.get\("components", \{\}\)\) != components:$/        if False:/' \
+        "attestation adding a component: helper accepted"
+
+    # The helper itself, mutated into a tree of its own so the checkout stays
+    # clean: it resolves the repository root from its own location.
+    assert_helper_mutation_rejected() {
+        local context="$1" expression="$2" needle="$3"
+        local root mutant
+        root="$mutation_root/helper-$(printf '%s' "$context" | tr ' ' '-')"
+        mkdir -p "$root/.github/workflows/scripts"
+        ln -s "$repo_root/scripts" "$root/scripts"
+        ln -s "$repo_root/dist" "$root/dist"
+        cp .github/workflows/scripts/release_attestations.py "$root/.github/workflows/scripts/"
+        mutant="$root/.github/workflows/scripts/release-assets.sh"
+        sed -E "$expression" "$helper_path" >"$mutant"
+        chmod +x "$mutant"
+        if cmp -s "$helper_path" "$mutant"; then
+            fail "$context mutation did not change the release asset helper"
+        fi
+        local output
+        if output="$(FACELOCK_RELEASE_ASSETS="$mutant" bash "$0" 2>&1)"; then
+            fail "release artifacts contract accepted $context"
+        fi
+        printf '%s\n' "$output" | grep -Fq "$needle" ||
+            fail "$context mutation failed for an unrelated reason: $output"
+        echo "release artifacts mutation: $context rejected"
+    }
+
+    # shellcheck disable=SC2016
+    assert_helper_mutation_rejected "an empty suite list tolerated" \
+        's/^    \[ -n "\$listing" \] \|\| fail "the release matrix names no Debian suite.*$/    [ -n "$listing" ] || return 0/' \
+        "allowlist from a matrix with no suite: helper accepted"
+    assert_helper_mutation_rejected "python running with the working directory on its path" \
+        's/^export PYTHONSAFEPATH=1$/: # safe path disabled/' \
+        "imported a module from its working directory"
 
     assert_workflow_mutation_rejected() {
         local context="$1" expression="$2" needle="$3"

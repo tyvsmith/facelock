@@ -35,25 +35,38 @@ from pathlib import Path
 ARTIFACT_PREFIX = "release-digests-"
 DOCUMENT_NAME = "digests.json"
 DIGEST = re.compile(r"[0-9a-f]{64}")
+# Everything a document may carry. A field outside this set is a claim the
+# release has no rule for, and is refused rather than ignored.
+DOCUMENT_KEYS = {"job", "assets", "suite", "image", "components"}
 
 
 class AttestationError(Exception):
     """A statement the release must not be built on."""
 
 
-def expected_slots(spec: str) -> dict[str, dict[str, str]]:
-    """Parse `<slot><TAB><job><TAB><output>` lines into the expected attesting set."""
-    slots: dict[str, dict[str, str]] = {}
+def expected_slots(spec: str) -> dict[str, dict]:
+    """Parse the expected attesting set: one tab-separated line per slot,
+    `<slot> <job> <output> <suite> <image> <components>`, `-` for none.
+
+    An attestation is a self-report, so the suite, image and component names
+    each slot may declare are pinned here and held exactly."""
+    slots: dict[str, dict] = {}
     for line in spec.splitlines():
         if not line.strip():
             continue
         fields = line.split("\t")
-        if len(fields) != 3 or not all(fields):
+        if len(fields) != 6 or not all(fields):
             raise AttestationError(f"malformed expected attestation: {line!r}")
-        slot, job, output = fields
+        slot, job, output, suite, image, components = fields
         if slot in slots:
             raise AttestationError(f"expected attestation slot declared twice: {slot}")
-        slots[slot] = {"job": job, "output": output}
+        slots[slot] = {
+            "job": job,
+            "output": output,
+            "suite": None if suite == "-" else suite,
+            "image": None if image == "-" else image,
+            "components": [] if components == "-" else sorted(components.split(",")),
+        }
     if not slots:
         raise AttestationError("the expected attesting set is empty")
     return slots
@@ -138,6 +151,33 @@ def load(root: str, spec: str, job_outputs: str) -> list[dict]:
             raise AttestationError(
                 f"attestation {slot} declares job {document.get('job')!r}, "
                 f"but that slot belongs to {job!r}"
+            )
+        # The provenance a slot may declare is pinned; the document is held to
+        # it exactly, so a swapped image, an invented suite or an added
+        # component never reaches the manifest.
+        suite, image = expected[slot]["suite"], expected[slot]["image"]
+        components = expected[slot]["components"]
+        extra = sorted(set(document) - DOCUMENT_KEYS)
+        if extra:
+            raise AttestationError(
+                f"attestation {slot} declares keys the release does not record: {', '.join(extra)}"
+            )
+        if document.get("suite") != suite:
+            raise AttestationError(
+                f"attestation {slot} declares suite {document.get('suite')!r}, "
+                f"but that slot attests {suite!r}"
+            )
+        if document.get("image") != image:
+            raise AttestationError(
+                f"attestation {slot} declares the build image {document.get('image')!r}, "
+                f"but the release pins {image!r} for that slot"
+            )
+        if not isinstance(document.get("components", {}), dict):
+            raise AttestationError(f"attestation {slot} components is not a JSON object")
+        if sorted(document.get("components", {})) != components:
+            raise AttestationError(
+                f"attestation {slot} declares components {sorted(document.get('components', {}))}, "
+                f"but that slot may declare exactly {components}"
             )
         assets = document.get("assets")
         if not isinstance(assets, dict) or not all(

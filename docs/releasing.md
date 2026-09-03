@@ -134,6 +134,11 @@ deny-all.
 - holds every staged asset to the SHA-256 its builder attested. An asset that
   changed between its build and publication stops the release, as does one no
   builder attested or one two builders claim.
+- holds each attestation to the provenance its slot may declare: the suite,
+  the image `dist/release-matrix.json` pins, and the component names. A
+  builder cannot report another image or an extra component into
+  `MANIFEST.json`; a matrix the job cannot read stops the release instead of
+  shortening the allowlist.
 - trusts an attestation only once it hashes to the job output its builder
   recorded. Artifacts are shared, writable storage for every job in the run;
   a job output belongs to the job that wrote it. An attestation that was

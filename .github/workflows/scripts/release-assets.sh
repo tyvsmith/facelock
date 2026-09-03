@@ -16,6 +16,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 source "$REPO_ROOT/scripts/release-versions.sh"
 
 MANIFEST_ASSET='MANIFEST.json'
+# The checked-in authority for what a release carries and what it is built in.
+RELEASE_MATRIX="${FACELOCK_RELEASE_MATRIX:-$REPO_ROOT/dist/release-matrix.json}"
 ATTESTATIONS_MODULE="${FACELOCK_RELEASE_ATTESTATIONS:-$SCRIPT_DIR/release_attestations.py}"
 export ATTESTATIONS_MODULE
 # Loading that module by path would otherwise leave __pycache__ in the checkout,
@@ -44,7 +46,7 @@ literal() {
 expected_assets() {
     local version="${1:?}" debian_revision="${2:?}" rpm_counter="${3:?}"
     local prerelease="${4:?}" stage="${5:?}"
-    local suite architecture debian_version rpm_evr rpm_kind rpm_prefix
+    local entry suite architecture debian_version rpm_evr rpm_kind rpm_prefix
 
     case "$stage" in
         builders | final) ;;
@@ -60,12 +62,14 @@ expected_assets() {
     printf 'pam-module\t%s\n' "$(literal pam_facelock.so)"
     printf 'polkit-agent\t%s\n' "$(literal facelock-polkit-agent-x86_64-linux-gnu)"
 
-    while IFS='	' read -r suite architecture; do
+    read_debian_suites
+    for entry in "${DEBIAN_SUITES[@]}"; do
+        IFS='	' read -r suite architecture _ <<<"$entry"
         debian_version="$(release_debian_version "$version" "$debian_revision" "$suite")" ||
             fail "cannot derive the $suite Debian version"
         printf 'deb-%s\t%s\n' "$suite" \
             "$(literal "facelock_${debian_version}_${architecture}.deb")"
-    done < <(debian_suites)
+    done
 
     rpm_evr="$(release_rpm_evr "$version" "$rpm_counter")" ||
         fail "cannot derive the RPM version-release"
@@ -86,39 +90,49 @@ expected_assets() {
     fi
 }
 
-# The artifacts that attest this release, as `<slot><TAB><job><TAB><output>`.
-# One slot per `release-digests-*` artifact the workflow uploads: the publish
-# job requires exactly these, so a builder cannot add an artifact of its own
-# and have its claims believed. The output is the job output under which the
-# job recorded its document's SHA-256; the artifact store is writable by every
-# job in the run, so an attestation is trusted only once it hashes to that
-# value. build-deb is a matrix job with one output per suite.
-# test/release-artifacts-contract.sh holds this list against the workflow's
-# attest-digests.sh call sites and outputs.
+# The artifacts that attest this release, one tab-separated line per slot:
+# `<slot> <job> <output> <suite> <image> <components>`, `-` where a slot has
+# none. One slot per `release-digests-*` artifact the workflow uploads: the
+# publish job requires exactly these, so a builder cannot add an artifact of
+# its own and have its claims believed. The output is the job output under
+# which the job recorded its document's SHA-256; the artifact store is writable
+# by every job in the run, so an attestation is trusted only once it hashes to
+# that value. build-deb is a matrix job with one output per suite. The suite,
+# image and component names are what the slot's document must declare, no
+# more and no less: an attestation is a self-report, and the image and
+# component digests it carries reach MANIFEST.json, so the pinned matrix image
+# and the reviewed component set are held here rather than taken from the
+# document. test/release-artifacts-contract.sh holds this list against the
+# workflow's attest-digests.sh call sites and outputs.
 expected_attestations() {
     local prerelease="${1:?}"
-    local suite architecture
+    local entry suite architecture image rpm
 
     case "$prerelease" in
         true | false) ;;
         *) fail "prerelease must be true or false, got: $prerelease" ;;
     esac
 
-    printf 'build\tbuild\tattestation\n'
-    printf 'onnxruntime\tdownload-ort\tattestation\n'
-    printf 'cargo-vendor\tprepare-cargo-vendor\tattestation\n'
-    while IFS='	' read -r suite architecture; do
-        printf 'deb-%s\tbuild-deb\tattestation-%s\n' "$suite" "$suite"
-    done < <(debian_suites)
-    printf 'rpm\tbuild-rpm\tattestation\n'
+    printf 'build\tbuild\tattestation\t-\t-\t-\n'
+    printf 'onnxruntime\tdownload-ort\tattestation\t-\t-\tonnxruntime\n'
+    printf 'cargo-vendor\tprepare-cargo-vendor\tattestation\t-\t-\tcargo-vendor\n'
+    read_debian_suites
+    for entry in "${DEBIAN_SUITES[@]}"; do
+        IFS='	' read -r suite architecture image <<<"$entry"
+        printf 'deb-%s\tbuild-deb\tattestation-%s\t%s\t%s\t-\n' "$suite" "$suite" "$suite" "$image"
+    done
+    rpm="$(rpm_image)" || fail "cannot read the direct RPM image from $RELEASE_MATRIX"
+    [ -n "$rpm" ] || fail "the release matrix pins no direct RPM image: $RELEASE_MATRIX"
+    printf 'rpm\tbuild-rpm\tattestation\t-\t%s\t-\n' "$rpm"
     if [ "$prerelease" = false ]; then
-        printf 'apt\tpublish-apt\tattestation\n'
+        printf 'apt\tpublish-apt\tattestation\t-\t-\t-\n'
     fi
 }
 
-# The published Debian suites and their architectures, from the release matrix.
+# The published Debian suites, their architectures and their pinned images,
+# from the release matrix, as `<suite><TAB><architecture><TAB><image>`.
 debian_suites() {
-    python3 - "$REPO_ROOT/dist/release-matrix.json" <<'PY'
+    python3 - "$RELEASE_MATRIX" <<'PY'
 import json
 import sys
 
@@ -126,8 +140,33 @@ matrix = json.load(open(sys.argv[1], encoding="utf-8"))
 for suite, details in sorted(matrix["apt_suites"].items()):
     if suite == "compat":
         continue
-    print(f"{suite}\t{details['architecture']}")
+    print(f"{suite}\t{details['architecture']}\t{details['image']}")
 PY
+}
+
+# The pinned image the direct RPM is built in. test/check-release-matrix.py
+# holds the workflow's container image to this same row.
+rpm_image() {
+    python3 - "$RELEASE_MATRIX" <<'PY'
+import json
+import sys
+
+matrix = json.load(open(sys.argv[1], encoding="utf-8"))
+print(next(row["image"] for row in matrix["platforms"] if row["id"] == "fedora-44-direct"))
+PY
+}
+
+# The matrix is the authority for what a release carries, so a matrix that
+# cannot be read must stop the allowlist rather than shorten it. A failure
+# inside a process substitution is invisible to `set -e`, and `mapfile` does
+# not report it either; read through a command substitution and floor the
+# result. Fills DEBIAN_SUITES.
+read_debian_suites() {
+    local listing
+    listing="$(debian_suites)" ||
+        fail "cannot read the Debian suites from $RELEASE_MATRIX"
+    [ -n "$listing" ] || fail "the release matrix names no Debian suite: $RELEASE_MATRIX"
+    mapfile -t DEBIAN_SUITES <<<"$listing"
 }
 
 # Every asset the release carries matches exactly one canonical name, and every
