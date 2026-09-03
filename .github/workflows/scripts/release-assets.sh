@@ -230,7 +230,16 @@ from pathlib import Path
 
 expected_file, artifacts_dir, assets_dir = sys.argv[1:4]
 
-candidates: list[Path] = [path for path in Path(artifacts_dir).rglob("*") if path.is_file()]
+# A builder's artifact tree is attacker-controlled: a symlink lets it point a
+# canonical name at bytes it does not own (another artifact, or the runner's
+# filesystem). Path.is_file() follows symlinks, so the walk must reject any
+# symlink before that check ever runs, not merely skip stray files.
+candidates: list[Path] = []
+for path in Path(artifacts_dir).rglob("*"):
+    if path.is_symlink():
+        raise SystemExit(f"release assets: refusing to stage a symlink under artifacts: {path}")
+    if path.is_file():
+        candidates.append(path)
 destination = Path(assets_dir)
 destination.mkdir(parents=True, exist_ok=True)
 

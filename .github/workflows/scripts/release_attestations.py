@@ -72,6 +72,18 @@ def expected_slots(spec: str) -> dict[str, dict]:
     return slots
 
 
+def _no_symlinks(paths: list[Path]) -> list[Path]:
+    """`paths`, or an attestation error naming the first symlink found.
+
+    The artifact tree these are globbed from is attacker-controlled, and a
+    symlink lets a builder point a trusted-looking name at bytes it does not
+    own; the digest and JSON checks below never run against a followed link."""
+    for path in paths:
+        if path.is_symlink():
+            raise AttestationError(f"{path} is a symlink; refusing to trust it as an attestation")
+    return paths
+
+
 def read_object(path: Path, what: str) -> dict:
     """A JSON object from `path`, or an attestation error naming `what`."""
     try:
@@ -94,7 +106,7 @@ def load(root: str, spec: str, job_outputs: str) -> list[dict]:
 
     smuggled = [
         path
-        for path in sorted(base.rglob(DOCUMENT_NAME))
+        for path in _no_symlinks(sorted(base.rglob(DOCUMENT_NAME)))
         if not path.relative_to(base).parts[0].startswith(ARTIFACT_PREFIX)
     ]
     if smuggled:
@@ -124,7 +136,7 @@ def load(root: str, spec: str, job_outputs: str) -> list[dict]:
     for slot in sorted(expected):
         job, output = expected[slot]["job"], expected[slot]["output"]
         artifact = base / f"{ARTIFACT_PREFIX}{slot}"
-        found = sorted(artifact.rglob(DOCUMENT_NAME))
+        found = _no_symlinks(sorted(artifact.rglob(DOCUMENT_NAME)))
         if len(found) != 1:
             raise AttestationError(
                 f"attestation {slot} holds {len(found)} {DOCUMENT_NAME} documents, expected one"
