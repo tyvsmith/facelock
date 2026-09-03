@@ -50,7 +50,13 @@ esac
 context="$(mktemp -d "${TMPDIR:-/tmp}/facelock-deb-context.XXXXXX")"
 artifact_dir="$(mktemp -d "${TMPDIR:-/tmp}/facelock-deb-artifacts.XXXXXX")"
 rebuild_dir="$(mktemp -d "${TMPDIR:-/tmp}/facelock-deb-rebuild-output.XXXXXX")"
-trap 'rm -rf -- "$context" "$artifact_dir" "$rebuild_dir"' EXIT
+cleanup() {
+    # The context holds a Git repository; retry once so that a straggling writer
+    # cannot turn scratch cleanup into a spurious lane failure.
+    rm -rf -- "$context" "$artifact_dir" "$rebuild_dir" 2>/dev/null ||
+        rm -rf -- "$context" "$artifact_dir" "$rebuild_dir"
+}
+trap cleanup EXIT
 "$repo_root/test/prepare-deb-test-context.sh" "$context" >/dev/null
 
 # Container engines omit .git from COPY even when an alternate empty ignore

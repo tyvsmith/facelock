@@ -19,6 +19,13 @@ git -C "$repo_root" ls-files --cached --others --exclude-standard -z |
     tar -C "$destination" -xf -
 
 git -C "$destination" init --quiet
+# `git commit` below detaches `git maintenance run --auto`, which repacks and
+# prunes .git/objects in the background. Callers transport this repository by
+# reading .git directly, so that detached process races the read and deletes
+# loose objects mid-copy. A throwaway one-commit repository gains nothing from
+# maintenance, so switch it off for every command run against this repository.
+git -C "$destination" config maintenance.auto false
+git -C "$destination" config gc.auto 0
 # The destination contains only the restricted candidate file set copied
 # above, so force-add preserves tracked paths that are ignored in a fresh
 # repository (for example, checked-in internal documentation).
