@@ -24,7 +24,7 @@
 use std::path::Path;
 
 use facelock_core::config::{Config, EncryptionMethod};
-use facelock_store::FaceStore;
+use facelock_store::{FaceStore, StoreError};
 use tracing::info;
 
 /// What the gate decided about the configured key file.
@@ -144,7 +144,64 @@ pub fn encrypted_rows_at_risk(store: &FaceStore, config: &Config) -> Option<Stri
 /// `Path::exists` follows a symlink, so a link planted at `key_path` used to
 /// answer "the key is there" and skip every check, leaving the reader to load
 /// whatever the link named.
+///
+/// The check and the write are one exclusive section on `store`, so an
+/// enrollment cannot land a sealed row in between; a store that cannot be
+/// locked is a refusal, on the same "cannot tell" reasoning as a store that
+/// cannot be queried.
 pub fn ensure_encrypt_by_default_key(store: &FaceStore, config: &Config) -> KeyfileDecision {
+    let key_path = Path::new(&config.encryption.key_path);
+
+    // A key that is already there means this call writes nothing, and nothing
+    // to write is nothing to serialize. Worth its own `stat` because the auth
+    // path runs this gate before every read of the key: in the steady state
+    // it stays off the database's write lock entirely. Anything else — a
+    // symlink, a missing key, a path that cannot be inspected — is a decision
+    // that may write, and is taken under the lock.
+    if matches!(key_path.symlink_metadata(), Ok(m) if !m.file_type().is_symlink()) {
+        return KeyfileDecision::Present;
+    }
+
+    // One exclusive section over the whole decision. The row check and the
+    // key write have to be indivisible: enrollment persists a template in a
+    // single store transaction, so unless it is excluded for the length of
+    // this call it can commit a row sealed under the current key between the
+    // question and the answer — and that row is exactly what the refusal
+    // exists to protect. Held only across a `stat`, one projection query and
+    // a 32-byte create.
+    store
+        .with_exclusive(|_conn| Ok::<_, StoreError>(decide_and_create(store, config)))
+        .unwrap_or_else(|e| KeyfileDecision::Refused(unlockable_store_refusal(config, &e)))
+}
+
+/// The refusal for a store the gate could not take the lock on.
+///
+/// A database another process is *writing* is a wait-and-retry, and saying
+/// "could not be read" of it would send an operator hunting a permissions
+/// problem that is not there. Every other failure to begin the section is the
+/// same "facelock cannot tell" the query path reports, down to the remedy.
+fn unlockable_store_refusal(config: &Config, error: &StoreError) -> String {
+    let target = configured_key_artifact(config);
+    let db_path = &config.storage.db_path;
+    match error {
+        StoreError::Busy { .. } => format!(
+            "refusing to write an encryption key at {target}: the face database at \
+             {db_path} is held by another process ({error}), so facelock cannot rule out \
+             an enrollment sealing a template under the key this would replace. Retry \
+             once it is free."
+        ),
+        _ => format!(
+            "refusing to write an encryption key at {target}: the face database at \
+             {db_path} could not be read ({error}), so facelock cannot tell whether \
+             existing templates would be orphaned. Fix access to it and retry, or clear \
+             the enrollments with `facelock clear`."
+        ),
+    }
+}
+
+/// The decision itself, with the store's write lock already held by
+/// [`ensure_encrypt_by_default_key`].
+fn decide_and_create(store: &FaceStore, config: &Config) -> KeyfileDecision {
     let key_path = Path::new(&config.encryption.key_path);
 
     match key_path.symlink_metadata() {
@@ -287,6 +344,88 @@ mod tests {
             store.count_sealed().unwrap(),
             (1, 0),
             "the flag is still set"
+        );
+    }
+
+    /// The auth path runs this gate before every read of the key, so the
+    /// steady state — a key that is already there, nothing to write — must
+    /// not queue behind the database's write lock. Asserted from inside
+    /// another connection's exclusive section: a gate that took the lock
+    /// would sit here until the busy timeout and then refuse.
+    #[test]
+    fn an_existing_key_is_decided_without_taking_the_write_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("faces.db");
+        let key_path = dir.path().join("encryption.key");
+        let mut config = config_for(&key_path);
+        config.storage.db_path = db_path.display().to_string();
+        facelock_tpm::SoftwareSealer::generate_key_file(&key_path).unwrap();
+
+        let writer = FaceStore::create(&db_path).unwrap();
+        let reader = FaceStore::open_existing(&db_path).unwrap();
+        writer
+            .with_exclusive(|_conn| {
+                let decision = ensure_encrypt_by_default_key(&reader, &config);
+                assert!(
+                    matches!(decision, KeyfileDecision::Present),
+                    "an existing key must be reported without the lock: {decision:?}"
+                );
+                Ok::<(), StoreError>(())
+            })
+            .unwrap();
+    }
+
+    /// The race the exclusive section closes (#231): the row check and the key
+    /// write are one act, so a writer holding the store — an enrollment
+    /// persisting its model in a single transaction — keeps the gate out
+    /// until it has committed, rather than the gate reading a snapshot taken
+    /// before that commit and minting over the row.
+    ///
+    /// Timed rather than sampled: the gate's own decision looks the same
+    /// either way, and what has to hold is that it did not proceed while the
+    /// writer had the database.
+    #[test]
+    fn the_gate_waits_for_a_writer_holding_the_store() {
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("faces.db");
+        let key_path = dir.path().join("encryption.key");
+        let mut config = config_for(&key_path);
+        config.storage.db_path = db_path.display().to_string();
+        let writer = FaceStore::create(&db_path).unwrap();
+
+        let (announce, section_open) = std::sync::mpsc::channel();
+        let gate_config = config.clone();
+        let gate_db = db_path.clone();
+        let gate = std::thread::spawn(move || {
+            let store = FaceStore::open_existing(&gate_db).unwrap();
+            section_open
+                .recv()
+                .expect("the writer never took the store");
+            let started = Instant::now();
+            (
+                ensure_encrypt_by_default_key(&store, &gate_config),
+                started.elapsed(),
+            )
+        });
+
+        writer
+            .with_exclusive(|_conn| {
+                announce.send(()).expect("the gate thread is waiting");
+                std::thread::sleep(Duration::from_millis(200));
+                Ok::<(), StoreError>(())
+            })
+            .unwrap();
+
+        let (decision, elapsed) = gate.join().unwrap();
+        assert!(
+            matches!(decision, KeyfileDecision::Created),
+            "a plaintext database still gets its key: {decision:?}"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(100),
+            "the gate decided while the writer held the store: {elapsed:?}"
         );
     }
 

@@ -36,26 +36,95 @@ fn obtain_sealer(config: &Config) -> Result<facelock_tpm::SoftwareSealer> {
     }
 }
 
-/// The refusal that stops any key writer here from orphaning stored templates,
-/// or `None` when nothing is at risk.
+/// `--generate-key`: check what the replacement would orphan and write the new
+/// key artifact, as one act.
+///
+/// The check and the write are one exclusive section on the store, because
+/// separately they are a race: enrollment persists a template in a single
+/// store transaction (`replace_model_with_embeddings`), and one committing
+/// between a check that found nothing encrypted and the key that replaces the
+/// old one leaves a row nothing can ever decrypt. Under WAL a plain read would
+/// not even see that commit — it reads the snapshot it opened on — so the
+/// window is not narrow, it is unbounded until the query runs. Enrollment's
+/// transaction now waits for this section, and this section waits for it.
 ///
 /// `open_existing`, never `create`: a database that is simply not there yet
 /// has no templates to orphan, and probing must not bring one into being at
 /// whatever path a typo'd config names. Every other failure class is "facelock
-/// cannot tell", which the shared gate turns into a refusal.
-fn key_replacement_refusal(config: &Config) -> Result<Option<String>> {
+/// cannot tell", which is a refusal.
+fn generate_key_serialized(config: &Config) -> Result<()> {
     match crate::direct::open_store_existing(config) {
-        Ok(store) => Ok(facelock_daemon::key_policy::key_creation_refusal(
-            &store, config,
-        )),
-        Err(facelock_store::StoreError::Absent { .. }) => Ok(None),
-        Err(e) => Ok(Some(format!(
+        Ok(store) => store.with_exclusive(|_conn| {
+            if let Some(refusal) = facelock_daemon::key_policy::key_creation_refusal(&store, config)
+            {
+                bail!("{refusal}");
+            }
+            write_key_artifact(config)
+        }),
+        // Nothing to lock and nothing to orphan. A writer that creates this
+        // database from here mints its own key through the shared gate, which
+        // takes the same section on the database it just created.
+        Err(facelock_store::StoreError::Absent { .. }) => write_key_artifact(config),
+        Err(e) => bail!(
             "refusing to write an encryption key: the face database at {} could not be \
              read ({e}), so facelock cannot tell whether existing templates would be \
              orphaned. Fix access to it and retry, or clear the enrollments with \
              `facelock clear`.",
             config.storage.db_path
-        ))),
+        ),
+    }
+}
+
+/// Write the key artifact the configured method uses, and print what an
+/// operator does next. Called with the store's write lock held, unless there
+/// is no database to hold it on.
+fn write_key_artifact(config: &Config) -> Result<()> {
+    match config.encryption.method {
+        EncryptionMethod::Tpm => {
+            #[cfg(feature = "tpm")]
+            {
+                let sealed_path = Path::new(&config.encryption.sealed_key_path);
+                println!(
+                    "Generating and sealing AES key with TPM to {}...",
+                    sealed_path.display()
+                );
+                let pcr = if config.tpm.pcr_binding {
+                    Some(config.tpm.pcr_indices.as_slice())
+                } else {
+                    None
+                };
+                let mut tpm = facelock_tpm::TpmSealer::new(&config.tpm.tcti)
+                    .context("failed to initialize TPM")?;
+                facelock_tpm::generate_and_seal_key(&mut tpm, sealed_path, pcr)
+                    .context("failed to generate and seal key")?;
+                println!("TPM-sealed key generated (permissions: 0600).");
+                Ok(())
+            }
+            #[cfg(not(feature = "tpm"))]
+            {
+                bail!("encryption method is 'tpm' but TPM support is not compiled in");
+            }
+        }
+        // `none` included: `--generate-key` is how an operator mints the key
+        // *before* switching the config to `keyfile`, which the notice below
+        // spells out. Only automatic creation is restricted to the method
+        // that reads the file.
+        EncryptionMethod::Keyfile | EncryptionMethod::None => {
+            let key_path = Path::new(&config.encryption.key_path);
+            println!("Generating encryption key at {}...", key_path.display());
+            facelock_tpm::SoftwareSealer::generate_key_file(key_path)
+                .context("failed to generate encryption key")?;
+            println!("Key generated (permissions: 0600 root-only).");
+            println!(
+                "\nTo encrypt embeddings, run: sudo facelock tpm encrypt\n\
+                 To enable auto-encryption, add to config:\n\
+                 [encryption]\n\
+                 method = \"keyfile\"\n\
+                 key_path = \"{}\"",
+                key_path.display()
+            );
+            Ok(())
+        }
     }
 }
 
@@ -79,52 +148,7 @@ pub fn run_encrypt(config: &Config, generate_key: bool) -> Result<()> {
         // permanently unrecoverable. It is allowed on a database with nothing
         // encrypted in it, and otherwise refused with `facelock clear` named
         // as the destructive step the operator can take deliberately (#231).
-        if let Some(refusal) = key_replacement_refusal(config)? {
-            bail!("{refusal}");
-        }
-        match config.encryption.method {
-            EncryptionMethod::Tpm => {
-                #[cfg(feature = "tpm")]
-                {
-                    let sealed_path = Path::new(&config.encryption.sealed_key_path);
-                    println!(
-                        "Generating and sealing AES key with TPM to {}...",
-                        sealed_path.display()
-                    );
-                    let pcr = if config.tpm.pcr_binding {
-                        Some(config.tpm.pcr_indices.as_slice())
-                    } else {
-                        None
-                    };
-                    let mut tpm = facelock_tpm::TpmSealer::new(&config.tpm.tcti)
-                        .context("failed to initialize TPM")?;
-                    facelock_tpm::generate_and_seal_key(&mut tpm, sealed_path, pcr)
-                        .context("failed to generate and seal key")?;
-                    println!("TPM-sealed key generated (permissions: 0600).");
-                    return Ok(());
-                }
-                #[cfg(not(feature = "tpm"))]
-                {
-                    bail!("encryption method is 'tpm' but TPM support is not compiled in");
-                }
-            }
-            _ => {
-                let key_path = Path::new(&config.encryption.key_path);
-                println!("Generating encryption key at {}...", key_path.display());
-                facelock_tpm::SoftwareSealer::generate_key_file(key_path)
-                    .context("failed to generate encryption key")?;
-                println!("Key generated (permissions: 0600 root-only).");
-                println!(
-                    "\nTo encrypt embeddings, run: sudo facelock tpm encrypt\n\
-                     To enable auto-encryption, add to config:\n\
-                     [encryption]\n\
-                     method = \"keyfile\"\n\
-                     key_path = \"{}\"",
-                    key_path.display()
-                );
-                return Ok(());
-            }
-        }
+        return generate_key_serialized(config);
     }
 
     // This command re-seals rows from a query that carries no device id, so
@@ -438,6 +462,52 @@ mod key_gate_tests {
 
         super::run_encrypt(&config_for(&key_path, &db_path), true).unwrap();
         assert_eq!(std::fs::metadata(&key_path).unwrap().len(), 32);
+        cleanup(&db_path);
+    }
+
+    /// The gate's section is the whole act, not just the query: an
+    /// enrollment holding the store keeps `--generate-key` out until it has
+    /// committed, so the row it wrote is one the check can still see.
+    ///
+    /// Timed rather than sampled — the outcome of an uncontended run looks
+    /// identical, and what has to hold is that the command did not decide
+    /// while another writer had the database.
+    #[test]
+    fn generate_key_waits_for_a_writer_holding_the_store() {
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("encryption.key");
+        let db_path = temp_db("generate-key-locked");
+        let writer = FaceStore::create(&db_path).unwrap();
+        writer
+            .add_model("alice", "front", &[0.5f32; 512], "e")
+            .unwrap();
+
+        let (announce, section_open) = std::sync::mpsc::channel();
+        let config = config_for(&key_path, &db_path);
+        let command = std::thread::spawn(move || {
+            section_open
+                .recv()
+                .expect("the writer never took the store");
+            let started = Instant::now();
+            (super::run_encrypt(&config, true), started.elapsed())
+        });
+
+        writer
+            .with_exclusive(|_conn| {
+                announce.send(()).expect("the command thread is waiting");
+                std::thread::sleep(Duration::from_millis(200));
+                Ok::<(), facelock_store::StoreError>(())
+            })
+            .unwrap();
+
+        let (result, elapsed) = command.join().unwrap();
+        result.expect("a plaintext database still gets its key");
+        assert!(
+            elapsed >= Duration::from_millis(100),
+            "the key was written while another writer held the store: {elapsed:?}"
+        );
         cleanup(&db_path);
     }
 

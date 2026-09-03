@@ -575,6 +575,14 @@ of that key goes through the same gate: the daemon, `facelock auth` and the othe
 commands, `facelock setup`'s automatic policy, and both branches of `facelock encrypt`
 (`--generate-key` included, which replaces a live key rather than creating one).
 
+**The check and the write are one exclusive transaction on the store**, so the question and
+the act cannot be separated by an enrollment. Enrollment persists a template in a single
+store transaction of its own, so it either commits before the check looks — where the
+refusal sees it — or waits until the key is in place. Without that section a plain read
+would not even observe the commit: under WAL it reads the snapshot it opened on. A store
+that cannot be locked is a refusal on the same reasoning as one that cannot be queried, and
+says which of the two happened.
+
 Creation is atomic and never destructive. The 32 bytes are written to an `O_EXCL |
 O_NOFOLLOW` temporary beside the key at mode `0600` in a single `open(2)` create-at-mode
 (no create-then-`chmod` window — finding #11), flushed, then moved onto the key path with
