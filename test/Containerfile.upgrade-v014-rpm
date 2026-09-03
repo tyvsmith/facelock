@@ -1,0 +1,61 @@
+# Fedora upgrade lane (#231, Track K): the released v0.1.4 fc44 RPM baked in
+# beside a candidate built here from the same host binaries and the production
+# spec.
+#
+# BASE_IMAGE is the image test/Containerfile.rpm-e2e produces. Deriving from it
+# rather than repeating it keeps one copy of the reviewed ONNX Runtime fetch and
+# one copy of the pamtester and shadow-file accommodations; this file only adds
+# what an upgrade lane needs on top.
+#
+# The predecessor pin arrives as build args rather than as a literal, because
+# dist/release-matrix.json is the single place that pin is reviewed;
+# test/check-release-matrix.py fails if a digest reappears in this file.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG FACELOCK_CANDIDATE_VERSION
+
+# The base image installs its own 0.0.0 fixture package. Remove it: this lane
+# starts from the released predecessor, and a leftover install would make the
+# first transaction an upgrade from something that was never published.
+#
+# `--with bundled_ort` matches the base image's own build, so the candidate
+# carries the same reviewed runtime the host binaries were linked against.
+RUN dnf -y remove facelock && \
+    rm -f /facelock-test-package.rpm /facelock-test-upgrade.rpm && \
+    cd /build && \
+    /run-networkless.sh bash /build/test/build-rpm-prebuilt.sh "$FACELOCK_CANDIDATE_VERSION" direct && \
+    mkdir -p /artifacts && \
+    cp "$(find /build -maxdepth 1 -name 'facelock-*.rpm' -print -quit)" \
+        /artifacts/facelock-candidate.rpm && \
+    test "$(rpm -qp --qf '%{VERSION}' /artifacts/facelock-candidate.rpm)" \
+        = "$FACELOCK_CANDIDATE_VERSION" && \
+    printf '%s\n' "$(rpm -qp --qf '%{VERSION}-%{RELEASE}' /artifacts/facelock-candidate.rpm)" \
+        > /artifacts/candidate.version && \
+    rm -rf ~/rpmbuild /build/*.rpm
+
+# swtpm for the sealed shapes, rpmdevtools for the native version comparator the
+# lane uses to prove the candidate really does sort above the predecessor.
+RUN dnf -y install --setopt=install_weak_deps=False \
+        swtpm swtpm-tools tpm2-tools rpmdevtools sqlite && \
+    dnf clean all
+
+ARG FACELOCK_PREDECESSOR_URL
+ARG FACELOCK_PREDECESSOR_SHA256
+ARG FACELOCK_PREDECESSOR_SIZE
+ARG FACELOCK_PREDECESSOR_VERSION
+
+RUN curl --proto '=https' --tlsv1.2 --output /artifacts/facelock-predecessor.rpm \
+        -fsSL "$FACELOCK_PREDECESSOR_URL" && \
+    printf '%s  %s\n' "$FACELOCK_PREDECESSOR_SHA256" /artifacts/facelock-predecessor.rpm \
+        | sha256sum -c - && \
+    test "$(stat -c %s /artifacts/facelock-predecessor.rpm)" = "$FACELOCK_PREDECESSOR_SIZE" && \
+    test "$(rpm -qp --qf '%{VERSION}-%{RELEASE}' /artifacts/facelock-predecessor.rpm)" \
+        = "$FACELOCK_PREDECESSOR_VERSION" && \
+    printf '%s\n' "$FACELOCK_PREDECESSOR_SHA256" > /artifacts/predecessor.sha256 && \
+    printf '%s\n' "$FACELOCK_PREDECESSOR_VERSION" > /artifacts/predecessor.version
+
+COPY test/upgrade-v014-lane.sh /upgrade-v014-lane.sh
+RUN chmod +x /upgrade-v014-lane.sh
+
+CMD ["/usr/lib/systemd/systemd"]

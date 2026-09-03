@@ -294,6 +294,13 @@ cp "$repo_root/test/Containerfile.copr-e2e" "$matrix_root/test/"
 cp "$repo_root/test/Containerfile.fedora" "$matrix_root/test/"
 cp "$repo_root/.dockerignore" "$matrix_root/"
 cp "$repo_root/test/fedora-lane-image.sh" "$matrix_root/test/"
+# The released-predecessor upgrade lanes (#231). check-release-matrix.py holds
+# the v0.1.4 RPM digest equal across the authselect fixture and the matrix, and
+# refuses a lane Containerfile that grew a digest of its own, so all three have
+# to be staged or the checker dies before asserting either.
+cp "$repo_root/test/build-rpm-authselect-fixtures.sh" "$matrix_root/test/"
+cp "$repo_root/test/Containerfile.upgrade-v014-deb" "$matrix_root/test/"
+cp "$repo_root/test/Containerfile.upgrade-v014-rpm" "$matrix_root/test/"
 cp "$repo_root/.github/workflows/packaging.yml" "$matrix_root/.github/workflows/"
 cp "$repo_root/test/copr-build.sh" "$matrix_root/test/"
 cp "$repo_root/test/packit-config-validate.sh" "$matrix_root/test/"

@@ -3384,6 +3384,53 @@ Only failed authentication attempts are recorded in `rate_limit`, and only those
 
 **Enrollment precondition (#309).** Every non-NULL `device_id` matches its own enrolling camera at the `security.device_match_granularity` in force when it was enrolled (a `model` row does not match after switching to `unit`; re-enroll). Under `model`, a camera missing either the vendor or the product id is stored NULL (legacy-governed). Under `unit`, a camera with no non-empty serial, or with no full vendor:product identity, is refused: a `unit` enrollment never stores a NULL row, which would bind to nothing. With `bind_templates_to_device = true` and `bind_legacy_templates = false`, a camera with no usable identity is refused at any granularity, since the NULL row it would store could never authenticate. The check (`Config::ensure_enrollment_binding_allowed`, which delegates the coupling half to `SecurityConfig::ensure_enrollment_binding_allowed`) runs once per enrollment, after the camera is open and before the first model write, in both the daemon `Enroll` path and the direct path; a refusal is an ordinary enroll error naming the key and the remedy, and leaves no row behind. It never re-judges an existing template, so it can refuse a new enrollment but never lock an authentication out.
 
+### Upgrade and downgrade contract
+
+An upgrade preserves everything the previous release wrote and changes only the
+schema version and the columns a migration adds. Specifically, across a native
+package upgrade:
+
+- **Embeddings keep their bytes.** A row encrypted by an earlier release
+  decrypts to the same plaintext under the same key. The upgrade never
+  re-encrypts, re-seals, or rewrites a row.
+- **Key artifacts are never replaced.** `encryption.key` and
+  `encryption.key.sealed` keep their bytes, mode and owner. No maintainer script
+  creates, reseals or reads a key, and none changes PCR selection.
+- **A missing key over encrypted rows is fatal, never replaced.** When the key
+  artifact is gone and the database still holds encrypted rows, the daemon and
+  the one-shot path refuse to write a replacement and say why. Enrollment is
+  refused; authentication keeps falling through to password. Writing a fresh key
+  there would make a later restore of the real key useless.
+- **The default key is created only for a plaintext-only legacy database with no
+  key artifact.** Creation is `O_CREAT | O_EXCL | O_NOFOLLOW` with the file and
+  its parent directory flushed, so concurrent starts resolve to exactly one key
+  and a symlink at the key path is refused rather than followed.
+- **Config, models, enrollment markers and audit data are untouched.**
+  Administrator edits to `/etc/facelock/config.toml` survive.
+- **Modes converge to ADR 010** without content changing, and the retired
+  `facelock` group is removed if an older install left one.
+- **PAM is never activated by an upgrade.** An existing service file keeps its
+  bytes; the packaged Debian profile is registered but not selected, and no
+  authselect profile is reinstated on Fedora.
+
+**Migration failure never resets the database.** A migration that cannot finish
+(full filesystem, interrupted process, corrupt page) leaves the database exactly
+as it was and reports the failure. Recreating a database it could not migrate
+would destroy every enrollment on the machine and look like a clean first run.
+
+**Downgrade is supported back to v0.1.4, with one limit.** Migrations are
+additive and forward-only: there is no down-migration from V6, and a package
+downgrade leaves `schema_version` at 6. What is guaranteed is that the older
+release still opens that database, reads its rows, and decrypts what it
+encrypted, because V6 only adds a nullable `face_models.device_id` column that
+older queries never name. What is **not** guaranteed is that rows written by the
+newer release carry data the older one understands: a `device_id` recorded after
+the upgrade is invisible to v0.1.4, so a template enrolled on the alpha and then
+rolled back is uncoupled from its camera rather than refused.
+
+`just test-upgrade-v014` is the gate for all of the above. It runs both halves
+against the real published v0.1.4 artifacts; see `docs/releasing.md`.
+
 ## IPC Protocol
 
 D-Bus system bus (`org.facelock.Daemon`). Only used in daemon mode.
