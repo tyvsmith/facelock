@@ -2450,10 +2450,46 @@ echo "packaging evidence: recipe, marker, and workflow-run cases OK"
 
 cp "$repo_root/justfile" "$repo_root/Cargo.toml" "$repo_root/Cargo.lock" "$release_repo/"
 cp "$repo_root/dist/PKGBUILD" "$repo_root/dist/PKGBUILD-bin" "$repo_root/dist/PKGBUILD-git" "$repo_root/dist/facelock.spec" "$release_repo/dist/"
-cp "$repo_root/debian/changelog" "$release_repo/debian/"
 cp "$repo_root/scripts/release-versions.sh" "$release_repo/scripts/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$tmp_root/bin/cargo"
 chmod +x "$tmp_root/bin/cargo"
+
+# The bump sequence below asserts absolute revisions (pkgrel=1 for a first
+# build, 0.1.alpha.1 for a first RPM prerelease), so the fixture must start
+# from a fixed predecessor rather than from whatever version this checkout
+# happens to carry. Copying the live files unpinned made the first `just
+# release 0.2.0-alpha.1` a rebuild once the repo itself reached that version.
+# Rewrite every version field to the released 0.1.4 shape, and rebuild
+# debian/changelog from scratch so no inherited entry can satisfy a later
+# grep for a revision this fixture never produced.
+sed -i '0,/^version = "[^"]*"/s//version = "0.1.4"/' "$release_repo/Cargo.toml"
+sed -i 's/^_tag=.*/_tag=0.1.4/; s/^pkgver=.*/pkgver=0.1.4/; s/^pkgrel=.*/pkgrel=1/' \
+    "$release_repo/dist/PKGBUILD" "$release_repo/dist/PKGBUILD-bin"
+sed -i 's/^pkgver=.*/pkgver=0.1.4/; s/^pkgrel=.*/pkgrel=1/' "$release_repo/dist/PKGBUILD-git"
+sed -i 's/^Version:.*/Version:        0.1.4/; s/^Release:.*/Release:        1%{?dist}/' "$release_repo/dist/facelock.spec"
+cat > "$release_repo/debian/changelog" <<'CHANGELOG'
+facelock (0.1.4-1) unstable; urgency=medium
+
+  * Release v0.1.4.
+
+ -- Facelock Contributors <facelock@m.tysmith.me>  Sun, 31 May 2026 11:38:33 -0700
+CHANGELOG
+
+# Guard the pin itself: if a future edit drops it and lets the fixture inherit
+# the live version again, this fails here instead of misreading a rebuild as a
+# first build further down.
+assert_file_line "$release_repo/Cargo.toml" 'version = "0.1.4"'
+assert_file_line "$release_repo/dist/PKGBUILD" '_tag=0.1.4'
+assert_file_line "$release_repo/dist/PKGBUILD" 'pkgver=0.1.4'
+assert_file_line "$release_repo/dist/PKGBUILD" 'pkgrel=1'
+assert_file_line "$release_repo/dist/PKGBUILD-bin" '_tag=0.1.4'
+assert_file_line "$release_repo/dist/PKGBUILD-bin" 'pkgver=0.1.4'
+assert_file_line "$release_repo/dist/PKGBUILD-bin" 'pkgrel=1'
+assert_file_line "$release_repo/dist/PKGBUILD-git" 'pkgver=0.1.4'
+assert_file_line "$release_repo/dist/facelock.spec" 'Version:        0.1.4'
+assert_file_line "$release_repo/dist/facelock.spec" 'Release:        1%{?dist}'
+assert_eq "facelock (0.1.4-1) unstable; urgency=medium" "$(head -1 "$release_repo/debian/changelog")" "fixture changelog baseline"
+assert_eq "1" "$(grep -c '^facelock (' "$release_repo/debian/changelog")" "fixture changelog entry count"
 
 git -C "$release_repo" init -q
 git -C "$release_repo" config user.name release-test
