@@ -83,6 +83,11 @@ if [ "$kind" = arch ]; then
         "$(release_arch_git_pkgver 0.1.4 650 a8c48b7)|$(release_arch_pkgver 0.2.0-alpha.1)"
         "$(release_arch_pkgver 0.2.0-alpha.1)|$(release_arch_git_pkgver 0.2.0-alpha.1 7 deadbee)"
         "$(release_arch_git_pkgver 0.2.0-alpha.1 7 deadbee)|$(release_arch_pkgver 0.2.0-alpha.2)"
+        # A prerelease build has to stay under every later release of the same
+        # base, not just the next alpha. Keeping the tag's punctuation cleared
+        # all three of these at once.
+        "$(release_arch_git_pkgver 0.2.0-alpha.1 7 deadbee)|$(release_arch_pkgver 0.2.0-beta.1)"
+        "$(release_arch_git_pkgver 0.2.0-alpha.1 7 deadbee)|$(release_arch_pkgver 0.2.0)"
         "$(release_arch_pkgver 0.2.0-rc.1)|$(release_arch_git_pkgver 0.2.0-rc.1 2 facefee)"
         "$(release_arch_git_pkgver 0.2.0-rc.1 2 facefee)|$(release_arch_pkgver 0.2.0)"
         "$(release_arch_pkgver 0.2.0)|$(release_arch_git_pkgver 0.2.0 1 c0ffee1)"

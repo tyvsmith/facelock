@@ -20,24 +20,45 @@ options=(!lto)
 source=("$pkgname::git+$url.git")
 sha256sums=('SKIP')
 
-# A build from main has to outrank every published facelock, or pacman refuses
-# it as an upgrade and AUR helpers report this package as permanently out of
-# date. Three things earn that (#330):
+# A build has to land strictly between the release it descends from and the next
+# one. Below the first and pacman refuses it as an upgrade, so AUR helpers report
+# this package as permanently out of date; above the second and it blocks the
+# real release. Four things earn that, and all four were faults (#330):
 #
 #   --tags        every release tag since v0.1.2 is lightweight; without this,
 #                 describe finds only the annotated v0.1.0-rc4 and each build
 #                 claims to descend from it.
 #   --match       the repository carries non-version tags (`assets`), and the
 #                 nearest one wins if it is not filtered out.
-#   s/^v//        pacman ranks an alphabetic first segment below a numeric one,
+#   ${tag#v}      pacman ranks an alphabetic first segment below a numeric one,
 #                 so a surviving `v` sorts the build under every release.
+#   ${x//[-.]/}   the prerelease suffix converts the way release_arch_pkgver
+#                 converts it for the released package: v0.2.0-alpha.1 becomes
+#                 0.2.0alpha1, not 0.2.0.alpha.1. pacman compares separator runs
+#                 before segments, so the dotted form outranks 0.2.0alpha2,
+#                 0.2.0beta1 and the stable 0.2.0 alike.
 #
-# Held to that shape by test/release-version-contract.sh; the ordering it buys
-# is decided by vercmp in test/release-native-ordering.sh.
+# Held to this shape by test/release-version-contract.sh; the ordering it buys is
+# decided by vercmp in test/release-native-ordering.sh. scripts/release-versions.sh
+# carries the same shape as release_arch_git_pkgver, which is what those two read.
 pkgver() {
     cd "$pkgname"
-    git describe --long --tags --abbrev=7 --match 'v[0-9]*' |
-        sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+
+    local described tag base suffix count object
+    described="$(git describe --long --tags --abbrev=7 --match 'v[0-9]*')"
+
+    # --long always ends in -<commits>-g<object>, so the two right-most fields
+    # come off to leave the tag, which carries a dash of its own on a prerelease.
+    tag="${described%-*-*}"
+    count="${described#"$tag"-}"
+    object="${count#*-}"
+    count="${count%-*}"
+
+    tag="${tag#v}"
+    base="${tag%%-*}"
+    suffix="${tag#"$base"}"
+
+    printf '%s%s.r%s.%s\n' "$base" "${suffix//[-.]/}" "$count" "$object"
 }
 
 prepare() {

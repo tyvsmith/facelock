@@ -802,19 +802,22 @@ not drift. What a build installs is whatever `pkgver()` computes at build time:
 <released pkgver>.r<commits since that tag>.g<7-char object name>
 ```
 
-so a build from `main` today is `0.1.4.r650.ga8c48b7`. Two properties make that
+so a build from `main` today is `0.1.4.r650.ga8c48b7`, and one from a
+`v0.2.0-alpha.1` checkout is `0.2.0alpha1.r7.gdeadbee`. Two properties make that
 version usable, and both are enforced rather than assumed:
 
 - it must outrank the release it descends from, or pacman refuses the upgrade
   and every AUR helper reports the package as permanently out of date
 - it must rank below the next release, or the git package blocks the real one
 
-Getting there needs `git describe --long --tags --match 'v[0-9]*'` and a
-stripped leading `v`. Every release tag since `v0.1.2` is lightweight, so a
-`--tags`-less describe walks back to the last annotated tag (`v0.1.0-rc4`); the
-repository also carries a non-version tag (`assets`) that `--match` filters out;
-and pacman ranks an alphabetic first segment below a numeric one, so a surviving
-`v` sorts the build under every release. All three were live faults (#330).
+Four things earn that, and all four were live faults (#330):
+
+| | |
+|---|---|
+| `--tags` | Every release tag since `v0.1.2` is lightweight. Without it, describe walks back to the last annotated tag, `v0.1.0-rc4`. |
+| `--match 'v[0-9]*'` | The repository carries a non-version tag (`assets`), and describe takes it whenever it sits nearer HEAD. |
+| stripped leading `v` | pacman ranks an alphabetic first segment below a numeric one, so a surviving `v` sorts the build under every release. |
+| converted prerelease suffix | `v0.2.0-alpha.1` becomes `0.2.0alpha1`, the same conversion the released package gets. pacman compares separator runs before segments, so keeping the punctuation ranks the build above `0.2.0alpha2`, `0.2.0beta1` and the stable `0.2.0` alike. |
 
 `test/release-version-contract.sh` holds the recipe to that shape against a
 synthetic tag graph, and `test/release-native-ordering.sh` hands the result to
