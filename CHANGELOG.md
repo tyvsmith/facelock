@@ -7,36 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **Source-install activation lifecycle** (#221): source installs now hold the
-  canonical `/run/facelock/lifecycle.lock`, establish a manager-proved systemd
-  activation barrier, preserve the daemon's active/inactive and enabled state,
-  and restore safely on normal exit or caught signals. Exact known historical
-  systemd/D-Bus copies are staged and rollback-capable through the protected
-  writes, with signal-safe child/parent handoff and preplan reconciliation,
-  published only while activation remains barred, and ambiguous or
-  administrator-modified state preserved. Privileged entrypoints use fixed
-  trusted paths; ordinary installs fail closed without systemd except for the
-  authenticated offline test-image path.
-- **System asset ownership migration** (#228): `facelock setup --systemd` no
-  longer creates or overwrites package/source-owned systemd and D-Bus files.
-  It validates their exact bytes and metadata, removes only reviewed exact
-  historical `/etc` copies through a failure-atomic no-replace quarantine,
-  preserves ambiguous administrator state, and verifies the intended unit and
-  activation files resolve before enabling the daemon. It treats D-Bus policy
-  as merged configuration and reports unrelated local fragments. Package
-  configuration no longer refreshes a marker-matched legacy policy, source
-  installs consume the same reviewed digest inventory, and source uninstall
-  leaves every historical `/etc` copy untouched without changing daemon-state
-  restoration policy.
-- **Every install path ships compiled translation catalogs** (#140): deb, rpm,
-  the three PKGBUILDs, Nix and the source install now all compile `po/` through
-  `scripts/install-locale-catalogs.sh`, for both the `facelock` and
-  `pam_facelock` gettext domains. Previously only `just install-files` did, and
-  only when the operator had run `just mo` first. gettext is a build dependency
-  of the packages and stays optional for source installs. Nothing is translated
-  yet (`po/` holds only templates), which is why the wiring landed first.
+## [0.2.0-alpha.1] - 2026-09-04
 
 ### Added
 
@@ -303,6 +274,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Intel IPU6/IPU7 + v4l2-relayd compatibility recipe** in `docs/compatibility.md`.
 
 ### Changed
+
+- **Source-install activation lifecycle** (#221): source installs now hold the
+  canonical `/run/facelock/lifecycle.lock`, establish a manager-proved systemd
+  activation barrier, preserve the daemon's active/inactive and enabled state,
+  and restore safely on normal exit or caught signals. Exact known historical
+  systemd/D-Bus copies are staged and rollback-capable through the protected
+  writes, with signal-safe child/parent handoff and preplan reconciliation,
+  published only while activation remains barred, and ambiguous or
+  administrator-modified state preserved. Privileged entrypoints use fixed
+  trusted paths; ordinary installs fail closed without systemd except for the
+  authenticated offline test-image path.
+- **System asset ownership migration** (#228): `facelock setup --systemd` no
+  longer creates or overwrites package/source-owned systemd and D-Bus files.
+  It validates their exact bytes and metadata, removes only reviewed exact
+  historical `/etc` copies through a failure-atomic no-replace quarantine,
+  preserves ambiguous administrator state, and verifies the intended unit and
+  activation files resolve before enabling the daemon. It treats D-Bus policy
+  as merged configuration and reports unrelated local fragments. Package
+  configuration no longer refreshes a marker-matched legacy policy, source
+  installs consume the same reviewed digest inventory, and source uninstall
+  leaves every historical `/etc` copy untouched without changing daemon-state
+  restoration policy.
+- **Every install path ships compiled translation catalogs** (#140): deb, rpm,
+  the three PKGBUILDs, Nix and the source install now all compile `po/` through
+  `scripts/install-locale-catalogs.sh`, for both the `facelock` and
+  `pam_facelock` gettext domains. Previously only `just install-files` did, and
+  only when the operator had run `just mo` first. gettext is a build dependency
+  of the packages and stays optional for source installs. Nothing is translated
+  yet (`po/` holds only templates), which is why the wiring landed first.
+
 
 - **Debian-family releases now target Debian 13 Trixie and Ubuntu 26.04
   Resolute only**: both suites ship one TPM-enabled `facelock` package. Debian
@@ -992,5 +993,6 @@ Initial open-source release.
 - **PAM install output**: Conditional install messages — suppressed when PAM entry already present (`c12a970`)
 - **PAM uninstall**: Uninstall now removes entries from all relevant PAM services, not just the primary one (`c12a970`)
 
+[0.2.0-alpha.1]: https://github.com/tyvsmith/facelock/releases/tag/v0.2.0-alpha.1
 [0.1.3]: https://github.com/tyvsmith/facelock/releases/tag/v0.1.3
 [0.1.0]: https://github.com/tyvsmith/facelock/releases/tag/v0.1.0

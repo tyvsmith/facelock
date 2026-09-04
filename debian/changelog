@@ -1,3 +1,9 @@
+facelock (0.2.0~alpha.1-1) unstable; urgency=medium
+
+  * Release v0.2.0-alpha.1.
+
+ -- Ty Smith <ty@tysmith.me>  Fri, 04 Sep 2026 10:18:58 -0700
+
 facelock (0.1.4-1) unstable; urgency=medium
 
   * Release v0.1.4.
