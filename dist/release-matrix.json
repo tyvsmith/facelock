@@ -61,6 +61,7 @@
       "optional_experimental_chroots": [
         "fedora-rawhide-x86_64"
       ],
+      "required_forge_project": "github.com/tyvsmith/facelock",
       "prerelease_publication": false
     },
     "staging": {
@@ -72,9 +73,10 @@
         "fedora-44-x86_64",
         "fedora-45-x86_64"
       ],
+      "required_forge_project": "github.com/tyvsmith/facelock",
       "provisioning_issue": 236,
       "managed_by_this_change": false,
-      "provisioned": false
+      "provisioned": true
     }
   },
   "arch": {

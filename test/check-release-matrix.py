@@ -146,6 +146,18 @@ require(
     required_supported_chroots.isdisjoint(optional_experimental_chroots),
     "production COPR required supported and optional experimental chroots must be disjoint",
 )
+# Both channels build from this repository and no other, so both declare the
+# forge project COPR must allow Packit to build from. It lives here rather than
+# inside test/check-live-release-channels.py because that checker's contract is
+# to compare public state against the checked-in authority; a repository
+# identity hardcoded in the checker would make the checker its own authority.
+# `enable_net` gets no key: true is its only correct value, and a setting with
+# one legal value is a place for drift to hide rather than a choice to record.
+expected_forge_project = "github.com/tyvsmith/facelock"
+require(
+    production_copr.get("required_forge_project") == expected_forge_project,
+    f"production COPR required forge project drifted: {production_copr.get('required_forge_project')!r}",
+)
 require(
     "expected_enabled_chroots" not in production_copr,
     "production COPR authority must separate required supported and optional experimental chroots",
@@ -177,14 +189,18 @@ require(
     "optional_experimental_chroots" not in staging_copr,
     "staging COPR must not declare optional experimental chroots",
 )
+require(
+    staging_copr.get("required_forge_project") == expected_forge_project,
+    f"staging COPR required forge project drifted: {staging_copr.get('required_forge_project')!r}",
+)
 require(staging_copr.get("provisioning_issue") == 236, "staging COPR provisioning must remain owned by issue #236")
 require(staging_copr.get("managed_by_this_change") is False, "issue #234 cannot provision staging COPR")
 # `provisioned` is the maintainer's switch. It gates two things at once: it is
 # the only thing that lets test/check-live-release-channels.py query the staging
-# project, and it decides which trigger the staging Packit job may carry. While
-# it is false that checker reports "not provisioned" and touches no network,
-# which is what keeps the staging fixtures in release-version-contract.sh
-# offline. The trigger half is checked with the Packit jobs below.
+# project, and it decides which trigger the staging Packit job may carry. It is
+# true now that the project exists, so that checker compares the live project on
+# every run; while it is false the checker reports "not provisioned" and touches
+# no network. The trigger half is checked with the Packit jobs below.
 require(
     isinstance(staging_copr.get("provisioned"), bool),
     f"staging COPR provisioned must be a boolean: {staging_copr.get('provisioned')!r}",
@@ -403,10 +419,9 @@ for job_index, job in enumerate(packit_jobs):
             targets == staging_copr_targets,
             f"Packit staging COPR targets drifted: {sorted(targets)}",
         )
-# The staging job is what will build a candidate commit into facelock-testing
-# once #236 provisions it. It must exist now so its shape is reviewed before
-# the project does, and it must stay pull-request/manual: a release trigger
-# would make a tag publish into staging without any of the wave 4 proof.
+# The staging job builds a candidate commit into facelock-testing, which now
+# exists. It must stay pull-request/manual: a release trigger would make a tag
+# publish into staging without any of the wave 4 proof.
 staging_jobs = [
     job
     for job in packit_jobs
@@ -420,11 +435,12 @@ require(
     staging_job.get("owner") == staging_copr["owner"],
     "Packit staging COPR owner disagrees with the release matrix",
 )
-# The trigger tracks provisioning. Until the project exists, `ignore` keeps the
-# job hand-dispatched (`/packit build`), because a pull-request trigger would
-# aim every pull request's Packit run at a project that answers 404. Once the
-# maintainer creates it they flip `provisioned` and the trigger together, and
-# this pairing is what stops one moving without the other.
+# The trigger tracks provisioning. While the project does not exist, `ignore`
+# keeps the job hand-dispatched (`/packit build`), because a pull-request
+# trigger would aim every pull request's Packit run at a project that answers
+# 404. The maintainer flips `provisioned` and the trigger together, and this
+# pairing is what stops one moving without the other. `manual_trigger` stays
+# true either way, so a pull request offers the build rather than starting it.
 expected_staging_trigger = "pull_request" if staging_provisioned else "ignore"
 require(
     staging_job.get("trigger") == expected_staging_trigger,
@@ -434,10 +450,6 @@ require(
 require(
     staging_job.get("manual_trigger") is True,
     "Packit staging COPR job must stay manually triggered",
-)
-require(
-    staging_provisioned is False,
-    "staging COPR provisioning must stay unclaimed until issue #236 creates the project",
 )
 # Two COPR projects exist and no more. Without a bound, a job aimed at a third
 # project passes every check above simply by choosing allowlisted targets, and
@@ -695,10 +707,9 @@ require(
 live_channel_command = "python3 test/check-live-release-channels.py"
 require(live_channel_command in ci_workflow, "CI does not compare live release channels with the checked-in authority")
 require(live_channel_command in justfile, "release preflight does not compare live release channels with the checked-in authority")
-# Staging is unprovisioned, so this run reports "not provisioned" and stops.
-# It is wired now anyway: the flag is what turns the checked-in staging
-# authority into a gate the day #236 creates the project, and an unwired flag
-# is the failure mode this file exists to catch.
+# Staging is provisioned, so this run compares the live project with the
+# checked-in staging authority. The flag has to stay wired in both places: an
+# unwired flag is the failure mode this file exists to catch.
 staging_channel_command = f"{live_channel_command} --channel staging"
 require(staging_channel_command in ci_workflow, "CI does not compare the staging release channel")
 require(staging_channel_command in justfile, "release preflight does not compare the staging release channel")
@@ -707,8 +718,8 @@ require(
     "release preflight does not require the pre-tag release attestation renderer",
 )
 # The staging channel and the attestation are contracts, not just scripts: a
-# reader has to be able to find out that staging exists, that it is not
-# provisioned yet, and what flipping that switch turns on.
+# reader has to be able to find out that staging exists, what its provisioning
+# switch is, and what flipping that switch turns on.
 staging_doc_claims = {
     "docs/releasing.md": (
         "tyvsmith/facelock-testing",
