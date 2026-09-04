@@ -111,6 +111,16 @@ assert_does_not_carry 0.2.0beta1-1 0.2.0-rc.1
 assert_rejected release_arch_version_carries_cargo 0.1.4-1 0.1.4-alpha1
 assert_rejected release_arch_version_carries_cargo 0.1.4 0.1.4
 assert_rejected release_arch_version_carries_cargo 0.1.4-0 0.1.4
+# `pacman -Q` may also print a nonzero epoch prefix and a pkgrel subrelease;
+# both are real forms and must still carry through to the same pkgver match.
+assert_carries 1:0.2.0alpha1-1 0.2.0-alpha.1
+assert_carries 0.2.0alpha1-1.1 0.2.0-alpha.1
+assert_carries 2:0.1.4-3.2 0.1.4
+# Neither form may become a loophole: the epoch and subrelease must not widen
+# the comparison past the pkgver capture.
+assert_does_not_carry 1:0.1.41-1 0.1.4
+assert_rejected release_arch_version_carries_cargo :0.1.4-1 0.1.4
+assert_rejected release_arch_version_carries_cargo 0.1.4- 0.1.4
 
 # The Arch end-to-end validator must reach the pairing through this contract
 # rather than restating the conversion or matching one spelling inside another.
