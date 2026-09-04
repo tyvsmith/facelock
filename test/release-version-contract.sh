@@ -2667,4 +2667,15 @@ assert_eq \
     "$(git_pkgver_run)" \
     "facelock-git pkgver at the release tag itself"
 
+# No reachable release tag. describe fails, and pkgver() has to fail with it:
+# the expansions would otherwise assemble a version out of an empty string, and
+# `.r.` clears makepkg's pkgver character check, so a nonsense version would ship
+# instead of the build stopping.
+git_pkgver_init untagged
+git_pkgver_commit base
+git -C "$git_pkgver_repo" tag assets
+if git_pkgver_output="$(git_pkgver_run 2>/dev/null)"; then
+    fail "facelock-git pkgver invented a version with no release tag: $git_pkgver_output"
+fi
+
 echo "release version contract: OK"

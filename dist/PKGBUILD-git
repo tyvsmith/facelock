@@ -45,8 +45,12 @@ sha256sums=('SKIP')
 pkgver() {
     cd "$pkgname"
 
+    # Failing here is the right answer when no release tag is reachable: makepkg
+    # stops with "failed to update pkgver". Without the guard the expansions
+    # below would build a version out of an empty string and ship it, because
+    # what they produce still satisfies makepkg's pkgver character check.
     local described tag base suffix count object
-    described="$(git describe --long --tags --abbrev=7 --match 'v[0-9]*')"
+    described="$(git describe --long --tags --abbrev=7 --match 'v[0-9]*')" || return 1
 
     # --long always ends in -<commits>-g<object>, so the two right-most fields
     # come off to leave the tag, which carries a dash of its own on a prerelease.
