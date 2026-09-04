@@ -57,8 +57,12 @@ try:
     project = channel["project"]
     api_url = channel["api_url"]
     required_chroot_list = channel["required_supported_chroots"]
+    required_forge_project = channel["required_forge_project"]
 except (KeyError, TypeError) as error:
     fail(f"release matrix has no complete {args.channel} COPR authority: {error}")
+
+if not isinstance(required_forge_project, str) or not required_forge_project:
+    fail(f"release matrix {args.channel} COPR required forge project must be a non-empty string")
 
 required_chroots = chroot_set(required_chroot_list, f"{args.channel} COPR required supported chroots")
 # Production tolerates one optional experimental chroot (Rawhide); staging has
@@ -129,6 +133,32 @@ if (
         f"got owner={response.get('ownername')!r}, name={response.get('name')!r}, "
         f"full_name={response.get('full_name')!r}"
     )
+# Two project settings docs/releasing.md promises, checked here because the same
+# response already carries them and neither is inferable from the chroot set.
+# Both are public: COPR returns them to an anonymous caller for a project it does
+# not own, so this holds from a fork. Builder permission is not here; COPR serves
+# project permissions only to an authenticated owner, so the release guide keeps
+# it as a setup step rather than a claim this gate can make.
+if response.get("enable_net") is not True:
+    fail(
+        f"{args.channel} COPR {owner}/{project} builds have no internet access "
+        f"(enable_net={response.get('enable_net')!r}); the RPM builds from source and cargo "
+        "fetches crates during %build, so a build without it fails resolving crates. "
+        'Enable Settings -> "Enable internet access during builds" in the COPR web UI'
+    )
+forge_projects = response.get("packit_forge_projects_allowed")
+if not isinstance(forge_projects, list) or not all(isinstance(entry, str) for entry in forge_projects):
+    fail(
+        f"{args.channel} COPR API response has no valid packit_forge_projects_allowed list: "
+        f"{forge_projects!r}"
+    )
+if required_forge_project not in forge_projects:
+    fail(
+        f"{args.channel} COPR {owner}/{project} does not accept Packit builds from "
+        f"{required_forge_project}; allowed={sorted(forge_projects)}. "
+        'Add it under Settings -> "allowed forge projects" in the COPR web UI'
+    )
+
 chroot_repos = response.get("chroot_repos")
 if not isinstance(chroot_repos, dict) or not all(isinstance(chroot, str) for chroot in chroot_repos):
     fail(f"{args.channel} COPR API response has no valid chroot_repos object")
@@ -146,5 +176,6 @@ if missing or extra:
 
 print(
     f"live release channel contract: OK ({args.channel} COPR {owner}/{project}; "
-    f"live={sorted(live_chroots)})"
+    f"live={sorted(live_chroots)}; enable_net=True; "
+    f"packit forge={required_forge_project})"
 )

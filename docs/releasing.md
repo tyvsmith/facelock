@@ -616,12 +616,17 @@ crate feature `api-20` keeps the binary compatible with Fedora's runtime.)
 3. Install the **Packit-as-a-Service** GitHub App on the repository:
    https://github.com/marketplace/packit-as-a-service
 4. In the COPR project → Settings → Permissions, grant the `packit` user
-   **builder** permission so Packit can build into the existing project. If an
-   "allowed forge projects" field is present, add `github.com/tyvsmith/facelock`.
+   **builder** permission so Packit can build into the existing project. In the
+   "allowed forge projects" field, add `github.com/tyvsmith/facelock`.
 5. In the COPR project → Settings, enable **"Enable internet access during
    builds"**. The RPM is built from source and `cargo` fetches crates from
    crates.io during `%build`; COPR's build chroot is network-isolated by
    default, so this toggle is required or the build fails resolving crates.
+
+Step 4's allowlist and step 5 apply to both channels and are checked on every
+pull request by `python3 test/check-live-release-channels.py`, which reads them
+off the public project response. Builder permission is not public, so it stays a
+hand-confirmed step.
 
 Verify the COPR build locally before relying on it with `just test-copr`, which
 reproduces the Packit SRPM + `mock` from-source rebuild on a Fedora chroot and
@@ -635,8 +640,17 @@ points at production; staging below is where a candidate gets built.
 
 The project exists, with exactly the `fedora-43-x86_64`, `fedora-44-x86_64`,
 and `fedora-45-x86_64` chroots, internet access during builds enabled, and
-`packit` holding builder permission. `dist/release-matrix.json` records that as
-`copr_channels.staging.provisioned: true`.
+`github.com/tyvsmith/facelock` on its Packit forge allowlist. Those three
+properties are contract-checked on every pull request, not just described here:
+`test/check-live-release-channels.py` reads all of them off the project response
+and fails on any of them. `dist/release-matrix.json` records the claim as
+`copr_channels.staging.provisioned: true` and holds the expected forge project
+in `copr_channels.staging.required_forge_project`.
+
+Builder permission for the `packit` user is the one setup step no gate can see.
+COPR serves project permissions only to an authenticated owner, so the checker,
+which reads the public project API, cannot compare them. Confirm that one by
+hand in the web UI.
 
 `.packit.yaml` declares a second `copr_build` job for it, on
 `trigger: pull_request` with `manual_trigger: true`. Packit therefore offers the
@@ -645,9 +659,10 @@ build on a pull request and a maintainer dispatches it by hand with a
 publishes into staging.
 
 `python3 test/check-live-release-channels.py --channel staging` now queries the
-real project and compares its chroots with the checked-in authority, on every
-pull request in CI and again in `just release-preflight`. A chroot that appears
-or disappears in COPR fails that gate.
+real project and compares it with the checked-in authority, on every pull
+request in CI and again in `just release-preflight`. A chroot that appears or
+disappears in COPR fails that gate, as does internet access switched off or a
+forge allowlist that stops naming this repository.
 
 The trigger and the switch move together, and `test/check-release-matrix.py`
 enforces the pairing in both directions: `provisioned: true` requires

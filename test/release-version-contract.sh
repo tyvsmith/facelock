@@ -1226,6 +1226,10 @@ cat > "$live_copr_supported_only" <<'JSON'
   "ownername": "tyvsmith",
   "name": "facelock",
   "full_name": "tyvsmith/facelock",
+  "enable_net": true,
+  "packit_forge_projects_allowed": [
+    "github.com/tyvsmith/facelock"
+  ],
   "chroot_repos": {
     "fedora-43-x86_64": "https://example.invalid/43/",
     "fedora-44-x86_64": "https://example.invalid/44/",
@@ -1238,6 +1242,10 @@ cat > "$live_copr_supported_with_rawhide" <<'JSON'
   "ownername": "tyvsmith",
   "name": "facelock",
   "full_name": "tyvsmith/facelock",
+  "enable_net": true,
+  "packit_forge_projects_allowed": [
+    "github.com/tyvsmith/facelock"
+  ],
   "chroot_repos": {
     "fedora-43-x86_64": "https://example.invalid/43/",
     "fedora-44-x86_64": "https://example.invalid/44/",
@@ -1251,6 +1259,10 @@ cat > "$live_copr_missing_supported" <<'JSON'
   "ownername": "tyvsmith",
   "name": "facelock",
   "full_name": "tyvsmith/facelock",
+  "enable_net": true,
+  "packit_forge_projects_allowed": [
+    "github.com/tyvsmith/facelock"
+  ],
   "chroot_repos": {
     "fedora-43-x86_64": "https://example.invalid/43/",
     "fedora-44-x86_64": "https://example.invalid/44/",
@@ -1263,6 +1275,10 @@ cat > "$live_copr_unknown_extra" <<'JSON'
   "ownername": "tyvsmith",
   "name": "facelock",
   "full_name": "tyvsmith/facelock",
+  "enable_net": true,
+  "packit_forge_projects_allowed": [
+    "github.com/tyvsmith/facelock"
+  ],
   "chroot_repos": {
     "fedora-43-x86_64": "https://example.invalid/43/",
     "fedora-44-x86_64": "https://example.invalid/44/",
@@ -1277,6 +1293,10 @@ cat > "$live_copr_wrong_project" <<'JSON'
   "ownername": "tyvsmith",
   "name": "facelock-testing",
   "full_name": "tyvsmith/facelock-testing",
+  "enable_net": true,
+  "packit_forge_projects_allowed": [
+    "github.com/tyvsmith/facelock"
+  ],
   "chroot_repos": {
     "fedora-43-x86_64": "https://example.invalid/43/",
     "fedora-44-x86_64": "https://example.invalid/44/",
@@ -1301,6 +1321,71 @@ if python3 "$repo_root/test/check-live-release-channels.py" --response-file "$li
 fi
 echo "release channel case: wrong-project rejected"
 echo "release channel case: Rawhide-in-Packit-targets rejected"
+
+# Project settings, not chroots. docs/releasing.md promises internet access
+# during builds and a Packit forge allowlist naming this repository; both ride
+# on the response the checker already fetches, so both are contract-checked
+# rather than described. A build without net fails resolving crates, and a
+# project that stops allowing this forge stops accepting Packit builds at all.
+live_copr_net_disabled="$tmp_root/live-copr-net-disabled.json"
+live_copr_forge_missing="$tmp_root/live-copr-forge-missing.json"
+cat > "$live_copr_net_disabled" <<'JSON'
+{
+  "ownername": "tyvsmith",
+  "name": "facelock",
+  "full_name": "tyvsmith/facelock",
+  "enable_net": false,
+  "packit_forge_projects_allowed": [
+    "github.com/tyvsmith/facelock"
+  ],
+  "chroot_repos": {
+    "fedora-43-x86_64": "https://example.invalid/43/",
+    "fedora-44-x86_64": "https://example.invalid/44/",
+    "fedora-45-x86_64": "https://example.invalid/45/"
+  }
+}
+JSON
+cat > "$live_copr_forge_missing" <<'JSON'
+{
+  "ownername": "tyvsmith",
+  "name": "facelock",
+  "full_name": "tyvsmith/facelock",
+  "enable_net": true,
+  "packit_forge_projects_allowed": [
+    "github.com/someone-else/facelock"
+  ],
+  "chroot_repos": {
+    "fedora-43-x86_64": "https://example.invalid/43/",
+    "fedora-44-x86_64": "https://example.invalid/44/",
+    "fedora-45-x86_64": "https://example.invalid/45/"
+  }
+}
+JSON
+assert_live_channel_response_rejected() {
+    local context="$1"
+    local channel="$2"
+    local response_file="$3"
+    local diagnostic="$4"
+    local output
+    if output=$(python3 "$repo_root/test/check-live-release-channels.py" --channel "$channel" \
+        --response-file "$response_file" 2>&1); then
+        fail "live channel checker accepted $context"
+    fi
+    case "$output" in
+        *"$diagnostic"*) ;;
+        *) fail "live channel checker rejected $context for another reason: $output" ;;
+    esac
+    echo "release channel case: $context rejected"
+}
+
+assert_live_channel_response_rejected \
+    "production builds without internet access" \
+    production "$live_copr_net_disabled" \
+    "production COPR tyvsmith/facelock builds have no internet access"
+assert_live_channel_response_rejected \
+    "production forge allowlist without this repository" \
+    production "$live_copr_forge_missing" \
+    "does not accept Packit builds from github.com/tyvsmith/facelock"
 
 # Staging (#236). The project exists now, so both sides of the provisioning
 # switch are written here rather than read from the tree: an unprovisioned
@@ -1346,6 +1431,10 @@ cat > "$staging_copr_supported_only" <<'JSON'
   "ownername": "tyvsmith",
   "name": "facelock-testing",
   "full_name": "tyvsmith/facelock-testing",
+  "enable_net": true,
+  "packit_forge_projects_allowed": [
+    "github.com/tyvsmith/facelock"
+  ],
   "chroot_repos": {
     "fedora-43-x86_64": "https://example.invalid/43/",
     "fedora-44-x86_64": "https://example.invalid/44/",
@@ -1358,6 +1447,10 @@ cat > "$staging_copr_missing_supported" <<'JSON'
   "ownername": "tyvsmith",
   "name": "facelock-testing",
   "full_name": "tyvsmith/facelock-testing",
+  "enable_net": true,
+  "packit_forge_projects_allowed": [
+    "github.com/tyvsmith/facelock"
+  ],
   "chroot_repos": {
     "fedora-43-x86_64": "https://example.invalid/43/",
     "fedora-44-x86_64": "https://example.invalid/44/"
@@ -1369,6 +1462,10 @@ cat > "$staging_copr_rawhide_extra" <<'JSON'
   "ownername": "tyvsmith",
   "name": "facelock-testing",
   "full_name": "tyvsmith/facelock-testing",
+  "enable_net": true,
+  "packit_forge_projects_allowed": [
+    "github.com/tyvsmith/facelock"
+  ],
   "chroot_repos": {
     "fedora-43-x86_64": "https://example.invalid/43/",
     "fedora-44-x86_64": "https://example.invalid/44/",
@@ -1382,6 +1479,10 @@ cat > "$staging_copr_wrong_project" <<'JSON'
   "ownername": "tyvsmith",
   "name": "facelock",
   "full_name": "tyvsmith/facelock",
+  "enable_net": true,
+  "packit_forge_projects_allowed": [
+    "github.com/tyvsmith/facelock"
+  ],
   "chroot_repos": {
     "fedora-43-x86_64": "https://example.invalid/43/",
     "fedora-44-x86_64": "https://example.invalid/44/",
@@ -1442,6 +1543,47 @@ if python3 "$repo_root/test/check-live-release-channels.py" --channel staging \
     fail "live staging checker accepted the production project identity"
 fi
 echo "release channel case: staging wrong-project rejected"
+
+staging_copr_net_disabled="$tmp_root/staging-copr-net-disabled.json"
+staging_copr_forge_missing="$tmp_root/staging-copr-forge-missing.json"
+cat > "$staging_copr_net_disabled" <<'JSON'
+{
+  "ownername": "tyvsmith",
+  "name": "facelock-testing",
+  "full_name": "tyvsmith/facelock-testing",
+  "enable_net": false,
+  "packit_forge_projects_allowed": [
+    "github.com/tyvsmith/facelock"
+  ],
+  "chroot_repos": {
+    "fedora-43-x86_64": "https://example.invalid/43/",
+    "fedora-44-x86_64": "https://example.invalid/44/",
+    "fedora-45-x86_64": "https://example.invalid/45/"
+  }
+}
+JSON
+cat > "$staging_copr_forge_missing" <<'JSON'
+{
+  "ownername": "tyvsmith",
+  "name": "facelock-testing",
+  "full_name": "tyvsmith/facelock-testing",
+  "enable_net": true,
+  "packit_forge_projects_allowed": [],
+  "chroot_repos": {
+    "fedora-43-x86_64": "https://example.invalid/43/",
+    "fedora-44-x86_64": "https://example.invalid/44/",
+    "fedora-45-x86_64": "https://example.invalid/45/"
+  }
+}
+JSON
+assert_live_channel_response_rejected \
+    "staging builds without internet access" \
+    staging "$staging_copr_net_disabled" \
+    "staging COPR tyvsmith/facelock-testing builds have no internet access"
+assert_live_channel_response_rejected \
+    "staging forge allowlist emptied" \
+    staging "$staging_copr_forge_missing" \
+    "staging COPR tyvsmith/facelock-testing does not accept Packit builds from"
 if python3 "$repo_root/test/check-live-release-channels.py" --channel nonsense \
     --response-file "$staging_copr_supported_only" >/dev/null 2>&1; then
     fail "live channel checker accepted an undeclared channel"
@@ -1501,6 +1643,16 @@ live_channel_authority_case \
     's/"optional_experimental_chroots"/"retired_experimental_chroots"/' \
     production \
     "omits its optional experimental chroots"
+live_channel_authority_case \
+    "production authority without a required forge project" \
+    's/"required_forge_project"/"retired_forge_project"/' \
+    production \
+    "has no complete production COPR authority"
+live_channel_authority_case \
+    "staging authority with an empty required forge project" \
+    's@"required_forge_project": "github.com/tyvsmith/facelock"@"required_forge_project": ""@' \
+    staging \
+    "required forge project must be a non-empty string"
 live_channel_authority_case \
     "staging authority granted optional experimental chroots" \
     's/"provisioned": true/"optional_experimental_chroots": ["fedora-rawhide-x86_64"], "provisioned": true/' \

@@ -2164,6 +2164,14 @@ Only an explicit `provisioned: false` skips a channel. `copr_channels.production
 declares no such switch and must never grow one, so the production comparison
 always queries its authority.
 
+A channel comparison covers three properties, not one. The live chroot set must
+match the channel's declared chroots. `enable_net` must be true, because the RPM
+builds from source and `cargo` fetches crates during `%build`. The project's
+Packit forge allowlist must contain `copr_channels.<channel>.required_forge_project`,
+which is `github.com/tyvsmith/facelock` for both channels. Builder permission for
+the `packit` user is outside this contract: COPR serves project permissions only
+to an authenticated owner, so a public comparison cannot make that claim.
+
 A pre-tag attestation binds the candidate commit to the EVRs each channel
 serves, the artifact and repository digests, the signing key fingerprints, and
 how fresh each channel's repository metadata was.

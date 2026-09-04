@@ -146,6 +146,18 @@ require(
     required_supported_chroots.isdisjoint(optional_experimental_chroots),
     "production COPR required supported and optional experimental chroots must be disjoint",
 )
+# Both channels build from this repository and no other, so both declare the
+# forge project COPR must allow Packit to build from. It lives here rather than
+# inside test/check-live-release-channels.py because that checker's contract is
+# to compare public state against the checked-in authority; a repository
+# identity hardcoded in the checker would make the checker its own authority.
+# `enable_net` gets no key: true is its only correct value, and a setting with
+# one legal value is a place for drift to hide rather than a choice to record.
+expected_forge_project = "github.com/tyvsmith/facelock"
+require(
+    production_copr.get("required_forge_project") == expected_forge_project,
+    f"production COPR required forge project drifted: {production_copr.get('required_forge_project')!r}",
+)
 require(
     "expected_enabled_chroots" not in production_copr,
     "production COPR authority must separate required supported and optional experimental chroots",
@@ -176,6 +188,10 @@ require_string_set(
 require(
     "optional_experimental_chroots" not in staging_copr,
     "staging COPR must not declare optional experimental chroots",
+)
+require(
+    staging_copr.get("required_forge_project") == expected_forge_project,
+    f"staging COPR required forge project drifted: {staging_copr.get('required_forge_project')!r}",
 )
 require(staging_copr.get("provisioning_issue") == 236, "staging COPR provisioning must remain owned by issue #236")
 require(staging_copr.get("managed_by_this_change") is False, "issue #234 cannot provision staging COPR")
