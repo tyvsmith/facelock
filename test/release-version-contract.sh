@@ -2568,14 +2568,16 @@ git -C "$release_repo" diff --quiet || fail "rejected stable-to-prerelease trans
 
 # dist/PKGBUILD-git computes its version at build time from `git describe`, so
 # nothing in the tree records what a build will actually be called, and every
-# fault in #330 needed a real tag graph to show itself. `--long` without `--tags`
-# saw annotated tags only -- every release tag since v0.1.2 is lightweight, so
-# describe walked back to v0.1.0-rc4; the tag's leading `v` reached the pkgver,
-# where pacman ranks an alphabetic first segment below a numeric one; and the
-# prerelease suffix kept the punctuation the released package drops, which
-# reverses the comparison in the other direction.
+# fault here needed a real tag graph to show itself. #330 reported two: `--long`
+# without `--tags` saw annotated tags only, and every release tag since v0.1.2 is
+# lightweight, so describe walked back to v0.1.0-rc4; and the tag's leading `v`
+# reached the pkgver, where pacman ranks an alphabetic first segment below a
+# numeric one. Two more came out of fixing those: a non-version tag nearer HEAD
+# was taken over the release tag, and the prerelease suffix kept the punctuation
+# the released package drops, which reverses the comparison in the other
+# direction.
 #
-# Reproduce both graphs and hold the recipe to the version it must produce.
+# Reproduce those graphs and hold the recipe to the version it must produce.
 # Ordering is not decided here: pacman decides it, in
 # test/release-native-ordering.sh, which is the only place vercmp exists.
 git_pkgver_src="$tmp_root/git-pkgver"

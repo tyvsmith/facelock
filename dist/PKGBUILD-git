@@ -23,7 +23,8 @@ sha256sums=('SKIP')
 # A build has to land strictly between the release it descends from and the next
 # one. Below the first and pacman refuses it as an upgrade, so AUR helpers report
 # this package as permanently out of date; above the second and it blocks the
-# real release. Four things earn that, and all four were faults (#330):
+# real release. Four things earn that, and all four were broken. #330 reported
+# the first and third; the other two are the same bug in the same expression:
 #
 #   --tags        every release tag since v0.1.2 is lightweight; without this,
 #                 describe finds only the annotated v0.1.0-rc4 and each build

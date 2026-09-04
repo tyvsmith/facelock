@@ -798,13 +798,15 @@ release` does not rewrite it.
 describe, and `just release` keeps it level with the release so the page does
 not drift. What a build installs is whatever `pkgver()` computes at build time:
 
-```
-<released pkgver>.r<commits since that tag>.g<7-char object name>
+```text
+<released pkgver>.r<commits since that tag>.g<abbreviated object name>
 ```
 
-so a build from `main` today is `0.1.4.r650.ga8c48b7`, and one from a
-`v0.2.0-alpha.1` checkout is `0.2.0alpha1.r7.gdeadbee`. Two properties make that
-version usable, and both are enforced rather than assumed:
+`git describe --abbrev=7` sets a floor, not a width: the object name is seven
+hex characters, or more where seven would be ambiguous. So a build off `v0.1.4`
+reads like `0.1.4.r650.ga8c48b7`, and one off `v0.2.0-alpha.1` like
+`0.2.0alpha1.r7.gdeadbee`. Two properties make that version usable, and both are
+enforced rather than assumed:
 
 - it must outrank the release it descends from, or pacman refuses the upgrade
   and every AUR helper reports the package as permanently out of date

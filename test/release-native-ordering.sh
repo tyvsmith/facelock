@@ -68,7 +68,7 @@ for ((index = 0; index + 1 < ${#versions[@]}; index++)); do
     fi
 done
 
-echo "native $kind ordering: OK (${versions[*]})"
+echo "native $kind release ordering: OK (${versions[*]})"
 
 # facelock-git is versioned by dist/PKGBUILD-git's pkgver(), which appends
 # `.r<commits>.g<sha>` to the newest release tag it can reach. That has to land
