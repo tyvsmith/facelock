@@ -593,10 +593,10 @@ Rawhide for release fails the matrix check.
 `.packit.yaml` deliberately uses JSON syntax, which is a valid YAML subset.
 Release guards therefore parse its jobs semantically with the Python standard
 library instead of comparing YAML spelling; general YAML outside that subset
-fails closed. The production project is `tyvsmith/facelock`. The planned
-prerelease staging project is `tyvsmith/facelock-testing`, but provisioning or
-changing it belongs to issue #236 and is not performed by this release-identity
-change.
+fails closed. The production project is `tyvsmith/facelock`; the prerelease
+staging project is `tyvsmith/facelock-testing`, covered below. Issue #236 still
+owns the remaining staging infrastructure, so changing the project's chroots or
+permissions belongs there, not to a release-identity change.
 
 The COPR RPM is built **from source** with the spec's default
 `%bcond_with bundled_ort` mode and does **not** bundle ONNX Runtime. Its
@@ -628,41 +628,42 @@ reproduces the Packit SRPM + `mock` from-source rebuild on a Fedora chroot and
 checks that the payload has no bundle while its dependencies select Fedora ORT.
 
 Only a stable-tagged config with the deliberately restored production release
-trigger can populate production COPR automatically. Do not point a prerelease
-tag at production while staging is unavailable.
+trigger can populate production COPR automatically. A prerelease tag never
+points at production; staging below is where a candidate gets built.
 
 ##### Staging COPR (`tyvsmith/facelock-testing`)
 
-`.packit.yaml` declares a second `copr_build` job, for
-`tyvsmith/facelock-testing`. It carries `trigger: ignore`, so nothing runs it
-automatically: a maintainer dispatches it by hand with a `/packit build`
-comment. A tag never publishes into staging.
+The project exists, with exactly the `fedora-43-x86_64`, `fedora-44-x86_64`,
+and `fedora-45-x86_64` chroots, internet access during builds enabled, and
+`packit` holding builder permission. `dist/release-matrix.json` records that as
+`copr_channels.staging.provisioned: true`.
 
-The project does not exist yet. Issue #236 owns creating it and granting Packit
-builder access; until then `dist/release-matrix.json` keeps
-`copr_channels.staging.provisioned` false and
-`python3 test/check-live-release-channels.py --channel staging` reports `not
-provisioned` and queries nothing.
+`.packit.yaml` declares a second `copr_build` job for it, on
+`trigger: pull_request` with `manual_trigger: true`. Packit therefore offers the
+build on a pull request and a maintainer dispatches it by hand with a
+`/packit build` comment; nothing builds into staging on its own, and a tag never
+publishes into staging.
 
-The trigger and that switch move together, and `test/check-release-matrix.py`
-enforces the pairing. While `provisioned` is false the staging job must stay on
-`trigger: ignore`; a pull-request trigger would aim every pull request's Packit
-run at a project that answers 404.
+`python3 test/check-live-release-channels.py --channel staging` now queries the
+real project and compares its chroots with the checked-in authority, on every
+pull request in CI and again in `just release-preflight`. A chroot that appears
+or disappears in COPR fails that gate.
 
-Provisioning is therefore three edits, and the contract rejects any two of them
-without the third. Create the project with exactly the Fedora 43, 44, and 45
-chroots, then:
+The trigger and the switch move together, and `test/check-release-matrix.py`
+enforces the pairing in both directions: `provisioned: true` requires
+`trigger: pull_request`, and `provisioned: false` requires `trigger: ignore`.
+Setting the switch back without moving the trigger, or the reverse, fails the
+release matrix contract. The pairing is what stops a pull-request trigger from
+aiming every Packit run at a project that answers 404.
 
-1. set `copr_channels.staging.provisioned` to true in `dist/release-matrix.json`
-2. move the staging job in `.packit.yaml` to `trigger: pull_request`
-3. delete the `staging COPR provisioning must stay unclaimed until issue #236
-   creates the project` assertion from `test/check-release-matrix.py`
-
-The third edit is the point of review: that assertion exists so provisioning
-cannot be claimed by a config change alone, and retiring it is the moment
-someone confirms the project really exists. From then on the same checker
-compares the live project with the checked-in authority on every pull request
-and in preflight.
+Provisioning was three edits, and the contract rejected any two of them without
+the third: the switch in `dist/release-matrix.json`, the trigger in
+`.packit.yaml`, and retiring the `staging COPR provisioning must stay unclaimed
+until issue #236 creates the project` assertion in
+`test/check-release-matrix.py`. That third assertion existed so provisioning
+could not be claimed by a config change alone; retiring it was the moment
+someone confirmed the project really exists. The live comparison above is what
+holds the claim honest from here.
 
 Staging tolerates no optional experimental chroot. Production accepts Rawhide's
 presence or absence; in staging any chroot beyond the supported three is drift.

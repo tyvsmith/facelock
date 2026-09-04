@@ -2107,8 +2107,9 @@ live module is exercised per code by the `facelock-map-*` fixtures in
 
 `dist/release-matrix.json` is the checked-in release-target authority. A strict
 prerelease tag has the form `vX.Y.Z-{alpha,beta,rc}.N`; it creates a GitHub
-prerelease and direct artifacts, but it must not publish to stable APT, stable AUR, or production COPR. Staging COPR infrastructure is owned by issue #236
-and is not provisioned or modified by the prerelease identity workflow.
+prerelease and direct artifacts, but it must not publish to stable APT, stable AUR, or production COPR. The staging COPR project exists; the remaining
+staging infrastructure is owned by issue #236, and neither is modified by the
+prerelease identity workflow.
 
 A stable `vX.Y.Z` tag may publish to stable APT and AUR only after validated
 release metadata classifies it as stable. Production COPR additionally
@@ -2149,11 +2150,15 @@ contract. While `provisioned` is false the job must carry `trigger: ignore` and
 is dispatched by hand; when it is true the job must carry
 `trigger: pull_request`. Either value alone fails the release matrix contract,
 so the project cannot be declared live without the job that builds into it, and
-the job cannot chase a project that does not exist. A third assertion holds
-`provisioned` false until issue #236 creates the project, so provisioning is
-three reviewed edits: the switch, the trigger, and retiring that assertion.
-While the switch is false, `test/check-live-release-channels.py --channel
-staging` reports `not provisioned` and contacts nothing.
+the job cannot chase a project that does not exist. The switch is true: the
+project exists with exactly the declared chroots. Provisioning it took three
+reviewed edits: the switch, the trigger, and retiring the assertion that held
+`provisioned` false until issue #236 created the project. `manual_trigger`
+stays true on either setting, so a pull request offers the staging build rather
+than starting it. While the switch is false,
+`test/check-live-release-channels.py --channel staging` reports
+`not provisioned` and contacts nothing; while it is true that comparison
+queries the live project on every pull request and in preflight.
 
 Only an explicit `provisioned: false` skips a channel. `copr_channels.production`
 declares no such switch and must never grow one, so the production comparison

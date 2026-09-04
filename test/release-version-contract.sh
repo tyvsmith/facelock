@@ -789,13 +789,13 @@ valid_packit_staging_root="$tmp_root/packit-valid-staging"
 cp -R "$matrix_root" "$valid_packit_staging_root"
 replace_packit_staging_job \
     "$valid_packit_staging_root/.packit.yaml" \
-    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-45-x86_64","fedora-43-x86_64","fedora-44-x86_64"]}'
+    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-45-x86_64","fedora-43-x86_64","fedora-44-x86_64"]}'
 RELEASE_MATRIX_VERSION=0.2.0 python3 "$valid_packit_staging_root/test/check-release-matrix.py" >/dev/null
 echo "release matrix Packit case: exact facelock-testing staging targets accepted"
 
 assert_extra_packit_job_rejected \
     "second facelock-testing staging job" \
-    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
+    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
 
 assert_extra_packit_job_rejected \
     "third copr_build job with allowlisted targets" \
@@ -814,14 +814,14 @@ assert_extra_packit_job_rejected \
     '{"job":"copr_build","trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-development-aarch64"]}'
 assert_staging_packit_job_rejected \
     "facelock-testing Rawhide target" \
-    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-rawhide-x86_64"]}' \
+    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-rawhide-x86_64"]}' \
     "targets Rawhide"
 assert_extra_packit_job_rejected \
     "Rawhide target outside production and staging" \
     '{"job":"copr_build","trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-rawhide-x86_64"]}'
 assert_staging_packit_job_rejected \
     "facelock-testing incomplete staging targets" \
-    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64"]}' \
+    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64"]}' \
     "Packit staging COPR targets drifted"
 assert_extra_packit_job_rejected \
     "duplicate targets outside production and staging" \
@@ -1045,10 +1045,11 @@ assert_matrix_mutation_rejected \
     ".packit.yaml" \
     's/"fedora-45-x86_64"/"fedora-rawhide-x86_64"/'
 
-# Staging COPR publication (#236). The project is not provisioned, so every
-# guard here is config shape: the Packit job that will build into it, the
-# checked-in authority it must agree with, and the fact that neither may reach
-# Rawhide or the production project.
+# Staging COPR publication (#236). The project is provisioned now, so the tree
+# carries the claimed shape: the switch true and the Packit job on the
+# pull-request trigger. The guards here are still config shape: the job that
+# builds into it, the checked-in authority it must agree with, and the fact that
+# neither may reach Rawhide or the production project.
 assert_matrix_mutation_rejected \
     "production COPR granted a provisioning switch" \
     "dist/release-matrix.json" \
@@ -1067,11 +1068,11 @@ assert_matrix_mutation_rejected \
 assert_matrix_mutation_rejected \
     "staging COPR granted an optional experimental chroot" \
     "dist/release-matrix.json" \
-    's/"provisioned": false/"optional_experimental_chroots": ["fedora-rawhide-x86_64"], "provisioned": false/' \
+    's/"provisioned": true/"optional_experimental_chroots": ["fedora-rawhide-x86_64"], "provisioned": true/' \
     "staging COPR must not declare optional experimental chroots"
 assert_staging_packit_job_rejected \
     "Packit staging job deleted" \
-    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"tyvsmith","project":"facelock-retired","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-retired","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
     "Packit must define exactly one staging COPR job"
 assert_staging_packit_job_rejected \
     "Packit staging job made release-triggered" \
@@ -1079,32 +1080,74 @@ assert_staging_packit_job_rejected \
     "Packit staging COPR trigger"
 assert_staging_packit_job_rejected \
     "Packit staging job made automatic" \
-    '{"job":"copr_build","trigger":"ignore","manual_trigger":false,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    '{"job":"copr_build","trigger":"pull_request","manual_trigger":false,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
     "Packit staging COPR job must stay manually triggered"
 assert_staging_packit_job_rejected \
     "Packit staging job owner drifted" \
-    '{"job":"copr_build","trigger":"ignore","manual_trigger":true,"owner":"packit","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"packit","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
     "Packit staging COPR owner"
 
 # The staging trigger and copr_channels.staging.provisioned move together. An
 # unprovisioned project must not be the target of every pull request's Packit
 # run, and a provisioned one that stays hand-dispatched is a gate nobody runs.
+# Both sides are pinned rather than inherited: a case that took its starting
+# switch from the tree would only ever exercise whichever way the tree is set,
+# and would stop proving the pairing the moment the maintainer flips it. Each
+# case below writes the switch and the trigger it wants and checks they took.
+pin_staging_provisioning() {
+    local root="$1"
+    local provisioned="$2"
+    local trigger="$3"
+    rm -rf "$root"
+    cp -R "$matrix_root" "$root"
+    python3 - "$root" "$provisioned" "$trigger" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+provisioned = sys.argv[2] == "true"
+trigger = sys.argv[3]
+matrix_path = root / "dist" / "release-matrix.json"
+packit_path = root / ".packit.yaml"
+
+matrix = json.loads(matrix_path.read_text())
+staging = matrix["copr_channels"]["staging"]
+if not isinstance(staging.get("provisioned"), bool):
+    raise SystemExit("the staging authority carries no provisioning switch to pin")
+staging["provisioned"] = provisioned
+matrix_path.write_text(json.dumps(matrix, indent=2) + "\n")
+
+config = json.loads(packit_path.read_text())
+staging_jobs = [job for job in config["jobs"] if job.get("project") == "facelock-testing"]
+if len(staging_jobs) != 1:
+    raise SystemExit(f"expected exactly one staging Packit job to pin, found {len(staging_jobs)}")
+staging_jobs[0]["trigger"] = trigger
+packit_path.write_text(json.dumps(config, indent=2) + "\n")
+
+# Guard the pin itself: read both files back, so an edit that stops writing one
+# of them fails here instead of quietly letting the case inherit the tree.
+written_staging = json.loads(matrix_path.read_text())["copr_channels"]["staging"]
+if written_staging["provisioned"] is not provisioned:
+    raise SystemExit(f"the staging provisioning pin did not take: {written_staging['provisioned']!r}")
+written_jobs = [
+    job for job in json.loads(packit_path.read_text())["jobs"] if job.get("project") == "facelock-testing"
+]
+if len(written_jobs) != 1 or written_jobs[0].get("trigger") != trigger:
+    raise SystemExit("the staging trigger pin did not take")
+PY
+}
+
 staging_pairing_index=0
 assert_staging_provisioning_pair_rejected() {
     local context="$1"
-    local matrix_expression="$2"
-    local staging_job_json="$3"
+    local provisioned="$2"
+    local trigger="$3"
     local diagnostic="$4"
     local mutation_root="$tmp_root/staging-pairing-$staging_pairing_index"
     local checker_output
     staging_pairing_index=$((staging_pairing_index + 1))
-    cp -R "$matrix_root" "$mutation_root"
-    if [ -n "$matrix_expression" ]; then
-        sed -i "$matrix_expression" "$mutation_root/dist/release-matrix.json"
-    fi
-    if [ -n "$staging_job_json" ]; then
-        replace_packit_staging_job "$mutation_root/.packit.yaml" "$staging_job_json"
-    fi
+    pin_staging_provisioning "$mutation_root" "$provisioned" "$trigger"
     if checker_output=$(RELEASE_MATRIX_VERSION=0.2.0 python3 "$mutation_root/test/check-release-matrix.py" 2>&1); then
         fail "release matrix checker accepted drift: $context"
     fi
@@ -1115,52 +1158,38 @@ assert_staging_provisioning_pair_rejected() {
     echo "release matrix staging pairing case: $context rejected"
 }
 
+assert_staging_provisioning_pair_accepted() {
+    local context="$1"
+    local provisioned="$2"
+    local trigger="$3"
+    local case_root="$tmp_root/staging-pairing-accepted-$provisioned"
+    local checker_output
+    pin_staging_provisioning "$case_root" "$provisioned" "$trigger"
+    if ! checker_output=$(RELEASE_MATRIX_VERSION=0.2.0 python3 "$case_root/test/check-release-matrix.py" 2>&1); then
+        fail "release matrix checker rejected $context: $checker_output"
+    fi
+    echo "release matrix staging pairing case: $context accepted"
+}
+
 assert_staging_provisioning_pair_rejected \
     "unprovisioned staging job triggered by pull requests" \
-    "" \
-    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    false pull_request \
     "must be 'ignore' while copr_channels.staging.provisioned is False"
 assert_staging_provisioning_pair_rejected \
-    "provisioned staging left on the manual trigger" \
-    's/"provisioned": false/"provisioned": true/' \
-    "" \
+    "provisioned staging left on the hand-dispatched trigger" \
+    true ignore \
     "must be 'pull_request' while copr_channels.staging.provisioned is True"
-assert_staging_provisioning_pair_rejected \
-    "staging claimed as provisioned with its pull-request trigger restored" \
-    's/"provisioned": false/"provisioned": true/' \
-    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
-    "staging COPR provisioning must stay unclaimed"
 
-# Provisioning is three edits, and docs/releasing.md says so: flip the switch,
-# move the staging job to the pull-request trigger, and retire the pin that
-# keeps the switch unclaimed. The pairing cases above prove no two of them pass
-# alone; this proves the three together do, so the procedure is reachable.
-provisioned_root="$tmp_root/matrix-staging-provisioned"
-cp -R "$matrix_root" "$provisioned_root"
-sed -i 's/"provisioned": false/"provisioned": true/' "$provisioned_root/dist/release-matrix.json"
-replace_packit_staging_job \
-    "$provisioned_root/.packit.yaml" \
-    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
-python3 - "$provisioned_root/test/check-release-matrix.py" <<'PY'
-import pathlib
-import sys
+# The other direction. Retiring the unclaimed-provisioning pin when #236 created
+# the project must not have replaced it with the mirror pin: the switch stays a
+# switch, so both matched pairs pass and the maintainer can set it back.
+assert_staging_provisioning_pair_accepted \
+    "provisioned staging on the pull-request trigger" \
+    true pull_request
+assert_staging_provisioning_pair_accepted \
+    "unprovisioned staging held on the hand-dispatched trigger" \
+    false ignore
 
-path = pathlib.Path(sys.argv[1])
-content = path.read_text()
-pin = """require(
-    staging_provisioned is False,
-    "staging COPR provisioning must stay unclaimed until issue #236 creates the project",
-)
-"""
-if pin not in content:
-    raise SystemExit("the unclaimed-provisioning pin is not the block the provisioning procedure retires")
-path.write_text(content.replace(pin, "", 1))
-PY
-if provisioned_output=$(RELEASE_MATRIX_VERSION=0.2.0 python3 "$provisioned_root/test/check-release-matrix.py" 2>&1); then
-    echo "release matrix staging pairing case: the three provisioning edits together accepted"
-else
-    fail "release matrix checker rejected the documented provisioning procedure: $provisioned_output"
-fi
 assert_matrix_mutation_rejected \
     "staging channel comparison dropped from CI" \
     ".github/workflows/ci.yml" \
@@ -1273,9 +1302,41 @@ fi
 echo "release channel case: wrong-project rejected"
 echo "release channel case: Rawhide-in-Packit-targets rejected"
 
-# Staging (#236). The project does not exist yet, so the unprovisioned run must
-# report that and touch no network; check-release-matrix.py pins
-# copr_channels.staging.provisioned to false, which is what keeps this offline.
+# Staging (#236). The project exists now, so both sides of the provisioning
+# switch are written here rather than read from the tree: an unprovisioned
+# authority must report the skip and touch no network, a provisioned one must
+# query. Every comparison below runs from a response fixture, so nothing in
+# this file contacts COPR either way.
+pin_staging_live_authority() {
+    python3 - "$1" "$2" "$3" "${4:-}" <<'PY'
+import json
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1])
+destination = pathlib.Path(sys.argv[2])
+provisioned = sys.argv[3] == "true"
+api_url = sys.argv[4]
+
+matrix = json.loads(source.read_text())
+staging = matrix["copr_channels"]["staging"]
+if not isinstance(staging.get("provisioned"), bool):
+    raise SystemExit("the staging authority carries no provisioning switch to pin")
+staging["provisioned"] = provisioned
+if api_url:
+    staging["api_url"] = api_url
+destination.write_text(json.dumps(matrix, indent=2) + "\n")
+
+# Guard the pin: a fixture that stopped writing the switch would inherit the
+# tree's and silently test whichever side the tree happens to be on.
+written = json.loads(destination.read_text())["copr_channels"]["staging"]
+if written["provisioned"] is not provisioned:
+    raise SystemExit(f"the staging provisioning pin did not take: {written['provisioned']!r}")
+if api_url and written["api_url"] != api_url:
+    raise SystemExit("the staging API pin did not take")
+PY
+}
+
 staging_copr_supported_only="$tmp_root/staging-copr-supported-only.json"
 staging_copr_missing_supported="$tmp_root/staging-copr-missing-supported.json"
 staging_copr_rawhide_extra="$tmp_root/staging-copr-rawhide-extra.json"
@@ -1331,12 +1392,38 @@ JSON
 python3 "$repo_root/test/check-live-release-channels.py" --channel production \
     --response-file "$live_copr_supported_only" >/dev/null
 echo "release channel case: explicit production channel accepted"
-staging_unprovisioned_output=$(python3 "$repo_root/test/check-live-release-channels.py" --channel staging)
+# The skip path is still real code, and it is pinned to its own baseline: the
+# tree's staging authority is provisioned, so a run against the live matrix
+# would query COPR instead of reporting the skip this case is about.
+staging_unprovisioned_root="$tmp_root/live-channel-staging-unprovisioned"
+mkdir -p "$staging_unprovisioned_root/dist" "$staging_unprovisioned_root/test"
+cp "$repo_root/test/check-live-release-channels.py" "$staging_unprovisioned_root/test/"
+pin_staging_live_authority "$repo_root/dist/release-matrix.json" \
+    "$staging_unprovisioned_root/dist/release-matrix.json" false
+staging_unprovisioned_output=$(python3 "$staging_unprovisioned_root/test/check-live-release-channels.py" --channel staging)
 case "$staging_unprovisioned_output" in
     *"staging COPR tyvsmith/facelock-testing is not provisioned"*) ;;
     *) fail "live staging checker did not report the unprovisioned project: $staging_unprovisioned_output" ;;
 esac
 echo "release channel case: staging not provisioned reported"
+
+# The other side of the switch, pinned the same way. A provisioned staging
+# authority must query rather than skip, so this one points at a closed local
+# port: a skip would print the unprovisioned line instead of a failed read, and
+# nothing here reaches COPR to prove it.
+staging_offline_root="$tmp_root/live-channel-staging-offline"
+mkdir -p "$staging_offline_root/dist" "$staging_offline_root/test"
+cp "$repo_root/test/check-live-release-channels.py" "$staging_offline_root/test/"
+pin_staging_live_authority "$repo_root/dist/release-matrix.json" \
+    "$staging_offline_root/dist/release-matrix.json" true "http://127.0.0.1:1/"
+if staging_offline_output=$(python3 "$staging_offline_root/test/check-live-release-channels.py" --channel staging 2>&1); then
+    fail "live channel checker skipped the staging query instead of performing it: $staging_offline_output"
+fi
+case "$staging_offline_output" in
+    *"cannot read the public staging COPR API"*) ;;
+    *) fail "live channel checker did not report a failed staging query: $staging_offline_output" ;;
+esac
+echo "release channel case: provisioned staging queries its authority"
 python3 "$repo_root/test/check-live-release-channels.py" --channel staging \
     --response-file "$staging_copr_supported_only" >/dev/null
 echo "release channel case: staging supported-only accepted"
@@ -1416,7 +1503,7 @@ live_channel_authority_case \
     "omits its optional experimental chroots"
 live_channel_authority_case \
     "staging authority granted optional experimental chroots" \
-    's/"provisioned": false/"optional_experimental_chroots": ["fedora-rawhide-x86_64"], "provisioned": false/' \
+    's/"provisioned": true/"optional_experimental_chroots": ["fedora-rawhide-x86_64"], "provisioned": true/' \
     staging \
     "must declare no optional experimental chroots"
 
