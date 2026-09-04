@@ -60,6 +60,15 @@ assert_eq "true" "$(release_github_prerelease 0.2.0-alpha.1)" "GitHub alpha clas
 assert_eq "false" "$(release_github_prerelease 0.2.0)" "GitHub stable classification"
 assert_eq "0.2.0~alpha.1" "$(release_debian_upstream 0.2.0-alpha.1)" "Debian upstream"
 assert_eq "0.2.0alpha1" "$(release_arch_pkgver 0.2.0-alpha.1)" "Arch pkgver"
+assert_eq "0.1.4.r650.ga8c48b7" "$(release_arch_git_pkgver 0.1.4 650 a8c48b7)" "Arch VCS pkgver"
+assert_eq "0.2.0alpha1.r7.gdeadbee" "$(release_arch_git_pkgver 0.2.0-alpha.1 7 deadbee)" "Arch VCS prerelease pkgver"
+assert_eq "0.1.4.r0.ga8c48b7" "$(release_arch_git_pkgver 0.1.4 0 a8c48b7)" "Arch VCS pkgver at the tagged commit"
+assert_rejected release_arch_git_pkgver 0.1.4 -1 a8c48b7
+assert_rejected release_arch_git_pkgver 0.1.4 07 a8c48b7
+assert_rejected release_arch_git_pkgver 0.1.4 650 ga8c48b7
+assert_rejected release_arch_git_pkgver 0.1.4 650 A8C48B7
+assert_rejected release_arch_git_pkgver 0.1.4 650 a8c48
+assert_rejected release_arch_git_pkgver v0.1.4 650 a8c48b7
 assert_eq "0.2.0" "$(release_rpm_version 0.2.0-alpha.1)" "RPM Version"
 assert_eq "0.1.alpha.1" "$(release_rpm_release 0.2.0-alpha.1 1)" "RPM prerelease Release"
 assert_eq "1" "$(release_rpm_release 0.2.0 99)" "RPM stable Release"
@@ -2592,5 +2601,117 @@ if (
     fail "just release accepted a prerelease after the same RPM Version reached stable"
 fi
 git -C "$release_repo" diff --quiet || fail "rejected stable-to-prerelease transition changed release metadata"
+
+# dist/PKGBUILD-git computes its version at build time from `git describe`, so
+# nothing in the tree records what a build will actually be called, and every
+# fault here needed a real tag graph to show itself. #330 reported two: `--long`
+# without `--tags` saw annotated tags only, and every release tag since v0.1.2 is
+# lightweight, so describe walked back to v0.1.0-rc4; and the tag's leading `v`
+# reached the pkgver, where pacman ranks an alphabetic first segment below a
+# numeric one. Two more came out of fixing those: a non-version tag nearer HEAD
+# was taken over the release tag, and the prerelease suffix kept the punctuation
+# the released package drops, which reverses the comparison in the other
+# direction.
+#
+# Reproduce those graphs and hold the recipe to the version it must produce.
+# Ordering is not decided here: pacman decides it, in
+# test/release-native-ordering.sh, which is the only place vercmp exists.
+git_pkgver_src="$tmp_root/git-pkgver"
+
+git_pkgver_repo=
+git_pkgver_commit() {
+    : > "$git_pkgver_repo/$1"
+    git -C "$git_pkgver_repo" add -A
+    git -C "$git_pkgver_repo" -c commit.gpgsign=false commit -qm "$1"
+}
+
+git_pkgver_init() {
+    git_pkgver_repo="$git_pkgver_src/$1/facelock-git"
+    mkdir -p "$git_pkgver_repo"
+    git -C "$git_pkgver_repo" init -q
+    git -C "$git_pkgver_repo" config user.name pkgver-test
+    git -C "$git_pkgver_repo" config user.email pkgver-test@example.invalid
+}
+
+# The recipe itself, not a copy of its transform: sourcing sets pkgname and
+# defines pkgver() exactly as makepkg does, with the checkout's parent as the
+# working directory.
+git_pkgver_run() {
+    (
+        cd "$(dirname "$git_pkgver_repo")"
+        # shellcheck source=/dev/null
+        source "$repo_root/dist/PKGBUILD-git"
+        pkgver
+    )
+}
+
+git_pkgver_init stable
+git_pkgver_commit rc-base
+# The one annotated tag, and the oldest. A `--tags`-less describe finds only
+# this one, however many releases came after it.
+git -C "$git_pkgver_repo" -c tag.gpgsign=false tag -a v0.1.0-rc4 -m v0.1.0-rc4
+git_pkgver_commit release
+# Lightweight, like v0.1.2 and every release tag since.
+git -C "$git_pkgver_repo" tag v0.1.4
+git_pkgver_commit assets-payload
+# A lightweight tag that is not a version, nearer HEAD than the release tag.
+# facelock carries exactly one of these (`assets`); describe has to skip it, or
+# the pkgver becomes `assets.rN.g...` and sorts below every release.
+git -C "$git_pkgver_repo" tag assets
+git_pkgver_commit post-release-1
+git_pkgver_commit post-release-2
+
+git_pkgver_head="$(git -C "$git_pkgver_repo" rev-parse --short=7 HEAD)"
+git_pkgver_output="$(git_pkgver_run)"
+assert_eq \
+    "$(release_arch_git_pkgver 0.1.4 3 "$git_pkgver_head")" \
+    "$git_pkgver_output" \
+    "facelock-git pkgver over a stable tag graph"
+case "$git_pkgver_output" in
+    [0-9]*) ;;
+    *) fail "facelock-git pkgver does not start with a digit: $git_pkgver_output" ;;
+esac
+
+# The next release is a prerelease, and its tag carries punctuation the released
+# pkgver drops (v0.2.0-alpha.1 -> 0.2.0alpha1). Keeping it produces
+# 0.2.0.alpha.1.rN.g..., which pacman ranks above 0.2.0alpha2, 0.2.0beta1 and the
+# stable 0.2.0, because it compares separator runs before it compares segments.
+git_pkgver_init prerelease
+git_pkgver_commit base
+git -C "$git_pkgver_repo" tag v0.2.0-alpha.1
+git_pkgver_commit post-alpha-1
+git_pkgver_commit post-alpha-2
+git_pkgver_commit post-alpha-3
+
+git_pkgver_head="$(git -C "$git_pkgver_repo" rev-parse --short=7 HEAD)"
+git_pkgver_output="$(git_pkgver_run)"
+assert_eq \
+    "$(release_arch_git_pkgver 0.2.0-alpha.1 3 "$git_pkgver_head")" \
+    "$git_pkgver_output" \
+    "facelock-git pkgver over a prerelease tag graph"
+case "$git_pkgver_output" in
+    *.alpha.*) fail "facelock-git pkgver kept the prerelease punctuation: $git_pkgver_output" ;;
+esac
+
+# Straight off a release tag, before any commit lands on top of it.
+git_pkgver_init tagged
+git_pkgver_commit base
+git -C "$git_pkgver_repo" tag v0.1.4
+git_pkgver_head="$(git -C "$git_pkgver_repo" rev-parse --short=7 HEAD)"
+assert_eq \
+    "$(release_arch_git_pkgver 0.1.4 0 "$git_pkgver_head")" \
+    "$(git_pkgver_run)" \
+    "facelock-git pkgver at the release tag itself"
+
+# No reachable release tag. describe fails, and pkgver() has to fail with it:
+# the expansions would otherwise assemble a version out of an empty string, and
+# `.r.` clears makepkg's pkgver character check, so a nonsense version would ship
+# instead of the build stopping.
+git_pkgver_init untagged
+git_pkgver_commit base
+git -C "$git_pkgver_repo" tag assets
+if git_pkgver_output="$(git_pkgver_run 2>/dev/null)"; then
+    fail "facelock-git pkgver invented a version with no release tag: $git_pkgver_output"
+fi
 
 echo "release version contract: OK"

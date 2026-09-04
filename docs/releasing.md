@@ -791,6 +791,41 @@ targets, lifecycle depth, and immutable environment identities. Release
 preflight, CI, and release metadata checks validate that authority; `just
 release` does not rewrite it.
 
+### The version `facelock-git` actually installs
+
+`dist/PKGBUILD-git`'s `pkgver` field is display only. AUR's web page and
+`.SRCINFO` show it because `makepkg --printsrcinfo` runs without a checkout to
+describe, and `just release` keeps it level with the release so the page does
+not drift. What a build installs is whatever `pkgver()` computes at build time:
+
+```text
+<released pkgver>.r<commits since that tag>.g<abbreviated object name>
+```
+
+`git describe --abbrev=7` sets a floor, not a width: the object name is seven
+hex characters, or more where seven would be ambiguous. So a build off `v0.1.4`
+reads like `0.1.4.r650.ga8c48b7`, and one off `v0.2.0-alpha.1` like
+`0.2.0alpha1.r7.gdeadbee`. Two properties make that version usable, and both are
+enforced rather than assumed:
+
+- it must outrank the release it descends from, or pacman refuses the upgrade
+  and every AUR helper reports the package as permanently out of date
+- it must rank below the next release, or the git package blocks the real one
+
+Four things earn that, and all four were live faults (#330):
+
+| | |
+|---|---|
+| `--tags` | Every release tag since `v0.1.2` is lightweight. Without it, describe walks back to the last annotated tag, `v0.1.0-rc4`. |
+| `--match 'v[0-9]*'` | The repository carries a non-version tag (`assets`), and describe takes it whenever it sits nearer HEAD. |
+| stripped leading `v` | pacman ranks an alphabetic first segment below a numeric one, so a surviving `v` sorts the build under every release. |
+| converted prerelease suffix | `v0.2.0-alpha.1` becomes `0.2.0alpha1`, the same conversion the released package gets. pacman compares separator runs before segments, so keeping the punctuation ranks the build above `0.2.0alpha2`, `0.2.0beta1` and the stable `0.2.0` alike. |
+
+`test/release-version-contract.sh` holds the recipe to that shape against a
+synthetic tag graph, and `test/release-native-ordering.sh` hands the result to
+`vercmp` inside the pinned Arch container. `release_arch_git_pkgver` in
+`scripts/release-versions.sh` is the one definition both read.
+
 ## ONNX Runtime Bundling
 
 The `ort` crate is built with feature `api-20`, so facelock requires ONNX Runtime
