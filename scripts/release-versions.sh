@@ -210,6 +210,29 @@ release_arch_pkgver() {
     fi
 }
 
+# What dist/PKGBUILD-git's pkgver() produces: the newest release the build
+# descends from, plus the commit distance and abbreviated object name. The
+# recipe computes it from `git describe` and cannot source this file -- it runs
+# from an AUR checkout -- so this is the shape both sides are held to, by
+# test/release-version-contract.sh against the recipe and by
+# test/release-native-ordering.sh against vercmp. Keep the two in step (#330).
+release_arch_git_pkgver() {
+    local version="${1:-}"
+    local commits="${2:-}"
+    local object="${3:-}"
+    local pkgver
+    pkgver="$(release_arch_pkgver "$version")" || return 1
+    if [[ ! "$commits" =~ ^(0|[1-9][0-9]*)$ ]]; then
+        echo "invalid commit distance '$commits'" >&2
+        return 1
+    fi
+    if [[ ! "$object" =~ ^[0-9a-f]{7,40}$ ]]; then
+        echo "invalid abbreviated object name '$object'" >&2
+        return 1
+    fi
+    printf '%s.r%s.g%s\n' "$pkgver" "$commits" "$object"
+}
+
 release_arch_version() {
     local version="${1:-}"
     local revision="${2:-}"

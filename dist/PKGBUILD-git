@@ -20,9 +20,24 @@ options=(!lto)
 source=("$pkgname::git+$url.git")
 sha256sums=('SKIP')
 
+# A build from main has to outrank every published facelock, or pacman refuses
+# it as an upgrade and AUR helpers report this package as permanently out of
+# date. Three things earn that (#330):
+#
+#   --tags        every release tag since v0.1.2 is lightweight; without this,
+#                 describe finds only the annotated v0.1.0-rc4 and each build
+#                 claims to descend from it.
+#   --match       the repository carries non-version tags (`assets`), and the
+#                 nearest one wins if it is not filtered out.
+#   s/^v//        pacman ranks an alphabetic first segment below a numeric one,
+#                 so a surviving `v` sorts the build under every release.
+#
+# Held to that shape by test/release-version-contract.sh; the ordering it buys
+# is decided by vercmp in test/release-native-ordering.sh.
 pkgver() {
     cd "$pkgname"
-    git describe --long --abbrev=7 | sed 's/\([^-]*-g\)/r\1/;s/-/./g'
+    git describe --long --tags --abbrev=7 --match 'v[0-9]*' |
+        sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
 }
 
 prepare() {

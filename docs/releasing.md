@@ -791,6 +791,36 @@ targets, lifecycle depth, and immutable environment identities. Release
 preflight, CI, and release metadata checks validate that authority; `just
 release` does not rewrite it.
 
+### The version `facelock-git` actually installs
+
+`dist/PKGBUILD-git`'s `pkgver` field is display only. AUR's web page and
+`.SRCINFO` show it because `makepkg --printsrcinfo` runs without a checkout to
+describe, and `just release` keeps it level with the release so the page does
+not drift. What a build installs is whatever `pkgver()` computes at build time:
+
+```
+<released pkgver>.r<commits since that tag>.g<7-char object name>
+```
+
+so a build from `main` today is `0.1.4.r650.ga8c48b7`. Two properties make that
+version usable, and both are enforced rather than assumed:
+
+- it must outrank the release it descends from, or pacman refuses the upgrade
+  and every AUR helper reports the package as permanently out of date
+- it must rank below the next release, or the git package blocks the real one
+
+Getting there needs `git describe --long --tags --match 'v[0-9]*'` and a
+stripped leading `v`. Every release tag since `v0.1.2` is lightweight, so a
+`--tags`-less describe walks back to the last annotated tag (`v0.1.0-rc4`); the
+repository also carries a non-version tag (`assets`) that `--match` filters out;
+and pacman ranks an alphabetic first segment below a numeric one, so a surviving
+`v` sorts the build under every release. All three were live faults (#330).
+
+`test/release-version-contract.sh` holds the recipe to that shape against a
+synthetic tag graph, and `test/release-native-ordering.sh` hands the result to
+`vercmp` inside the pinned Arch container. `release_arch_git_pkgver` in
+`scripts/release-versions.sh` is the one definition both read.
+
 ## ONNX Runtime Bundling
 
 The `ort` crate is built with feature `api-20`, so facelock requires ONNX Runtime

@@ -60,6 +60,15 @@ assert_eq "true" "$(release_github_prerelease 0.2.0-alpha.1)" "GitHub alpha clas
 assert_eq "false" "$(release_github_prerelease 0.2.0)" "GitHub stable classification"
 assert_eq "0.2.0~alpha.1" "$(release_debian_upstream 0.2.0-alpha.1)" "Debian upstream"
 assert_eq "0.2.0alpha1" "$(release_arch_pkgver 0.2.0-alpha.1)" "Arch pkgver"
+assert_eq "0.1.4.r650.ga8c48b7" "$(release_arch_git_pkgver 0.1.4 650 a8c48b7)" "Arch VCS pkgver"
+assert_eq "0.2.0alpha1.r7.gdeadbee" "$(release_arch_git_pkgver 0.2.0-alpha.1 7 deadbee)" "Arch VCS prerelease pkgver"
+assert_eq "0.1.4.r0.ga8c48b7" "$(release_arch_git_pkgver 0.1.4 0 a8c48b7)" "Arch VCS pkgver at the tagged commit"
+assert_rejected release_arch_git_pkgver 0.1.4 -1 a8c48b7
+assert_rejected release_arch_git_pkgver 0.1.4 07 a8c48b7
+assert_rejected release_arch_git_pkgver 0.1.4 650 ga8c48b7
+assert_rejected release_arch_git_pkgver 0.1.4 650 A8C48B7
+assert_rejected release_arch_git_pkgver 0.1.4 650 a8c48
+assert_rejected release_arch_git_pkgver v0.1.4 650 a8c48b7
 assert_eq "0.2.0" "$(release_rpm_version 0.2.0-alpha.1)" "RPM Version"
 assert_eq "0.1.alpha.1" "$(release_rpm_release 0.2.0-alpha.1 1)" "RPM prerelease Release"
 assert_eq "1" "$(release_rpm_release 0.2.0 99)" "RPM stable Release"
@@ -2556,5 +2565,64 @@ if (
     fail "just release accepted a prerelease after the same RPM Version reached stable"
 fi
 git -C "$release_repo" diff --quiet || fail "rejected stable-to-prerelease transition changed release metadata"
+
+# dist/PKGBUILD-git computes its version at build time from `git describe`, so
+# nothing in the tree records what a build will actually be called. #330 was two
+# faults in that one pipeline, and neither surfaces without a real tag graph:
+# `--long` without `--tags` sees annotated tags only -- every release tag since
+# v0.1.2 is lightweight, so describe walked back to v0.1.0-rc4 -- and the tag's
+# leading `v` survived into the pkgver, where pacman ranks an alphabetic first
+# segment below a numeric one. The result sorted below the released package, so
+# it could never be installed as an upgrade.
+#
+# Reproduce that tag graph and hold the recipe to the version it must produce.
+# Ordering is not decided here: pacman decides it, in
+# test/release-native-ordering.sh, which is the only place vercmp exists.
+git_pkgver_src="$tmp_root/git-pkgver"
+git_pkgver_repo="$git_pkgver_src/facelock-git"
+mkdir -p "$git_pkgver_repo"
+git -C "$git_pkgver_repo" init -q
+git -C "$git_pkgver_repo" config user.name pkgver-test
+git -C "$git_pkgver_repo" config user.email pkgver-test@example.invalid
+
+git_pkgver_commit() {
+    : > "$git_pkgver_repo/$1"
+    git -C "$git_pkgver_repo" add -A
+    git -C "$git_pkgver_repo" -c commit.gpgsign=false commit -qm "$1"
+}
+
+git_pkgver_commit rc-base
+# The one annotated tag, and the oldest. A `--tags`-less describe finds only
+# this one, however many releases came after it.
+git -C "$git_pkgver_repo" -c tag.gpgsign=false tag -a v0.1.0-rc4 -m v0.1.0-rc4
+git_pkgver_commit release
+# Lightweight, like v0.1.2 and every release tag since.
+git -C "$git_pkgver_repo" tag v0.1.4
+git_pkgver_commit assets-payload
+# A lightweight tag that is not a version, nearer HEAD than the release tag.
+# facelock carries exactly one of these (`assets`); describe has to skip it, or
+# the pkgver becomes `assets.rN.g...` and sorts below every release.
+git -C "$git_pkgver_repo" tag assets
+git_pkgver_commit post-release-1
+git_pkgver_commit post-release-2
+
+git_pkgver_head="$(git -C "$git_pkgver_repo" rev-parse --short=7 HEAD)"
+git_pkgver_output="$(
+    cd "$git_pkgver_src"
+    # The recipe itself, not a copy of its pipeline: sourcing sets pkgname and
+    # defines pkgver() exactly as makepkg does, with the checkout's parent as
+    # the working directory.
+    # shellcheck source=/dev/null
+    source "$repo_root/dist/PKGBUILD-git"
+    pkgver
+)"
+assert_eq \
+    "$(release_arch_git_pkgver 0.1.4 3 "$git_pkgver_head")" \
+    "$git_pkgver_output" \
+    "facelock-git pkgver over a real tag graph"
+case "$git_pkgver_output" in
+    [0-9]*) ;;
+    *) fail "facelock-git pkgver does not start with a digit: $git_pkgver_output" ;;
+esac
 
 echo "release version contract: OK"
