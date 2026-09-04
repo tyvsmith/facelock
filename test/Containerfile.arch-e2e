@@ -40,6 +40,11 @@ RUN useradd -m builder && \
 COPY dist/PKGBUILD dist/PKGBUILD-bin dist/PKGBUILD-git dist/facelock.install /recipe/
 
 COPY .github/workflows/scripts/run-networkless.sh /run-networkless.sh
+# The validator compares what the installed binary reports against what pacman
+# records, and those are two different spellings of one release. The mapping
+# between them belongs to the release tooling, so the validator sources it
+# rather than restating it.
+COPY scripts/release-versions.sh /release-versions.sh
 COPY test/arch-pkgbuild-dependency-contract.sh /arch-pkgbuild-dependency-contract.sh
 COPY test/build-arch-source-package.sh /build-arch-source-package.sh
 COPY test/arch-package-e2e-validate.sh /arch-package-e2e-validate.sh

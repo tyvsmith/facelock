@@ -73,6 +73,66 @@ assert_eq "0.2.0" "$(release_rpm_version 0.2.0-alpha.1)" "RPM Version"
 assert_eq "0.1.alpha.1" "$(release_rpm_release 0.2.0-alpha.1 1)" "RPM prerelease Release"
 assert_eq "1" "$(release_rpm_release 0.2.0 99)" "RPM stable Release"
 
+# What an installed Arch package records and what its binary reports are two
+# spellings of one release, and they coincide only for a stable version. The
+# Arch end-to-end validator pairs them through this predicate.
+assert_carries() {
+    local arch_version="$1"
+    local cargo_version="$2"
+    if ! release_arch_version_carries_cargo "$arch_version" "$cargo_version"; then
+        fail "Arch package $arch_version should carry Cargo version $cargo_version"
+    fi
+}
+
+assert_does_not_carry() {
+    local arch_version="$1"
+    local cargo_version="$2"
+    if release_arch_version_carries_cargo "$arch_version" "$cargo_version" 2>/dev/null; then
+        fail "Arch package $arch_version must not carry Cargo version $cargo_version"
+    fi
+}
+
+assert_carries 0.1.4-1 0.1.4
+assert_carries 0.2.0alpha1-1 0.2.0-alpha.1
+assert_carries 0.2.0alpha1-2 0.2.0-alpha.1
+assert_carries 0.2.0beta2-1 0.2.0-beta.2
+assert_carries 0.2.0rc1-1 0.2.0-rc.1
+assert_carries 0.2.0-1 0.2.0
+# The pairing is equality, not containment: the substring match this replaced
+# let a 0.1.41 binary answer for a 0.1.4 package.
+assert_does_not_carry 0.1.4-1 0.1.41
+assert_does_not_carry 0.1.41-1 0.1.4
+# A prerelease binary in a stable package, and the reverse, are both mismatches.
+assert_does_not_carry 0.2.0-1 0.2.0-alpha.1
+assert_does_not_carry 0.2.0alpha1-1 0.2.0
+assert_does_not_carry 0.2.0alpha1-1 0.2.0-alpha.2
+assert_does_not_carry 0.2.0beta1-1 0.2.0-rc.1
+# Neither side may be waved through unparsed.
+assert_rejected release_arch_version_carries_cargo 0.1.4-1 0.1.4-alpha1
+assert_rejected release_arch_version_carries_cargo 0.1.4 0.1.4
+assert_rejected release_arch_version_carries_cargo 0.1.4-0 0.1.4
+# `pacman -Q` may also print a nonzero epoch prefix and a pkgrel subrelease;
+# both are real forms and must still carry through to the same pkgver match.
+assert_carries 1:0.2.0alpha1-1 0.2.0-alpha.1
+assert_carries 0.2.0alpha1-1.1 0.2.0-alpha.1
+assert_carries 2:0.1.4-3.2 0.1.4
+# Neither form may become a loophole: the epoch and subrelease must not widen
+# the comparison past the pkgver capture.
+assert_does_not_carry 1:0.1.41-1 0.1.4
+assert_rejected release_arch_version_carries_cargo :0.1.4-1 0.1.4
+assert_rejected release_arch_version_carries_cargo 0.1.4- 0.1.4
+
+# The Arch end-to-end validator must reach the pairing through this contract
+# rather than restating the conversion or matching one spelling inside another.
+arch_e2e_validator="$repo_root/test/arch-package-e2e-validate.sh"
+grep -Fq 'release_arch_version_carries_cargo' "$arch_e2e_validator" ||
+    fail "the Arch end-to-end validator no longer pairs versions through release-versions.sh"
+grep -Fq 'source /release-versions.sh' "$arch_e2e_validator" ||
+    fail "the Arch end-to-end validator no longer sources the release conversion contract"
+grep -Fq 'COPY scripts/release-versions.sh /release-versions.sh' \
+    "$repo_root/test/Containerfile.arch-e2e" ||
+    fail "the Arch end-to-end image no longer carries the release conversion contract"
+
 release_validate_transition 0.1.4 0.2.0-alpha.1
 release_validate_transition 0.2.0-alpha.1 0.2.0-alpha.1
 release_validate_transition 0.2.0-alpha.1 0.2.0-alpha.2
