@@ -118,12 +118,12 @@ Only after explicit confirmation. No AI attribution in the commit or tag message
 
 ## Step 6: Watch the publish
 
-The `v*` tag triggers `.github/workflows/release.yml`, which has 11 jobs:
+The `v*` tag triggers `.github/workflows/release.yml`, which has 12 jobs:
 
 ```text
 metadata · build · download-ort · prepare-cargo-vendor
 build-deb · build-rpm · build-nix
-publish-apt · publish · publish-aur · trigger-pages
+publish-apt · publish · publish-aur · verify-copr · trigger-pages
 ```
 
 Every builder produces workflow artifacts and nothing else. `publish` is the
@@ -146,6 +146,13 @@ hand is not safe, and `publish` refuses a tag that is already published.
 `publish-aur` and `publish-apt` push to external package repositories. A failure
 after those succeed is only partially recoverable — check them first when
 triaging a bad release.
+
+`verify-copr` publishes nothing. Packit submits the COPR build off the published
+release event, outside this run, so the job polls the public COPR API for the
+released EVR and goes red if it never lands (#333). A red `verify-copr` over a
+green `publish` means the release shipped everywhere but Fedora: read the Packit
+check runs on the tag commit, then `docs/releasing.md` → "Why v0.1.4 never
+reached COPR".
 
 ## Guardrails
 

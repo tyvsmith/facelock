@@ -53,6 +53,8 @@
       "owner": "tyvsmith",
       "project": "facelock",
       "api_url": "https://copr.fedorainfracloud.org/api_3/project?ownername=tyvsmith&projectname=facelock",
+      "package": "facelock",
+      "package_api_url": "https://copr.fedorainfracloud.org/api_3/package?ownername=tyvsmith&projectname=facelock&packagename=facelock&with_latest_build=True&with_latest_succeeded_build=True",
       "required_supported_chroots": [
         "fedora-43-x86_64",
         "fedora-44-x86_64",
@@ -62,12 +64,19 @@
         "fedora-rawhide-x86_64"
       ],
       "required_forge_project": "github.com/tyvsmith/facelock",
-      "prerelease_publication": false
+      "prerelease_publication": false,
+      "served_evr_gap": {
+        "expected_evr": "0.1.4-1",
+        "served_evr": "0.1.3-1",
+        "issue": 333
+      }
     },
     "staging": {
       "owner": "tyvsmith",
       "project": "facelock-testing",
       "api_url": "https://copr.fedorainfracloud.org/api_3/project?ownername=tyvsmith&projectname=facelock-testing",
+      "package": "facelock",
+      "package_api_url": "https://copr.fedorainfracloud.org/api_3/package?ownername=tyvsmith&projectname=facelock-testing&packagename=facelock&with_latest_build=True&with_latest_succeeded_build=True",
       "required_supported_chroots": [
         "fedora-43-x86_64",
         "fedora-44-x86_64",
@@ -106,6 +115,7 @@
       "release_id": 332190914,
       "published_at": "2026-05-31T18:54:26Z",
       "upstream_version": "0.1.4",
+      "rpm_evr": "0.1.4-1",
       "lanes": {
         "deb-trixie": {
           "suite": "trixie",

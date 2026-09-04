@@ -2172,6 +2172,37 @@ which is `github.com/tyvsmith/facelock` for both channels. Builder permission fo
 the `packit` user is outside this contract: COPR serves project permissions only
 to an authenticated owner, so a public comparison cannot make that claim.
 
+Enabled chroots are the shape of a channel, not its contents. A second
+comparison asks what the channel serves:
+`test/check-live-release-channels.py --expect-evr <EVR>` requires the project's
+latest **succeeded** build to carry the expected EVR. The latest succeeded build
+is what the channel serves; the latest build of any state says only whether the
+awaited one is running or dead. The expected EVR is a prefix ending at a dot,
+because Packit rewrites the spec's `Release` with a snapshot suffix: `0.2.0-1`
+matches `0.2.0-1.20260904220135.v0.2.0` and does not match `0.2.0-11`.
+
+That build's chroot list is reported, never required. It is what the build
+covered, not what the repository serves, and a single-chroot rebuild becomes the
+latest succeeded build while an earlier complete one still serves the rest.
+Which chroots a channel must enable is the project comparison's contract.
+
+Exit status separates a verdict from a wait — 1 for a build of the expected EVR
+that failed, was canceled, or was skipped; 2 for a build still running, never
+submitted, or a query that could not be made; only a poller
+distinguishes them, and every other caller treats both as failure. The release
+workflow's `verify-copr` job polls it after publication, because Packit submits
+the COPR build off the published release event and no job in the release run can
+observe that submission. `just release-preflight` runs `--expect-predecessor`,
+which resolves the EVR from the pinned predecessor's `rpm_evr`.
+
+A release that production COPR never received may be recorded as
+`copr_channels.production.served_evr_gap`, naming the EVR owed, the EVR served,
+and the issue that owns it. The record is pinned at both ends: it must excuse
+exactly the pinned predecessor's EVR, and it stops matching the moment the
+channel serves anything other than the EVR it names, under the same prefix rule.
+It excuses no other release, and the next predecessor pin fails the matrix
+contract until it is updated or deleted.
+
 A pre-tag attestation binds the candidate commit to the EVRs each channel
 serves, the artifact and repository digests, the signing key fingerprints, and
 how fresh each channel's repository metadata was.

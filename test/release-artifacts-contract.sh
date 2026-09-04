@@ -87,7 +87,7 @@ builders=(
     build-nix
     publish-apt
 )
-expected_jobs=("${builders[@]}" publish publish-aur trigger-pages)
+expected_jobs=("${builders[@]}" publish publish-aur verify-copr trigger-pages)
 
 actual_jobs="$(job_names | LC_ALL=C sort)"
 wanted_jobs="$(printf '%s\n' "${expected_jobs[@]}" | LC_ALL=C sort)"
@@ -216,6 +216,19 @@ fi
 
 requires_job trigger-pages publish ||
     fail "trigger-pages must run after the release is published"
+
+# Packit reacts to the published release event, so the COPR build it submits
+# cannot even start before publish. A verifier that ran earlier would be
+# checking the previous release (#333).
+verify_copr_job="$(job_body verify-copr)"
+requires_job verify-copr publish ||
+    fail "verify-copr waits on a build Packit submits after publication and must run after publish"
+printf '%s\n' "$verify_copr_job" | grep -Fq "needs.metadata.outputs.prerelease == 'false'" ||
+    fail "verify-copr must be stable-only; a prerelease never reaches production COPR"
+printf '%s\n' "$verify_copr_job" | grep -Eq '^ +timeout-minutes: [0-9]+$' ||
+    fail "verify-copr polls and must carry its own timeout"
+grep -Fq 'check-live-release-channels.py' .github/workflows/scripts/verify-copr.sh ||
+    fail "verify-copr must compare the served EVR with the live release-channel checker"
 
 publish_aur_job="$(job_body publish-aur)"
 requires_job publish-aur publish ||
@@ -1334,6 +1347,15 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
     assert_workflow_mutation_rejected "pages rebuild before publication" \
         's/^    needs: \[publish-apt, publish\]$/    needs: [publish-apt]/' \
         "trigger-pages must run after the release is published"
+    assert_workflow_mutation_rejected "COPR verification dropped" \
+        '/^  verify-copr:$/,/^  trigger-pages:$/{/^  trigger-pages:$/!d}' \
+        "release jobs drifted"
+    assert_workflow_mutation_rejected "COPR verification open to prereleases" \
+        '/^  verify-copr:$/,/^  trigger-pages:$/{/^    if: /d}' \
+        "verify-copr must be stable-only"
+    assert_workflow_mutation_rejected "COPR verification polling without a deadline" \
+        '/^  verify-copr:$/,/^  trigger-pages:$/{/^    timeout-minutes: /d}' \
+        "verify-copr polls and must carry its own timeout"
     assert_workflow_mutation_rejected "release upload without the publication token" \
         '0,/^          token: \$\{\{ secrets.RELEASE_PAT \}\}$/s///' \
         "every release upload must pass the publication token"

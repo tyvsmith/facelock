@@ -103,7 +103,11 @@ guards use the validated release identity rather than substring matching.
 COPR (Fedora) is **not** built by `release.yml`. It is handled by [Packit](https://packit.dev),
 which reacts to the release the `publish` job makes public in step 8. A draft
 raises no release event, so nothing downstream fires until validation passes.
-See the COPR section below.
+The workflow does *watch*: a stable run's `verify-copr` job polls the public
+COPR API for the released EVR and fails the run if it never appears. It builds
+nothing and can undo nothing — the release is already public by then — it only
+makes a failed Packit submission loud on the day it happens. See the COPR
+section below.
 
 #### Builders build, publish publishes
 
@@ -489,9 +493,12 @@ secret — it is driven by Packit. Preflight and CI also read the public
 production COPR API and require its enabled chroots to equal the checked-in
 authority: Fedora 43/44/45 are required and Rawhide is the only optional
 experimental chroot. Rawhide may be present or absent; a missing required
-chroot or any unknown extra is release-blocking drift. The checker never
-modifies the project. Preflight always runs `packit config validate --offline`
-against `.packit.yaml`, in the digest-pinned Fedora container built from
+chroot or any unknown extra is release-blocking drift. Preflight goes one step
+further than CI and asks what production COPR actually serves: the EVR of the
+predecessor pinned in `dist/release-matrix.json`. The checker never modifies the
+project. Preflight always runs
+`packit config validate --offline` against `.packit.yaml`, in the digest-pinned
+Fedora container built from
 `test/Containerfile.packit` — the same real schema gate `just test-copr` runs,
 reachable without a host `packit` install. It has no skip path: podman is a
 preflight prerequisite, and without it the gate fails rather than passing
@@ -616,8 +623,12 @@ crate feature `api-20` keeps the binary compatible with Fedora's runtime.)
 3. Install the **Packit-as-a-Service** GitHub App on the repository:
    https://github.com/marketplace/packit-as-a-service
 4. In the COPR project → Settings → Permissions, grant the `packit` user
-   **builder** permission so Packit can build into the existing project. In the
-   "allowed forge projects" field, add `github.com/tyvsmith/facelock`.
+   **admin** permission, and in the "allowed forge projects" field add
+   `github.com/tyvsmith/facelock`. Builder permission is enough to build and not
+   enough to edit the project, which is a distinction Packit makes for you: it
+   reconciles the project against `.packit.yaml` before submitting anything, and
+   a reconciliation it is not allowed to perform aborts every target. See
+   "Why v0.1.4 never reached COPR" below.
 5. In the COPR project → Settings, enable **"Enable internet access during
    builds"**. The RPM is built from source and `cargo` fetches crates from
    crates.io during `%build`; COPR's build chroot is network-isolated by
@@ -625,8 +636,8 @@ crate feature `api-20` keeps the binary compatible with Fedora's runtime.)
 
 Step 4's allowlist and step 5 apply to both channels and are checked on every
 pull request by `python3 test/check-live-release-channels.py`, which reads them
-off the public project response. Builder permission is not public, so it stays a
-hand-confirmed step.
+off the public project response. The permission grant is not public, so it stays
+a hand-confirmed step -- and it is the one that failed silently for v0.1.4.
 
 Verify the COPR build locally before relying on it with `just test-copr`, which
 reproduces the Packit SRPM + `mock` from-source rebuild on a Fedora chroot and
@@ -635,6 +646,69 @@ checks that the payload has no bundle while its dependencies select Fedora ORT.
 Only a stable-tagged config with the deliberately restored production release
 trigger can populate production COPR automatically. A prerelease tag never
 points at production; staging below is where a candidate gets built.
+
+##### Why v0.1.4 never reached COPR
+
+Packit was installed, the release trigger was correct, and the release event
+reached it. Every target still failed at submission with `Copr project update
+failed for 'tyvsmith/facelock' project.`, thirteen seconds after publication
+(#333).
+
+Packit reconciles the COPR project against `.packit.yaml` before it submits
+anything, and it edits the project whenever the config's `targets` are not
+already a subset of the project's enabled chroots. The v0.1.4 config listed
+`fedora-42-x86_64`, which the project had never enabled and which COPR no
+longer offers. Editing a COPR project requires **admin**, and until this
+section was written the setup steps above asked for builder. One chroot the
+project did not have cost all three builds. v0.1.3 failed identically and
+reached COPR only because it was submitted by hand fourteen minutes later.
+
+Two rules follow, and both are enforced:
+
+- **`.packit.yaml` targets must be a subset of the project's enabled chroots.**
+  The release matrix binds `fedora.packit_release_targets` to
+  `copr_channels.production.required_supported_chroots`, and
+  `test/check-live-release-channels.py` requires the live project to enable
+  every one of them, so a target the project lacks fails before the tag.
+- **A COPR build that never lands must fail something.** Nothing in the release
+  run can observe Packit's submission — it happens outside the run, after
+  publication — so the release workflow's `verify-copr` job polls the public
+  COPR API for the released EVR and fails the run when it never appears. Before
+  this existed, the chroot comparison passed on every day of the three months
+  COPR served 0.1.3.
+
+The EVR COPR serves is **not** the one in the conversion table above. Packit's
+default `fix-spec-file` action rewrites `Release: 1%{?dist}` to
+`1.{timestamp}.{ref}`, so a v0.2.0 release lands in COPR as
+`facelock-0.2.0-1.20260904220135575676.v0.2.0`, not `facelock-0.2.0-1`. The
+served comparison therefore takes the release matrix's EVR as a prefix ending at
+a dot: `0.2.0-1` and `0.2.0-1.<anything>` both satisfy it, `0.2.0-11` does not.
+Setting `update_release: false` on the production job would make COPR match the
+other channels exactly; that is a change to what COPR publishes and has not been
+made.
+
+`just release-preflight` asks the same question about the previous release:
+`test/check-live-release-channels.py --expect-predecessor` requires production
+COPR to serve the EVR pinned in `predecessors`. The v0.1.4 build was never
+backfilled — 0.2.0 supersedes it — so that gap is recorded in
+`copr_channels.production.served_evr_gap` and reported rather than failed. The
+record names both EVRs and issue #333, and it retires itself: once the
+predecessor pin moves past v0.1.4 the release matrix contract fails until the
+record is deleted.
+
+A recovery after a failed submission is a hand-submitted build from a checkout
+of the tag. Packit reacts only to *new* release events, so re-publishing is not
+an option:
+
+```bash
+git checkout vX.Y.Z
+packit build in-copr --owner tyvsmith --project facelock \
+    --targets fedora-43-x86_64,fedora-44-x86_64,fedora-45-x86_64
+```
+
+`--targets` defaults to Rawhide alone, so pass the supported set. This takes the
+same reconciliation path the service does, so it fails the same way if the
+project cannot be edited.
 
 ##### Staging COPR (`tyvsmith/facelock-testing`)
 
