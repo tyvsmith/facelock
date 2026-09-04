@@ -2488,8 +2488,8 @@ assert_file_line "$release_repo/dist/PKGBUILD-bin" 'pkgrel=1'
 assert_file_line "$release_repo/dist/PKGBUILD-git" 'pkgver=0.1.4'
 assert_file_line "$release_repo/dist/facelock.spec" 'Version:        0.1.4'
 assert_file_line "$release_repo/dist/facelock.spec" 'Release:        1%{?dist}'
-assert_eq "facelock (0.1.4-1) unstable; urgency=medium" "$(head -1 "$release_repo/debian/changelog")" "fixture changelog baseline"
-assert_eq "1" "$(grep -c '^facelock (' "$release_repo/debian/changelog")" "fixture changelog entry count"
+assert_eq "facelock (0.1.4-1) unstable; urgency=medium" "$(head -n 1 "$release_repo/debian/changelog")" "fixture changelog baseline"
+assert_eq "1" "$(grep -c '^facelock (' "$release_repo/debian/changelog" || true)" "fixture changelog entry count"
 
 git -C "$release_repo" init -q
 git -C "$release_repo" config user.name release-test
