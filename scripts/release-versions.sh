@@ -242,6 +242,23 @@ release_arch_version() {
     printf '%s-%s\n' "$pkgver" "$revision"
 }
 
+# Does an installed Arch package version (pkgver-pkgrel, as `pacman -Q` prints
+# it) carry this Cargo version? The two spellings coincide only for a stable
+# release, so the Cargo side is mapped through release_arch_pkgver and compared
+# for equality. Equality, not a substring: 0.1.4 must not answer for 0.1.41.
+# pkgrel is a packaging counter the binary cannot report, so it is not compared.
+release_arch_version_carries_cargo() {
+    local arch_version="${1:-}"
+    local cargo_version="${2:-}"
+    local expected
+    expected="$(release_arch_pkgver "$cargo_version")" || return 1
+    if [[ ! "$arch_version" =~ ^([^-]+)-([1-9][0-9]*)$ ]]; then
+        echo "invalid Arch package version '$arch_version' (expected pkgver-pkgrel)" >&2
+        return 1
+    fi
+    [ "${BASH_REMATCH[1]}" = "$expected" ]
+}
+
 release_rpm_version() {
     release_base_version "${1:-}"
 }

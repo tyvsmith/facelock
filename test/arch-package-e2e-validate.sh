@@ -49,6 +49,20 @@ mode_is() {
 }
 export -f mode_is
 
+# `facelock --version` prints the Cargo version (0.2.0-alpha.1); `pacman -Q`
+# prints the Arch one (0.2.0alpha1-1). Those spellings coincide only for a
+# stable release, so compare them through the release tooling's own conversion
+# rather than by looking for one inside the other.
+reports_packaged_version() {
+    # shellcheck source=../scripts/release-versions.sh
+    # shellcheck disable=SC1091  # the path is the one inside the container image
+    source /release-versions.sh
+    release_arch_version_carries_cargo \
+        "$(pacman -Q facelock | awk 'NR == 1 { print $2 }')" \
+        "$(/usr/bin/facelock --version | awk 'NR == 1 { print $2 }')"
+}
+export -f reports_packaged_version
+
 echo "=== Arch package validation (built from dist/PKGBUILD) ==="
 echo ""
 
@@ -150,7 +164,7 @@ done
 # --- the first commands a user types ------------------------------------------
 
 run_test "facelock --version reports the packaged version" \
-    "/usr/bin/facelock --version | grep -q \"\$(pacman -Q facelock | cut -d' ' -f2 | cut -d- -f1)\""
+    "reports_packaged_version"
 run_test "facelock --help exits successfully" "/usr/bin/facelock --help >/dev/null"
 run_test "facelock setup --help exits successfully" "/usr/bin/facelock setup --help >/dev/null"
 run_test "facelock tpm --help exits successfully" "/usr/bin/facelock tpm --help >/dev/null"
