@@ -6,6 +6,22 @@
     "facelock-polkit-agent": "docs/auxiliary-commands.md"
   },
   "files": {
+    "docs/testing-walkthrough.md": {
+      "role": "canonical",
+      "reason": "Clean-system walkthrough matrix, evidence requirements and guarded runner usage"
+    },
+    "book/src/testing-walkthrough.md": {
+      "role": "summary",
+      "reason": "Published include of the canonical walkthrough guide"
+    },
+    "book/src/testing-safety.md": {
+      "role": "summary",
+      "reason": "Published include of the testing safety tiers"
+    },
+    "book/src/releasing.md": {
+      "role": "summary",
+      "reason": "Published include of the canonical release process"
+    },
     "docs/auxiliary-commands.md": {
       "role": "canonical",
       "reason": "Reference for the standalone benchmark and polkit session executable"

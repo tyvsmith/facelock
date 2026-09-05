@@ -30,6 +30,20 @@ class ExamplesTest(unittest.TestCase):
         row = self.extract('```sh\nfacelock enroll --label "|"\n```')[0]
         self.assertEqual(row["segments"][0]["argv"], ["facelock", "enroll", "--label", "|"])
 
+    def test_redirect_descriptor_requires_adjacency(self):
+        self.assertEqual(MODULE.segments('facelock remove 1 > /tmp/out')[0][0]["argv"], ["facelock", "remove", "1"])
+        self.assertEqual(MODULE.segments('facelock remove 1 2>/tmp/err')[0][0]["argv"], ["facelock", "remove", "1"])
+
+    def test_hash_inside_word_is_not_a_comment(self):
+        self.assertEqual(MODULE.segments('facelock enroll --label face#1 # comment')[0][0]["argv"], ["facelock", "enroll", "--label", "face#1"])
+
+    def test_absolute_binary_inline_reference_is_collected(self):
+        self.assertEqual(self.extract('Run `/usr/bin/facelock status`.')[0]["segments"][0]["argv"], ["facelock", "status"])
+
+    def test_html_void_elements_preserve_ordered_commands(self):
+        rows = self.extract('<pre>facelock status<br>facelock devices</pre>', 'website/index.html')
+        self.assertEqual([r["segments"][0]["argv"] for r in rows], [["facelock", "status"], ["facelock", "devices"]])
+
     def test_sudo_stdin_flag_does_not_consume_command(self):
         row = self.extract('```sh\nsudo -S facelock devices\n```')[0]
         self.assertEqual(row["segments"][0]["argv"], ["facelock", "devices"])

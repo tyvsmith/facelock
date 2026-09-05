@@ -3,6 +3,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import tempfile
 
 SPEC = importlib.util.spec_from_file_location("docs_inventory", Path(__file__).with_name("docs-inventory.py"))
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -10,6 +11,15 @@ SPEC.loader.exec_module(MODULE)
 
 
 class InventoryTest(unittest.TestCase):
+    def test_source_archive_discovery_finds_new_docs_and_excludes_build_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'docs').mkdir()
+            (root / 'docs/new.md').write_text('# New documentation')
+            (root / 'target').mkdir()
+            (root / 'target/generated.html').write_text('build output')
+            self.assertEqual(MODULE.instructional_files(root), ['docs/new.md'])
+
     def test_new_instruction_requires_classification(self):
         errors = MODULE.check_corpus(["docs/new.md"], {"files": {}})
         self.assertIn("docs/new.md", " ".join(errors))

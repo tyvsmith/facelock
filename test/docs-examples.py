@@ -21,7 +21,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SHELLS = {"bash", "sh", "shell", "console"}
-COMMAND = re.compile(r"^(?:(?:sudo|env)\s+|[A-Z_][A-Z_0-9]*=\S+\s+)*(?:facelock(?:-bench|-polkit-agent)?|just|cargo|(?:sudo\s+)?(?:apt|apt-get|pacman|yay|paru|dnf)|systemctl|journalctl|busctl|pamtester|curl|git|nix|nixos-rebuild|python3|bash|sh|test/[\w./-]+|scripts/[\w./-]+)(?:\s|$)")
+COMMAND = re.compile(r"^(?:(?:sudo|env)\s+|[A-Z_][A-Z_0-9]*=\S+\s+)*(?:(?:[\w./-]+/)?facelock(?:-bench|-polkit-agent)?|just|cargo|(?:sudo\s+)?(?:apt|apt-get|pacman|yay|paru|dnf)|systemctl|journalctl|busctl|pamtester|curl|git|nix|nixos-rebuild|python3|bash|sh|test/[\w./-]+|scripts/[\w./-]+)(?:\s|$)")
 ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
 METAVARIABLE = re.compile(r"<[A-Za-z_][\w.|-]*>")
 
@@ -68,7 +68,7 @@ def segments(raw):
         return [], "shell control flow requires a reviewed runtime scenario"
     # Retain lexical spelling until operators are distinguished from quoted
     # values. shlex alone loses that distinction for an argument such as "|".
-    token_pattern = re.compile(r'''\s+|\#[^\n]*|[|&;<>]+|(?:'[^']*'|"(?:\\.|[^"\\])*"|\\.|[^\s|&;<>#'"\\])+''')
+    token_pattern = re.compile(r'''\s+|\#[^\n]*|[|&;<>]+|(?:'[^']*'|"(?:\\.|[^"\\])*"|\\.|[^\s|&;<> '"\\])+''')
     tokens = []
     offset = 0
     try:
@@ -81,7 +81,7 @@ def segments(raw):
             if spelling.isspace() or spelling.startswith("#"):
                 continue
             operator = bool(re.fullmatch(r"[|&;<>]+", spelling))
-            tokens.append((spelling if operator else shlex.split(spelling)[0], operator))
+            tokens.append((spelling if operator else shlex.split(spelling)[0], operator, match.start(), match.end(), spelling))
     except ValueError as error:
         return [], f"shell tokenization: {error}"
     result, current = [], []
@@ -93,13 +93,13 @@ def segments(raw):
             current.clear()
     i = 0
     while i < len(tokens):
-        token, is_operator = tokens[i]
+        token, is_operator, start, _, _ = tokens[i]
         if is_operator and token in {"|", "||", "&&", ";", "&"}:
             append(token)
         elif is_operator and token in {">", ">>", "<", "<<", "<<<", ">&", "<&"}:
             if token in {"<<", "<<<"}:
                 return [], "here-document/string requires a reviewed runtime scenario"
-            if current and current[-1].isdigit():
+            if current and i and tokens[i - 1][3] == start and tokens[i - 1][4].isdigit():
                 current.pop()
             i += 1  # redirect target is not an argument
         else:
@@ -110,6 +110,7 @@ def segments(raw):
 
 
 class CommandsHTML(HTMLParser):
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.anchor = "preamble"
@@ -120,6 +121,10 @@ class CommandsHTML(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        if tag in self.VOID:
+            if self.depth and tag == "br":
+                self.parts.append("\n")
+            return
         if attrs.get("id") and not self.depth:
             self.anchor = attrs["id"]
         if self.depth:
@@ -133,7 +138,7 @@ class CommandsHTML(HTMLParser):
         if self.depth:
             self.depth -= 1
             if not self.depth:
-                self.rows.append((self.anchor, self.start, "".join(self.parts), "executable", None))
+                self.rows.extend((self.anchor, self.start + i, line, "executable", None) for i, line in enumerate("".join(self.parts).splitlines()))
 
     def handle_data(self, data):
         if self.depth:

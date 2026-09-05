@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -17,7 +18,19 @@ def command_json(argv, root=ROOT):
 
 
 def instructional_files(root=ROOT):
-    paths = subprocess.run(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], cwd=root, check=True, capture_output=True).stdout.decode().split("\0")
+    if (root / ".git").exists():
+        paths = subprocess.run(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], cwd=root, check=True, capture_output=True).stdout.decode().split("\0")
+    else:
+        # Distribution source archives have no Git metadata. Discover rather
+        # than trust the corpus list, so newly added instructions still fail
+        # closed. Only known build/worktree outputs are excluded here.
+        paths = []
+        ignored = {".git", ".worktrees", "target", "__pycache__", "node_modules", ".venv"}
+        ignored_paths = {"book/book", "docs/superpowers", ".claude/worktrees"}
+        for directory, dirs, files in os.walk(root, followlinks=False):
+            relative = Path(directory).relative_to(root)
+            dirs[:] = [d for d in dirs if d not in ignored and (relative / d).as_posix() not in ignored_paths and not (Path(directory) / d).is_symlink()]
+            paths.extend((relative / name).as_posix() for name in files)
     return sorted({p for p in paths if p and (Path(p).suffix in {".md", ".html", ".1", ".8"} or p in {"config/facelock.toml", "dev/config.toml"})})
 
 
