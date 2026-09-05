@@ -308,14 +308,12 @@ User to match faces against (defaults to current user).
 .RE
 .SS "facelock config"
 Show or edit configuration. With no subcommand, shows.
-.RS
 .SS "facelock config show"
 Print the config file path and contents, and whether the file parses. Reads a
 0644 file and needs no root.
 .SS "facelock config edit"
 Open the config file in \fB$EDITOR\fR, validate it on save, and restart the
 daemon when a setting it caches at startup changed. Requires root.
-.RE
 .SS "facelock status"
 Check system status including daemon connectivity, enrolled faces, camera
 availability, and model integrity. Also reports whether the PAM module's
@@ -356,7 +354,6 @@ present only on the direct backend; the D-Bus device type does not carry them.
 .SS "facelock daemon"
 Run or restart the persistent authentication daemon. With no subcommand, runs
 it \(em the form every shipped service unit invokes.
-.RS
 .SS "facelock daemon run"
 Run the daemon in the foreground. Registers on the D-Bus system bus as
 \fBorg.facelock.Daemon\fR to service authentication and enrollment requests
@@ -365,7 +362,6 @@ from the PAM module and CLI.
 Restart the facelock daemon via systemd, or via a D-Bus shutdown request when
 systemd is unavailable, in which case the daemon restarts on next use through
 D-Bus activation. Requires root.
-.RE
 .IP
 Takes \fB\-c\fR, \fB\-\-config\fR from GLOBAL OPTIONS above.
 .SS "facelock auth"
@@ -382,7 +378,6 @@ subject, and it must never fall back to the process owner.
 Takes \fB\-\-config\fR from GLOBAL OPTIONS above.
 .SS "facelock bench"
 Benchmark and calibration tools.
-.RS
 .SS "facelock bench cold-auth"
 Measure cold auth latency (model load + first auth).
 .SS "facelock bench warm-auth"
@@ -406,13 +401,11 @@ trades LED\-on time against.
 Number of reopen cycles (default: 5).
 .SS "facelock bench report"
 Generate a comprehensive benchmark report.
-.RE
 .SS "facelock tpm"
 Manage the embedding encryption key and the TPM that can seal it. The group
 owns the key's whole lifecycle, so \fBencrypt\fR, \fBdecrypt\fR and
 \fBreseal\fR live here \(em the cipher is software AES-256-GCM either way, and
 \fBencryption.method\fR decides only where the key lives.
-.RS
 .SS "facelock tpm status"
 Report TPM availability and configuration.
 .SS "facelock tpm seal-key"
@@ -442,7 +435,6 @@ is satisfied, so it is safe to run proactively before a firmware update; once
 the PCRs have moved it falls back to the plaintext key backup. Use
 .B "facelock tpm unseal\-check"
 to find out which of those applies.
-.RE
 .SS "facelock pam"
 Manage the facelock line in
 .I /etc/pam.d
@@ -474,7 +466,6 @@ restores or keeps the drifted local copy and reports why. If the current vendor
 source is absent, only a header naming a normalized configured candidate is
 recognized, and only to report why the local copy is retained; the header path
 is never opened.
-.RS
 .SS "facelock pam add"
 Add the facelock line to one or more service files. Root. Accepts
 \fB\-\-service \fIname\fR (repeatable), \fB\-y\fR, \fB\-\-yes\fR
@@ -606,7 +597,6 @@ the row, so it appears with \fB\-\-service\fR too, and on \fBadd\fR and
 answer; see
 .B EXIT STATUS
 below.
-.RE
 .SS "facelock hyprlock"
 Manage hyprlock lock-screen integration: the face glyph in
 \fBplaceholder_text\fR and the \fBignore_empty_input = false\fR setting that
@@ -618,7 +608,6 @@ and root would leave root-owned files under
 A backup is taken before the first edit. Wiring
 .I /etc/pam.d/hyprlock
 itself is a separate, root step \(em see \fBpam add\fR above.
-.RS
 .SS "facelock hyprlock enable"
 Add the face icon and set \fBignore_empty_input = false\fR. \fB\-\-no\-icon\fR
 sets only the functional flag, for a hyprlock font with no Nerd Font glyphs, and
@@ -628,7 +617,6 @@ Remove the face icon, and restore \fBignore_empty_input\fR only when no
 fingerprint icon coexists, so a machine using both keeps working.
 .SS "facelock hyprlock status"
 Show the current hyprlock integration state.
-.RE
 .SS "facelock audit"
 View the structured audit log.
 .RS
