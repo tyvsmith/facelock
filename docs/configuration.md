@@ -2,7 +2,9 @@
 
 Facelock reads its configuration from `/etc/facelock/config.toml`.
 Unprivileged CLI commands may override the path with `FACELOCK_CONFIG`.
-Privileged PAM and root auth flows ignore that environment variable and use either an explicit `--config` path or `/etc/facelock/config.toml`.
+Every effective-UID-0 process ignores that environment variable, including
+ordinary root CLI commands. Use an explicit `--config` path where the command
+supports it, or `/etc/facelock/config.toml`.
 
 All settings are optional. Facelock auto-detects the camera and uses sensible defaults. The annotated config file at `config/facelock.toml` in the repository serves as the canonical example.
 
@@ -88,6 +90,8 @@ Controls how the PAM module reaches the face engine.
 | `abort_if_lid_closed` | bool | `true` | Refuse face auth when the laptop lid is closed (camera blocked). |
 | `require_ir` | bool | `true` | Require an IR camera for authentication. RGB cameras are trivially spoofed with a printed photo. Only set to `false` for development/testing. |
 | `require_frame_variance` | bool | `true` | Require multiple frames with different embeddings before accepting. Defends against static photo attacks. |
+| `frame_variance_max_similarity` | f32 | `0.985` | Maximum cosine similarity allowed between consecutive matched frames in the sliding window. Lower is stricter. Passive anti-photo check only; it does not stop video replay. |
+| `ir_texture_min_stddev` | f32 | `10.0` | Minimum raw-grayscale standard deviation for the IR texture check. Applied only to IR frames; lower values reduce false rejects and higher values are stricter. |
 | `require_landmark_liveness` | bool | `false` | Require landmark movement between frames to pass liveness check. Detects static images by tracking facial landmark positions across frames. Experimental; off by default. |
 | `landmark_displacement_px` | f32 | `1.5` | Minimum pixel displacement for a landmark to count as "moving" between frames. Only used when `require_landmark_liveness` is true. |
 | `landmark_min_moving` | u32 | `3` | Number of facial landmarks (out of 5) that must show movement to pass the liveness check. Only used when `require_landmark_liveness` is true. |
@@ -97,6 +101,7 @@ Controls how the PAM module reaches the face engine.
 | `device_match_granularity` | string | `"model"` | `"model"` compares VID:PID; `"unit"` also requires a matching serial. Enrollment at `"unit"` on a camera with no non-empty serial, or with no full vendor:product identity, is refused before any template is written, whether or not `bind_templates_to_device` is on. |
 | `bind_legacy_templates` | bool | `true` | Let templates with no device id (pre-coupling rows, or cameras with no readable USB identity) authenticate, with a log line suggesting re-enrollment. `false` requires every template to carry a matching id, and (with `bind_templates_to_device` on) refuses enrollment on a camera with no readable USB identity, since its NULL row could never authenticate. |
 | `bind_device_aad` | bool | `false` | Hard device binding: fold the enrolling camera's device id into the AES-GCM AAD so a template cannot be decrypted under another camera. Opt-in only; needs an active encryption method. Enrollment on a camera with no usable USB identity is refused before any template is written. Templates with no device id still authenticate and are reported as `unbound (re-enroll to bind)` by `facelock list` and `facelock status`; templates with a device id sealed before enabling fail to decrypt until re-enrolled; so do all hard-bound templates if the flag is later turned off. Inert under `encryption.method = "none"`. See `docs/security.md`. |
+| `allow_plaintext` | bool | `false` | Permit enrollment with `encryption.method = "none"`. Plaintext storage is refused unless this is explicitly enabled. |
 
 ### [security.rate_limit]
 
@@ -138,11 +143,23 @@ Controls how face embeddings are encrypted at rest.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `method` | string | `"none"` | `"none"` -- no encryption. `"keyfile"` -- AES-256-GCM with a plaintext key file. `"tpm"` -- AES-256-GCM with a TPM-sealed key (recommended if TPM available). |
+| `method` | string | `"keyfile"` | `"keyfile"` -- AES-256-GCM with a root-only key file. `"tpm"` -- AES-256-GCM with a TPM-sealed key. `"none"` -- plaintext, refused unless `security.allow_plaintext = true`. |
 | `key_path` | string | `"/etc/facelock/encryption.key"` | Path to AES-256-GCM key file for `keyfile` method. |
 | `sealed_key_path` | string | `"/etc/facelock/encryption.key.sealed"` | Path to TPM-sealed AES key for `tpm` method. |
 
 With `method = "tpm"`, the 32-byte AES key is sealed by the TPM at rest. At daemon startup, the key is unsealed and held in memory. Embeddings use the same AES-256-GCM format as `keyfile` — no re-encryption needed when migrating between methods. Migration commands: `facelock tpm seal-key` (keyfile → tpm) and `facelock tpm unseal-key` (tpm → keyfile).
+
+## [polkit]
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `face_eligible_actions` | list of strings | `["org.freedesktop.login1.lock-sessions"]` | Polkit action IDs for which the optional Facelock agent may offer face authentication. All other actions are declined so another agent can handle them. An empty list disables face eligibility. |
+
+## [pam]
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `config_dirs` | list of strings | `["/etc/pam.d", "/usr/lib/pam.d"]` | PAM service lookup order. The first directory is the only writable override directory; later directories are read-only vendor roots. |
 
 ## [audit]
 

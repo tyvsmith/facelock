@@ -46,6 +46,7 @@ follow it.
 | Binary | Crate | Purpose |
 |--------|-------|---------|
 | `facelock` | facelock-cli | Unified CLI (daemon, auth, enroll, test, setup, etc.) |
+| `facelock-bench` | facelock-bench | Source-only standalone benchmark utility; not installed by current packages |
 | `pam_facelock.so` | pam-facelock | PAM authentication module |
 | `facelock-polkit-agent` | facelock-polkit | Polkit face authentication agent |
 

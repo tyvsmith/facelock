@@ -210,6 +210,15 @@ Eight services are gated: the shared auth stacks `common-auth`,
 `facelock setup --pam --service login` refuses until `--allow-sensitive` is
 added, even when `-y` is present.
 
+### `--execution-provider=auto` {#execution-provider-auto}
+
+`auto` inspects the execution providers compiled into the installed ONNX
+Runtime and selects the first available provider in this order: CUDA, ROCm,
+OpenVINO, CPU. It does not probe the GPU or install a provider. An ONNX Runtime
+built with CPU support only therefore resolves `auto` to `cpu`, even on a
+machine with a supported GPU. Setup prints the resolved provider before it
+writes the configuration.
+
 Every `setup` run reconciles the per-user enrollment markers behind
 [`facelock is-enrolled`](#facelock-is-enrolled) against the database, which is
 what backfills users who enrolled before markers existed.
@@ -228,7 +237,7 @@ as an error.
 
 ```bash
 facelock is-enrolled                    # prints enrolled / not-enrolled
-facelock is-enrolled --user alice       # specific user
+facelock is-enrolled -u alice           # specific user (-u is short for --user)
 facelock is-enrolled --json             # machine-readable
 facelock is-enrolled --quiet            # no stdout; the exit code is the answer
 ```
@@ -290,8 +299,8 @@ Capture and store a face model.
 
 ```bash
 facelock enroll                         # current user, auto-label
-facelock enroll --user alice            # specific user
-facelock enroll --label "office"        # specific label
+facelock enroll -u alice                # specific user (-u/--user)
+facelock enroll -l "office"             # specific label (-l/--label)
 facelock enroll --skip-setup-check      # enroll on a tree setup never marked complete
 ```
 
@@ -316,10 +325,14 @@ Test face recognition against enrolled models.
 
 ```bash
 facelock test                           # current user
-facelock test --user alice              # specific user
+facelock test -u alice                  # specific user (-u/--user)
 ```
 
-Reports match similarity and latency.
+Reports match similarity and latency when a scan runs. A zero exit status means
+the command completed, not necessarily that a face matched or even that the
+camera was opened: no enrollment, no enrollment for the configured embedder,
+and a completed non-match all return zero with explanatory output. Inspect the
+human result; this command has no machine-readable success contract.
 
 ## facelock list
 
@@ -327,7 +340,7 @@ List enrolled face models.
 
 ```bash
 facelock list                           # current user
-facelock list --user alice              # specific user
+facelock list -u alice                  # specific user (-u/--user)
 facelock list --json                    # JSON output
 ```
 
@@ -347,12 +360,14 @@ facelock list --json                    # JSON output
 
 ## facelock remove
 
-Remove a specific face model by ID.
+Remove a specific face model by `MODEL_ID`. Decimal IDs and the hexadecimal
+model IDs shown by `facelock list` are accepted; hexadecimal input is
+case-insensitive.
 
 ```bash
 facelock remove 3                       # remove model #3
-facelock remove 3 --user alice          # for specific user
-facelock remove 3 --yes                 # skip confirmation
+facelock remove 3 -u alice              # for specific user (-u/--user)
+facelock remove 3 -y                    # skip confirmation (-y/--yes)
 ```
 
 ## facelock clear
@@ -361,7 +376,7 @@ Remove all face models for a user.
 
 ```bash
 facelock clear                          # current user
-facelock clear --user alice --yes       # skip confirmation
+facelock clear -u alice -y              # -u/--user; -y/--yes skips confirmation
 ```
 
 ## facelock preview
@@ -371,7 +386,7 @@ Live camera preview with face detection overlay.
 ```bash
 facelock preview                        # Wayland graphical window
 facelock preview --json                 # one JSON object per frame on stdout
-facelock preview --user alice           # match against specific user
+facelock preview -u alice               # match against user (-u/--user)
 ```
 
 The window opens on the invoking user's Wayland session even though the
@@ -533,7 +548,7 @@ sudo facelock daemon restart
 One-shot authentication. Used by the PAM module in oneshot mode.
 
 ```bash
-facelock auth --user alice              # authenticate
+facelock auth -u alice                   # authenticate (-u/--user)
 facelock auth --user alice --config /etc/facelock/config.toml
 ```
 
@@ -635,17 +650,6 @@ available there is nothing to re-seal and it fails. Run
 
 Benchmark and calibration tools.
 
-```bash
-facelock bench cold-auth                # cold start authentication latency (model load + first auth)
-facelock bench warm-auth                # warm authentication latency (pre-loaded models, 10 iterations)
-facelock bench preview                  # frame capture + face detection latency
-facelock bench enrollment               # time to capture and embed snapshots (dry run, embeddings not stored)
-facelock bench model-load               # ONNX model load time (SCRFD + ArcFace)
-facelock bench calibrate                # sweep FAR/FRR thresholds and recommend optimal value
-facelock bench camera-reopen            # cost of reopening the camera: open / STREAMON / warmup split
-facelock bench report                   # full benchmark report
-```
-
 **Every `bench` subcommand requires root** (DEC-6): direct-mode access needs the
 `0600` root:root database whatever the subcommand, and the auth benchmarks may
 need TPM access besides. `cold-auth`, `warm-auth`, `calibrate`, and `report`
@@ -656,6 +660,49 @@ the rest: it closes and reopens the camera `--iterations` times (default 5) and
 reports the per-phase median. That total is what `device.camera_release_secs`
 trades LED-on time against — holding the stream warm after a failed attempt
 buys a retry exactly this much (ADR 008).
+
+### facelock bench cold-auth
+
+Measure cold-start authentication latency, including model load and the first
+authentication attempt: `sudo facelock bench cold-auth`.
+
+### facelock bench warm-auth
+
+Measure ten authentication attempts with models already loaded:
+`sudo facelock bench warm-auth`.
+
+### facelock bench preview
+
+Measure frame capture and face-detection latency:
+`sudo facelock bench preview`.
+
+### facelock bench enrollment
+
+Measure snapshot capture and embedding without storing the result:
+`sudo facelock bench enrollment`.
+
+### facelock bench model-load
+
+Measure SCRFD and ArcFace model loading: `sudo facelock bench model-load`.
+
+### facelock bench calibrate
+
+Sweep FAR/FRR thresholds and recommend a threshold from enrolled samples:
+`sudo facelock bench calibrate`.
+
+### facelock bench camera-reopen
+
+Measure open, STREAMON and warm-up phases. Use `--iterations <N>` to replace the
+default five repetitions:
+
+```bash
+sudo facelock bench camera-reopen
+sudo facelock bench camera-reopen --iterations 10
+```
+
+### facelock bench report
+
+Run the full benchmark report: `sudo facelock bench report`.
 
 ## facelock pam
 
@@ -766,6 +813,7 @@ default `pam remove`, but they are not rewritten into versioned provenance.
 sudo facelock pam remove                                     # /etc/pam.d/sudo
 sudo facelock pam remove --service login                     # removal is never gated
 sudo facelock pam remove --all                               # every recognized owned edit
+sudo facelock pam remove --service sudo -y                   # accepted compatibility flag
 sudo facelock pam remove --service hyprlock --if-present     # a missing file is success
 sudo facelock pam remove --service sudo --keep-backup        # retain rollback state
 sudo facelock pam remove --service sudo --dry-run --json
@@ -773,7 +821,9 @@ sudo facelock pam remove --service sudo --dry-run --json
 
 Takes the same flags as `add` except `--allow-sensitive`, which it does not
 offer: removal can only take away a way to authenticate, so there is nothing to
-gate. It never prompts either. Named removal uses the configured lookup path.
+gate. It never prompts; `-y`/`--yes` (alias `--no-confirm`) is accepted for
+symmetry and compatibility but does not change removal behavior. Named removal
+uses the configured lookup path.
 By default it removes committed Facelock-owned provenance and backups for the
 requested service, including the legacy adjacent `<service>.facelock-backup`
 name. Unresolved prepared state is preserved for recovery. `--keep-backup`
@@ -983,13 +1033,6 @@ PAM. Runs as your normal user and refuses to run as root, since it edits
 `~/.config/hypr/hyprlock.conf` and root would leave root-owned files in `$HOME`.
 A backup is taken before the first edit.
 
-```bash
-facelock hyprlock enable                # face icon, and allow the empty-Enter submit
-facelock hyprlock enable --no-icon      # only set ignore_empty_input = false
-facelock hyprlock disable               # undo
-facelock hyprlock status                # report the current state
-```
-
 `--no-icon` is for a hyprlock font with no Nerd Font glyphs; it flips the
 functional setting and leaves any existing icon alone. `disable` restores
 `ignore_empty_input` only when no fingerprint icon coexists, so a machine using
@@ -997,6 +1040,25 @@ both keeps working.
 
 Wiring `/etc/pam.d/hyprlock` itself is a separate, root step — see
 [`facelock pam`](#facelock-pam). This command touches no file outside `$HOME`.
+
+### facelock hyprlock enable
+
+Enable empty-Enter submission and add the face glyph. `--no-icon` changes only
+the functional setting and leaves the placeholder text alone.
+
+```bash
+facelock hyprlock enable
+facelock hyprlock enable --no-icon
+```
+
+### facelock hyprlock disable
+
+Undo Facelock's hyprlock changes: `facelock hyprlock disable`.
+
+### facelock hyprlock status
+
+Report the current integration state without changing it:
+`facelock hyprlock status`.
 
 ## facelock audit
 
@@ -1207,5 +1269,5 @@ For commands that accept `--user`:
 
 | Variable | Purpose |
 |----------|---------|
-| `FACELOCK_CONFIG` | Override config file path for unprivileged CLI commands. Ignored by privileged PAM/root auth flows; use `--config` there. |
+| `FACELOCK_CONFIG` | Override config file path only while the effective user is non-root. Every effective-UID-0 process ignores it, including ordinary root CLI commands; use the explicit global `--config` flag when supported. |
 | `RUST_LOG` | Control log verbosity (e.g., `facelock_daemon=debug`). Outranks both the built-in default and `-v`. An unparseable value is reported at `warn` and ignored. |

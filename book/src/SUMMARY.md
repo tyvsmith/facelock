@@ -6,6 +6,8 @@
 - [GPU Acceleration](gpu.md)
 - [Architecture](architecture.md)
 - [CLI Reference](cli-reference.md)
+- [Auxiliary Commands](auxiliary-commands.md)
+- [Developer Commands](developer-commands.md)
 - [Security](security.md)
 - [Troubleshooting](troubleshooting.md)
 - [Contracts](contracts.md)
