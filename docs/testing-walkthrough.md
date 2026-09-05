@@ -42,9 +42,10 @@ python3 test/docs-walkthrough/run.py check
 python3 test/docs-walkthrough/run.py report
 ```
 
-`list` shows scenario IDs, `check` runs the offline schema/safety checks, and
-`report` compares explicit case mappings with the complete documentation
-inventory. Use `refresh` only when intentionally refreshing the checked-in
+`list` shows scenario IDs, `check` validates definitions, source pins, and total
+mapping, and `report` compares explicit case mappings with the complete
+documentation inventory. The separate walkthrough unit tests exercise safety
+guards. Use `refresh` only when intentionally refreshing the checked-in
 inventory and generated manual sections derived from documentation:
 
 ```bash
@@ -59,8 +60,11 @@ was executed or reviewed.
 
 The catalog includes repository and direct-package cases for APT, RPM/COPR,
 AUR, source, NixOS, OpenRC, runit, and s6, plus first setup, daemon/oneshot
-auth, desktop lock, physical TPM, GPU, and Y16 cases. Listing a case is not a
-claim that it passed.
+auth, desktop lock, physical TPM, GPU, and Y16 cases. Fixed adapters are
+reviewed route probes with source-context references, not literal replay of
+the referenced line. Literal source rows become ordered manual-section
+candidates. Listing or generating a case is not a claim that its expectations
+were reviewed or that it passed.
 
 ## Pin release identity
 
@@ -71,8 +75,8 @@ channel:
 ```bash
 RELEASE_TAG=v0.2.0-alpha.1
 CHANNEL=github-alpha
-READINESS_DIR=/tmp/facelock-walkthrough-readiness
-python3 test/docs-walkthrough/run.py readiness --release "$RELEASE_TAG" --channel "$CHANNEL" --output "$READINESS_DIR"
+READINESS_FILE=/tmp/facelock-walkthrough-readiness.json
+python3 test/docs-walkthrough/run.py readiness --release "$RELEASE_TAG" --channel "$CHANNEL" --output "$READINESS_FILE"
 ```
 
 The identity must bind `release`, normalized `version`, exact native package
@@ -84,8 +88,10 @@ downloaded package digest and repository URL, plus APT suite/signing-key
 digest, COPR chroot, or AUR commit as applicable. An AUR source-built package
 may omit the expected package digest; its evidence instead records the built
 payload digest and the verified recipe commit. Every other repository channel
-requires the expected package digest. Do not substitute a source checkout,
-staged build, or successful rebuild for published-asset identity.
+requires the expected package digest. `artifact_commit` is an asserted input
+unless the installed record's `source_commit_verification` proves tag/build
+linkage. Do not substitute a source checkout, staged build, or successful
+rebuild for published-asset identity.
 
 ## Run one explicit case
 
@@ -106,7 +112,9 @@ For example, the current clean Debian 13 `apt-trixie` run records that the
 future suite's Release URL returns 404; it does not establish a clean install.
 
 When an environmental prerequisite is deliberately unavailable, record an
-explicit blocked result rather than skipping silently:
+explicit blocked result rather than skipping silently. The generic runner
+always rejects camera and TPM devices; intentional hardware work uses the
+separate manual protocol.
 
 ```bash
 SCENARIO=physical-tpm
