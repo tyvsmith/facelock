@@ -5,7 +5,7 @@
 #
 # Location: /etc/facelock/config.toml
 # Override (effective user must be non-root):
-#   FACELOCK_CONFIG=/path/to/config.toml facelock config show
+#   env FACELOCK_CONFIG=/path/to/config.toml facelock config show
 # Every effective-UID-0 process ignores the environment. Use an explicit
 # --config path where supported, or /etc/facelock/config.toml.
 

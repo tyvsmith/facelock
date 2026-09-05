@@ -150,6 +150,10 @@ def raw_examples(path, text):
         parser = CommandsHTML()
         parser.feed(text)
         return parser.rows
+    if path.endswith('.toml'):
+        return [('configuration-comments', number, line.lstrip()[1:].strip(), 'executable', None)
+                for number, line in enumerate(text.splitlines(), 1)
+                if line.lstrip().startswith('#') and COMMAND.match(line.lstrip()[1:].strip())]
     rows, anchor, fence, language, annotation = [], "preamble", None, "", None
     block, start = [], 1
     for number, line in enumerate(text.splitlines(), 1):

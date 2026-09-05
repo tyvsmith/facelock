@@ -93,6 +93,11 @@ class ExamplesTest(unittest.TestCase):
     def test_non_shell_blocks_not_interpreted(self):
         self.assertEqual(self.extract('```toml\ncommand = "facelock fake"\n```'), [])
 
+    def test_shell_instructions_in_config_comments_are_collected(self):
+        rows = self.extract('# Configuration\n# env FACELOCK_CONFIG=/tmp/test.toml facelock config show\n# max_height = 480', 'config/facelock.toml')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["segments"][0]["argv"], ['facelock', 'config', 'show'])
+
     def test_syntax_check_reports_incomplete_shell_block(self):
         errors = MODULE.shell_syntax_errors("example.md", '```bash\nif true; then\necho hi\n```')
         self.assertTrue(errors)
