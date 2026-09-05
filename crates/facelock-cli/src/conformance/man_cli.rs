@@ -27,6 +27,28 @@ fn section<'a>(page: &'a str, path: &str) -> Option<&'a str> {
     Some(&body[..end])
 }
 
+fn declared_flags(body: &str) -> Vec<&str> {
+    body.lines()
+        .filter_map(|line| {
+            line.strip_prefix(".B ")
+                .or_else(|| line.strip_prefix(".BR "))
+        })
+        .filter(|arguments| arguments.trim_start_matches('"').starts_with('-'))
+        .flat_map(super::surface::flag_tokens)
+        .collect()
+}
+
+#[test]
+fn man_option_declarations_reject_invented_flags() {
+    let root = command_tree();
+    let command = super::sub(&root, "devices");
+    let page = plain(".TP\n.B \\-\\-invented\nAn option\n.B \\-\\-json\nSee --user on list\n");
+    assert_eq!(
+        super::surface::unknown_flags(command, &declared_flags(&page), true),
+        ["--invented"]
+    );
+}
+
 #[test]
 fn man_cli_covers_every_public_command_and_local_argument() {
     let root = command_tree();
@@ -45,6 +67,9 @@ fn man_cli_covers_every_public_command_and_local_argument() {
         for missing in missing_arguments(command, body, false) {
             failures.push(format!("{path}: missing {missing}"));
         }
+        for unknown in super::surface::unknown_flags(command, &declared_flags(body), true) {
+            failures.push(format!("{path}: declares unknown option {unknown}"));
+        }
     }
     let globals = page
         .split_once(".SH GLOBAL OPTIONS\n")
@@ -55,6 +80,9 @@ fn man_cli_covers_every_public_command_and_local_argument() {
         .expect("global body");
     for missing in missing_arguments(&root, globals, true) {
         failures.push(format!("global: missing {missing}"));
+    }
+    for unknown in super::surface::unknown_flags(&root, &declared_flags(globals), false) {
+        failures.push(format!("global: declares unknown option {unknown}"));
     }
     assert!(
         failures.is_empty(),

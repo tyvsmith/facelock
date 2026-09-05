@@ -65,6 +65,25 @@ fn command_section<'a>(doc: &'a str, path: &str) -> Option<&'a str> {
     start.map(|start| &doc[start..])
 }
 
+fn declared_flags(body: &str) -> Vec<&str> {
+    body.lines()
+        .filter_map(|line| line.strip_prefix('|')?.split('|').next())
+        .filter(|cell| cell.trim_start().starts_with("`-"))
+        .flat_map(super::surface::flag_tokens)
+        .collect()
+}
+
+#[test]
+fn option_table_rejects_invented_flags_without_treating_prose_as_declarations() {
+    let root = super::surface::command_tree();
+    let command = super::sub(&root, "devices");
+    let body = "| `--json` | Payload; see `--user` on list |\n| `--invented` | Missing option |\nSee `--another-command-flag` elsewhere.\n";
+    assert_eq!(
+        super::surface::unknown_flags(command, &declared_flags(body), true),
+        ["--invented"]
+    );
+}
+
 #[test]
 fn docs_cli_covers_every_public_command_and_local_argument() {
     let root = super::surface::command_tree();
@@ -83,11 +102,25 @@ fn docs_cli_covers_every_public_command_and_local_argument() {
             for missing in super::surface::missing_arguments(command, body, false) {
                 failures.push(format!("{doc_path}: {path}: missing {missing}"));
             }
+            for unknown in super::surface::unknown_flags(command, &declared_flags(body), true) {
+                failures.push(format!(
+                    "{doc_path}: {path}: declares unknown option {unknown}"
+                ));
+            }
         }
         for missing in
             super::surface::missing_arguments(&root, section_of(doc, "\n## Global flags\n"), true)
         {
             failures.push(format!("{doc_path}: global: missing {missing}"));
+        }
+        for unknown in super::surface::unknown_flags(
+            &root,
+            &declared_flags(section_of(doc, "\n## Global flags\n")),
+            false,
+        ) {
+            failures.push(format!(
+                "{doc_path}: global: declares unknown option {unknown}"
+            ));
         }
     }
     assert!(

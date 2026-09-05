@@ -154,11 +154,76 @@ pub(super) fn missing_arguments(command: &clap::Command, body: &str, globals: bo
     missing
 }
 
+pub(super) fn flag_tokens(text: &str) -> Vec<&str> {
+    text.split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+        .filter(|token| {
+            token.starts_with('-')
+                && token
+                    .trim_start_matches('-')
+                    .starts_with(|c: char| c.is_ascii_alphabetic())
+        })
+        .collect()
+}
+
+/// A group may summarize its children's options; a leaf may declare only
+/// its own options and inherited globals. Compatibility aliases still parse.
+pub(super) fn unknown_flags(
+    command: &clap::Command,
+    declared: &[&str],
+    include_children: bool,
+) -> Vec<String> {
+    let mut commands = Vec::new();
+    if include_children {
+        super::walk(command, "", &mut commands);
+    } else {
+        commands.push((command.get_name().to_owned(), command));
+    }
+    let mut accepted = std::collections::BTreeSet::new();
+    for (_, command) in commands {
+        for arg in command.get_arguments() {
+            if let Some(long) = arg.get_long() {
+                accepted.insert(format!("--{long}"));
+            }
+            if let Some(short) = arg.get_short() {
+                accepted.insert(format!("-{short}"));
+            }
+            accepted.extend(
+                arg.get_all_aliases()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|alias| format!("--{alias}")),
+            );
+            accepted.extend(
+                arg.get_all_short_aliases()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|alias| format!("-{alias}")),
+            );
+        }
+    }
+    declared
+        .iter()
+        .filter(|flag| !accepted.contains(**flag))
+        .map(|flag| (*flag).to_owned())
+        .collect()
+}
+
 #[test]
 fn flag_coverage_does_not_accept_another_flag_prefix() {
     assert!(!contains_token("`--user-name`", "--user"));
     assert!(!contains_token("`--USER`", "--user"));
     assert!(contains_token("`--user <NAME>`", "--user"));
+}
+
+#[test]
+fn option_declarations_cannot_borrow_flags_from_unrelated_commands() {
+    let root = command_tree();
+    assert_eq!(unknown_flags(&root, &["--json"], false), ["--json"]);
+    assert_eq!(
+        unknown_flags(super::sub(&root, "devices"), &["--user"], true),
+        ["--user"]
+    );
+    assert!(unknown_flags(super::sub(&root, "bench"), &["--iterations"], true).is_empty());
 }
 
 #[test]
