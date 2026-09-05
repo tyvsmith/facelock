@@ -72,6 +72,11 @@ class ExamplesTest(unittest.TestCase):
         row = self.extract('```bash\ncargo run --bin facelock -- devices --json\n```')[0]
         self.assertEqual(row["segments"][0]["argv"], ["facelock", "devices", "--json"])
 
+    def test_prefixed_cargo_run_keeps_target_validation_input(self):
+        for prefix in ('env FOO=bar ', 'sudo -u alice ', 'FOO=bar '):
+            segment = MODULE.segments(prefix + 'cargo run --bin nonexistent -- --help')[0][0]
+            self.assertIn(['cargo', 'run', '--bin', 'nonexistent', '--'], MODULE.entrypoint_argv(segment))
+
     def test_content_hash_changes_not_with_line_number(self):
         a = self.extract('## Test\n```bash\nfacelock devices\n```')[0]
         b = self.extract('\n\n## Test\n```bash\nfacelock devices\n```')[0]

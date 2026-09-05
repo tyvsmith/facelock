@@ -295,6 +295,14 @@ def collect(root=ROOT):
     return {"schema_version": 1, "occurrences": records, "errors": errors}
 
 
+def entrypoint_argv(segment):
+    wrapper = segment["wrapper"]
+    # unwrap already proved which tokens are wrappers; do not search an
+    # arbitrary command's arguments for something that only looks like Cargo.
+    cargo = wrapper[wrapper.index("cargo"):] if "cargo" in wrapper else []
+    return [segment["argv"], cargo]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true")
@@ -312,7 +320,7 @@ def main():
             if row["classification"] not in {"executable", "schematic"}:
                 continue
             for part in row["segments"]:
-                for argv in (part["argv"], part["wrapper"]):
+                for argv in entrypoint_argv(part):
                     error = inventory.check_entrypoint(argv, targets, recipes, schematic=row["classification"] == "schematic")
                     if error:
                         report["errors"].append(f"{row['source']['path']}:{row['source']['line']}: {error}")

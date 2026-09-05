@@ -71,7 +71,7 @@ Observed on 2026-09-05:
 
 - The `v0.2.0-alpha.1` tag exists, but its GitHub Release was unavailable; no alpha release asset installation was established
 - A fresh pinned Debian 13 container reached the public APT `trixie` suite and received HTTP 404/no Release file; the documentation now identifies this suite as planned, not currently installable
-- A fresh pinned Fedora 44 container installed the production COPR package and ran its CLI; the observed package was `0.1.3-1.fc44`, not the alpha or latest stable `0.1.4`
+- Fresh pinned Fedora 43, 44 and 45 containers installed production COPR packages and ran their CLI; the observed packages were `0.1.3-1.fc43`, `0.1.3-1.fc44` and `0.1.3-1.fc45`, not the alpha or latest stable `0.1.4`
 - Stable APT/AUR/production COPR channels cannot establish prerelease coverage; the release matrix separates these channels
 
 These results do not close #211. See [the walkthrough protocol](testing-walkthrough.md)
@@ -79,6 +79,43 @@ for release identity, sanitized logs, source hashes and evidence levels. The
 catalog records route tests separately from exact documentation occurrences;
 mechanically generated section cases are candidates awaiting human review,
 fixture bindings and execution, not proof of coverage.
+
+### Evidence identity and scope
+
+The audit inventories 69 instructional files, three executable targets and 77
+public recipes. The isolated workspace run passed 1,713 tests with 12 ignored
+hardware tests; all-target Clippy, formatting, source-archive extraction, site
+links, mandoc and package-lifecycle documentation checks were also exercised.
+These are local verification results, not release or hardware attestations.
+
+The production COPR observations used build `10489915` and these retained
+package hashes:
+
+| Chroot | Native package version | SHA256 |
+|---|---|---|
+| Fedora 43 x86_64 | `0.1.3-1.fc43` | `66061f0d239a4ac58cd37b8f49a1189977bd34aaed7fb9ed4e6a849bcf01f2a3` |
+| Fedora 44 x86_64 | `0.1.3-1.fc44` | `469fabc1c8678bccb48342d36107a3dd67429b0a8ac1406e742ed0d8f5884697` |
+| Fedora 45 x86_64 | `0.1.3-1.fc45` | `521a7abbdf266bea57f1c8031912734c4968b57251ba9f9b1cec4e44f97f58b0` |
+
+The tag commit `24aed886a71a3ed904f3232a1776a460f81b7d85` is an identity
+assertion, not independently verified binary build provenance. Matching a
+retained same-version cache payload does not exclude same-version repository
+replacement. Repository completion therefore additionally requires verified
+transaction-bound bytes; these container observations do not qualify.
+
+Local, uncommitted artifacts are retained under `target/docs-audit/` in the
+audit worktree. `inventory.json`, `examples.json` and `coverage.json` contain
+the final machine-readable inventories. `evidence/apt-trixie-final`,
+`evidence/copr-43-final`, `evidence/copr-44-final`, `evidence/copr-45-final`
+and `evidence/alpha-blocked-final` contain sanitized logs and JSON records.
+These paths are build artifacts, not files shipped in a source checkout.
+
+The APT/Fedora 44/alpha records name harness revision
+`1f20684f294697584c8cea9b000edb82c7d6c201`; Fedora 43/45 name
+`628e2b83ff303d0c1cd2b8e3a932d375d42f0139`. All were clean committed harness
+runs at their recorded revision. Later documentation and guard changes are
+not retroactively credited to these records: old source pins must not be
+rewritten to qualify against the final inventory.
 
 Remaining requirements include published alpha assets, applicable current
 public-package identities, booted distro/alternative-init/NixOS guests, and
