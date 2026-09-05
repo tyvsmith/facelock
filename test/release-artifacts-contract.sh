@@ -418,10 +418,21 @@ job_step_bodies() {
 # Only the script a step runs, never its name or its keys. `Validate Debian
 # source contract` is a step name carrying the word source, and matching it
 # would report a POSIX step as a bash one.
+#
+# All three spellings of `run:` count. A one-line `run: <command>` carries its
+# whole script on the key's own line, and a step written `- run: <command>`
+# carries it there with no name at all; reading only the indented block below
+# the key would skip both and leave the rule enforcing nothing on them.
 step_run_script() {
     awk '
-        /^        run:/ { inside = 1; next }
-        inside && /^        [A-Za-z]/ { inside = 0 }
+        function emit(text) {
+            sub(/^[[:space:]]*-?[[:space:]]*run:[[:space:]]*/, "", text)
+            # A block scalar indicator introduces the script, it is not script.
+            if (text ~ /^[|>][0-9+-]*$/) return
+            if (text != "") print text
+        }
+        /^      - run:/ || /^        run:/ { emit($0); inside = 1; next }
+        inside && (/^      - / || /^        [A-Za-z]/) { inside = 0 }
         inside { print }
     ' <<<"$1"
 }
@@ -1466,6 +1477,12 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
         "declare 'shell: bash' on step: Select the packages the validated metadata names"
     assert_workflow_mutation_rejected "a container step shell weakened to sh" \
         's/^        shell: bash$/        shell: sh/' \
+        "runs bash-only syntax under the image's /bin/sh"
+    assert_workflow_mutation_rejected "a one-line container step turning bash" \
+        's|^        run: scripts/prepare-cargo-vendor\.sh verify cargo-vendor$|        run: [[ -d cargo-vendor ]] \&\& scripts/prepare-cargo-vendor.sh verify cargo-vendor|' \
+        "declare 'shell: bash' on step: Verify exact Cargo vendor bundle"
+    assert_workflow_mutation_rejected "a nameless container step turning bash" \
+        '/^      - name: Verify exact Cargo vendor bundle$/,+1c\      - run: [[ -d cargo-vendor ]] && scripts/prepare-cargo-vendor.sh verify cargo-vendor' \
         "runs bash-only syntax under the image's /bin/sh"
     assert_workflow_mutation_rejected "public release creation" \
         's/^          draft: true$//' \
