@@ -692,6 +692,28 @@ jobs:
           test "$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" --jq '.draft')" = false
           echo "Published $TAG"
 
+  verify-copr:
+    name: Verify Production COPR
+    runs-on: ubuntu-latest
+    # Packit builds COPR off the published release event, outside this run and
+    # after it. Nothing here can make that build happen; this job is only the
+    # deadline that makes its absence a failed release instead of a discovery
+    # three months later (#333). Stable only: a prerelease never reaches
+    # production COPR.
+    needs: [metadata, publish]
+    if: ${{ needs.metadata.outputs.prerelease == 'false' }}
+    timeout-minutes: 100
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Wait for Packit to publish the release build
+        run: |
+          .github/workflows/scripts/verify-copr.sh \
+            "${{ needs.metadata.outputs.cargo-version }}" \
+            "${{ needs.metadata.outputs.rpm-counter }}"
+
   trigger-pages:
     name: Trigger Pages Rebuild
     runs-on: ubuntu-latest

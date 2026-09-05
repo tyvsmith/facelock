@@ -132,6 +132,19 @@ require(
     == "https://copr.fedorainfracloud.org/api_3/project?ownername=tyvsmith&projectname=facelock",
     "production COPR public API drifted",
 )
+require(production_copr.get("package") == "facelock", "production COPR package name drifted")
+# The two build flags are the query, not a detail. Without them COPR answers with
+# the package's source configuration and no build at all, and the served-EVR half
+# of the checker would have nothing to compare (#333). It needs both: the latest
+# succeeded build is what the channel serves, the latest build of any state is
+# what says whether the one it is waiting for is running or dead.
+require(
+    production_copr.get("package_api_url")
+    == "https://copr.fedorainfracloud.org/api_3/package?ownername=tyvsmith"
+    "&projectname=facelock&packagename=facelock"
+    "&with_latest_build=True&with_latest_succeeded_build=True",
+    "production COPR package API drifted",
+)
 required_supported_chroots = require_string_set(
     production_copr.get("required_supported_chroots"),
     expected_copr_targets,
@@ -176,6 +189,20 @@ require(
     staging_copr.get("api_url")
     == "https://copr.fedorainfracloud.org/api_3/project?ownername=tyvsmith&projectname=facelock-testing",
     "staging COPR public API drifted",
+)
+require(staging_copr.get("package") == "facelock", "staging COPR package name drifted")
+require(
+    staging_copr.get("package_api_url")
+    == "https://copr.fedorainfracloud.org/api_3/package?ownername=tyvsmith"
+    "&projectname=facelock-testing&packagename=facelock"
+    "&with_latest_build=True&with_latest_succeeded_build=True",
+    "staging COPR package API drifted",
+)
+# Only production has a released history to fall short of, and only production
+# is queried unconditionally.
+require(
+    "served_evr_gap" not in staging_copr,
+    "staging COPR must not record a served EVR gap",
 )
 require_string_set(
     staging_copr.get("required_supported_chroots"),
@@ -435,6 +462,18 @@ require(
     staging_job.get("owner") == staging_copr["owner"],
     "Packit staging COPR owner disagrees with the release matrix",
 )
+# The other half of the pin. Staging builds every pull request into one project,
+# so its NVRs have to differ from each other; Packit's snapshot suffix is what
+# makes them. Pinning the release there would collide two pull requests on one
+# NVR, so the flag stays off the job and the comparison stays a prefix.
+require(
+    "update_release" not in staging_job,
+    "Packit staging COPR job must keep Packit's release suffix so its per-pull-request NVRs differ",
+)
+require(
+    staging_copr.get("served_evr_exact") is False,
+    "staging COPR must compare the served EVR as a prefix, because its Packit job keeps the suffix",
+)
 # The trigger tracks provisioning. While the project does not exist, `ignore`
 # keeps the job hand-dispatched (`/packit build`), because a pull-request
 # trigger would aim every pull request's Packit run at a project that answers
@@ -476,6 +515,23 @@ production_trigger = production_job.get("trigger")
 require(
     production_trigger in {"ignore", "release"},
     f"Packit production COPR trigger must be 'ignore' or 'release', got {production_trigger!r}",
+)
+# `update_release` and `served_evr_exact` are one contract, held here so neither
+# can move alone. Packit's default rewrites `Release: 1%{?dist}` to
+# `1.{timestamp}.{ref}`, and production pins it off so COPR serves the EVR the
+# conversion table promises. Tightening the served comparison to an equality
+# without that pin reds every stable release; dropping the pin while the
+# comparison stays exact does the same (#333). Staging keeps the default: its
+# pull-request builds need distinct NVRs, so its comparison stays a prefix.
+production_update_release = production_job.get("update_release")
+require(
+    production_update_release is False,
+    "Packit production COPR job must pin update_release: false so COPR serves the "
+    f"canonical EVR, got {production_update_release!r}",
+)
+require(
+    production_copr.get("served_evr_exact") is True,
+    "production COPR must compare the served EVR exactly, because its Packit job pins the release",
 )
 if release_version is not None and "-" not in release_version:
     require(
@@ -713,6 +769,14 @@ require(live_channel_command in justfile, "release preflight does not compare li
 staging_channel_command = f"{live_channel_command} --channel staging"
 require(staging_channel_command in ci_workflow, "CI does not compare the staging release channel")
 require(staging_channel_command in justfile, "release preflight does not compare the staging release channel")
+# Chroots are the shape of a channel, not its contents. Preflight also asks
+# whether production actually serves the predecessor it pinned above: the v0.1.4
+# build never landed and nothing noticed for three months (#333).
+predecessor_channel_command = f"{live_channel_command} --expect-predecessor"
+require(
+    predecessor_channel_command in justfile,
+    "release preflight does not require production COPR to serve the pinned predecessor",
+)
 require(
     "scripts/release-attestation.py" in justfile,
     "release preflight does not require the pre-tag release attestation renderer",
@@ -1577,6 +1641,12 @@ for tag in predecessor_tags:
         version_triple(upstream) <= version_triple(workspace_version()),
         f"{tag} predecessor is not older than the workspace version {workspace_version()}",
     )
+    # A predecessor is a stable release, so its RPM Release is always 1. This is
+    # the EVR `just release-preflight` requires production COPR to serve.
+    require(
+        release.get("rpm_evr") == f"{upstream}-1",
+        f"{tag} predecessor rpm_evr must be {upstream}-1, got {release.get('rpm_evr')!r}",
+    )
 
     lanes = release.get("lanes")
     require(isinstance(lanes, dict) and lanes, f"{tag} predecessor must declare upgrade lanes")
@@ -1626,6 +1696,35 @@ for tag in predecessor_tags:
     require(
         lanes["rpm-fedora"]["release"] in declared_fedora_releases,
         f"{tag} rpm predecessor names an undeclared Fedora release: {lanes['rpm-fedora']['release']}",
+    )
+
+# Production COPR never received the v0.1.4 build: Packit's submission failed on
+# every target and nobody noticed for three months (#333). Preflight requires
+# the channel to serve the predecessor, so that unfixed history is recorded as a
+# gap rather than silently tolerated. The record is pinned to both EVRs -- the
+# one owed and the one served -- and to the predecessor above, so it cannot
+# outlive what it excuses: the next predecessor pin makes it fail here, and any
+# change to what COPR serves makes it stop matching in the live checker.
+served_evr_gap = production_copr.get("served_evr_gap")
+if served_evr_gap is not None:
+    require(isinstance(served_evr_gap, dict), "production COPR served EVR gap must be an object")
+    require(
+        set(served_evr_gap) == {"expected_evr", "served_evr", "issue"},
+        f"production COPR served EVR gap fields drifted: {sorted(served_evr_gap)}",
+    )
+    require(
+        served_evr_gap.get("expected_evr") == predecessors[predecessor_tags[0]]["rpm_evr"],
+        "production COPR served EVR gap must excuse the pinned predecessor, "
+        f"got {served_evr_gap.get('expected_evr')!r}",
+    )
+    require(
+        isinstance(served_evr_gap.get("served_evr"), str)
+        and served_evr_gap["served_evr"] != served_evr_gap["expected_evr"],
+        "production COPR served EVR gap must record a served EVR that differs from the expected one",
+    )
+    require(
+        served_evr_gap.get("issue") == 333,
+        "production COPR served EVR gap must stay owned by issue #333",
     )
 
 # The retired-authselect-profile fixture downloads the same released RPM from a

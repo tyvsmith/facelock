@@ -600,6 +600,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A COPR build that never lands now fails the release** (#333): production
+  COPR served 0.1.3 for the three months v0.1.4 was the current release. Packit
+  ran and submitted nothing: `.packit.yaml` listed a chroot the project did not
+  have enabled, so Packit tried to edit the project, lacked the permission to,
+  and aborted every target. Nothing anywhere compared what the channel served
+  with what the release should have produced, so the failure was three red
+  check runs on a tag commit and no failed job. `test/check-live-release-channels.py`
+  now compares the served EVR as well as the enabled chroots; the release
+  workflow's `verify-copr` job polls for it after publication and fails the run
+  when it never appears; and `just release-preflight` requires production to
+  serve the pinned predecessor. The setup guide now asks for the admin
+  permission Packit actually needs. The v0.1.4 build is not backfilled — 0.2.0
+  supersedes it — and that gap is recorded against both EVRs so it excuses
+  nothing else and retires itself. Only preflight consults the record; the
+  release job asks about the release it is publishing and cannot be silenced
+  by it.
+- **Production COPR publishes the EVR the versioning contract promises**
+  (#333): the production `copr_build` job now carries `update_release: false`.
+  Packit's default rewrites `Release: 1%{?dist}` to `1.{timestamp}.{ref}`, so
+  COPR would have served `0.2.0-1.20260904220135575676.v0.2.0` while every
+  other channel served `0.2.0-1`. Staging keeps the suffix, which its
+  per-pull-request NVRs need, and its served comparison stays a prefix while
+  production's is an equality; `test/check-release-matrix.py` holds the flag
+  and the comparison together so neither channel can move one alone. The
+  documented recovery build now passes `--no-update-release`, because the
+  Packit CLI reads package-level config rather than a job's. Whether
+  packit-service applies the per-job flag on a real release event is not
+  provable locally; the first stable tag after this change is the proof.
 - **A lost encryption key is never replaced automatically** (#231): the
   encrypt-by-default keyfile is now created only for a database that holds no
   encrypted template. On a system whose key artifact went missing, facelock had

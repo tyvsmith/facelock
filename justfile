@@ -1552,6 +1552,11 @@ release-preflight tag='':
     bash test/release-artifacts-contract.sh || failed=1
     python3 test/check-live-release-channels.py || failed=1
     python3 test/check-live-release-channels.py --channel staging || failed=1
+    # Enabled chroots say the project is shaped right; they say nothing about
+    # what it serves. The v0.1.4 COPR build never landed and the chroot check
+    # passed for three months (#333), so preflight asks production for the EVR
+    # the pinned predecessor should have left behind.
+    python3 test/check-live-release-channels.py --expect-predecessor || failed=1
 
     echo ""
     echo "== GitHub release secret checks =="

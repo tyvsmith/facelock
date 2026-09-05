@@ -1638,6 +1638,31 @@ case "$live_offline_output" in
 esac
 echo "release channel case: production queries its authority on every run"
 
+# The release pin and the comparison it licenses are one contract. Either half
+# alone reds every stable release: an unpinned production job publishes a
+# suffixed EVR the exact comparison refuses, and a pinned job read with the
+# loose comparison stops catching the drift the pin exists to prevent (#333).
+assert_matrix_mutation_rejected \
+    "production Packit job dropping its release pin" \
+    ".packit.yaml" \
+    's/^      "update_release": false,$//' \
+    "must pin update_release: false"
+assert_matrix_mutation_rejected \
+    "production comparison loosened while the job stays pinned" \
+    "dist/release-matrix.json" \
+    's/"served_evr_exact": true/"served_evr_exact": false/' \
+    "must compare the served EVR exactly"
+assert_matrix_mutation_rejected \
+    "staging Packit job pinned into NVR collisions" \
+    ".packit.yaml" \
+    's/^      "manual_trigger": true,$/      "manual_trigger": true,\n      "update_release": false,/' \
+    "must keep Packit's release suffix"
+assert_matrix_mutation_rejected \
+    "staging comparison tightened while the job keeps its suffix" \
+    "dist/release-matrix.json" \
+    's/"served_evr_exact": false/"served_evr_exact": true/' \
+    "must compare the served EVR as a prefix"
+
 live_channel_authority_case \
     "production authority without optional experimental chroots" \
     's/"optional_experimental_chroots"/"retired_experimental_chroots"/' \
@@ -1658,6 +1683,226 @@ live_channel_authority_case \
     's/"provisioned": true/"optional_experimental_chroots": ["fedora-rawhide-x86_64"], "provisioned": true/' \
     staging \
     "must declare no optional experimental chroots"
+
+# The served half (#333). Enabled chroots passed on every day of the three
+# months production COPR served 0.1.3 while v0.1.4 was the current release, so
+# these cases compare what the project's latest build actually carries. Exit 2
+# means "not yet, and it may still arrive": the release job polls on it, and
+# every other caller treats it as failure.
+#
+# A COPR package answer carries two builds: `latest_succeeded` is what the
+# channel serves, `latest` is the most recently submitted build in any state.
+# The fixture writes both, because the checker reads each for a different
+# question and a fixture that collapsed them would prove neither.
+served_package_fixture() {
+    local path="$1" project="$2" served_evr="$3" latest_evr="$4" latest_state="$5"
+    shift 5
+    local chroots="" chroot
+    for chroot in "$@"; do
+        chroots="${chroots:+$chroots, }\"$chroot\""
+    done
+    local succeeded="null"
+    if [ -n "$served_evr" ]; then
+        succeeded="{\"state\": \"succeeded\", \"chroots\": [$chroots],"
+        succeeded="$succeeded \"source_package\": {\"name\": \"facelock\", \"version\": \"$served_evr\"}}"
+    fi
+    local newest="null"
+    if [ -n "$latest_evr" ]; then
+        newest="{\"state\": \"$latest_state\", \"chroots\": [$chroots],"
+        newest="$newest \"source_package\": {\"name\": \"facelock\", \"version\": \"$latest_evr\"}}"
+    fi
+    cat > "$path" <<JSON
+{
+  "ownername": "tyvsmith",
+  "projectname": "$project",
+  "name": "facelock",
+  "builds": {
+    "latest": $newest,
+    "latest_succeeded": $succeeded
+  }
+}
+JSON
+    python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$path" ||
+        fail "served package fixture $path is not valid JSON"
+}
+
+served_case() {
+    local context="$1" package_fixture="$2" evr="$3" expected_status="$4" needle="$5"
+    local output status=0
+    output=$(python3 "$repo_root/test/check-live-release-channels.py" \
+        --response-file "$live_copr_supported_with_rawhide" \
+        --package-response-file "$package_fixture" \
+        --expect-evr "$evr" 2>&1) || status=$?
+    [ "$status" = "$expected_status" ] ||
+        fail "served EVR case '$context' exited $status, expected $expected_status: $output"
+    case "$output" in
+        *"$needle"*) ;;
+        *) fail "served EVR case '$context' was rejected for another reason: $output" ;;
+    esac
+    echo "release channel case: $context"
+}
+
+served_all_chroots=(fedora-43-x86_64 fedora-44-x86_64 fedora-45-x86_64 fedora-rawhide-x86_64)
+# served_package_fixture <path> <project> <served EVR> <latest EVR> <latest state> <chroots...>
+served_package_fixture "$tmp_root/served-ok.json" facelock 0.9.9-1 0.9.9-1 succeeded "${served_all_chroots[@]}"
+# What Packit publishes when nothing pins the release: its default
+# fix-spec-file action rewrites `Release: 1%{?dist}` to `1.<timestamp>.<ref>`.
+# Production pins it off (`update_release: false`), so this shape reaching
+# production means the pin stopped working and must not be accepted. Staging
+# keeps the suffix and accepts the same fixture below.
+served_package_fixture "$tmp_root/served-snapshot.json" facelock \
+    0.9.9-1.20260904220135575676.v0.9.9 0.9.9-1.20260904220135575676.v0.9.9 succeeded \
+    "${served_all_chroots[@]}"
+served_package_fixture "$tmp_root/served-snapshot-staging.json" facelock-testing \
+    0.9.9-1.20260904220135575676.v0.9.9 0.9.9-1.20260904220135575676.v0.9.9 succeeded \
+    fedora-43-x86_64 fedora-44-x86_64 fedora-45-x86_64
+served_package_fixture "$tmp_root/served-adjacent.json" facelock 0.9.9-11 0.9.9-11 succeeded \
+    "${served_all_chroots[@]}"
+served_package_fixture "$tmp_root/served-stale.json" facelock 0.9.8-1 0.9.8-1 succeeded "${served_all_chroots[@]}"
+served_package_fixture "$tmp_root/served-failed.json" facelock 0.9.8-1 0.9.9-1 failed "${served_all_chroots[@]}"
+served_package_fixture "$tmp_root/served-running.json" facelock 0.9.8-1 0.9.9-1 running "${served_all_chroots[@]}"
+served_package_fixture "$tmp_root/served-skipped.json" facelock 0.9.8-1 0.9.9-1 skipped "${served_all_chroots[@]}"
+served_package_fixture "$tmp_root/served-partial.json" facelock 0.9.9-1 0.9.9-1 succeeded \
+    fedora-43-x86_64 fedora-44-x86_64
+served_package_fixture "$tmp_root/served-other-project.json" facelock-testing 0.9.9-1 0.9.9-1 succeeded \
+    "${served_all_chroots[@]}"
+# The channel still serves the expected EVR while an unrelated later build sits
+# on top of it: a rebuild, a retry, a chroot backfill. Reading the served
+# version off `latest` would call that a regression.
+served_package_fixture "$tmp_root/served-newer-failure.json" facelock 0.9.9-1 1.0.0-1 failed \
+    "${served_all_chroots[@]}"
+served_package_fixture "$tmp_root/served-never-built.json" facelock "" "" "" "${served_all_chroots[@]}"
+
+served_case "served expected EVR accepted" \
+    "$tmp_root/served-ok.json" 0.9.9-1 0 "serves facelock-0.9.9-1"
+# COPR reports `skipped` when the same NVR was already built, so that build is
+# dead and the earlier one is what `latest_succeeded` already answered with.
+served_case "skipped build of the expected EVR rejected outright" \
+    "$tmp_root/served-skipped.json" 0.9.9-1 1 "state='skipped'"
+# Production compares exactly, so an unpinned release reaching it is drift.
+served_case "Packit's snapshot release suffix rejected on production" \
+    "$tmp_root/served-snapshot.json" 0.9.9-1 2 "does not serve facelock-0.9.9-1"
+served_case "exact EVR still accepted on production" \
+    "$tmp_root/served-ok.json" 0.9.9-1 0 "serves facelock-0.9.9-1"
+served_case "adjacent release number rejected on production" \
+    "$tmp_root/served-adjacent.json" 0.9.9-1 2 "does not serve facelock-0.9.9-1"
+
+# Staging keeps Packit's suffix, so it keeps the looser comparison. The two
+# channels reading the same fixture differently is the point of binding the
+# comparison to the Packit job rather than hardcoding one rule.
+served_staging_case() {
+    local context="$1" package_fixture="$2" evr="$3" expected_status="$4" needle="$5"
+    local output status=0
+    output=$(python3 "$repo_root/test/check-live-release-channels.py" --channel staging \
+        --response-file "$staging_copr_supported_only" \
+        --package-response-file "$package_fixture" \
+        --expect-evr "$evr" 2>&1) || status=$?
+    [ "$status" = "$expected_status" ] ||
+        fail "staging EVR case '$context' exited $status, expected $expected_status: $output"
+    case "$output" in
+        *"$needle"*) ;;
+        *) fail "staging EVR case '$context' was rejected for another reason: $output" ;;
+    esac
+    echo "release channel case: $context"
+}
+
+served_package_fixture "$tmp_root/served-adjacent-staging.json" facelock-testing 0.9.9-11 0.9.9-11 \
+    succeeded fedora-43-x86_64 fedora-44-x86_64 fedora-45-x86_64
+served_staging_case "Packit snapshot release suffix accepted on staging" \
+    "$tmp_root/served-snapshot-staging.json" 0.9.9-1 0 "serves facelock-0.9.9-1.20260904220135575676.v0.9.9"
+served_staging_case "adjacent release number rejected on staging" \
+    "$tmp_root/served-adjacent-staging.json" 0.9.9-1 2 "does not serve facelock-0.9.9-1"
+served_case "served predecessor EVR reported as not yet published" \
+    "$tmp_root/served-stale.json" 0.9.9-1 2 "does not serve facelock-0.9.9-1"
+# A failed build of the expected EVR is a verdict, not a wait: polling it to a
+# deadline would delay the failure by an hour and change nothing.
+served_case "failed build of the expected EVR rejected outright" \
+    "$tmp_root/served-failed.json" 0.9.9-1 1 "state='failed'"
+served_case "running build of the expected EVR left to finish" \
+    "$tmp_root/served-running.json" 0.9.9-1 2 "state='running'"
+# A build's chroot list is what that build covered, not what the repository
+# serves. A single-chroot rebuild is the documented recovery from a failed
+# submission and becomes the newest succeeded build; requiring every chroot of
+# it would call a healthy channel broken.
+served_case "partial rebuild on top of a complete build accepted" \
+    "$tmp_root/served-partial.json" 0.9.9-1 0 "newest build covered ['fedora-43-x86_64', 'fedora-44-x86_64']"
+served_case "package answering for another project rejected" \
+    "$tmp_root/served-other-project.json" 0.9.9-1 1 "package identity drifted"
+served_case "later unrelated build does not unseat the served EVR" \
+    "$tmp_root/served-newer-failure.json" 0.9.9-1 0 "serves facelock-0.9.9-1"
+served_case "project that has never built the package reported" \
+    "$tmp_root/served-never-built.json" 0.9.9-1 2 "does not serve facelock-0.9.9-1"
+
+# The recorded gap excuses exactly the EVR it names, against exactly the EVR it
+# says is served, so the cases read both out of the authority rather than
+# restating them. No gap recorded means nothing to prove, and the cases retire
+# with the record instead of failing for a reason that looks unrelated.
+served_gap_expected="$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1]))["copr_channels"]["production"].get("served_evr_gap") or {}).get("expected_evr",""))' "$repo_root/dist/release-matrix.json")"
+served_gap_served="$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1]))["copr_channels"]["production"].get("served_evr_gap") or {}).get("served_evr",""))' "$repo_root/dist/release-matrix.json")"
+# A gap answers only the predecessor question, so its cases ask it that way.
+# `--expect-predecessor` resolves the EVR from the matrix, which is the same
+# EVR the record must name.
+served_predecessor_case() {
+    local context="$1" package_fixture="$2" expected_status="$3" needle="$4"
+    local output status=0
+    output=$(python3 "$repo_root/test/check-live-release-channels.py" --expect-predecessor \
+        --response-file "$live_copr_supported_with_rawhide" \
+        --package-response-file "$package_fixture" 2>&1) || status=$?
+    [ "$status" = "$expected_status" ] ||
+        fail "predecessor EVR case '$context' exited $status, expected $expected_status: $output"
+    case "$output" in
+        *"$needle"*) ;;
+        *) fail "predecessor EVR case '$context' was rejected for another reason: $output" ;;
+    esac
+    echo "release channel case: $context"
+}
+
+if [ -n "$served_gap_expected" ]; then
+    served_package_fixture "$tmp_root/served-gap.json" facelock \
+        "$served_gap_served" "$served_gap_served" succeeded "${served_all_chroots[@]}"
+    served_predecessor_case "recorded gap accepted for the predecessor it names" \
+        "$tmp_root/served-gap.json" 0 "KNOWN GAP"
+    # The record excuses a release that already shipped. `verify-copr` asks
+    # about the one it is publishing, and a record that could answer that would
+    # silence the job on the failure it exists to make loud.
+    served_case "recorded gap does not excuse the release being published" \
+        "$tmp_root/served-gap.json" "$served_gap_expected" 2 \
+        "does not serve facelock-$served_gap_expected"
+    served_case "recorded gap does not excuse another EVR" \
+        "$tmp_root/served-gap.json" 0.9.9-1 2 "does not serve facelock-0.9.9-1"
+    # The record is read under the channel's own rule. Production pins the
+    # release, so a suffixed EVR appearing there means the pin stopped working,
+    # and the record must not paper over it.
+    served_package_fixture "$tmp_root/served-gap-snapshot.json" facelock \
+        "$served_gap_served.20260904220135575676.rebuild" \
+        "$served_gap_served.20260904220135575676.rebuild" succeeded "${served_all_chroots[@]}"
+    served_predecessor_case "recorded gap does not excuse a suffixed rebuild on the pinned channel" \
+        "$tmp_root/served-gap-snapshot.json" 2 "does not serve facelock-$served_gap_expected"
+else
+    echo "release channel case: no served EVR gap recorded, nothing to excuse"
+fi
+
+served_no_expectation_status=0
+served_no_expectation_output=$(python3 "$repo_root/test/check-live-release-channels.py" \
+    --package-response-file "$tmp_root/served-ok.json" 2>&1) || served_no_expectation_status=$?
+[ "$served_no_expectation_status" != 0 ] ||
+    fail "live channel checker accepted a package fixture with nothing to compare it against"
+case "$served_no_expectation_output" in
+    *"needs an expected EVR"*) ;;
+    *) fail "live channel checker rejected a bare package fixture for another reason: $served_no_expectation_output" ;;
+esac
+echo "release channel case: package fixture without an expectation rejected"
+
+served_empty_evr_status=0
+served_empty_evr_output=$(python3 "$repo_root/test/check-live-release-channels.py" \
+    --response-file "$live_copr_supported_with_rawhide" --expect-evr "" 2>&1) || served_empty_evr_status=$?
+[ "$served_empty_evr_status" != 0 ] ||
+    fail "live channel checker green-lit an empty expected EVR: $served_empty_evr_output"
+case "$served_empty_evr_output" in
+    *"empty EVR"*) ;;
+    *) fail "live channel checker rejected an empty EVR for another reason: $served_empty_evr_output" ;;
+esac
+echo "release channel case: empty expected EVR rejected"
 
 # Pre-tag staging attestation (#236, Track M2 task 5). The document binds the
 # candidate commit, the EVRs each channel serves, artifact and repository
