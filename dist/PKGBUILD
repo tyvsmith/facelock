@@ -9,6 +9,7 @@ url="https://github.com/tyvsmith/facelock"
 license=('MIT OR Apache-2.0')
 depends=('glibc' 'dbus' 'pam' 'gcc-libs' 'tpm2-tss' 'libxkbcommon' 'onnxruntime')
 makedepends=('rust' 'cargo' 'clang' 'gettext' 'wayland' 'libxkbcommon')
+checkdepends=('python')
 optdepends=(
     'onnxruntime-opt-cuda: NVIDIA GPU acceleration (replaces onnxruntime)'
     'onnxruntime-opt-rocm: AMD GPU acceleration (replaces onnxruntime)'
