@@ -37,6 +37,8 @@ sudo facelock bench camera-reopen
 Keep a separate root shell open for every host PAM test. From that shell,
 prefer the validated removal path:
 
+### If you still have a root shell open
+
 ```bash
 facelock pam remove --service sudo
 ```
@@ -47,6 +49,8 @@ newest-looking file without reviewing its provenance and the live target.
 Current Facelock does not automatically create
 `/etc/pam.d/sudo.facelock-backup`; that path exists only when an operator or an
 older release made it.
+
+### If you are locked out
 
 With no root shell, boot recovery media, remount the root filesystem
 read-write, and remove the exact `pam_facelock.so` rule or restore a separately

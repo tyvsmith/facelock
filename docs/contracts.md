@@ -3206,8 +3206,8 @@ schema fields. `/var/lib/facelock/pam-backups` is deliberately fixed for the
 PAM writer and shared state layout. Neither `[pam].config_dirs` nor
 `storage.db_path` redirects it: the former selects PAM service roots and the
 latter relocates biometric database state only. `FACELOCK_CONFIG` is honored
-for unprivileged processes, but privileged PAM/root auth flows ignore the
-environment and use either an explicit `--config` path or
+for unprivileged processes, but every effective-UID-0 process ignores the
+environment and uses either an explicit `--config` path or
 `/etc/facelock/config.toml`.
 Runtime-created DB sidecars (`-wal`, `-shm`), audit logs, and snapshots are created with explicit restrictive modes. The packaged systemd unit also sets `UMask=0027`.
 

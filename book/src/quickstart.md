@@ -1,5 +1,7 @@
 # Quick Start
 
+## Published packages
+
 v0.1.4 is the latest published stable release. The v0.2.0-alpha.1 tag exists,
 but no corresponding GitHub Release is currently published. Prereleases do not
 enter the stable AUR, APT, or production COPR channels.
@@ -18,6 +20,8 @@ is not in the supported matrix.
 See the canonical [Quickstart](../../docs/quickstart.md) for repository setup
 commands and exact channel limitations.
 
+## System installation
+
 For a source system install:
 
 ```bash
@@ -32,6 +36,8 @@ sequence. Keep a root shell open while testing. A zero exit from
 `facelock test` means the command completed, not that recognition succeeded;
 inspect its output and then verify a new `sudo` session.
 
+## Development
+
 For non-installing development, use the built path and explicit development
 configuration. Management commands remain root-gated, and root ignores
 `FACELOCK_CONFIG`:
@@ -42,6 +48,8 @@ sudo target/debug/facelock --config "$PWD/dev/config.toml" devices
 sudo target/debug/facelock --config "$PWD/dev/config.toml" enroll --skip-setup-check
 sudo target/debug/facelock --config "$PWD/dev/config.toml" test
 ```
+
+## Retained data
 
 Ordinary uninstall preserves retained biometric state. Preview the fixed-root
 purge while the CLI is installed:

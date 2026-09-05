@@ -1,4 +1,4 @@
-.TH FACELOCK 1 "2026-08-21" "facelock" "User Commands"
+.TH FACELOCK 1 "2026-09-05" "facelock" "User Commands"
 .SH NAME
 facelock \- Linux face authentication
 .SH SYNOPSIS
@@ -401,6 +401,9 @@ split over \fIn\fR close\(->open\(->first\-usable\-frame cycles (default 5) as a
 per\-phase median. Needs no enrolled face and loads no models. This is the total
 .B device.camera_release_secs
 trades LED\-on time against.
+.TP
+.B \-\-iterations \fIn\fR
+Number of reopen cycles (default: 5).
 .SS "facelock bench report"
 Generate a comprehensive benchmark report.
 .RE

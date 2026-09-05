@@ -7,7 +7,11 @@
 > currently published. A tag, source build, staged package, or successful
 > rebuild is not evidence that an artifact is available to users.
 
-A modern face authentication system for Linux PAM. Provides Windows Hello-style facial auth with IR anti-spoofing, configurable as a persistent daemon or daemonless one-shot. All inference runs locally on your hardware -- no cloud services, no network requests, no telemetry. Your biometric data never leaves your machine.
+A modern face authentication system for Linux PAM. Provides Windows Hello-style
+facial auth with IR-required capture and layered static-presentation checks,
+configurable as a persistent daemon or daemonless one-shot. All inference runs
+locally on your hardware -- no cloud services, no runtime network requests, no
+telemetry. Your biometric data never leaves your machine.
 
 ## Install
 

@@ -34,6 +34,22 @@ it until [#140](https://github.com/tyvsmith/facelock/issues/140) is finished:
 `status --quiet` is not. `preview --json` is on neither list: its frame stream
 is stdout by design and `--quiet` is documented not to reach it.
 
+## Privilege model
+
+Enrollment, model management, camera inspection/preview, system status, the
+unified benchmarks, TPM operations, and audit access use protected system state
+and require root. Many interactive management commands offer to re-execute via
+`sudo`; examples without an explicit `sudo` rely on that terminal prompt.
+Scripts and redirected/non-interactive calls must provide the required
+privilege themselves. `daemon run`, PAM writes, `data purge`, and scripted
+audit access do not rely on an elevation prompt.
+
+`is-enrolled`, `capabilities`, `config show`, and `pam status` are deliberately
+unprivileged reads. `hyprlock` is user-owned and refuses root. `auth` is the PAM
+helper: `--user` is required, and the daemon independently restricts a
+non-root caller to its own account. Command-specific exceptions and hard-root
+behavior are stated below.
+
 ## Machine-readable output
 
 Every command whose output a script would parse takes `--json`, and spells it

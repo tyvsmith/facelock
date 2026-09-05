@@ -1,6 +1,10 @@
 # Introduction
 
-Facelock is a modern face authentication system for Linux PAM. It provides Windows Hello-style facial authentication with IR anti-spoofing, configurable as a persistent daemon or daemonless one-shot. All inference runs locally on your hardware -- no cloud services, no network requests, no telemetry. Your biometric data never leaves your machine.
+Facelock is a modern face authentication system for Linux PAM. It provides
+Windows Hello-style facial authentication with IR-required capture and layered
+static-presentation checks, configurable as a persistent daemon or daemonless
+one-shot. Inference runs locally; model download occurs during setup, while the
+authentication path makes no network request and sends no telemetry.
 
 ## Quick Start
 
