@@ -1,0 +1,246 @@
+{
+  "schema_version": 1,
+  "binaries": {
+    "facelock": "docs/cli.md",
+    "facelock-bench": "docs/auxiliary-commands.md",
+    "facelock-polkit-agent": "docs/auxiliary-commands.md"
+  },
+  "files": {
+    ".claude/rules/pam-boundary.md": {
+      "role": "internal",
+      "reason": "Repository development instructions checked by check-agent-docs and command inventory"
+    },
+    ".claude/rules/security.md": {
+      "role": "internal",
+      "reason": "Repository development instructions checked by check-agent-docs and command inventory"
+    },
+    ".claude/rules/testing.md": {
+      "role": "internal",
+      "reason": "Repository development instructions checked by check-agent-docs and command inventory"
+    },
+    ".claude/skills/packaging-test/SKILL.md": {
+      "role": "internal",
+      "reason": "Repository development instructions checked by check-agent-docs and command inventory"
+    },
+    ".claude/skills/release/SKILL.md": {
+      "role": "internal",
+      "reason": "Repository development instructions checked by check-agent-docs and command inventory"
+    },
+    ".github/ISSUE_TEMPLATE/bug_report.md": {
+      "role": "summary",
+      "reason": "Project metadata and contribution template, not an install guide"
+    },
+    ".github/ISSUE_TEMPLATE/feature_request.md": {
+      "role": "summary",
+      "reason": "Project metadata and contribution template, not an install guide"
+    },
+    ".github/PULL_REQUEST_TEMPLATE.md": {
+      "role": "summary",
+      "reason": "Project metadata and contribution template, not an install guide"
+    },
+    ".internal/docs/TODO-tensorrt.md": {
+      "role": "historical",
+      "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "AGENTS.md": {
+      "role": "internal",
+      "reason": "Repository development instructions checked by check-agent-docs and command inventory"
+    },
+    "CHANGELOG.md": {
+      "role": "historical",
+      "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "CLAUDE.md": {
+      "role": "internal",
+      "reason": "Repository development instructions checked by check-agent-docs and command inventory"
+    },
+    "CONTRIBUTING.md": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "README.md": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "SECURITY.md": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "book/src/SUMMARY.md": {
+      "role": "summary",
+      "reason": "Published book chapter; current command examples and links are checked"
+    },
+    "book/src/architecture.md": {
+      "role": "summary",
+      "reason": "Published book chapter; current command examples and links are checked"
+    },
+    "book/src/cli-reference.md": {
+      "role": "summary",
+      "reason": "Published book chapter; current command examples and links are checked"
+    },
+    "book/src/compatibility.md": {
+      "role": "summary",
+      "reason": "Published book chapter; current command examples and links are checked"
+    },
+    "book/src/configuration.md": {
+      "role": "summary",
+      "reason": "Published book chapter; current command examples and links are checked"
+    },
+    "book/src/contracts.md": {
+      "role": "summary",
+      "reason": "Published book chapter; current command examples and links are checked"
+    },
+    "book/src/contributing.md": {
+      "role": "summary",
+      "reason": "Published book chapter; current command examples and links are checked"
+    },
+    "book/src/gpu.md": {
+      "role": "summary",
+      "reason": "Published book chapter; current command examples and links are checked"
+    },
+    "book/src/introduction.md": {
+      "role": "summary",
+      "reason": "Published book chapter; current command examples and links are checked"
+    },
+    "book/src/quickstart.md": {
+      "role": "summary",
+      "reason": "Published book chapter; current command examples and links are checked"
+    },
+    "book/src/security.md": {
+      "role": "summary",
+      "reason": "Published book chapter; current command examples and links are checked"
+    },
+    "book/src/testing.md": {
+      "role": "summary",
+      "reason": "Published book chapter; current command examples and links are checked"
+    },
+    "book/src/troubleshooting.md": {
+      "role": "summary",
+      "reason": "Published book chapter; current command examples and links are checked"
+    },
+    "config/facelock.toml": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "dev/config.toml": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "docs/adr/001-dbus-over-unix-socket.md": {
+      "role": "historical",
+      "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "docs/adr/002-onnx-over-dlib.md": {
+      "role": "historical",
+      "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "docs/adr/003-rust-pam-module.md": {
+      "role": "historical",
+      "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "docs/adr/004-tpm-encryption.md": {
+      "role": "historical",
+      "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "docs/adr/005-anti-spoofing-layered-defense.md": {
+      "role": "historical",
+      "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "docs/adr/006-constant-time-matching.md": {
+      "role": "historical",
+      "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "docs/adr/007-systemd-hardening-tradeoffs.md": {
+      "role": "historical",
+      "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "docs/adr/008-camera-lifecycle.md": {
+      "role": "historical",
+      "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "docs/adr/009-cli-verb-noun-shape.md": {
+      "role": "historical",
+      "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "docs/adr/010-open-authenticate-retire-group-grant.md": {
+      "role": "historical",
+      "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "docs/adr/README.md": {
+      "role": "historical",
+      "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "docs/architecture.md": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "docs/cli.md": {
+      "role": "canonical",
+      "reason": "Canonical command, system, or configuration reference"
+    },
+    "docs/compatibility.md": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "docs/configuration.md": {
+      "role": "canonical",
+      "reason": "Canonical command, system, or configuration reference"
+    },
+    "docs/contracts.md": {
+      "role": "canonical",
+      "reason": "Canonical command, system, or configuration reference"
+    },
+    "docs/integrating.md": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "docs/quickstart.md": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "docs/releasing.md": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "docs/security.md": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "docs/testing-roadmap.md": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "docs/testing-safety.md": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "docs/troubleshooting.md": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "man/facelock.1": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "man/pam_facelock.8": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    },
+    "models/NOTICE.md": {
+      "role": "summary",
+      "reason": "Project metadata and contribution template, not an install guide"
+    },
+    "templates/benchmark-report.md": {
+      "role": "historical",
+      "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "templates/spec-execution-report.md": {
+      "role": "historical",
+      "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "website/index.html": {
+      "role": "current",
+      "reason": "Current project instructions and reference links"
+    }
+  }
+}
