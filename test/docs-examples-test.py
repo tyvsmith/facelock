@@ -95,6 +95,12 @@ class ExamplesTest(unittest.TestCase):
         self.assertEqual(row["classification"], "negative")
         self.assertEqual(row["expected_error"], "MissingRequiredArgument")
 
+    def test_inline_annotation_is_scoped_to_next_content_line(self):
+        rows = self.extract('<!-- docs-example: negative InvalidSubcommand -->\nThe rejected name was `facelock purge`.\nUse `facelock devices` instead.')
+        self.assertEqual(rows[0]["classification"], "negative")
+        self.assertEqual(rows[0]["expected_error"], "InvalidSubcommand")
+        self.assertEqual(rows[1]["classification"], "schematic")
+
 
 if __name__ == "__main__":
     unittest.main()

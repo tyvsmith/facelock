@@ -185,9 +185,12 @@ def raw_examples(path, text):
             anchor = slug(heading[1])
         for inline in re.findall(r"`([^`\n]+)`", line):
             if COMMAND.match(inline):
-                rows.append((anchor, number, inline, "schematic", "inline invocation or syntax reference; runtime evidence is separate"))
+                kind, reason = annotation or ("schematic", "inline invocation or syntax reference; runtime evidence is separate")
+                rows.append((anchor, number, inline, kind, reason))
         if line.startswith("    ") and COMMAND.match(line.strip()):
             rows.append((anchor, number, line.strip(), "executable", None))
+        if line.strip():
+            annotation = None
     return rows
 
 

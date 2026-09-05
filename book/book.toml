@@ -8,3 +8,8 @@ src = "src"
 default-theme = "navy"
 preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/tyvsmith/facelock"
+
+# Canonical Markdown includes link to docs/cli.md; the book chapter retains
+# its established public URL and anchors.
+[output.html.redirect]
+"cli.html" = "cli-reference.html"
