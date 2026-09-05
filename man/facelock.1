@@ -40,9 +40,21 @@ starts at info, because it writes to the journal.
 .B RUST_LOG
 outranks both. The level changes output volume only: exit codes and the
 payloads on stdout are identical at every level.
+.SH PRIVILEGE MODEL
+Enrollment, model management, camera inspection/preview, status, the unified
+benchmarks, TPM operations and audit access require root. Interactive CLI use
+may offer to re-execute through sudo; service/script-oriented hard-root paths
+such as \fBdaemon run\fR, \fBauth\fR's PAM use, and PAM writes must be invoked
+with their required identity explicitly. \fBis-enrolled\fR,
+\fBcapabilities\fR, \fBconfig show\fR and \fBpam status\fR are unprivileged.
+The \fBhyprlock\fR group is user-owned and refuses root.
+.PP
+Under a non-default \fB\-\-config\fR, commands that would otherwise use the
+packaged daemon operate directly because that daemon reads the fixed default
+configuration. See each command below. The environment override is ignored by
+all effective-UID-0 processes.
 .SH COMMANDS
-.TP
-.B setup
+.SS "facelock setup"
 Download models and create directories. An interactive wizard guides initial
 configuration.
 .IP
@@ -120,9 +132,8 @@ Used with \fB\-\-pam\fR: remove the facelock PAM line instead of adding it.
 Requires \fB\-\-pam\fR.
 .TP
 .B \-\-if\-present
-Used with \fB\-\-pam \-\-remove\fR: treat an absent service file as success
-rather than an error. Read, parse and write failures remain fatal. Requires
-\fB\-\-remove\fR.
+Used with \fB\-\-pam\fR on add or remove: treat an absent service file as
+success rather than an error. Read, parse and write failures remain fatal.
 .TP
 .B \-\-camera \fIpath\fR|\fBauto\fR
 Camera device path, or \fBauto\fR to re-detect the IR camera from the attached
@@ -163,8 +174,7 @@ process. Existing \fBsetup \-\-pam\fR invocations keep parsing; sensitive
 additions use the same explicit \fB\-\-allow\-sensitive\fR authorization as
 .BR "facelock pam add" .
 \fB\-y\fR only suppresses the confirmation prompt.
-.TP
-.B is\-enrolled
+.SS "facelock is-enrolled"
 Report whether a user has a usable face enrollment. The exit status is the
 contract: 0 if enrolled, 1 if not, 2 on error; stdout is the state word
 .B enrolled
@@ -200,8 +210,7 @@ Suppress stdout and report only via the exit status. Errors are still written
 to stderr. This is the global flag (see GLOBAL OPTIONS), so
 \fBfacelock \-\-quiet is\-enrolled\fR is the same invocation.
 .RE
-.TP
-.B capabilities
+.SS "facelock capabilities"
 Report what this build can do, as capability names \(em one per line on stdout.
 Answers from the binary's own clap tree and compiled-in constants: it reads no
 config file, activates no daemon and opens no camera, and so needs no root. It
@@ -225,8 +234,7 @@ command answers by failing \(em unrecognized subcommand on stderr, exit 2 \(em
 which a caller reads as "no capabilities at all". See
 .B EXIT STATUS
 below.
-.TP
-.B enroll
+.SS "facelock enroll"
 Capture and store a face embedding for authentication.
 .RS
 .TP
@@ -244,9 +252,9 @@ configuration manager, where the marker was never written but the models,
 database and encryption key are in place; enrollment still fails on its own
 terms if any of them is not.
 .RE
-.TP
-.B remove \fImodel_id\fR
-Remove a specific face model by its numeric ID.
+.SS "facelock remove"
+Remove the required \fIMODEL_ID\fR. Decimal and hexadecimal list IDs are
+accepted; hexadecimal input is case-insensitive.
 .RS
 .TP
 .B \-u\fR, \fB\-\-user \fIusername\fR
@@ -255,8 +263,7 @@ Username (default: current user).
 .B \-y\fR, \fB\-\-yes
 Skip the confirmation prompt. Also accepted as \fB\-\-no\-confirm\fR.
 .RE
-.TP
-.B clear
+.SS "facelock clear"
 Remove all face models for a user.
 .RS
 .TP
@@ -266,8 +273,7 @@ Username (default: current user).
 .B \-y\fR, \fB\-\-yes
 Skip the confirmation prompt. Also accepted as \fB\-\-no\-confirm\fR.
 .RE
-.TP
-.B list
+.SS "facelock list"
 List enrolled face models.
 .RS
 .TP
@@ -277,16 +283,18 @@ Username (default: current user).
 .B \-\-json
 Output as JSON.
 .RE
-.TP
-.B test
+.SS "facelock test"
 Test face recognition against enrolled models for the current or specified user.
 .RS
 .TP
 .B \-u\fR, \fB\-\-user \fIusername\fR
 Username (default: current user).
 .RE
-.TP
-.B preview
+.IP
+A zero exit status means the command completed, not that a scan ran or a face
+matched. No usable enrollment and a completed non-match also return zero; read
+the human result.
+.SS "facelock preview"
 Live camera preview with face detection overlay.
 .RS
 .TP
@@ -298,21 +306,17 @@ hidden alias and keeps parsing; the per-frame payload is unchanged.
 .B \-u\fR, \fB\-\-user \fIusername\fR
 User to match faces against (defaults to current user).
 .RE
-.TP
-.B config \fR[\fIsubcommand\fR]
+.SS "facelock config"
 Show or edit configuration. With no subcommand, shows.
 .RS
-.TP
-.B show
+.SS "facelock config show"
 Print the config file path and contents, and whether the file parses. Reads a
 0644 file and needs no root.
-.TP
-.B edit
+.SS "facelock config edit"
 Open the config file in \fB$EDITOR\fR, validate it on save, and restart the
 daemon when a setting it caches at startup changed. Requires root.
 .RE
-.TP
-.B status
+.SS "facelock status"
 Check system status including daemon connectivity, enrolled faces, camera
 availability, and model integrity. Also reports whether the PAM module's
 oneshot fallback could authenticate with the daemon unreachable, and whether
@@ -341,29 +345,30 @@ unchanged: \fBstatus\fR exits 0 whenever it produced a report, and the verdicts
 are in the document. See \fBfacelock status Semantics\fR in the contracts
 document for the schema and its stability tier.
 .RE
-.TP
-.B devices
+.SS "facelock devices"
 List available camera devices.
+.RS
 .TP
-.B daemon \fR[\fIsubcommand\fR]
+.B \-\-json
+Emit the typed device array instead of the human listing. Format details are
+present only on the direct backend; the D-Bus device type does not carry them.
+.RE
+.SS "facelock daemon"
 Run or restart the persistent authentication daemon. With no subcommand, runs
 it \(em the form every shipped service unit invokes.
 .RS
-.TP
-.B run
+.SS "facelock daemon run"
 Run the daemon in the foreground. Registers on the D-Bus system bus as
 \fBorg.facelock.Daemon\fR to service authentication and enrollment requests
 from the PAM module and CLI.
-.TP
-.B restart
+.SS "facelock daemon restart"
 Restart the facelock daemon via systemd, or via a D-Bus shutdown request when
 systemd is unavailable, in which case the daemon restarts on next use through
 D-Bus activation. Requires root.
 .RE
 .IP
 Takes \fB\-c\fR, \fB\-\-config\fR from GLOBAL OPTIONS above.
-.TP
-.B auth
+.SS "facelock auth"
 One-shot authentication (used by the PAM module). Exits with code 0 on
 success or non-zero on failure. The PAM module spawns
 \fBfacelock auth \-\-user \fIname\fB \-\-config \fIpath\fR.
@@ -375,74 +380,56 @@ subject, and it must never fall back to the process owner.
 .RE
 .IP
 Takes \fB\-\-config\fR from GLOBAL OPTIONS above.
-.TP
-.B bench \fIsubcommand\fR
+.SS "facelock bench"
 Benchmark and calibration tools.
 .RS
-.TP
-.B cold\-auth
+.SS "facelock bench cold-auth"
 Measure cold auth latency (model load + first auth).
-.TP
-.B warm\-auth
+.SS "facelock bench warm-auth"
 Measure warm auth latency (models already loaded).
-.TP
-.B preview
+.SS "facelock bench preview"
 Measure preview frame capture latency.
-.TP
-.B enrollment
+.SS "facelock bench enrollment"
 Measure enrollment time.
-.TP
-.B model\-load
+.SS "facelock bench model-load"
 Measure ONNX model load time.
-.TP
-.B calibrate
+.SS "facelock bench calibrate"
 Sweep thresholds and measure FAR/FRR.
-.TP
-.B camera\-reopen \fR[\fB\-\-iterations \fIn\fR]
+.SS "facelock bench camera-reopen"
 Measure what reopening the camera costs, reporting the open / STREAMON / warmup
 split over \fIn\fR close\(->open\(->first\-usable\-frame cycles (default 5) as a
 per\-phase median. Needs no enrolled face and loads no models. This is the total
 .B device.camera_release_secs
 trades LED\-on time against.
-.TP
-.B report
+.SS "facelock bench report"
 Generate a comprehensive benchmark report.
 .RE
-.TP
-.B tpm \fIsubcommand\fR
+.SS "facelock tpm"
 Manage the embedding encryption key and the TPM that can seal it. The group
 owns the key's whole lifecycle, so \fBencrypt\fR, \fBdecrypt\fR and
 \fBreseal\fR live here \(em the cipher is software AES-256-GCM either way, and
 \fBencryption.method\fR decides only where the key lives.
 .RS
-.TP
-.B status
+.SS "facelock tpm status"
 Report TPM availability and configuration.
-.TP
-.B seal\-key
+.SS "facelock tpm seal-key"
 Seal the AES encryption key with TPM (migrate keyfile to TPM).
-.TP
-.B unseal\-key
+.SS "facelock tpm unseal-key"
 Unseal the AES key from TPM back to a plaintext keyfile (migrate TPM to keyfile).
-.TP
-.B unseal\-check
+.SS "facelock tpm unseal-check"
 Read-only check that the sealed AES key currently unseals, verifying the PCR
 policy is still satisfied. Writes nothing and exits non-zero if the unseal
 fails, which is the signal to run
 .BR "facelock tpm reseal" .
-.TP
-.B pcr\-baseline
+.SS "facelock tpm pcr-baseline"
 Display current PCR values for configured indices.
-.TP
-.B encrypt
+.SS "facelock tpm encrypt"
 Encrypt all unencrypted embeddings in the database with AES-256-GCM.
 \fB\-\-generate\-key\fR generates a new encryption key without encrypting
 embeddings.
-.TP
-.B decrypt
+.SS "facelock tpm decrypt"
 Decrypt all software-encrypted embeddings in the database.
-.TP
-.B reseal
+.SS "facelock tpm reseal"
 Re-seal the TPM AES key under the current PCR values \(em the recovery step
 after a firmware or kernel change moves a measured PCR and the sealed key stops
 unsealing. Requires root, and applies only when \fBencryption.method\fR is
@@ -453,8 +440,7 @@ the PCRs have moved it falls back to the plaintext key backup. Use
 .B "facelock tpm unseal\-check"
 to find out which of those applies.
 .RE
-.TP
-.B pam \fIsubcommand\fR
+.SS "facelock pam"
 Manage the facelock line in
 .I /etc/pam.d
 service files. This command owns every write to that directory;
@@ -486,8 +472,7 @@ source is absent, only a header naming a normalized configured candidate is
 recognized, and only to report why the local copy is retained; the header path
 is never opened.
 .RS
-.TP
-.B add
+.SS "facelock pam add"
 Add the facelock line to one or more service files. Root. Accepts
 \fB\-\-service \fIname\fR (repeatable), \fB\-y\fR, \fB\-\-yes\fR
 (alias \fB\-\-no\-confirm\fR) to skip the per-file confirmation,
@@ -519,12 +504,16 @@ verify that a real correct password succeeds and a wrong password fails, then
 retry the original Facelock command with all of its services and flags. Any
 saved-selection/live-graph disagreement or untrusted state also refuses without
 a PAM or backup write.
-.TP
-.B remove
+.SS "facelock pam remove"
 Remove the facelock line. Root. Same flags as \fBadd\fR except
 \fB\-\-allow\-sensitive\fR, which it does not offer \(em removal can only
 take away a way to authenticate, so there is nothing to gate. It never prompts,
-and it removes validated Facelock backup state plus the exact legacy adjacent
+but accepts \fB\-y\fR, \fB\-\-yes\fR (alias
+\fB\-\-no\-confirm\fR) for compatibility. Its other local options are
+repeatable \fB\-\-service \fIname\fR, \fB\-\-all\fR,
+\fB\-\-if\-present\fR, \fB\-\-keep\-backup\fR,
+\fB\-\-dry\-run\fR, and \fB\-\-json\fR. It removes validated Facelock
+backup state plus the exact legacy adjacent
 \fI.facelock\-backup\fR name by default. \fB\-\-keep\-backup\fR preserves
 both forms of rollback state. \fB\-\-all\fR conflicts with \fB\-\-service\fR
 and scans the compiled system roots
@@ -579,8 +568,7 @@ deletion rechecks the exact installed inode and the journaled header payload,
 owner, mode and first existing fixed-root vendor service, plus the journal
 backup identity and line-removed installed hash. Drift preserves the override,
 and an already absent flagged target is an idempotent completed unlink.
-.TP
-.B status
+.SS "facelock pam status"
 Report whether services carry the line. Reads only and needs
 .B no
 root: this is the probe to branch on instead of grepping
@@ -616,8 +604,7 @@ answer; see
 .B EXIT STATUS
 below.
 .RE
-.TP
-.B hyprlock \fIsubcommand\fR
+.SS "facelock hyprlock"
 Manage hyprlock lock-screen integration: the face glyph in
 \fBplaceholder_text\fR and the \fBignore_empty_input = false\fR setting that
 lets a bare Enter submit to PAM. Runs as your normal user and refuses to run as
@@ -629,21 +616,17 @@ A backup is taken before the first edit. Wiring
 .I /etc/pam.d/hyprlock
 itself is a separate, root step \(em see \fBpam add\fR above.
 .RS
-.TP
-.B enable
+.SS "facelock hyprlock enable"
 Add the face icon and set \fBignore_empty_input = false\fR. \fB\-\-no\-icon\fR
 sets only the functional flag, for a hyprlock font with no Nerd Font glyphs, and
 leaves any existing icon alone.
-.TP
-.B disable
+.SS "facelock hyprlock disable"
 Remove the face icon, and restore \fBignore_empty_input\fR only when no
 fingerprint icon coexists, so a machine using both keeps working.
-.TP
-.B status
+.SS "facelock hyprlock status"
 Show the current hyprlock integration state.
 .RE
-.TP
-.B audit
+.SS "facelock audit"
 View the structured audit log.
 .RS
 .TP
@@ -653,8 +636,9 @@ Follow mode: watch for new log entries.
 .B \-l\fR, \fB\-\-lines \fIcount\fR
 Number of recent entries to show (default: 20).
 .RE
-.TP
-.B data purge
+.SS "facelock data"
+Manage retained Facelock state.
+.SS "facelock data purge"
 Destroy retained Facelock state inside the compiled roots: enrolled
 embeddings, the database and its sidecars, encryption keys and sealed
 blobs, models, enrollment markers, audit logs, snapshots and upgrade
@@ -747,7 +731,9 @@ Outranks both the built-in default and
 a value that cannot be parsed is reported at warn level and ignored.
 .TP
 .B FACELOCK_CONFIG
-Override path to the configuration file.
+Override the configuration path only while the effective user is non-root.
+Every effective-UID-0 process ignores it, including ordinary root CLI
+commands. Use the explicit global \fB\-\-config\fR option when supported.
 .SH FILES
 .TP
 .I /etc/facelock/config.toml
