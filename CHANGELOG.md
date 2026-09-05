@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Debian release jobs trust the checkout they were handed**: tagging
+  v0.2.0-alpha.1 ran the release workflow for the first time since the Debian
+  source contract joined it, and both suites died on `fatal: detected dubious
+  ownership in repository at '/__w/facelock/facelock'` before a package was
+  built. A container job runs every step as root while the workspace keeps the
+  runner uid, so git rejects the checkout and exits 128; `actions/checkout`
+  writes the exception itself, but under a temporary `HOME` it discards when it
+  finishes, so no later step sees it. `build-deb` now takes the exception right
+  after checking out, the way `ci.yml` already does in the two jobs that need
+  it. `build-rpm` was unaffected and stays as it is: it installs no git, so
+  `actions/checkout` falls back to the REST tarball and leaves no repository
+  behind. `test/release-artifacts-contract.sh` now fails a containerized
+  release job that installs git without taking the exception, since a tag is
+  the only thing that runs this workflow.
+
 ## [0.2.0-alpha.1] - 2026-09-04
 
 ### Added

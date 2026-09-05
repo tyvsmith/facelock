@@ -209,6 +209,20 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Every step of a container job runs as root while the workspace keeps
+      # the runner uid, so git rejects the checkout as dubiously owned and
+      # exits 128. actions/checkout writes this same entry, but under a
+      # temporary HOME it discards when it finishes, so no later step sees it.
+      # Without this line both places this job reaches git die at 128:
+      # test/prepare-deb-test-context.sh under `just test-deb-source-contract`,
+      # and the `git archive` build-deb.sh takes the source tarball from.
+      # Ownership is the whole of what git checks, so the exception is all this
+      # needs. Only a container job needs it -- a job on the runner already
+      # owns its checkout, and build-rpm installs no git at all, so its
+      # checkout is the REST tarball and not a repository.
+      - name: Trust the workspace checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Install system dependencies
         run: |
           set -euo pipefail
