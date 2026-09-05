@@ -157,6 +157,10 @@ distribution/channel stand in for another.
 `manual-sections.json` presents remaining manual commands as ordered steps,
 including the exact documentation text, source location, and source hash.
 Manual review is not a shortcut around that binding. A passing manual record
+can qualify for completion only after its checked-in case has
+`review_status: reviewed`, concrete per-step invocation/exit/output/state
+expectations, and explicit fixture bindings. Refreshing the generated catalog
+resets these definitions to candidates requiring another review. The record
 must include `manual_review` with the operator, notes,
 `expectations_reviewed: true`, and the fixture bindings used. Each passing step
 must preserve the exact `documented_command`, record the actual argv, expected

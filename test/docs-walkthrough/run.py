@@ -234,14 +234,14 @@ def verify_guest(marker=MARKER):
         raise ValueError("guest evidence level differs from detected virtualization")
     # Refuse shared host paths and hardware. The launcher copies files instead
     # of mounting the checkout, host /run, PAM, devices, or a system bus.
-    check_mounts(Path("/proc/self/mountinfo").read_text())
+    check_mounts(Path("/proc/self/mountinfo").read_text(), launcher=guest.get("launcher_no_host_mounts") is True)
     if any(Path("/dev").glob("video*")) or any(Path("/dev").glob("tpm*")):
         raise ValueError("generic runner forbids camera/TPM passthrough; use the manual hardware protocol")
     guest["isolation_verified"] = True
     return guest
 
 
-def check_mounts(mountinfo):
+def check_mounts(mountinfo, launcher=False):
     for line in mountinfo.splitlines():
         columns = line.split()
         target = columns[4].replace(r"\040", " ")
@@ -255,6 +255,14 @@ def check_mounts(mountinfo):
         guest_run = target == "/run" and suffix[0] == "tmpfs" and columns[3] == "/"
         if any(target == path or target.startswith(path + "/") for path in protected) or (parent and not guest_run):
             raise ValueError(f"protected host exposure or unexpected mount: {target}")
+        # Package scripts, source builds and AUR helpers also write outside
+        # PAM/state roots. A separate mount there is not proven guest-local.
+        # Only the launcher's three container-managed networking files are
+        # exceptions; it copies inputs and never accepts user volume mounts.
+        write_roots = ("/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc", "/var", "/home", "/root", "/tmp", "/opt", "/srv")
+        managed_network_file = launcher and target in ("/etc/hosts", "/etc/hostname", "/etc/resolv.conf")
+        if not managed_network_file and any(target == path or target.startswith(path + "/") for path in write_roots):
+            raise ValueError(f"unverified mount at an adapter write path: {target}")
 
 
 def check_guest_case(guest, case, observed_init):
@@ -271,8 +279,23 @@ def check_guest_case(guest, case, observed_init):
 
 
 def pristine_files(root=Path("/")):
+    def symlinked_parent(relative):
+        path = root
+        for component in Path(relative).parts:
+            path /= component
+            if path.is_symlink():
+                # Standard merged-/usr aliases stay within the guest root.
+                aliases = {root / 'lib': root / 'usr/lib', root / 'lib64': root / 'usr/lib64'}
+                if path in aliases and path.resolve() == aliases[path].resolve() and path.resolve().is_relative_to(root.resolve()):
+                    continue
+                return True
+        return False
+
     pam_absent = True
     for directory in (root / "etc/pam.d", root / "usr/lib/pam.d"):
+        if symlinked_parent(directory.relative_to(root)):
+            pam_absent = False
+            continue
         if directory.exists():
             for path in directory.iterdir():
                 if path.is_dir():
@@ -297,7 +320,8 @@ def pristine_files(root=Path("/")):
         "etc/xdg/autostart/*facelock*", "usr/lib/tmpfiles.d/*facelock*",
         "usr/lib/security/*facelock*", "usr/lib64/security/*facelock*", "lib/security/*facelock*",
     )
-    return {"pam_absent": pam_absent, "service_assets_absent": not any(any(root.glob(pattern)) for pattern in patterns)}
+    unsafe_parent = any(symlinked_parent(pattern.split('*', 1)[0].rstrip('/')) for pattern in patterns)
+    return {"pam_absent": pam_absent, "service_assets_absent": not unsafe_parent and not any(any(root.glob(pattern)) for pattern in patterns)}
 
 
 def pristine_guest():

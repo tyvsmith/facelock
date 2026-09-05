@@ -17,6 +17,21 @@ def runner():
 
 
 class RunnerTests(unittest.TestCase):
+    def test_adapter_write_roots_reject_parent_and_child_binds(self):
+        for target in ('/usr', '/usr/lib', '/home', '/root', '/bin', '/lib', '/sbin', '/tmp', '/opt'):
+            with self.subTest(target=target), self.assertRaisesRegex(ValueError, 'mount'):
+                runner().check_mounts(f'31 20 8:1 /host{target} {target} rw - ext4 /dev/sda rw')
+
+    def test_symlinked_pam_and_service_parents_are_not_pristine(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'etc').mkdir()
+            (root / 'external').mkdir()
+            (root / 'etc/pam.d').symlink_to(root / 'external', target_is_directory=True)
+            self.assertFalse(runner().pristine_files(root)['pam_absent'])
+            (root / 'etc/systemd').symlink_to(root / 'external', target_is_directory=True)
+            self.assertFalse(runner().pristine_files(root)['service_assets_absent'])
+
     def test_derives_suite_and_fedora_cases_from_matrix(self):
         cases = runner().load_cases()
         names = {case["id"] for case in cases}
