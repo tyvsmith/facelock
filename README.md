@@ -29,10 +29,19 @@ but they are not currently served: a clean Debian 13 check of the documented
 `trixie` Release URL returns 404. Do not add that source until a stable 0.2.0
 release publishes it.
 
+The future public base is `https://tysmith.me/facelock/apt`; this mapping is a
+release contract, not a currently usable repository:
+
+| Future stable target | Suite | Required package capability |
+|----------------------|-------|-----------------------------|
+| Debian 13 | `trixie` | TPM |
+| Ubuntu 26.04 | `resolute` | TPM |
+
 Source entries written for v0.1.4 name the `main` or `legacy` suite. They
-are transitional compatibility entries until 0.3.0: `main` maps to the
-Trixie package and `legacy` serves no package. Bookworm, Noble, and Ubuntu 25.x
-have no future suite. Use the source build below for the current alpha tree.
+keep working until 0.3.0: `main` maps to the Trixie package set and `legacy`
+serves signed empty indexes. At 0.3.0, `apt update` fails until the entry is
+removed. Bookworm, Noble, and Ubuntu 25.x have no future suite. Use the source
+build below for the current alpha tree.
 
 ### Fedora (COPR)
 
@@ -253,10 +262,11 @@ just release 0.2.0        # bump version across all packaging files
 git push origin main --tags  # trigger CI release workflow
 ```
 
-A `vX.Y.Z` tag starts the release workflow, which attempts binaries, the two
-suite-specific `.deb` artifacts, and the direct Fedora `.rpm`. Those builds are
-not publication proof: the release and every required asset must be present and
-verified. Stable releases publish AUR/APT and enable production COPR handling;
+A `vX.Y.Z` tag starts the release workflow. It attempts binaries and the direct
+Fedora `.rpm`. It also attempts two suite-specific `.deb` artifacts, one for
+each supported suite. Those builds are not publication proof: the release and
+every required asset must be present and verified. Stable releases publish
+AUR/APT and enable production COPR handling;
 prereleases must not enter those stable channels. The existing
 v0.2.0-alpha.1 tag currently has no GitHub Release. See
 [docs/releasing.md](docs/releasing.md) for the gates and versioning contract.

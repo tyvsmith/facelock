@@ -13,10 +13,21 @@ just build
 target/debug/facelock --help
 ```
 
-The planned 0.2.0 APT suites (`trixie` and `resolute`) are not currently served;
-a clean `trixie` check returns 404. The production Fedora COPR currently serves
-v0.1.3, while stable is v0.1.4; the testing COPR is a candidate channel. RHEL
-is not in the supported matrix.
+The planned 0.2.0 APT suites are not currently served; a clean `trixie` check
+returns 404. The future public base is `https://tysmith.me/facelock/apt`, and
+the mapping below is policy rather than a currently usable repository:
+
+| Future stable target | Suite | Required package capability |
+|----------------------|-------|-----------------------------|
+| Debian 13 | `trixie` | TPM |
+| Ubuntu 26.04 | `resolute` | TPM |
+
+Existing v0.1.4 entries naming `main` or `legacy` keep working until 0.3.0:
+`main` maps to the Trixie package set and `legacy` serves signed empty indexes.
+At 0.3.0, `apt update` fails until the entry is removed.
+
+The production Fedora COPR currently serves v0.1.3, while stable is v0.1.4;
+the testing COPR is a candidate channel. RHEL is not in the supported matrix.
 See the canonical [Quickstart on GitHub](https://github.com/tyvsmith/facelock/blob/main/docs/quickstart.md)
 for repository setup commands and exact channel limitations.
 
@@ -38,7 +49,8 @@ inspect its output and then verify a new `sudo` session.
 
 ## Development
 
-For non-installing development, use the built path and explicit development
+Source development requires Rust 1.88+ and `just`. For non-installing
+development, use the built path and explicit development
 configuration. Management commands remain root-gated, and root ignores
 `FACELOCK_CONFIG`:
 

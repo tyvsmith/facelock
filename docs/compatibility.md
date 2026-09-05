@@ -30,6 +30,12 @@ No RHEL release target is claimed. OpenRC, runit, and s6 service templates are
 provided in the source tree, but their presence is not a claim that a named
 distribution has passed package or hardware validation.
 
+### Expected to Work (untested)
+
+No additional distribution is claimed as expected to work. This section is
+kept explicit so source templates and plausible compatibility are not mistaken
+for tested support.
+
 ## Camera Compatibility
 
 ### IR Cameras (recommended)

@@ -1,10 +1,28 @@
 # Compatibility
 
 The current delivery targets are x86_64 Linux systems with V4L2 and
-Linux-PAM. Package validation covers Arch, Debian 13 (`trixie`), Ubuntu 26.04
+Linux-PAM; source builds require Rust 1.88+. Package validation covers Arch,
+Debian 13 (`trixie`), Ubuntu 26.04
 LTS (`resolute`), and Fedora 43/44/45. RHEL is not in the supported matrix.
 Source templates exist for OpenRC, runit, and s6, but that does not establish
 package or hardware support for every distribution using those supervisors.
+
+## Tested Distributions
+
+Debian-family release support is exactly Debian 13 (Trixie) and Ubuntu 26.04
+LTS (Resolute). Other Debian and Ubuntu releases are unsupported.
+
+| Distribution | Init System | Mode | Status |
+|-------------|-------------|------|--------|
+| Arch Linux | systemd | daemon + D-Bus activation | Primary target |
+| Debian 13 (Trixie) | systemd | daemon + D-Bus activation | Booted package gate |
+| Ubuntu 26.04 LTS (Resolute) | systemd | daemon + D-Bus activation | Booted package gate |
+| Fedora 43/44/45 | systemd | daemon + D-Bus activation | Release matrix target |
+
+### Expected to Work (untested)
+
+No additional distribution is claimed as expected to work. Source templates
+do not convert a distribution into an untested support claim.
 
 ## Cameras and formats
 

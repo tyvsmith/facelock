@@ -63,6 +63,10 @@ stable APT, AUR, or production COPR. The production COPR currently serves
 v0.1.3; Fedora staging is a candidate channel. The exact supported release
 matrix is Fedora 43/44/45, Debian 13, and Ubuntu 26.04, not RHEL.
 
+A stable release is expected to carry two suite-specific `.deb` artifacts for
+trixie and resolute. That inventory states the release contract; it does not
+mean either future APT suite is currently published or installable.
+
 The Nix flake/module and OpenRC, runit, and s6 templates live in the source
 tree. Nix is not in nixpkgs and its derivation disables `doCheck`; the init
 templates have no independent package channel. Their existence is not a

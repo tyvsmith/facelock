@@ -351,13 +351,15 @@
             </div>
             <div class="terminal-body">
               <div><span class="comment"># Planned 0.2.0 stable suites:</span></div>
-              <div><span class="output">Debian 13 (trixie), Ubuntu 26.04 (resolute), amd64, TPM</span></div>
+              <div><span class="output">Debian 13 — trixie — amd64 — TPM</span></div>
+              <div><span class="output">Ubuntu 26.04 — resolute — amd64 — TPM</span></div>
               <div>&nbsp;</div>
+              <div><span class="comment"># Future public base: https://tysmith.me/facelock/apt</span></div>
               <div><span class="comment"># Not currently installable: the clean trixie Release check returns 404.</span></div>
               <div><span class="comment"># Use source until a stable 0.2.0 release publishes these suites.</span></div>
             </div>
           </div>
-          <p class="install-note migration">Existing v0.1.4 source entries use transitional <code>main</code>/<code>legacy</code> names. Do not rewrite them to <code>trixie</code> or <code>resolute</code> before those suites are actually published.</p>
+          <p class="install-note migration">Existing v0.1.4 source entries naming <code>main</code> or <code>legacy</code> keep working until 0.3.0. At 0.3.0, <code>apt update</code> fails until the entry is removed. Do not rewrite an existing entry to <code>trixie</code> or <code>resolute</code> before those suites are actually published.</p>
         </div>
 
         <div id="install-fedora" class="install-panel" role="tabpanel" hidden>

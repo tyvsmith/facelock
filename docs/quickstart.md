@@ -16,9 +16,14 @@ yay -S facelock
 Debian 13 (`trixie`) and Ubuntu 26.04 LTS (`resolute`) on amd64 are the exact
 0.2.0 stable APT targets. They are not currently served: the clean-system
 check of the documented `trixie` Release URL returns 404. Do not add either
-source until a stable 0.2.0 release publishes it. Existing v0.1.4 sources used
-the transitional `main`/`legacy` names; the current alpha tree is a source
-build, not an APT publication.
+source until a stable 0.2.0 release publishes it. Their future public base is
+`https://tysmith.me/facelock/apt`; the release-policy mapping is Debian 13 /
+`trixie` / TPM and Ubuntu 26.04 / `resolute` / TPM.
+
+Existing v0.1.4 entries naming `main` or `legacy` keep working until 0.3.0:
+`main` maps to the Trixie package set and `legacy` serves signed empty indexes.
+At 0.3.0, `apt update` fails until the entry is removed. The current alpha tree
+is a source build, not an APT publication.
 
 The production COPR targets Fedora 43, 44, and 45 only. It currently serves
 v0.1.3, behind stable v0.1.4. `tyvsmith/facelock-testing` is a staging/candidate
@@ -44,7 +49,7 @@ then test `sudo` from a new terminal before closing the recovery shell.
 
 ## Build from source
 
-Use Rust 1.88 or newer and `just`. Build dependencies follow the package
+Use Rust 1.88+ and `just`. Build dependencies follow the package
 manifests: PAM and V4L2 development headers, Clang, Wayland and libxkbcommon
 headers, gettext, pkg-config, and TPM2-TSS headers. The system ONNX Runtime is a
 runtime/package concern; Cargo's source build obtains the pinned runtime crate
