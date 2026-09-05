@@ -51,7 +51,16 @@ def metadata(root=ROOT):
     cargo = command_json(["cargo", "metadata", "--locked", "--offline", "--no-deps", "--format-version", "1"], root)
     binaries = sorted([{"name": t["name"], "crate": p["name"]} for p in cargo["packages"] for t in p["targets"] if "bin" in t["kind"]], key=lambda b: b["name"])
     just = command_json(["just", "--dump", "--dump-format", "json"], root)
-    return binaries, just["recipes"]
+    return binaries, recipe_metadata(just)
+
+
+def recipe_metadata(dump):
+    recipes = dict(dump["recipes"])
+    for name, alias in dump.get("aliases", {}).items():
+        target = alias["target"]
+        recipes[name] = {**recipes[target], "name": name, "alias_for": target,
+                         "doc": f"Alias for `{target}`", "private": "private" in alias.get("attributes", [])}
+    return recipes
 
 
 def check_just_argv(argv, recipes):
@@ -146,7 +155,7 @@ def main():
             print(f"documentation inventory: {len(paths)} files, {len(binaries)} executables, {sum(not r.get('private') for r in recipes.values())} public recipes")
         return bool(errors)
     if not args.write:
-        print(json.dumps({"schema_version": 1, "files": paths, "binaries": binaries, "recipes": [{"name": n, "parameters": r.get("parameters", [])} for n, r in sorted(recipes.items()) if not r.get("private")], "errors": errors}, indent=2))
+        print(json.dumps({"schema_version": 1, "files": paths, "binaries": binaries, "recipes": [{"name": n, "parameters": r.get("parameters", []), "dependencies": r.get("dependencies", []), "alias_for": r.get("alias_for")} for n, r in sorted(recipes.items()) if not r.get("private")], "errors": errors}, indent=2))
     return 0
 
 

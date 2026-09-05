@@ -52,6 +52,14 @@ class InventoryTest(unittest.TestCase):
         self.assertIsNotNone(MODULE.check_entrypoint(["just", "invented"], set(), recipes, schematic=True))
         self.assertIsNone(MODULE.check_entrypoint(["just", "release"], set(), recipes, schematic=True))
 
+    def test_just_aliases_retain_target_parameters_and_dependencies(self):
+        target = {"parameters": [{"name": "version", "default": None}], "dependencies": [{"recipe": "build", "arguments": []}], "private": False}
+        recipes = MODULE.recipe_metadata({"recipes": {"release": target}, "aliases": {"r": {"target": "release", "attributes": []}}})
+        self.assertEqual(recipes["r"]["alias_for"], "release")
+        self.assertEqual(recipes["r"]["dependencies"], target["dependencies"])
+        self.assertIsNotNone(MODULE.check_just_argv(["just", "r"], recipes))
+        self.assertIn("Alias for", MODULE.render_recipes(recipes, []))
+
 
 if __name__ == "__main__":
     unittest.main()
