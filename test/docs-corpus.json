@@ -6,6 +6,14 @@
     "facelock-polkit-agent": "docs/auxiliary-commands.md"
   },
   "files": {
+    "docs/command-audit.md": {
+      "role": "current",
+      "reason": "Audit scope, reproducible conformance checks and dated evidence limitations"
+    },
+    "book/src/command-audit.md": {
+      "role": "summary",
+      "reason": "Published include of command audit scope and evidence limitations"
+    },
     "docs/testing-walkthrough.md": {
       "role": "canonical",
       "reason": "Clean-system walkthrough matrix, evidence requirements and guarded runner usage"

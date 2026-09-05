@@ -15,5 +15,6 @@
 - [Testing](testing.md)
 - [Testing Safety](testing-safety.md)
 - [Clean-System Walkthrough](testing-walkthrough.md)
+- [Command Audit](command-audit.md)
 - [Releasing](releasing.md)
 - [Contributing](contributing.md)
