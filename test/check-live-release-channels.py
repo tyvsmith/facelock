@@ -324,14 +324,32 @@ served_evr = build_evr(succeeded)
 served_chroots = build_chroots(succeeded)
 
 
-def matches(evr: str | None) -> bool:
-    """Packit rewrites `Release` to `<release>.<snapshot>` unless told not to.
+# How strictly this channel's EVR is read, decided by whether its Packit job
+# pins the release. Production sets `update_release: false`, so it publishes the
+# EVR the conversion table promises and is compared exactly. Staging keeps
+# Packit's `1.{timestamp}.{ref}` suffix, which its per-pull-request NVRs need,
+# so its comparison ends at the boundary dot instead. `check-release-matrix.py`
+# holds this value and the Packit flag together; neither moves alone.
+exact = channel.get("served_evr_exact")
+if not isinstance(exact, bool):
+    fail(
+        f"release matrix {args.channel} COPR authority must declare a boolean "
+        f"served EVR comparison: {exact!r}"
+    )
 
-    A release-triggered build of 0.2.0 lands as `0.2.0-1.20260904220135.v0.2.0`,
-    not `0.2.0-1`, so the expected EVR is a prefix and not an equality. The
-    boundary dot matters: it keeps `0.2.0-1` from matching `0.2.0-11`.
-    """
-    return evr == expected_evr or (evr is not None and evr.startswith(f"{expected_evr}."))
+
+def carries(evr: str | None, wanted: str) -> bool:
+    """Is `evr` the build `wanted` names? Exactly, or under a release suffix."""
+    if evr is None:
+        return False
+    if exact:
+        return evr == wanted
+    # The boundary dot keeps `0.2.0-1` from swallowing `0.2.0-11`.
+    return evr == wanted or evr.startswith(f"{wanted}.")
+
+
+def matches(evr: str | None) -> bool:
+    return carries(evr, expected_evr)
 
 
 if matches(served_evr):
@@ -343,14 +361,19 @@ if matches(served_evr):
 
 # A gap the maintainer has already accepted, pinned to both EVRs so it cannot
 # outlive itself: the moment the channel serves anything else, the recorded
-# gap stops matching and this stops excusing anything. The served side takes the
-# same prefix rule as the expected side, or a snapshot-suffixed rebuild of the
-# very EVR the record names would stop matching it.
-gap = channel.get("served_evr_gap")
+# gap stops matching and this stops excusing anything. The served side is read
+# under the channel's own rule, so it tightens and loosens with the expected
+# side rather than drifting away from it.
+#
+# Only `--expect-predecessor` consults it. A gap is a statement about a release
+# that already shipped without reaching COPR, and preflight is the only caller
+# asking about one. `verify-copr` asks about the release it is publishing right
+# now with `--expect-evr`, and a record that could answer that question would
+# silence the job on the very failure it exists to make loud -- reachable,
+# because a predecessor may be pinned at the workspace version.
+gap = channel.get("served_evr_gap") if args.expect_predecessor else None
 gap_served = gap.get("served_evr") if isinstance(gap, dict) else None
-gap_matches_served = isinstance(gap_served, str) and served_evr is not None and (
-    served_evr == gap_served or served_evr.startswith(f"{gap_served}.")
-)
+gap_matches_served = isinstance(gap_served, str) and carries(served_evr, gap_served)
 if isinstance(gap, dict) and gap.get("expected_evr") == expected_evr and gap_matches_served:
     print(
         f"served release channel contract: KNOWN GAP ({args.channel} COPR "

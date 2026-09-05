@@ -462,6 +462,18 @@ require(
     staging_job.get("owner") == staging_copr["owner"],
     "Packit staging COPR owner disagrees with the release matrix",
 )
+# The other half of the pin. Staging builds every pull request into one project,
+# so its NVRs have to differ from each other; Packit's snapshot suffix is what
+# makes them. Pinning the release there would collide two pull requests on one
+# NVR, so the flag stays off the job and the comparison stays a prefix.
+require(
+    "update_release" not in staging_job,
+    "Packit staging COPR job must keep Packit's release suffix so its per-pull-request NVRs differ",
+)
+require(
+    staging_copr.get("served_evr_exact") is False,
+    "staging COPR must compare the served EVR as a prefix, because its Packit job keeps the suffix",
+)
 # The trigger tracks provisioning. While the project does not exist, `ignore`
 # keeps the job hand-dispatched (`/packit build`), because a pull-request
 # trigger would aim every pull request's Packit run at a project that answers
@@ -503,6 +515,23 @@ production_trigger = production_job.get("trigger")
 require(
     production_trigger in {"ignore", "release"},
     f"Packit production COPR trigger must be 'ignore' or 'release', got {production_trigger!r}",
+)
+# `update_release` and `served_evr_exact` are one contract, held here so neither
+# can move alone. Packit's default rewrites `Release: 1%{?dist}` to
+# `1.{timestamp}.{ref}`, and production pins it off so COPR serves the EVR the
+# conversion table promises. Tightening the served comparison to an equality
+# without that pin reds every stable release; dropping the pin while the
+# comparison stays exact does the same (#333). Staging keeps the default: its
+# pull-request builds need distinct NVRs, so its comparison stays a prefix.
+production_update_release = production_job.get("update_release")
+require(
+    production_update_release is False,
+    "Packit production COPR job must pin update_release: false so COPR serves the "
+    f"canonical EVR, got {production_update_release!r}",
+)
+require(
+    production_copr.get("served_evr_exact") is True,
+    "production COPR must compare the served EVR exactly, because its Packit job pins the release",
 )
 if release_version is not None and "-" not in release_version:
     require(

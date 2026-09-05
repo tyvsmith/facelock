@@ -677,15 +677,35 @@ Two rules follow, and both are enforced:
   this existed, the chroot comparison passed on every day of the three months
   COPR served 0.1.3.
 
-The EVR COPR serves is **not** the one in the conversion table above. Packit's
-default `fix-spec-file` action rewrites `Release: 1%{?dist}` to
-`1.{timestamp}.{ref}`, so a v0.2.0 release lands in COPR as
-`facelock-0.2.0-1.20260904220135575676.v0.2.0`, not `facelock-0.2.0-1`. The
-served comparison therefore takes the release matrix's EVR as a prefix ending at
-a dot: `0.2.0-1` and `0.2.0-1.<anything>` both satisfy it, `0.2.0-11` does not.
-Setting `update_release: false` on the production job would make COPR match the
-other channels exactly; that is a change to what COPR publishes and has not been
-made.
+Packit's default `fix-spec-file` action rewrites `Release: 1%{?dist}` to
+`1.{timestamp}.{ref}`, which would publish a v0.2.0 release as
+`facelock-0.2.0-1.20260904220135575676.v0.2.0` rather than the
+`facelock-0.2.0-1` the conversion table promises. The production `copr_build`
+job therefore carries `update_release: false`, and production's served
+comparison is an equality.
+
+Staging keeps the default. It builds every pull request into one project, so
+its NVRs have to differ from each other, and the snapshot suffix is what makes
+them; its comparison ends at the boundary dot instead, accepting `0.2.0-1` and
+`0.2.0-1.<anything>` while still refusing `0.2.0-11`. The flag and the
+comparison are one contract in `test/check-release-matrix.py`: neither channel
+can change one without the other, because either half alone reds every stable
+release.
+
+**What is proven, and what is not.** The schema accepts the per-job flag
+(`just test-packit-config`), Packit's own config parser resolves it to `False`
+for the production job while staging stays `True`, and `packit srpm` with the
+flag set produces `facelock-0.2.0-1.fc44.src.rpm` against
+`facelock-0.2.0-1.20260904220135575676.master.0.g7d8eef8.fc44.src.rpm` without
+it. What no local check can reach is packit-service applying the job's flag on a
+real release event: `just test-copr` builds its SRPM through the CLI, which
+reads package-level config, so that lane still carries the snapshot suffix and
+proves the package builds rather than the EVR it will be published under.
+**The first stable tag after this change is the proof.** If that release
+publishes a suffixed EVR anyway, `verify-copr` fails on an otherwise healthy
+build; the fix is to move `update_release` from the job to the top level of
+`.packit.yaml` and flip staging's `served_evr_exact` accordingly, not to loosen
+the comparison.
 
 `just release-preflight` asks the same question about the previous release:
 `test/check-live-release-channels.py --expect-predecessor` requires production
@@ -702,13 +722,19 @@ an option:
 
 ```bash
 git checkout vX.Y.Z
-packit build in-copr --owner tyvsmith --project facelock \
-    --targets fedora-43-x86_64,fedora-44-x86_64,fedora-45-x86_64
+packit srpm --no-update-release
+copr-cli build tyvsmith/facelock facelock-X.Y.Z-1.*.src.rpm \
+    -r fedora-43-x86_64 -r fedora-44-x86_64 -r fedora-45-x86_64
 ```
 
-`--targets` defaults to Rawhide alone, so pass the supported set. This takes the
-same reconciliation path the service does, so it fails the same way if the
-project cannot be edited.
+`--no-update-release` is not optional. The Packit CLI reads package-level
+config, not a job's, so it would otherwise apply the snapshot suffix the
+production job pins off and hand production an EVR its own gate refuses.
+`packit build in-copr` has no equivalent flag, which is why the recovery goes
+through `copr-cli` with an SRPM built locally. Name the three supported chroots:
+`copr-cli build` with no `-r` builds every chroot the project has enabled, which
+picks up the optional Rawhide one. This path needs a COPR API token in
+`~/.config/copr`, which the Packit CLI did not.
 
 ##### Staging COPR (`tyvsmith/facelock-testing`)
 

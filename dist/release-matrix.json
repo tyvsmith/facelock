@@ -65,6 +65,7 @@
       ],
       "required_forge_project": "github.com/tyvsmith/facelock",
       "prerelease_publication": false,
+      "served_evr_exact": true,
       "served_evr_gap": {
         "expected_evr": "0.1.4-1",
         "served_evr": "0.1.3-1",
@@ -83,6 +84,7 @@
         "fedora-45-x86_64"
       ],
       "required_forge_project": "github.com/tyvsmith/facelock",
+      "served_evr_exact": false,
       "provisioning_issue": 236,
       "managed_by_this_change": false,
       "provisioned": true

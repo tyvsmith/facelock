@@ -613,7 +613,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   serve the pinned predecessor. The setup guide now asks for the admin
   permission Packit actually needs. The v0.1.4 build is not backfilled — 0.2.0
   supersedes it — and that gap is recorded against both EVRs so it excuses
-  nothing else and retires itself.
+  nothing else and retires itself. Only preflight consults the record; the
+  release job asks about the release it is publishing and cannot be silenced
+  by it.
+- **Production COPR publishes the EVR the versioning contract promises**
+  (#333): the production `copr_build` job now carries `update_release: false`.
+  Packit's default rewrites `Release: 1%{?dist}` to `1.{timestamp}.{ref}`, so
+  COPR would have served `0.2.0-1.20260904220135575676.v0.2.0` while every
+  other channel served `0.2.0-1`. Staging keeps the suffix, which its
+  per-pull-request NVRs need, and its served comparison stays a prefix while
+  production's is an equality; `test/check-release-matrix.py` holds the flag
+  and the comparison together so neither channel can move one alone. The
+  documented recovery build now passes `--no-update-release`, because the
+  Packit CLI reads package-level config rather than a job's. Whether
+  packit-service applies the per-job flag on a real release event is not
+  provable locally; the first stable tag after this change is the proof.
 - **A lost encryption key is never replaced automatically** (#231): the
   encrypt-by-default keyfile is now created only for a database that holds no
   encrypted template. On a system whose key artifact went missing, facelock had
