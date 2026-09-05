@@ -53,6 +53,7 @@ def release_payload(identity, work):
         resolved = json.load(response)
     if resolved.get("sha") != identity["artifact_commit"]:
         raise ValueError("published tag commit differs from requested artifact commit")
+    (work / "source-commit-verification.json").write_text(json.dumps({"asserted_commit": identity["artifact_commit"], "observed_tag_commit": resolved["sha"], "tag_commit_verified": True, "build_commit_verified": False, "reason": "GitHub tag resolution checked; no binary build attestation validated"}))
     if identity["channel"].startswith("github-"):
         url = "https://api.github.com/repos/tyvsmith/facelock/releases/tags/" + identity["release"]
         with urllib.request.urlopen(url, timeout=30) as response:
@@ -82,6 +83,8 @@ def observe(case, identity, work, state, actual_hash):
     version = version_text.split()[-1]
     native = native_version(case)
     installed = {"version": version, "native_version": native, "artifact_sha256": actual_hash}
+    provenance = work / "source-commit-verification.json"
+    installed["source_commit_verification"] = json.loads(provenance.read_text()) if provenance.exists() else {"asserted_commit": identity["artifact_commit"], "tag_commit_verified": False, "build_commit_verified": False, "reason": "package version and payload verified; source commit was asserted, not established by package-manager metadata"}
     if case["adapter"] == "arch":
         installed["aur_commit"] = (work / "aur-commit").read_text().strip()
     if version != identity["version"] or native != identity["native_version"]:

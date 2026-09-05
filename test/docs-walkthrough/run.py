@@ -74,6 +74,9 @@ def load_cases(include_manual=True):
             case = copy.deepcopy(manifest["defaults"])
             case.update(template)
             case.update(binding)
+            # These fixed adapters test an installation route. The cited
+            # examples supply context; they are not literal shell replay.
+            case["source_role"] = "route-reference"
             case["id"] = template["id"].format(**binding)
             case["sources"] = manifest.get("source_pins", {}).get(template["id"], [])
             if "image" not in case:
@@ -118,7 +121,7 @@ def coverage(cases, occurrences):
     for row in occurrences:
         if row["classification"] not in ("executable", "manual"):
             continue
-        matching = [case["id"] for case in cases if row["source"] in case["sources"]]
+        matching = [case["id"] for case in cases if case.get("source_role") != "route-reference" and row["source"] in case["sources"]]
         obligations.append({"source": row["source"], "raw": row["raw"], "classification": row["classification"], "scenario_ids": matching, "status": "pending", "reason": "execution evidence required" if matching else "no reviewed ordered scenario covers this occurrence"})
     return {"schema_version": 1, "obligations": obligations, "unmapped": sum(not row["scenario_ids"] for row in obligations), "pending": len(obligations)}
 
@@ -137,7 +140,7 @@ def manual_sections(cases, occurrences):
             sections.setdefault((source["path"], source["anchor"]), []).append(row)
     result = []
     for (path, anchor), rows in sections.items():
-        if all(any(row["source"] in case["sources"] for case in cases) for row in rows):
+        if all(any(case.get("source_role") != "route-reference" and row["source"] in case["sources"] for case in cases) for row in rows):
             continue
         text = "\n".join(row["raw"] for row in rows)
         requirements = ["human-command-review", "section-prerequisites", "fixture-bindings", "observed-postconditions"]
@@ -161,6 +164,8 @@ def manual_sections(cases, occurrences):
         case = {
             "id": "manual-section-" + identifier, "target": "section-specific-guest",
             "channel": "github-alpha", "adapter": "manual", "generated_section": True,
+            "source_role": "ordered-occurrence", "review_status": "candidate",
+            "review_reason": "mechanically grouped commands; a human must review section fixtures, exit expectations and applicability before execution",
             "title": f"{path}#{anchor}", "minimum_level": "physical-hardware" if any(item in requirements for item in ("ir-camera", "gpu")) else "booted-vm",
             "requirements": list(dict.fromkeys(requirements)),
             "prerequisites": ["restore a pristine disposable guest for this section", "read the enclosing section and earlier prerequisite headings", "bind every user, path, service, device, package and secret placeholder to guest-local fixtures", "record intentionally failing commands with their documented expected outcome"],
@@ -205,7 +210,7 @@ def refresh():
     MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n")
     manual = manual_sections(load_cases(include_manual=False), occurrences)
     MANUAL_CASES.write_text(json.dumps({"schema_version": 1, "cases": manual}, indent=2) + "\n")
-    print("refreshed source pins; review the diff before accepting existing evidence")
+    print("refreshed source pins and candidate manual sections; review the diff and execution prerequisites")
 
 
 def verify_guest(marker=MARKER):
@@ -280,7 +285,7 @@ def commit():
 
 
 def initial_record(case, identity):
-    return {"schema_version": 1, "scenario": case["id"], "target": case["target"], "status": "blocked", "level": "syntax-only", "reason": "not executed", "docs_commit": commit(), "harness_commit": commit(), **harness_identity(), "sources": case["sources"], "started_at": now(), "finished_at": now(), "identity": identity, "environment": {}, "steps": [], "installed": {}}
+    return {"schema_version": 1, "scenario": case["id"], "target": case["target"], "source_role": case.get("source_role", "ordered-occurrence"), "status": "blocked", "level": "syntax-only", "reason": "not executed", "docs_commit": commit(), "harness_commit": commit(), **harness_identity(), "sources": case["sources"], "started_at": now(), "finished_at": now(), "identity": identity, "artifact_commit_status": "asserted; consult installed.source_commit_verification for independently observed provenance", "environment": {}, "steps": [], "installed": {}}
 
 
 def harness_identity():
@@ -488,7 +493,7 @@ def main():
             missing = coverage(cases, source_occurrences())["unmapped"]
             if missing:
                 raise ValueError(f"{missing} documented obligations have no scenario; review refresh output")
-            print(f"walkthrough cases: {len(cases)} reviewed scenarios; source hashes match")
+            print(f"walkthrough cases: {len(cases)} definitions; source hashes match; generated manual sections remain candidates pending human review")
             return 0
         case = next((case for case in cases if case["id"] == args.scenario), None)
         if case is None:

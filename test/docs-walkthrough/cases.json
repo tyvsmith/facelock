@@ -39,8 +39,8 @@
       "runtime_policy": "bundled-ort",
       "source_selectors": [
         {
-          "path": "README.md",
-          "contains": "tysmith-archive-keyring.gpg"
+          "path": "docs/releasing.md",
+          "contains": "just test-apt-repo"
         }
       ]
     },
@@ -210,8 +210,8 @@
       ],
       "source_selectors": [
         {
-          "path": "docs/quickstart.md",
-          "contains": "sudo echo"
+          "path": "docs/testing-safety.md",
+          "contains": "facelock pam add"
         }
       ]
     },
@@ -228,7 +228,7 @@
       ],
       "source_selectors": [
         {
-          "path": "docs/testing-safety.md",
+          "path": "docs/cli.md",
           "contains": "facelock enroll"
         }
       ]
@@ -283,7 +283,7 @@
       ],
       "source_selectors": [
         {
-          "path": "docs/quickstart.md",
+          "path": "book/src/gpu.md",
           "contains": "onnxruntime-opt-cuda"
         }
       ]
@@ -312,24 +312,17 @@
         "path": "README.md",
         "anchor": "arch-linux-aur",
         "ordinal": 1,
-        "line": 14,
+        "line": 21,
         "sha256": "d362fd362389741be7a261a22cf3cb04edfabb48d43d545e4685ca00b4a1c743"
       }
     ],
     "apt-{suite}": [
       {
-        "path": "README.md",
-        "anchor": "debian--ubuntu-apt",
-        "ordinal": 3,
-        "line": 26,
-        "sha256": "08ac66acb8d6ca6fcc5e1bb5c73d41524c5c68e91c3a90aae33935c91f595c88"
-      },
-      {
-        "path": "README.md",
-        "anchor": "debian--ubuntu-apt",
-        "ordinal": 5,
-        "line": 33,
-        "sha256": "f12182ac12e13123994fc98604f5b23d90c445698aa9babd7e504f6ddb17a130"
+        "path": "docs/releasing.md",
+        "anchor": "release-preflight-recommended",
+        "ordinal": 16,
+        "line": 509,
+        "sha256": "655d50b2ad3658f69f4548aa1da652750d17bec282f550281f9cc518912ca460"
       }
     ],
     "deb-{suite}-direct": [
@@ -451,18 +444,18 @@
     "copr-production-{release}": [
       {
         "path": "README.md",
-        "anchor": "fedora--rhel-copr",
+        "anchor": "fedora-copr",
         "ordinal": 1,
-        "line": 52,
+        "line": 45,
         "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
       }
     ],
     "copr-staging-{release}": [
       {
         "path": "README.md",
-        "anchor": "fedora--rhel-copr",
+        "anchor": "fedora-copr",
         "ordinal": 1,
-        "line": 52,
+        "line": 45,
         "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
       }
     ],
@@ -470,9 +463,9 @@
       {
         "path": "README.md",
         "anchor": "from-source",
-        "ordinal": 1,
-        "line": 59,
-        "sha256": "5a697d0b2971d1277eaae0a1baa752a3c7ab70493c04991c1ae6008023e800e7"
+        "ordinal": 3,
+        "line": 54,
+        "sha256": "eb299e25573b6ee163d6fdcc275497b0219332e1a8345bf4bb6c26c4e20bf162"
       }
     ],
     "nixos": [
@@ -489,15 +482,8 @@
         "path": "docs/compatibility.md",
         "anchor": "non-systemd",
         "ordinal": 1,
-        "line": 196,
-        "sha256": "392536215d3fa43b5417b9a9c5a7662cfddf5f9d593b65ce7b0299d208a712b6"
-      },
-      {
-        "path": "docs/compatibility.md",
-        "anchor": "non-systemd",
-        "ordinal": 3,
-        "line": 200,
-        "sha256": "d926e118f105b53b0f1371af8a88cf95e7612f0ec3365469d1988aaadbf5d71f"
+        "line": 190,
+        "sha256": "4048f94d4e94a019ea8fce71887f6614b1bb0cec5f2847a54745ee8c5157d02d"
       }
     ],
     "runit": [
@@ -505,15 +491,8 @@
         "path": "docs/compatibility.md",
         "anchor": "non-systemd",
         "ordinal": 1,
-        "line": 196,
-        "sha256": "392536215d3fa43b5417b9a9c5a7662cfddf5f9d593b65ce7b0299d208a712b6"
-      },
-      {
-        "path": "docs/compatibility.md",
-        "anchor": "non-systemd",
-        "ordinal": 3,
-        "line": 200,
-        "sha256": "d926e118f105b53b0f1371af8a88cf95e7612f0ec3365469d1988aaadbf5d71f"
+        "line": 190,
+        "sha256": "4048f94d4e94a019ea8fce71887f6614b1bb0cec5f2847a54745ee8c5157d02d"
       }
     ],
     "s6": [
@@ -521,15 +500,8 @@
         "path": "docs/compatibility.md",
         "anchor": "non-systemd",
         "ordinal": 1,
-        "line": 196,
-        "sha256": "392536215d3fa43b5417b9a9c5a7662cfddf5f9d593b65ce7b0299d208a712b6"
-      },
-      {
-        "path": "docs/compatibility.md",
-        "anchor": "non-systemd",
-        "ordinal": 3,
-        "line": 200,
-        "sha256": "d926e118f105b53b0f1371af8a88cf95e7612f0ec3365469d1988aaadbf5d71f"
+        "line": 190,
+        "sha256": "4048f94d4e94a019ea8fce71887f6614b1bb0cec5f2847a54745ee8c5157d02d"
       }
     ],
     "first-setup": [
@@ -537,54 +509,68 @@
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 1,
-        "line": 65,
+        "line": 60,
         "sha256": "13ece4f24ba1175dd24829a6e605712bee3c028c5505562d6f7dc6616ef1bb63"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 4,
-        "line": 71,
+        "line": 68,
         "sha256": "e75d40fad8fc39564478eb4a79fc737f644f9b056e395a761231e9d5ba87526a"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 5,
-        "line": 71,
+        "line": 69,
         "sha256": "ffd01420441dd9f03d93c8cc6ee904634a47010b453fdb05d06b7bfee0c455b2"
       },
       {
         "path": "README.md",
         "anchor": "hyprlock-integration",
         "ordinal": 1,
-        "line": 188,
+        "line": 198,
         "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
       }
     ],
     "daemon-auth": [
       {
-        "path": "docs/quickstart.md",
-        "anchor": "verify",
+        "path": "docs/testing-safety.md",
+        "anchor": "host-pam-testing",
         "ordinal": 1,
-        "line": 68,
-        "sha256": "26dc2d7de3624784826d9528f17c93aced416852f2a1078d3b2a23295e7a2ac7"
+        "line": 94,
+        "sha256": "0677a306f44c09bf7779105645adecf936718a3add5e8a9384cd8819f219b449"
       }
     ],
     "oneshot-auth": [
       {
-        "path": "docs/testing-safety.md",
-        "anchor": "no-daemon-development",
+        "path": "docs/cli.md",
+        "anchor": "facelock-enroll",
         "ordinal": 1,
-        "line": 101,
-        "sha256": "9461941e0a7f00e987ce2dda9a16da8fe5f559f836c5e87bdbd898ff64f0c2ac"
+        "line": 317,
+        "sha256": "c4690fbd7fc9c8306ad09a3c9908dc8705b6b432c357ef42feefdb9a364e56ec"
       },
       {
-        "path": "docs/testing-safety.md",
-        "anchor": "daemon-development",
+        "path": "docs/cli.md",
+        "anchor": "facelock-enroll",
         "ordinal": 2,
-        "line": 110,
-        "sha256": "574f98e639ed7cd0c06ebb25a3a2fa9d0166b18eeb3b924fec53599e120d2073"
+        "line": 318,
+        "sha256": "f6258456e1c316bf195463b75d4cc3ca46505e310b4f647148666799f433ab59"
+      },
+      {
+        "path": "docs/cli.md",
+        "anchor": "facelock-enroll",
+        "ordinal": 3,
+        "line": 319,
+        "sha256": "1d6fbfd963d2c16abc573dd78da48ef57c0d217acc29a134e1aecaa85f35d614"
+      },
+      {
+        "path": "docs/cli.md",
+        "anchor": "facelock-enroll",
+        "ordinal": 4,
+        "line": 320,
+        "sha256": "81c7de8a62e99df3226e7e1bb6f63cdb9cce4d5091b285b192bbdb5c9264353e"
       }
     ],
     "desktop-lock": [
@@ -592,28 +578,28 @@
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 1,
-        "line": 65,
+        "line": 60,
         "sha256": "13ece4f24ba1175dd24829a6e605712bee3c028c5505562d6f7dc6616ef1bb63"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 4,
-        "line": 71,
+        "line": 68,
         "sha256": "e75d40fad8fc39564478eb4a79fc737f644f9b056e395a761231e9d5ba87526a"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 5,
-        "line": 71,
+        "line": 69,
         "sha256": "ffd01420441dd9f03d93c8cc6ee904634a47010b453fdb05d06b7bfee0c455b2"
       },
       {
         "path": "README.md",
         "anchor": "hyprlock-integration",
         "ordinal": 1,
-        "line": 188,
+        "line": 198,
         "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
       }
     ],
@@ -621,38 +607,59 @@
       {
         "path": "docs/security.md",
         "anchor": "c-encryption-at-rest-implemented--encrypted-by-default-plan-04",
-        "ordinal": 14,
-        "line": 702,
+        "ordinal": 3,
+        "line": 575,
+        "sha256": "01e97e6674c49b0624391bf9baf995fbc5cd7b6a538c83d957874feaf7d6d619"
+      },
+      {
+        "path": "docs/security.md",
+        "anchor": "c-encryption-at-rest-implemented--encrypted-by-default-plan-04",
+        "ordinal": 4,
+        "line": 589,
+        "sha256": "bde87dbfe2840eed57125f83eee67850efa8fcf859ad1f9cf8c08ee1c3fb22ad"
+      },
+      {
+        "path": "docs/security.md",
+        "anchor": "c-encryption-at-rest-implemented--encrypted-by-default-plan-04",
+        "ordinal": 9,
+        "line": 625,
         "sha256": "01e97e6674c49b0624391bf9baf995fbc5cd7b6a538c83d957874feaf7d6d619"
       },
       {
         "path": "docs/security.md",
         "anchor": "c-encryption-at-rest-implemented--encrypted-by-default-plan-04",
         "ordinal": 15,
+        "line": 702,
+        "sha256": "01e97e6674c49b0624391bf9baf995fbc5cd7b6a538c83d957874feaf7d6d619"
+      },
+      {
+        "path": "docs/security.md",
+        "anchor": "c-encryption-at-rest-implemented--encrypted-by-default-plan-04",
+        "ordinal": 16,
         "line": 713,
         "sha256": "ca52638beb8b81752047d1c4cfbeb5f5163e88c7236a263be28b86a84ad799a9"
       },
       {
         "path": "docs/security.md",
         "anchor": "c-encryption-at-rest-implemented--encrypted-by-default-plan-04",
-        "ordinal": 16,
+        "ordinal": 17,
         "line": 717,
         "sha256": "db7fc11fb14de64e8d400fe3178e168101f01d06eeb4940e5016052c8a4aa6af"
       },
       {
         "path": "docs/security.md",
         "anchor": "c-encryption-at-rest-implemented--encrypted-by-default-plan-04",
-        "ordinal": 17,
+        "ordinal": 19,
         "line": 725,
         "sha256": "08540ee4ee5e471b586a5c24a07b5cc333c4f1451e59e47ee59574b5ed24cc33"
       }
     ],
     "gpu": [
       {
-        "path": "docs/quickstart.md",
-        "anchor": "gpu-acceleration-optional",
-        "ordinal": 2,
-        "line": 80,
+        "path": "book/src/gpu.md",
+        "anchor": "1-install-a-gpu-enabled-onnx-runtime",
+        "ordinal": 1,
+        "line": 18,
         "sha256": "8549d3bdd567da8fa44759ce1df15340c20cea95965a5b4552d3f28eb7db260b"
       }
     ],
@@ -661,28 +668,28 @@
         "path": "docs/cli.md",
         "anchor": "machine-readable-output",
         "ordinal": 4,
-        "line": 43,
+        "line": 59,
         "sha256": "32e4f166b24220db08e9e7531a21c213db35adb07f50734b3bfe19ff300ecad5"
       },
       {
         "path": "docs/cli.md",
         "anchor": "machine-readable-output",
         "ordinal": 11,
-        "line": 50,
+        "line": 66,
         "sha256": "b9726ad09c98f0986ca1bc892a27b5cd5de3fd235b7ff17e342dd748e66b0042"
       },
       {
         "path": "docs/cli.md",
         "anchor": "facelock-devices",
         "ordinal": 1,
-        "line": 408,
+        "line": 439,
         "sha256": "6f6b179ea3830b95038c6708805c55ec33823224dc1b072d3e0173b1dc50f478"
       },
       {
         "path": "docs/cli.md",
         "anchor": "facelock-devices",
         "ordinal": 2,
-        "line": 409,
+        "line": 440,
         "sha256": "b9599e555bfca95fe805614377cdc83dfad7fea07c59141141f966e7e1d9ff54"
       }
     ]

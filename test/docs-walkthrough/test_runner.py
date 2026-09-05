@@ -73,6 +73,12 @@ class RunnerTests(unittest.TestCase):
         row = {"source": {"path": "docs/releasing.md", "anchor": "publish", "ordinal": 1, "sha256": "a" * 64}, "raw": "gh release create v0.2.0", "classification": "manual"}
         self.assertIn("explicit-publication-authority", runner().manual_sections([], [row])[0]["requirements"])
 
+    def test_route_reference_does_not_claim_literal_occurrence_coverage(self):
+        row = {"source": {"path": "docs/releasing.md", "anchor": "packages", "ordinal": 1, "sha256": "a" * 64}, "raw": "just test-deb", "classification": "executable"}
+        route = {"id": "deb-direct", "source_role": "route-reference", "sources": [row["source"]]}
+        self.assertEqual(runner().coverage([route], [row])["unmapped"], 1)
+        self.assertEqual(len(runner().manual_sections([route], [row])), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
