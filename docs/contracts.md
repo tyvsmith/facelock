@@ -111,11 +111,14 @@ distinct from `config` (the config file) and from the per-user face models the
 top-level verbs reach. It is spelled as a group because the alternative is
 worse. The rejected spelling illustrates the ambiguity:
 <!-- docs-example: negative InvalidSubcommand -->
-`facelock purge` would sit immediately beside `facelock clear`, which already
-means "remove all face models for a user", and the two
-would differ only in blast radius. Naming the object first makes that
-difference the first word a reader sees, which on an irreversible command is
-worth a group that ADR 009's two-subcommand rule would otherwise refuse.
+`facelock purge`
+
+That spelling would sit immediately beside `facelock clear`, which already
+means "remove all face models for a user", and the two would differ only in
+blast radius. Naming the object first makes that difference the first word a
+reader sees, which on an irreversible command is worth a group that ADR 009's
+two-subcommand rule would otherwise refuse.
+
 Bare `facelock data` is a usage error, not an implied `purge`: unlike `daemon`
 and `config`, whose bare forms are load-bearing invocations, nothing invokes
 this one and a destructive default would be a trap.

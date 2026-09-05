@@ -45,12 +45,17 @@ python3 test/docs-walkthrough/run.py report
 `list` shows scenario IDs, `check` runs the offline schema/safety checks, and
 `report` compares explicit case mappings with the complete documentation
 inventory. Use `refresh` only when intentionally refreshing the checked-in
-inventory derived from documentation:
+inventory and generated manual sections derived from documentation:
 
 ```bash
 python3 test/docs-walkthrough/run.py refresh
 git diff -- test/docs-walkthrough/cases.json
+git diff -- test/docs-walkthrough/manual-sections.json
 ```
+
+Review changed expectations and manual gate classifications before committing
+either generated file. A refreshed mapping is not evidence that any command
+was executed or reviewed.
 
 The catalog includes repository and direct-package cases for APT, RPM/COPR,
 AUR, source, NixOS, OpenRC, runit, and s6, plus first setup, daemon/oneshot
@@ -72,10 +77,14 @@ python3 test/docs-walkthrough/run.py readiness --release "$RELEASE_TAG" --channe
 
 The identity must bind `release`, normalized `version`, exact native package
 version, a 40-hex `artifact_commit`, channel, runtime policy, and immutable
-artifact evidence: positive asset ID and size, release asset name and URL,
-64-hex SHA256. Public-repository identities additionally bind the downloaded
-package digest and repository URL, plus APT suite/signing-key digest, COPR
-chroot, or AUR commit as applicable. Do not substitute a source checkout,
+artifact evidence: positive asset ID and size, release asset name and URL, and
+64-hex SHA256. The evidence record separately binds `harness_sha256` and
+`harness_tree_dirty`. Public-repository identities additionally bind the
+downloaded package digest and repository URL, plus APT suite/signing-key
+digest, COPR chroot, or AUR commit as applicable. An AUR source-built package
+may omit the expected package digest; its evidence instead records the built
+payload digest and the verified recipe commit. Every other repository channel
+requires the expected package digest. Do not substitute a source checkout,
 staged build, or successful rebuild for published-asset identity.
 
 ## Run one explicit case
@@ -134,3 +143,15 @@ python3 test/docs-walkthrough/evidence.py aggregate --require-pass "$EVIDENCE_RO
 Aggregation reports missing cases and unmapped documentation inventory rows.
 It does not convert manual-only commands into executed coverage or let one
 distribution/channel stand in for another.
+
+## Manual evidence
+
+`manual-sections.json` presents remaining manual commands as ordered steps,
+including the exact documentation text, source location, and source hash.
+Manual review is not a shortcut around that binding. A passing manual record
+must include `manual_review` with the operator, notes,
+`expectations_reviewed: true`, and the fixture bindings used. Each passing step
+must preserve the exact `documented_command`, record the actual argv, expected
+exit, actual output and observed state, and reference a sanitized, hashed log.
+If a required expectation cannot be observed, record the case as blocked or
+failed rather than marking the section complete.

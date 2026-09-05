@@ -1103,9 +1103,11 @@ Manage retained Facelock state on this machine. One verb today, `purge`.
 `data` is a noun group with a single subcommand on purpose. A top-level name was
 rejected:
 <!-- docs-example: negative InvalidSubcommand -->
-`facelock purge` would sit beside `facelock clear`, which already means "remove
-all face models for a user", and the two would differ only in blast radius —
-naming the object first makes that difference the first word you read.
+`facelock purge`
+
+That spelling would sit beside `facelock clear`, which already means "remove all
+face models for a user", and the two would differ only in blast radius — naming
+the object first makes that difference the first word you read.
 
 ### facelock data purge
 

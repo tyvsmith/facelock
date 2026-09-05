@@ -1,6 +1,6 @@
 # Quick Start
 
-## Published packages
+## Release availability summary
 
 v0.1.4 is the latest published stable release. The v0.2.0-alpha.1 tag exists,
 but no corresponding GitHub Release is currently published. Prereleases do not
@@ -17,8 +17,8 @@ The planned 0.2.0 APT suites (`trixie` and `resolute`) are not currently served;
 a clean `trixie` check returns 404. The production Fedora COPR currently serves
 v0.1.3, while stable is v0.1.4; the testing COPR is a candidate channel. RHEL
 is not in the supported matrix.
-See the canonical [Quickstart](../../docs/quickstart.md) for repository setup
-commands and exact channel limitations.
+See the canonical [Quickstart on GitHub](https://github.com/tyvsmith/facelock/blob/main/docs/quickstart.md)
+for repository setup commands and exact channel limitations.
 
 ## System installation
 
@@ -61,5 +61,5 @@ sudo facelock data purge --allow-destruction
 
 Unsafe, cross-mount, wrong-owner, and externally configured remnants are
 reported rather than traversed or removed. See
-[Package Lifecycle Ownership](../../docs/contracts.md#package-lifecycle-ownership)
+[Package Lifecycle Ownership](contracts.md#package-lifecycle-ownership)
 and [Testing](testing.md).

@@ -32,7 +32,7 @@ It has exactly eight verbs:
 | `facelock-bench preview` | camera capture and face detection | camera and models |
 | `facelock-bench enrollment` | five capture-and-embed snapshots, without storing them | camera and models |
 | `facelock-bench model-load` | detector and embedder load | models |
-| `facelock-bench calibrate` | pairwise genuine/impostor threshold sweep | plaintext enrolled templates for at least two users |
+| `facelock-bench calibrate` | ten live captures compared with the current user's enrolled templates, sweeping thresholds from 0.20 through 0.80 toward a 90% match rate | camera, models and current-user plaintext enrollment; it does not estimate false-accept rates |
 | `facelock-bench camera-reopen` | open, STREAMON, warm-up and total reopen latency | camera; optional `--iterations <N>`, default `5` |
 | `facelock-bench report` | combined environment and benchmark report | camera, models and plaintext enrolled templates |
 

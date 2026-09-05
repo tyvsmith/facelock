@@ -29,8 +29,9 @@ decodable format and reports the advertised formats.
 
 RGB operation requires `security.require_ir = false` and is for development;
 it does not provide the default IR boundary. See the canonical
-[Compatibility](../../docs/compatibility.md) page for the IPU6/IPU7 relay
-notes, exact negotiation order, and current validation evidence.
+[Compatibility page on GitHub](https://github.com/tyvsmith/facelock/blob/main/docs/compatibility.md)
+for the IPU6/IPU7 relay notes, exact negotiation order, and current validation
+evidence.
 
 ## Init and PAM
 

@@ -10,9 +10,9 @@ just check
 Camera tests, package lifecycle tests, and live authentication have different
 risk. Use containers for isolated PAM smoke coverage and an explicitly marked
 disposable guest for booted package/login scenarios. The walkthrough runner
-does not provision the guest and refuses ordinary hosts. See the canonical
-[Testing and Safety](../../docs/testing-safety.md) and
-[Testing Walkthrough](../../docs/testing-walkthrough.md).
+does not provision the guest and refuses ordinary hosts. See
+[Testing and Safety](testing-safety.md) and the
+[Testing Walkthrough](testing-walkthrough.md).
 
 The development configuration is not rootless. Management commands retain
 their root gate, and effective-UID-0 processes ignore `FACELOCK_CONFIG`:

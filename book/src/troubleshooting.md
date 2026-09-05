@@ -71,5 +71,6 @@ The package uses the D-Bus system bus and the package-owned policy under
 D-Bus merges them. `sudo facelock setup --systemd` validates installed assets
 and reports preserved local policy for review.
 
-See the canonical [Troubleshooting](../../docs/troubleshooting.md) page for
-model verification, IPU relay, permissions, and detailed recovery guidance.
+See the canonical
+[Troubleshooting page on GitHub](https://github.com/tyvsmith/facelock/blob/main/docs/troubleshooting.md)
+for model verification, IPU relay, permissions, and detailed recovery guidance.
