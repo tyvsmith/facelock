@@ -87,8 +87,12 @@ public recipes. The isolated workspace run passed 1,713 tests with 12 ignored
 hardware tests; all-target Clippy, formatting, source-archive extraction, site
 links, mandoc and package-lifecycle documentation checks were also exercised.
 These are local verification results, not release or hardware attestations.
-The final extractor records 1,349 occurrences: 417 executable, 21 manual-only,
-732 schematic references, 177 historical and two intentional negative examples.
+The full `just check` gate completed; the final documentation/safety subset was
+rerun after the last isolation fixes. Native Debian/RPM version-ordering checks
+were skipped because `dpkg` and `rpmdev-vercmp` were unavailable. Dependency
+audit completed with three yanked-package warnings allowed by existing policy.
+The final extractor records 1,350 occurrences: 417 executable, 21 manual-only,
+733 schematic references, 177 historical and two intentional negative examples.
 The catalog has 28 route/hardware definitions and 134 manual section candidates;
 all 438 executable/manual occurrences have pending definitions, with none
 unmapped. Definition coverage is not reviewed-scenario or execution completion.
@@ -121,6 +125,13 @@ The APT/Fedora 44/alpha records name harness revision
 runs at their recorded revision. Later documentation and guard changes are
 not retroactively credited to these records: old source pins must not be
 rewritten to qualify against the final inventory.
+
+A further Fedora 44 probe at clean harness revision
+`8f4253f4c892719b594995286ceec6920130812c` exercised the final isolation guards.
+Its record and logs are in `evidence/copr-44-guarded`. All six pristine-state
+observations were checked, including PAM and service assets. Validation accepts
+it as a container observation and correctly rejects it as walkthrough
+completion; transaction-byte and source-build provenance remain unestablished.
 
 Remaining requirements include published alpha assets, applicable current
 public-package identities, booted distro/alternative-init/NixOS guests, and
