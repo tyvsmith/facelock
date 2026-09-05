@@ -282,6 +282,98 @@ nix_build_step="$(nix_step 'nix build')"
 printf '%s\n' "$nix_build_step" | grep -Eq '^ +continue-on-error: true$' ||
     fail "nix build depends on nixpkgs state and is documented as advisory; it must keep continue-on-error"
 
+# --------------------------------------- container jobs and checkout ownership
+#
+# A container job runs every step as root while the workspace keeps the runner
+# uid, so git rejects the checkout ("detected dubious ownership") and exits 128.
+# actions/checkout writes the exception itself, but under a temporary HOME it
+# discards when it finishes, so no later step sees it. This workflow runs only
+# on a tag, so no pull request exercises it: v0.2.0-alpha.1 (run 33983928629)
+# was the first run of both Debian legs and both died here before building a
+# deb.
+#
+# The trigger is git being installed, not any one recipe. A container job that
+# installs git gets a real git checkout, and anything it runs afterwards can
+# shell out to git -- `just test-deb-source-contract` reaches
+# test/prepare-deb-test-context.sh, and build-deb.sh takes its source tarball
+# from `git archive`. Proving the negative, that nothing in a job's transitive
+# script closure ever calls git, is the analysis that fails open, so the rule is
+# the coarse one. A container job that installs no git carries no requirement:
+# build-rpm installs none, actions/checkout falls back to the API tarball there
+# and leaves no repository behind. It acquires the requirement the day it
+# installs git.
+#
+# ci.yml already takes the exception in the two jobs that need it, and every
+# pull request runs ci.yml, so a regression there is visible immediately. This
+# gate covers release.yml because a tag is the only thing that runs it.
+trust_step_name='Trust the workspace checkout'
+# shellcheck disable=SC2016
+trust_step_run='run: git config --global --add safe.directory "$GITHUB_WORKSPACE"'
+
+# One job's body with whole-line comments removed: a commented-out package or
+# step must never pass as present. `grep -v` finds no match on an empty body,
+# which is a failure under `set -e`, so an empty result is allowed through and
+# the caller's own assertion reports it.
+job_statements() {
+    job_body "$1" | grep -v '^[[:space:]]*#' || true
+}
+
+# The first line of each step of one job, in order, as `keyword<TAB>value`.
+job_step_heads() {
+    awk '
+        /^      - / {
+            line = $0
+            sub(/^      - /, "", line)
+            split(line, parts, ": ")
+            print parts[1] "\t" substr(line, length(parts[1]) + 3)
+        }
+    ' <<<"$1"
+}
+
+# Whether one job installs git: a package-manager install naming git as a
+# package. Line continuations are joined first, so a package list spread over a
+# dozen lines reads as the one command it is.
+installs_git() {
+    local joined
+    joined="$(sed -e ':a' -e '/\\$/N; s/\\\n//; ta' <<<"$1")"
+    grep -Eq '(^|[[:space:]])(install|-S[a-z]*)[[:space:]].*[[:space:]]git([[:space:]]|$)' <<<"$joined"
+}
+
+trusting_jobs=0
+for job in "${expected_jobs[@]}"; do
+    statements="$(job_statements "$job")"
+    grep -Eq '^    container:' <<<"$statements" || continue
+    steps="$(job_step_heads "$statements")"
+    if ! installs_git "$statements"; then
+        # Fail closed in the other direction too: a job holding an exception it
+        # does not need has either lost its git install or gained a stray step.
+        if grep -Fq "name	$trust_step_name" <<<"$steps"; then
+            fail "job $job trusts the workspace checkout but installs no git; drop the step or restore the install"
+        fi
+        continue
+    fi
+    trusting_jobs=$((trusting_jobs + 1))
+    grep -Fq "name	$trust_step_name" <<<"$steps" ||
+        fail "container job $job installs git and must trust the workspace checkout; git exits 128 on a checkout it does not own"
+    grep -Fq "$trust_step_run" <<<"$statements" ||
+        fail "job $job must trust the workspace checkout with exactly: $trust_step_run"
+    # Immediately after the checkout: nothing between them may reach git, and
+    # the entry actions/checkout makes for itself is gone by the time it
+    # returns.
+    after_checkout="$(awk -F'\t' '
+        seen { print $2; exit }
+        $1 == "uses" && $2 ~ /^actions\/checkout@/ { seen = 1 }
+    ' <<<"$steps")"
+    [ -n "$after_checkout" ] ||
+        fail "job $job has no step after its checkout; the ownership exception has nowhere to go"
+    [ "$after_checkout" = "$trust_step_name" ] ||
+        fail "job $job must trust the workspace checkout immediately after checking it out, not after '$after_checkout'"
+done
+# A renamed `container:` key, or a job list that stopped containing one, would
+# turn every assertion above into a no-op.
+[ "$trusting_jobs" -gt 0 ] ||
+    fail "no containerized release job installs git; the checkout-ownership rule stopped covering anything"
+
 # The attesting set the helper pins must be exactly the artifacts the workflow
 # uploads, each bound to a job output. The artifact store is writable by every
 # job in the run; a job output is recorded under the job that produced it and
@@ -1332,6 +1424,26 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
     assert_workflow_mutation_rejected "flake evaluation that cannot fail" \
         's|^        run: nix flake check ./dist/nix --no-build$|        run: nix flake check ./dist/nix --no-build\n        continue-on-error: true|' \
         "flake evaluation must gate publication"
+
+    # The checkout-ownership exception. Removed, neutralized, displaced, or
+    # owed by a job that just acquired git: each is a tag-time-only failure,
+    # which is the class this whole gate exists for.
+    assert_workflow_mutation_rejected "a container job left untrusting" \
+        '/^      - name: Trust the workspace checkout$/,+1d' \
+        "must trust the workspace checkout"
+    assert_workflow_mutation_rejected "the ownership exception neutralized" \
+        's|^        run: git config --global --add safe\.directory .*$|        run: ": # trust disabled"|' \
+        "must trust the workspace checkout with exactly"
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "the ownership exception taken late" \
+        's|^      - name: Trust the workspace checkout$|      - name: Report the workspace\n        run: ls "$GITHUB_WORKSPACE"\n\n      - name: Trust the workspace checkout|' \
+        "immediately after checking it out"
+    assert_workflow_mutation_rejected "a container job gaining git untrusted" \
+        's|^            rust cargo clang-devel|            git rust cargo clang-devel|' \
+        "container job build-rpm installs git"
+    assert_workflow_mutation_rejected "an exception kept past its git install" \
+        's|^            git$||' \
+        "trusts the workspace checkout but installs no git"
     # shellcheck disable=SC2016
     assert_workflow_mutation_rejected "attestation left unbound to its job" \
         '0,/^      attestation: \$\{\{ steps.attest.outputs.sha256 \}\}$/s///' \
