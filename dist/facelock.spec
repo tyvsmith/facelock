@@ -1,6 +1,6 @@
 Name:           facelock
 Version:        0.2.0
-Release:        0.2.alpha.2%{?dist}
+Release:        0.3.alpha.3%{?dist}
 Summary:        Face authentication for Linux PAM
 License:        MIT OR Apache-2.0
 URL:            https://github.com/tyvsmith/facelock
