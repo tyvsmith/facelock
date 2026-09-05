@@ -105,7 +105,7 @@ Camera commands touch real hardware. See [Testing Safety](testing-safety.md)
 before changing PAM, and [Developer Commands](developer-commands.md) for the
 full validation inventory.
 
-## Uninstall and retained data
+## Package lifecycle and retained data
 
 ```bash
 just uninstall
@@ -113,6 +113,9 @@ just uninstall
 
 Ordinary package removal and `just uninstall` preserve the face database,
 encryption keys, models, enrollment markers, logs, snapshots, and setup state.
+Debian purge removes only provably safe entries under the compiled Facelock
+roots; safety refusals are reported without stranding package-manager state.
+Unsafe or externally configured remnants are retained for manual review.
 To inspect the supported bounded erasure path while Facelock is still installed:
 
 ```bash

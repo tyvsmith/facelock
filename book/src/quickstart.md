@@ -49,7 +49,7 @@ sudo target/debug/facelock --config "$PWD/dev/config.toml" enroll --skip-setup-c
 sudo target/debug/facelock --config "$PWD/dev/config.toml" test
 ```
 
-## Retained data
+## Package lifecycle and retained data
 
 Ordinary uninstall preserves retained biometric state. Preview the fixed-root
 purge while the CLI is installed:
@@ -59,7 +59,10 @@ sudo facelock data purge --dry-run
 sudo facelock data purge --allow-destruction
 ```
 
-Unsafe, cross-mount, wrong-owner, and externally configured remnants are
-reported rather than traversed or removed. See
+Debian purge removes only provably safe entries under the compiled Facelock
+roots and reports safety refusals without stranding package-manager state.
+Unsafe or externally configured remnants are retained for manual review;
+cross-mount and wrong-owner objects are likewise reported rather than
+traversed or removed. See
 [Package Lifecycle Ownership](contracts.md#package-lifecycle-ownership)
 and [Testing](testing.md).
