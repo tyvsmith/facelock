@@ -1,7 +1,7 @@
 # Maintainer: facelock contributors
 pkgname=facelock
-_tag=0.2.0-alpha.1
-pkgver=0.2.0alpha1
+_tag=0.2.0-alpha.2
+pkgver=0.2.0alpha2
 pkgrel=1
 pkgdesc="Face authentication PAM module for Linux"
 arch=('x86_64')

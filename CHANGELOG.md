@@ -7,24 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **The Debian release jobs trust the checkout they were handed**: tagging
-  v0.2.0-alpha.1 ran the release workflow for the first time since the Debian
-  source contract joined it, and both suites died on `fatal: detected dubious
-  ownership in repository at '/__w/facelock/facelock'` before a package was
-  built. A container job runs every step as root while the workspace keeps the
-  runner uid, so git rejects the checkout and exits 128; `actions/checkout`
-  writes the exception itself, but under a temporary `HOME` it discards when it
-  finishes, so no later step sees it. `build-deb` now takes the exception right
-  after checking out, the way `ci.yml` already does in the two jobs that need
-  it. `build-rpm` was unaffected and stays as it is: it installs no git, so
-  `actions/checkout` falls back to the REST tarball and leaves no repository
-  behind. `test/release-artifacts-contract.sh` now fails a containerized
-  release job that installs git without taking the exception, since a tag is
-  the only thing that runs this workflow.
-
-## [0.2.0-alpha.1] - 2026-09-04
+## [0.2.0-alpha.2] - 2026-09-05
 
 ### Added
 
@@ -873,6 +856,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   logged with their path and advertised formats, so syslog explains a later
   "not an IR camera" failure.
 
+- **The Debian release jobs trust the checkout they were handed**: the first
+  tagged run since the Debian source contract joined the release workflow saw
+  both suites die on `fatal: detected dubious ownership in repository at
+  '/__w/facelock/facelock'` before a package was built. A container job runs
+  every step as root while the workspace keeps the runner uid, so git rejects
+  the checkout and exits 128; `actions/checkout` writes the exception itself,
+  but under a temporary `HOME` it discards when it finishes, so no later step
+  sees it. `build-deb` now takes the exception right after checking out, the
+  way `ci.yml` already does in the two jobs that need it. `build-rpm` was
+  unaffected and stays as it is: it installs no git, so `actions/checkout`
+  falls back to the REST tarball and leaves no repository behind.
+  `test/release-artifacts-contract.sh` now fails a containerized release job
+  that installs git without taking the exception, since a tag is the only
+  thing that runs this workflow.
+
 ### Security
 
 - **`CAP_CHOWN` added to the daemon's capability bounding set, for startup
@@ -1010,6 +1008,6 @@ Initial open-source release.
 - **PAM install output**: Conditional install messages — suppressed when PAM entry already present (`c12a970`)
 - **PAM uninstall**: Uninstall now removes entries from all relevant PAM services, not just the primary one (`c12a970`)
 
-[0.2.0-alpha.1]: https://github.com/tyvsmith/facelock/releases/tag/v0.2.0-alpha.1
+[0.2.0-alpha.2]: https://github.com/tyvsmith/facelock/releases/tag/v0.2.0-alpha.2
 [0.1.3]: https://github.com/tyvsmith/facelock/releases/tag/v0.1.3
 [0.1.0]: https://github.com/tyvsmith/facelock/releases/tag/v0.1.0
