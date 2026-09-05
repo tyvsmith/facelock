@@ -318,6 +318,16 @@ job_statements() {
     job_body "$1" | grep -v '^[[:space:]]*#' || true
 }
 
+# The whole text of the named step of one job, empty when it has no such step.
+named_step() {
+    awk -v needle="      - name: $2" '
+        function flush() { if (head == needle) printf "%s", step; step = ""; head = "" }
+        /^      - / { flush(); head = $0 }
+        { step = step $0 "\n" }
+        END { flush() }
+    ' <<<"$1"
+}
+
 # The first line of each step of one job, in order, as `keyword<TAB>value`.
 job_step_heads() {
     awk '
@@ -336,7 +346,7 @@ job_step_heads() {
 installs_git() {
     local joined
     joined="$(sed -e ':a' -e '/\\$/N; s/\\\n//; ta' <<<"$1")"
-    grep -Eq '(^|[[:space:]])(install|-S[a-z]*)[[:space:]].*[[:space:]]git([[:space:]]|$)' <<<"$joined"
+    grep -Eq '(^|[[:space:]])(install|-S[a-z]*)[[:space:]]+([^[:space:]]+[[:space:]]+)*git([[:space:]]|$)' <<<"$joined"
 }
 
 trusting_jobs=0
@@ -353,9 +363,12 @@ for job in "${expected_jobs[@]}"; do
         continue
     fi
     trusting_jobs=$((trusting_jobs + 1))
-    grep -Fq "name	$trust_step_name" <<<"$steps" ||
+    # Read the command out of the named step, not out of the job: a no-op step
+    # beside a `git config` line somewhere else is not the exception.
+    trust_step="$(named_step "$statements" "$trust_step_name")"
+    [ -n "$trust_step" ] ||
         fail "container job $job installs git and must trust the workspace checkout; git exits 128 on a checkout it does not own"
-    grep -Fq "$trust_step_run" <<<"$statements" ||
+    grep -Fq "$trust_step_run" <<<"$trust_step" ||
         fail "job $job must trust the workspace checkout with exactly: $trust_step_run"
     # Immediately after the checkout: nothing between them may reach git, and
     # the entry actions/checkout makes for itself is gone by the time it
@@ -1444,6 +1457,16 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
     assert_workflow_mutation_rejected "an exception kept past its git install" \
         's|^            git$||' \
         "trusts the workspace checkout but installs no git"
+    # git as the very first package of the install, with no token before it.
+    assert_workflow_mutation_rejected "a container job installing git first" \
+        's|^          dnf install -y \\$|          dnf install git \\|' \
+        "container job build-rpm installs git"
+    # The exception read out of the job rather than out of its step: a no-op
+    # trust step beside a real `git config` line in a later one.
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "the exception moved out of its step" \
+        's|^        run: git config --global --add safe\.directory .*$|        run: ": # trust disabled"\n\n      - name: Trust it later\n        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"|' \
+        "must trust the workspace checkout with exactly"
     # shellcheck disable=SC2016
     assert_workflow_mutation_rejected "attestation left unbound to its job" \
         '0,/^      attestation: \$\{\{ steps.attest.outputs.sha256 \}\}$/s///' \
