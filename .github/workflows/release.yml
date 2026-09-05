@@ -301,6 +301,9 @@ jobs:
 
       - name: Build suite-specific .deb package
         id: deb
+        # scripts/release-versions.sh is bash, and a container step otherwise
+        # runs under the image's /bin/sh, which is dash on Debian and Ubuntu.
+        shell: bash
         run: |
           set -euo pipefail
           install -d -m700 /tmp/facelock-empty-cargo-home /tmp/facelock-empty-rustup-home
@@ -408,6 +411,9 @@ jobs:
 
       - name: Select the packages the validated metadata names
         id: rpm
+        # mapfile, process substitution and array expansion, none of which the
+        # image's /bin/sh has to provide.
+        shell: bash
         run: |
           set -euo pipefail
           source scripts/release-versions.sh
