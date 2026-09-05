@@ -6,6 +6,18 @@
     "facelock-polkit-agent": "docs/auxiliary-commands.md"
   },
   "files": {
+    "docs/auxiliary-commands.md": {
+      "role": "canonical",
+      "reason": "Reference for the standalone benchmark and polkit session executable"
+    },
+    "book/src/auxiliary-commands.md": {
+      "role": "summary",
+      "reason": "Published include of the canonical auxiliary executable reference"
+    },
+    "book/src/developer-commands.md": {
+      "role": "summary",
+      "reason": "Published include of the generated developer recipe reference"
+    },
     "docs/developer-commands.md": {
       "role": "generated",
       "reason": "Public recipe and executable index derived from just and Cargo metadata"
