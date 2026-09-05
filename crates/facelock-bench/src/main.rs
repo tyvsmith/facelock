@@ -109,7 +109,7 @@ fn main() -> Result<()> {
 /// Load config, returning a helpful error if it fails.
 fn load_config() -> Result<Config> {
     Config::load().context(
-        "Failed to load config. Set FACELOCK_CONFIG env var or ensure /etc/facelock/config.toml exists.",
+        "Failed to load config. Check /etc/facelock/config.toml. FACELOCK_CONFIG is supported only for unprivileged runs and is ignored as root.",
     )
 }
 
@@ -168,7 +168,7 @@ fn cmd_cold_auth() -> Result<()> {
     let embeddings = Wiped::new(store.get_user_embeddings(&user)?);
     if embeddings.is_empty() {
         bail!(
-            "No enrolled faces for user '{}'. Enroll first with `facelock add`.",
+            "No enrolled faces for user '{}'. Enroll first with `facelock enroll`.",
             user
         );
     }
@@ -220,7 +220,7 @@ fn cmd_warm_auth() -> Result<()> {
     let embeddings = Wiped::new(store.get_user_embeddings(&user)?);
     if embeddings.is_empty() {
         bail!(
-            "No enrolled faces for user '{}'. Enroll first with `facelock add`.",
+            "No enrolled faces for user '{}'. Enroll first with `facelock enroll`.",
             user
         );
     }
@@ -415,7 +415,7 @@ fn cmd_calibrate() -> Result<()> {
     let enrolled = Wiped::new(store.get_user_embeddings(&user)?);
     if enrolled.is_empty() {
         bail!(
-            "No enrolled faces for user '{}'. Enroll first with `facelock add`.",
+            "No enrolled faces for user '{}'. Enroll first with `facelock enroll`.",
             user
         );
     }
@@ -935,6 +935,137 @@ fn os_release() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostics_name_the_supported_enrollment_command() {
+        let source = include_str!("main.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+        assert!(
+            !source.contains("`facelock add`"),
+            "the enrollment verb is facelock enroll"
+        );
+        assert_eq!(source.matches("`facelock enroll`").count(), 3);
+    }
+
+    #[test]
+    fn config_diagnostic_explains_the_root_environment_boundary() {
+        let source = include_str!("main.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+        assert!(
+            source.contains("ignored as root"),
+            "FACELOCK_CONFIG must not be recommended unconditionally to root"
+        );
+    }
+
+    #[test]
+    fn standalone_surface_has_its_own_eight_verbs() {
+        use clap::CommandFactory;
+        let command = Cli::command();
+        let actual: std::collections::BTreeSet<_> = command
+            .get_subcommands()
+            .map(|sub| sub.get_name())
+            .collect();
+        assert_eq!(
+            actual,
+            [
+                "cold-auth",
+                "warm-auth",
+                "preview",
+                "enrollment",
+                "model-load",
+                "calibrate",
+                "camera-reopen",
+                "report"
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert!(
+            Cli::try_parse_from(["facelock-bench", "camera-reopen", "--iterations", "3"]).is_ok()
+        );
+        assert!(
+            Cli::try_parse_from(["facelock-bench", "camera-reopen", "--iterations", "invalid"])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["facelock-bench", "--config", "/tmp/bench.toml", "report"])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn standalone_documentation_examples_parse_without_running_benchmarks() {
+        use clap::CommandFactory;
+        let command = Cli::command();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let output = std::process::Command::new("python3")
+            .args(["test/docs-examples.py", "--json"])
+            .current_dir(root)
+            .output()
+            .expect("extract documentation examples");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let inventory: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("inventory JSON");
+        assert_eq!(inventory["schema_version"], 1);
+        let mut parsed = 0;
+        for entry in inventory["occurrences"].as_array().expect("occurrences") {
+            if entry["classification"] != "executable" && entry["classification"] != "schematic" {
+                continue;
+            }
+            for segment in entry["segments"].as_array().expect("segments") {
+                let argv: Vec<_> = segment["argv"]
+                    .as_array()
+                    .expect("argv")
+                    .iter()
+                    .map(|arg| arg.as_str().expect("argument string"))
+                    .collect();
+                if argv.first().is_none_or(|arg| {
+                    Path::new(arg)
+                        .file_name()
+                        .is_none_or(|name| name != "facelock-bench")
+                }) {
+                    continue;
+                }
+                if entry["classification"] == "schematic" {
+                    if let Some(verb) = argv.get(1)
+                        && !verb.starts_with('-')
+                        && !verb.contains(['<', '>', '[', ']', '|', '/', '…'])
+                        && *verb != "..."
+                    {
+                        assert!(
+                            command.find_subcommand(verb).is_some(),
+                            "{}: unknown standalone benchmark command {verb}",
+                            entry["source"]
+                        );
+                    }
+                    continue;
+                }
+                parsed += 1;
+                match Cli::try_parse_from(&argv) {
+                    Ok(_) => {}
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            clap::error::ErrorKind::DisplayHelp
+                                | clap::error::ErrorKind::DisplayVersion
+                        ) => {}
+                    Err(error) => panic!("{}: {argv:?}: {error}", entry["source"]),
+                }
+            }
+        }
+        assert!(
+            parsed > 0,
+            "no standalone benchmark documentation examples reached its parser"
+        );
+    }
 
     #[test]
     fn test_percentile_empty() {

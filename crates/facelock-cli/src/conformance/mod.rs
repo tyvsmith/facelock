@@ -22,11 +22,15 @@
 //! check every one of them presumes.
 
 mod capabilities;
+mod config_docs;
 mod docs;
+mod examples;
 mod flags;
+mod man_cli;
 mod man_pam;
 mod packages;
 mod pairs;
+mod surface;
 
 use clap::CommandFactory;
 
