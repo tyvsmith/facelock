@@ -1484,6 +1484,28 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
     assert_workflow_mutation_rejected "a nameless container step turning bash" \
         '/^      - name: Verify exact Cargo vendor bundle$/,+1c\      - run: [[ -d cargo-vendor ]] && scripts/prepare-cargo-vendor.sh verify cargo-vendor' \
         "runs bash-only syntax under the image's /bin/sh"
+
+    # The other direction of the step-shell rule: a workflow it must not
+    # reject. Whole-line YAML comments never reach the scanner because
+    # job_statements strips them first, so a comment illustrating bash syntax
+    # is documentation and not a step written in bash. Pinned because the
+    # stripping happens a long way from the scan, and a later rewrite reading
+    # job_body directly would make this comment look like script.
+    assert_workflow_mutation_accepted() {
+        local context="$1" expression="$2"
+        local mutated
+        mutated="$mutation_root/release-$(printf '%s' "$context" | tr ' ' '-').yml"
+        sed -E "$expression" "$workflow_path" >"$mutated"
+        if cmp -s "$workflow_path" "$mutated"; then
+            fail "$context mutation did not change the workflow"
+        fi
+        FACELOCK_RELEASE_WORKFLOW="$mutated" bash "$self" >/dev/null 2>&1 ||
+            fail "release artifacts contract rejected $context"
+        echo "release artifacts case: $context accepted"
+    }
+
+    assert_workflow_mutation_accepted "a container step commented with bash syntax" \
+        's|^        run: scripts/prepare-cargo-vendor\.sh verify cargo-vendor$|&\n        # example: [[ -f file ]] \&\& mapfile -t x < <(echo hi)|'
     assert_workflow_mutation_rejected "public release creation" \
         's/^          draft: true$//' \
         "must create the GitHub release as a draft"
