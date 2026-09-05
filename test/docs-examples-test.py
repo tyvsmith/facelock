@@ -79,6 +79,16 @@ class ExamplesTest(unittest.TestCase):
     def test_non_shell_blocks_not_interpreted(self):
         self.assertEqual(self.extract('```toml\ncommand = "facelock fake"\n```'), [])
 
+    def test_syntax_check_reports_incomplete_shell_block(self):
+        errors = MODULE.shell_syntax_errors("example.md", '```bash\nif true; then\necho hi\n```')
+        self.assertTrue(errors)
+        self.assertEqual(MODULE.shell_syntax_errors("example.md", '```bash\nif true; then\necho hi\nfi\n```'), [])
+
+    def test_metavariable_does_not_disappear_as_redirect(self):
+        row = self.extract('```bash\njust release <X.Y.Z>\n```')[0]
+        self.assertEqual(row["classification"], "schematic")
+        self.assertIn("metavariable", row["reason"])
+
     def test_negative_annotation_binds_to_block(self):
         text = '<!-- docs-example: negative MissingRequiredArgument -->\n```bash\nfacelock auth\n```'
         row = self.extract(text)[0]

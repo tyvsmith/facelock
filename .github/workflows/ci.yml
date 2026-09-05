@@ -29,7 +29,9 @@ jobs:
             libxkbcommon \
             wayland \
             pam \
-            tpm2-tss
+            tpm2-tss \
+            python \
+            just
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -56,6 +58,9 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace
+
+      - name: Verify documented commands and walkthrough contracts
+        run: just check-docs
 
       # Build the PAM module ALONE — not via --workspace. `cargo build --workspace`
       # unifies features across crates, so facelock-cli/facelock-polkit (which both
@@ -100,6 +105,25 @@ jobs:
             target/release/facelock
             target/release/libpam_facelock.so
           retention-days: 1
+
+  documentation-site:
+    name: Documentation Site
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install documentation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mandoc
+          curl -fsSL --retry 3 https://github.com/rust-lang/mdBook/releases/download/v0.4.44/mdbook-v0.4.44-x86_64-unknown-linux-gnu.tar.gz | tar xz
+      - name: Check roff syntax
+        run: mandoc -T lint -W error man/facelock.1 man/pam_facelock.8
+      - name: Build and check the rendered site
+        env:
+          MDBOOK_BIN: ./mdbook
+        run: bash test/build-docs-site.sh _site
 
   cargo-audit:
     name: Supply-chain Audit (cargo-audit)

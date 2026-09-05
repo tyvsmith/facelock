@@ -101,8 +101,36 @@ test-debian-postrm-purge:
 check-package-names-live:
     python3 test/check-package-names-live.py
 
+# Verify instructional coverage, references and parser acceptance (no example execution).
+check-docs:
+    python3 test/docs-inventory-test.py
+    python3 test/docs-examples-test.py
+    python3 test/check-docs-site-test.py
+    python3 test/docs-inventory.py --check
+    python3 test/docs-examples.py --check
+    python3 -m unittest discover -s test/docs-walkthrough -p 'test_*.py'
+    python3 test/docs-walkthrough/run.py check
+    cargo test -p facelock-cli --bin facelock conformance:: --locked
+    cargo test -p facelock-bench --locked
+
+# Report the tracked documentation, public recipes and Cargo executables as JSON.
+docs-inventory:
+    python3 test/docs-inventory.py
+
+# Build with mdBook 0.4.44 and check rendered links/assets; retain the temporary site for review.
+docs-site-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    docs_output=$(mktemp -d /tmp/facelock-docs-site.XXXXXX)
+    bash test/build-docs-site.sh "$docs_output/site"
+    echo "Rendered documentation: $docs_output/site"
+
+# Execute one explicit walkthrough scenario using a pinned identity inside a disposable guest.
+test-docs-walkthrough scenario identity output:
+    python3 test/docs-walkthrough/run.py run --scenario "{{ scenario }}" --identity "{{ identity }}" --output "{{ output }}"
+
 # Run all checks (test + lint + format + audit + PAM standalone surface + agent docs)
-check: test lint fmt-check audit check-pam-standalone check-agent-docs test-source-install-daemon-lifecycle test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test test-legacy-system-assets test-locale-install-contract test-classify-changes test-arch-package-select check-workflow-policy test-upgrade-v014-contract test-release-artifacts
+check: test lint fmt-check audit check-pam-standalone check-agent-docs check-docs test-source-install-daemon-lifecycle test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test test-legacy-system-assets test-locale-install-contract test-classify-changes test-arch-package-select check-workflow-policy test-upgrade-v014-contract test-release-artifacts
 
 # The path filter that decides whether the packaging gates run on a pull
 # request. A pattern that stops matching fails nothing: it reports every deb,

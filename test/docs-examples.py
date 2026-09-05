@@ -12,15 +12,18 @@ import hashlib
 from html.parser import HTMLParser
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import shlex
+import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SHELLS = {"bash", "sh", "shell", "console"}
 COMMAND = re.compile(r"^(?:(?:sudo|env)\s+|[A-Z_][A-Z_0-9]*=\S+\s+)*(?:facelock(?:-bench|-polkit-agent)?|just|cargo|(?:sudo\s+)?(?:apt|apt-get|pacman|yay|paru|dnf)|systemctl|journalctl|busctl|pamtester|curl|git|nix|nixos-rebuild|python3|bash|sh|test/[\w./-]+|scripts/[\w./-]+)(?:\s|$)")
 ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z_0-9]*=")
+METAVARIABLE = re.compile(r"<[A-Za-z_][\w.|-]*>")
 
 
 def slug(text):
@@ -200,6 +203,8 @@ def extract_text(path, text):
         if raw.rstrip().endswith("\\"):
             pending = (anchor, line, raw.rstrip()[:-1], kind, reason)
             continue
+        if METAVARIABLE.search(raw) and kind == "executable":
+            kind, reason = "schematic", "syntax metavariable requires a concrete value before execution"
         parsed, error = segments(raw)
         if error and kind not in {"schematic", "historical"}:
             kind, reason = "manual", error
@@ -218,6 +223,25 @@ def extract_text(path, text):
     if pending:
         raise ValueError(f"{path}:{pending[1]}: unfinished command continuation")
     return records
+
+
+def shell_syntax_errors(path, text):
+    """bash -n parses complete shell blocks with startup hooks disabled."""
+    errors = []
+    env = {k: v for k, v in os.environ.items() if k not in {"BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS"} and not k.startswith("BASH_FUNC_")}
+    pattern = re.compile(r"(?m)^\s*(`{3,}|~{3,})(bash|sh|shell|console)\s*\n(.*?)^\s*\1\s*$", re.S)
+    for match in pattern.finditer(text):
+        body = re.sub(r"(?m)^\s*\$ ", "", match[3])
+        if METAVARIABLE.search(body):
+            continue  # These are explicitly inventoried as syntax templates.
+        prefix = text[:match.start()].rstrip().splitlines()
+        if prefix and re.match(r"<!-- docs-example: (schematic|historical) ", prefix[-1]):
+            continue
+        check = subprocess.run(["bash", "--noprofile", "--norc", "-n"], input=body, text=True, capture_output=True, env=env, timeout=5)
+        if check.returncode:
+            line = text[:match.start()].count("\n") + 1
+            errors.append(f"{path}:{line}: invalid shell block: {check.stderr.strip()}")
+    return errors
 
 
 def resolve_includes(root, path, stack=()):
@@ -253,6 +277,8 @@ def collect(root=ROOT):
             for row in found:
                 row["classification"] = "historical"
                 row["reason"] = corpus["files"][path]["reason"]
+        else:
+            errors.extend(shell_syntax_errors(path, text))
         records.extend(found)
     return {"schema_version": 1, "occurrences": records, "errors": errors}
 
@@ -264,6 +290,24 @@ def main():
     parser.add_argument("--root", type=Path, default=ROOT)
     args = parser.parse_args()
     report = collect(args.root)
+    if args.check:
+        spec = importlib.util.spec_from_file_location("docs_inventory", args.root / "test/docs-inventory.py")
+        inventory = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(inventory)
+        binaries, recipes = inventory.metadata(args.root)
+        targets = {binary["name"] for binary in binaries}
+        for row in report["occurrences"]:
+            if row["classification"] != "executable":
+                continue
+            for part in row["segments"]:
+                argv = part["argv"]
+                if argv and argv[0] == "just":
+                    error = inventory.check_just_argv(argv, recipes)
+                    if error:
+                        report["errors"].append(f"{row['source']['path']}:{row['source']['line']}: {error}")
+                wrapper = part["wrapper"]
+                if "cargo" in wrapper and "--bin" in wrapper and argv and argv[0] not in targets:
+                    report["errors"].append(f"{row['source']['path']}:{row['source']['line']}: unknown Cargo binary {argv[0]}")
     if args.json or not args.check:
         print(json.dumps(report, indent=2))
     else:

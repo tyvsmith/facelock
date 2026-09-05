@@ -6,6 +6,10 @@
     "facelock-polkit-agent": "docs/auxiliary-commands.md"
   },
   "files": {
+    "docs/developer-commands.md": {
+      "role": "generated",
+      "reason": "Public recipe and executable index derived from just and Cargo metadata"
+    },
     ".claude/rules/pam-boundary.md": {
       "role": "internal",
       "reason": "Repository development instructions checked by check-agent-docs and command inventory"
