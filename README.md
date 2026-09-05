@@ -2,7 +2,10 @@
 
 # Facelock: Face Authentication for Linux
 
-> **v0.1.4** — Stable release. See [CHANGELOG.md](CHANGELOG.md) for details.
+> **Release status:** v0.1.4 is the latest published stable release. This tree
+> is v0.2.0-alpha.1; its tag exists, but no corresponding GitHub Release is
+> currently published. A tag, source build, staged package, or successful
+> rebuild is not evidence that an artifact is available to users.
 
 A modern face authentication system for Linux PAM. Provides Windows Hello-style facial auth with IR anti-spoofing, configurable as a persistent daemon or daemonless one-shot. All inference runs locally on your hardware -- no cloud services, no network requests, no telemetry. Your biometric data never leaves your machine.
 
@@ -14,39 +17,25 @@ A modern face authentication system for Linux PAM. Provides Windows Hello-style 
 yay -S facelock           # or paru -S facelock
 ```
 
-### Debian / Ubuntu (APT)
+### Debian / Ubuntu (APT status)
 
 Debian-family release support is exactly Debian 13 (Trixie) and Ubuntu 26.04
-LTS (Resolute). Both packages use the single `facelock` identity and include
-TPM support.
-
-```bash
-# Add signing key
-sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://tysmith.me/facelock/apt/tysmith-archive-keyring.gpg \
-  | sudo tee /etc/apt/keyrings/tysmith-archive-keyring.gpg >/dev/null
-
-# Set APT_SUITE to the exact suite for your host:
-# Debian 13 — trixie — TPM required
-# Ubuntu 26.04 LTS — resolute — TPM required
-APT_SUITE=trixie  # Debian 13 example
-echo "deb [signed-by=/etc/apt/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt ${APT_SUITE} facelock" \
-  | sudo tee /etc/apt/sources.list.d/facelock.list
-
-sudo apt update && sudo apt install facelock
-```
+LTS (Resolute). Those exact suites are the 0.2.0 stable publication contract,
+but they are not currently served: a clean Debian 13 check of the documented
+`trixie` Release URL returns 404. Do not add that source until a stable 0.2.0
+release publishes it.
 
 Source entries written for v0.1.4 name the `main` or `legacy` suite. They
-keep working until 0.3.0: `main` serves the trixie package and `legacy`
-serves no package. On Debian 13 or Ubuntu 26.04, replace the suite with
-`trixie` or `resolute`. Bookworm, noble, and Ubuntu 25.x have no suite: 0.1.4
-was the last release for those hosts, so remove
-`/etc/apt/sources.list.d/facelock.list`. At 0.3.0 the old suites disappear
-and `apt update` fails until the entry is removed. Reinstalling or
-downloading 0.1.4 through APT stops working at 0.2.0, because the pool is
-rebuilt at each release.
+are transitional compatibility entries until 0.3.0: `main` maps to the
+Trixie package and `legacy` serves no package. Bookworm, Noble, and Ubuntu 25.x
+have no future suite. Use the source build below for the current alpha tree.
 
-### Fedora / RHEL (COPR)
+### Fedora (COPR)
+
+The supported COPR targets are Fedora 43, 44, and 45. The production COPR
+currently serves v0.1.3, behind the v0.1.4 stable release; use the source path
+below if you need the current tree. The staging COPR is a candidate channel,
+not a stable installation source. RHEL is not in the supported matrix.
 
 ```bash
 sudo dnf copr enable tyvsmith/facelock
@@ -56,19 +45,24 @@ sudo dnf install facelock
 ### From Source
 
 ```bash
-just install              # build + install binaries, systemd, D-Bus, PAM
+just build                # build into target/debug; does not install
+target/debug/facelock --help
+just install              # optional host install; prompts for sudo, does not edit PAM
 ```
 
 ### Post-Install
 
 ```bash
 sudo facelock setup       # interactive wizard: camera, models, encryption,
-                          # daemon, enrollment, and PAM for sudo + screen lock
+                          # daemon, enrollment, and optional PAM services
 ```
 
 That's it. Open a new terminal and run `sudo echo "ok"` to confirm face auth fires. Keep a root shell open until you've verified it works.
 
-To re-run individual steps later: `sudo facelock enroll`, `sudo facelock test`, `sudo facelock setup --systemd`, `sudo facelock setup --pam`.
+The setup wizard already offers enrollment; do not add a redundant enrollment
+command to the initial sequence. To re-run individual steps later:
+`sudo facelock enroll`, `sudo facelock test`, `sudo facelock setup --systemd`,
+or `sudo facelock setup --pam`.
 
 Every wizard step can also be answered or declined from the command line — `--camera`, `--models`, `--execution-provider`, `--encryption` to supply a value, and `--no-pam` / `--no-systemd` / `--no-enroll` to decline an action outright. See the [CLI reference](book/src/cli-reference.md#facelock-setup) for the full flag surface.
 
@@ -90,6 +84,11 @@ Supports CUDA, ROCm, and OpenVINO execution providers. CPU is the default. Arch 
 just uninstall
 ```
 
+Ordinary uninstall preserves biometric and configuration state. Preview the
+bounded purge with `sudo facelock data purge --dry-run`; destruction additionally
+requires `--allow-destruction`. It operates only inside compiled Facelock roots
+and reports unsafe or externally configured remnants for manual inspection.
+
 ## Operating Modes
 
 | Mode | Config | How it works | Latency |
@@ -104,11 +103,13 @@ The CLI works in all modes — it connects to the daemon if available, otherwise
 
 ## CLI Reference
 
-```
+<!-- docs-example: schematic command overview, not executable shell -->
+```text
 facelock setup          Download models, validate systemd, configure PAM
 facelock is-enrolled    Is this user enrolled? (exit 0/1/2)
+facelock capabilities   Report machine-readable integration capabilities
 facelock enroll         Capture and store a face
-facelock test           Test recognition
+facelock test           Test recognition; inspect output, not exit 0 alone
 facelock list           List enrolled models
 facelock remove <id>    Remove a specific model
 facelock clear          Remove all models for a user
@@ -122,6 +123,9 @@ facelock tpm status     TPM status/management
 facelock tpm encrypt    Encrypt stored embeddings (tpm decrypt to reverse)
 facelock tpm reseal     Re-seal the TPM key under current PCRs
 facelock bench          Benchmarks and calibration
+facelock pam            Inspect or edit PAM services
+facelock hyprlock       Manage the built-in hyprlock adapter
+facelock data purge     Preview or destroy retained state
 facelock audit          View structured audit log
 ```
 
@@ -135,7 +139,7 @@ Omarchy example.
 
 ## Architecture
 
-```
+```text
 facelock-core       Config, types, errors, D-Bus interface, traits
 facelock-camera     V4L2 capture, auto-detection, preprocessing
 facelock-face       ONNX inference (SCRFD detection + ArcFace embedding)
@@ -183,7 +187,9 @@ Full reference: `config/facelock.toml`.
 
 ## Hyprlock Integration
 
-Facelock works with [hyprlock](https://github.com/hyprwm/hyprlock) on Hyprland (Arch, Omarchy, NixOS, etc.). Two things are needed:
+Facelock includes a [hyprlock](https://github.com/hyprwm/hyprlock) adapter for
+systems where a hyprlock PAM service is present. This does not imply package or
+hardware validation for every Hyprland distribution. Two things are needed:
 
 1. **PAM line** in `/etc/pam.d/hyprlock` — `sudo facelock setup` does this automatically when you select hyprlock in the PAM step.
 2. **Lock-screen tweak** in `~/.config/hypr/hyprlock.conf` — set `ignore_empty_input = false` and add a face icon to `placeholder_text`. Run as your normal user:
@@ -221,7 +227,9 @@ See [docs/testing-safety.md](docs/testing-safety.md) before editing PAM config o
 **Security**:
 
 - IR camera enforcement on by default (anti-spoofing)
-- Frame variance + landmark liveness checks reject photo/video attacks
+- Frame variance and IR texture checks are enabled by default against static
+  presentation attacks; landmark liveness is experimental and off by default.
+  These checks do not establish resistance to video replay.
 - Constant-time embedding comparison via `subtle` crate
 - AES-256-GCM encryption at rest with optional TPM-sealed keys
 - Model SHA256 verification at every load
@@ -241,12 +249,13 @@ just release 0.2.0        # bump version across all packaging files
 git push origin main --tags  # trigger CI release workflow
 ```
 
-Tagging `vX.Y.Z` builds release binaries, two suite-specific `.deb` artifacts
-(trixie and resolute), and the direct Fedora `.rpm` artifact.
-Stable tags publish the stable AUR and APT channels; Packit handles production
-COPR builds. Prerelease tags create a GitHub prerelease without entering those
-stable channels. See [docs/releasing.md](docs/releasing.md) for the full process
-and versioning contract.
+A `vX.Y.Z` tag starts the release workflow, which attempts binaries, the two
+suite-specific `.deb` artifacts, and the direct Fedora `.rpm`. Those builds are
+not publication proof: the release and every required asset must be present and
+verified. Stable releases publish AUR/APT and enable production COPR handling;
+prereleases must not enter those stable channels. The existing
+v0.2.0-alpha.1 tag currently has no GitHub Release. See
+[docs/releasing.md](docs/releasing.md) for the gates and versioning contract.
 
 ## License
 

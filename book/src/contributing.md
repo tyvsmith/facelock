@@ -13,6 +13,9 @@
 cargo build --workspace
 ```
 
+The unified binary is then `target/debug/facelock`; it is not installed on
+`PATH`. See [Developer Commands](developer-commands.md) for the full inventory.
+
 ## Workspace structure
 
 Facelock is a Cargo workspace with 11 crates:
@@ -25,7 +28,7 @@ Facelock is a Cargo workspace with 11 crates:
 | `facelock-store` | lib | SQLite face embedding storage |
 | `facelock-daemon` | lib | Auth/enroll logic, liveness, audit, rate limiting, handler |
 | `facelock-cli` | bin | Unified CLI (`facelock` binary, includes `bench` subcommand) |
-| `facelock-bench` | bin | Standalone benchmark and calibration utility |
+| `facelock-bench` | bin | Developer standalone benchmark utility; see [Auxiliary Commands](auxiliary-commands.md) |
 | `pam-facelock` | cdylib | PAM module (libc + toml + serde + zbus only) |
 | `facelock-tpm` | lib | Optional TPM-bound encryption for embeddings at rest |
 | `facelock-polkit` | bin | Polkit authentication agent for face auth |
@@ -88,7 +91,7 @@ Only after tiers 3--4 pass. Always keep a root shell open. Start with `sudo` onl
 ### All checks at once
 
 ```bash
-just check  # runs test + clippy + fmt
+just check  # full local validation aggregate, including audit and docs/contracts
 ```
 
 ## Translations

@@ -92,7 +92,7 @@ if config.security.require_ir && !device_is_ir {
 
 **Why `force_ir` is device-level, not node-level (hardware-verified regression)**: on a real Logitech BRIO, treating every quirk-matched node as IR made *both* `/dev/video0` (the RGB sensor) and `/dev/video2` (the IR sensor) classify IR — so setup stopped auto-selecting and auto-detect captured from the RGB sensor (white LED) instead of the IR sensor. The sibling-format disambiguation above restores per-node honesty: exactly one BRIO node is `[IR]`, and auto-detection prefers the format-corroborated IR node. A quirk preference for an RGB format such as MJPG may still guide capture negotiation, but it is not IR evidence and cannot exempt an RGB sibling from demotion.
 
-**Limitation**: classification is capability-based, not a hardware allow-list. A genuine IR camera that exposes its IR and color streams on a *single* V4L2 node (so its format set is not mono-only) and is not covered by a shipped quirk will not auto-classify as IR. Add a quirks `force_ir` entry keyed by **USB vendor:product ID** (`/etc/facelock/quirks.d/`) for such hardware — a VID:PID match is authoritative — and set `format_preference` to the IR node's native format (e.g. `"GREY"`) when the camera exposes multiple capture nodes. Prefer a USB-ID quirk over a name-only one: a name-only `force_ir` is trusted only when corroborated by the device's own mono-format evidence or a real USB identity, so it is not a reliable override on its own. The `facelock devices` command displays whether each camera is detected as IR. Device *identity* pinning (rather than capability heuristics) is implemented as its robust successor — see §1.D Device Coupling (Plan 02).
+**Limitation**: classification is capability-based, not a hardware allow-list. A genuine IR camera that exposes its IR and color streams on a *single* V4L2 node (so its format set is not mono-only) and is not covered by a shipped quirk will not auto-classify as IR. Add a quirks `force_ir` entry keyed by **USB vendor:product ID** (`/etc/facelock/quirks.d/`) for such hardware — a VID:PID match is authoritative — and set `format_preference` to the IR node's native format (e.g. `"GREY"`) when the camera exposes multiple capture nodes. Prefer a USB-ID quirk over a name-only one: a name-only `force_ir` is trusted only when corroborated by the device's own mono-format evidence or a real USB identity, so it is not a reliable override on its own. `sudo facelock devices` displays whether each camera is detected as IR. Device *identity* pinning (rather than capability heuristics) is implemented as its robust successor — see §1.D Device Coupling (Plan 02).
 
 #### B. Frame Variance Check (Required)
 
@@ -572,7 +572,7 @@ makes a later restore of the real key useless, and that is the one loss facelock
 prevent. A store that *cannot be asked* counts as encrypted rows existing — "no rows" and
 "no answer" are different facts, and only the first authorizes writing a key. Every writer
 of that key goes through the same gate: the daemon, `facelock auth` and the other one-shot
-commands, `facelock setup`'s automatic policy, and both branches of `facelock encrypt`
+commands, `facelock setup`'s automatic policy, and both branches of `facelock tpm encrypt`
 (`--generate-key` included, which replaces a live key rather than creating one).
 
 **The check and the write are one exclusive transaction on the store**, so the question and
@@ -586,7 +586,7 @@ says which of the two happened. Automatic creation is further restricted to `met
 `none`, which is how an operator bootstraps a key before switching the method over. The
 guarantee is about ordering a row's commit against a key write through the store; it does
 not invalidate a key a running daemon has already cached in memory — replacing the key file
-while the daemon keeps running (`facelock encrypt --generate-key` against a live system) is
+while the daemon keeps running (`facelock tpm encrypt --generate-key` against a live system) is
 a known limit, not covered here (follow-up).
 
 Creation is atomic and never destructive. The 32 bytes are written to an `O_EXCL |
@@ -622,7 +622,7 @@ operator who has no backup, is `facelock clear` followed by re-enrollment.
   nothing to distinguish it from.
 - Under `ProtectSystem=strict` the shipped daemon unit cannot write `/etc/facelock` at all,
   so it cannot create `/etc/facelock/encryption.key`: on that unit the key is created by
-  installation or by a privileged `facelock setup` / `facelock encrypt` run, and the daemon
+installation or by a privileged `facelock setup` / `facelock tpm encrypt` run, and the daemon
   only ever reads it. A daemon that finds no key refuses enrollment as above rather than
   falling back to plaintext.
 
@@ -807,8 +807,9 @@ journals, and remapped blocks remain outside its guarantee.
 #### A. D-Bus System Bus Policy (Required)
 
 Access to the daemon is governed by the D-Bus system bus policy in
-`dbus/org.facelock.Daemon.conf`, installed to `/usr/share/dbus-1/system.d/`
-and enforced by the bus itself (dbus-daemon or dbus-broker). Package
+`dbus/org.facelock.Daemon.conf`, installed as
+`/usr/share/dbus-1/system.d/org.facelock.Daemon.conf` and enforced by the bus
+itself (dbus-daemon or dbus-broker). Package
 transactions never overwrite a legacy `/etc/dbus-1/system.d/` copy. Setup
 removes one only when it is an exact reviewed historical Facelock file;
 modified or linked copies are preserved and reported. D-Bus merges policy

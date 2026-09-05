@@ -1,320 +1,69 @@
-# Testing Strategy, Coverage Gaps, and Deployment Roadmap
-
-Last updated: 2026-05-17
-
-## 1. Current Testing Tiers
-
-### Tier 1: Unit Tests
-
-**How:** `cargo test --workspace` / `just test`
-**Status:** Active, runs in CI on every push and PR.
-
-Exercises pure logic across all library crates: config parsing, embedding
-comparison, rate limiting, audit log formatting, image preprocessing, alignment
-math, database CRUD, TPM sealing/unsealing (with swtpm in CI), liveness
-heuristics, quality scoring, and CLI argument parsing.
-
-CI also runs `cargo clippy --workspace -- -D warnings` and `cargo fmt --check`.
-
-### Tier 2: Hardware Tests
-
-**How:** `cargo test --workspace -- --ignored` / `just test-all`
-**Status:** Manual only. Requires a physical camera (V4L2 device).
-
-Tests marked `#[ignore]` that need a real camera or IR emitter:
-- `facelock-camera`: 2 ignored tests (capture from real device, IR emitter control)
-- `facelock-face`: 5 ignored tests (full ONNX pipeline with real frames)
-
-These cannot run in GitHub Actions (no `/dev/video*`). Developers run them
-locally before merging camera-related changes.
-
-### Tier 3a: Container PAM Smoke Tests
-
-**How:** `just test-arch-pam` (podman, Arch Linux container)
-**Status:** Active, runs in CI (`container-pam-test` job). 13 tests.
-
-Validates the PAM module in an isolated container without a camera:
-- Module loads without crashing
-- Graceful behavior when daemon is not running
-- Handles missing config
-- Respects `disabled = true` config
-- Exports required PAM symbols (`pam_sm_authenticate`, `pam_sm_setcred`)
-- Privilege enforcement (`setup` and `daemon` require root)
-- Smart skip: exits quickly with PAM_IGNORE when no faces enrolled
-- PAM conversation messages ("Identifying face...")
-- Notification mode=off suppresses messages
-- Oneshot mode returns quickly with no enrolled faces
-
-### Tier 3b: Container E2E (Daemon Mode)
-
-**How:** `just test-arch-integration` (podman, passes `/dev/video*` devices)
-**Status:** Active locally. Cannot run in CI (needs camera). 7 tests.
-
-Full daemon-mode flow inside a container with a real camera:
-1. Start daemon, verify it responds to status check
-2. List available devices
-3. Enroll a face
-4. List enrolled models
-5. Authenticate via CLI (`facelock test`)
-6. Authenticate via PAM (`pamtester`)
-7. Clear enrolled models
-
-### Tier 3c: Container E2E (Oneshot Mode)
-
-**How:** `just test-arch-oneshot` (podman, passes `/dev/video*` devices)
-**Status:** Active locally. Cannot run in CI (needs camera). 10 tests.
-
-Same as 3b but fully daemonless: verifies no socket exists, enrollment,
-listing, CLI auth, `facelock auth` binary (PAM path), pamtester, unknown
-user rejection, clear, and empty-after-clear verification.
-
-### Tier 4: VM Testing
-
-**How:** Disposable VM with filesystem snapshots.
-**Status:** Manual, ad-hoc. Used before host PAM changes.
-
-Tests the full install/uninstall cycle (`just install` / `just uninstall`),
-systemd service activation, D-Bus policy, PAM stack integration with real
-`/etc/pam.d/sudo`, and upgrade paths.
-
-### Tier 5: Host PAM
-
-**How:** Direct install on developer machine with root shell backup.
-**Status:** Manual, last resort. Only after tiers 3-4 pass.
-
-Real-world validation of sudo/login integration. Always keep a root shell
-open as a recovery path.
-
-## 2. Test Coverage Audit
-
-### Unit test counts by crate (approximate)
-
-| Crate | Approx. tests | Notes |
-|-------|-------------:|-------|
-| facelock-core | ~40+ | Good coverage: config parsing, types, paths, D-Bus types |
-| facelock-camera | ~40+ | Good: preprocessing, device detection, quirks. A few hardware tests ignored. |
-| facelock-face | ~20 | Moderate: alignment, detector, embedder, model verification. Some integration tests need camera+models. |
-| facelock-store | ~30 | Good: SQLite CRUD, embedding storage, migration. |
-| facelock-daemon | ~50+ | Strong: rate limiting, audit, quality scoring, auth logic, liveness. |
-| facelock-cli | ~60+ | Strong: daemon command, preview rendering, bench, list, encrypt, setup, TPM, IPC client, notifications. |
-| facelock-tpm | ~25+ | Good: PCR policy, sealing/unsealing (swtpm in CI). |
-| pam-facelock | 0 | No unit tests. Tested via container PAM smoke (Tier 3a). |
-| facelock-polkit | 0 | No tests. Agent is not production-ready. |
-| facelock-bench | 0 | Benchmark binary, not a test target. |
-| facelock-test-support | 0 | Mocks/fixtures only, no self-tests. |
-| **Total** | **~270+** | |
-
-### CI jobs
-
-| Job | Trigger | What it does |
-|-----|---------|--------------|
-| `build-and-test` | push/PR to main | fmt check, build, build+tpm, clippy, clippy+tpm, `cargo test` |
-| `tpm-tests` | after build-and-test | Starts swtpm, runs `cargo test --features tpm` |
-| `container-pam-test` | after build-and-test | Release build, podman container, 13 PAM smoke tests |
-
-### Assessment
-
-- **Well-covered:** core, camera (non-hardware), store, daemon, cli, tpm.
-- **Adequately covered via integration:** pam-facelock (Tier 3a container tests cover the critical paths).
-- **Thin:** facelock-face has only 12 non-ignored unit tests for ONNX inference logic. Model loading and SHA256 verification are tested, but embedding comparison edge cases are limited.
-- **Uncovered:** facelock-polkit has zero tests and is flagged as not production-ready.
-
-## 3. Identified Gaps
-
-### No hardware CI
-Cameras are unavailable in GitHub Actions. Tiers 2, 3b, and 3c only run on
-developer machines. A self-hosted runner with a USB camera would close this
-gap, but is not worth the maintenance cost at this stage.
-
-### No fuzzing
-No `cargo-fuzz` targets exist. High-value fuzz targets would be:
-- ONNX model parsing (malformed `.onnx` files)
-- Image preprocessing pipeline (corrupt/malformed frames)
-- Config TOML parsing (adversarial config files)
-- Embedding comparison (NaN, infinity, zero-length vectors)
-
-### No coverage reporting
-Neither `cargo-tarpaulin` nor `llvm-cov` is configured. No visibility into
-which code paths are actually exercised by the unit tests.
-
-### No supply chain auditing
-No `cargo-audit` or `cargo-deny` in CI. The project pulls in `ort` (ONNX
-Runtime), `rusqlite` (bundled SQLite), `zbus`, and other non-trivial
-dependencies that should be audited for known vulnerabilities.
-
-### No property-based testing
-No `proptest` or `quickcheck` usage. Embedding comparison (cosine
-similarity with `subtle` constant-time operations) and rate-limit window
-logic are good candidates for property-based tests.
-
-### No load/stress testing for daemon
-The daemon has rate limiting (5 attempts/user/60s) but no stress test to
-verify it holds under concurrent connections or resource exhaustion.
-
-### No benchmarks in CI
-Benchmarks exist (`facelock bench`) but are manual-only. No regression
-detection for inference latency or auth round-trip time.
-
-### PAM module has no unit tests
-`pam-facelock` has zero `#[test]` functions. The container tests in Tier 3a
-cover runtime behavior, but there are no tests for config parsing logic,
-D-Bus client construction, or error-path handling within the crate itself.
-
-### Polkit agent untested
-`facelock-polkit` has no tests at all. It is explicitly marked as not
-production-ready in the justfile install recipe.
-
-## 4. Deployment Roadmap
-
-### Current state: v0.1.4 released
-- **v0.1.4 released on 2026-05-31** (tag-driven CI)
-- Published packages: `.deb` (APT with signing key), `.rpm` (Fedora COPR via Packit), PKGBUILD (AUR)
-- `just install` / `just uninstall` for local development still available
-
-### Packaging status
-
-| Format | Location | Status |
-|--------|----------|--------|
-| Raw binaries | `release.yml` | Released. Triggered on `v*` tags. `build` uploads `facelock-x86_64-linux-gnu`, `pam_facelock.so`, and the polkit agent as workflow artifacts; the `publish` job stages them into a draft GitHub Release and publishes it with `MANIFEST.json` once every asset validates. |
-| `.deb` | `release.yml` (build-deb job) | Released. Two suite-specific `.deb` artifacts for trixie and resolute are built in CI and uploaded to GitHub Release. Stable releases publish the matching signed APT suites at `tysmith.me/facelock/apt`. |
-| `.rpm` | `release.yml` (build-rpm job) | Released. Built in CI for the GitHub Release asset. COPR builds from source via Packit (`tyvsmith/facelock`) per `releasing.md`. |
-| PKGBUILD (Arch) | `dist/PKGBUILD` | Released. Automated via tag CI; published to AUR (`facelock`, `facelock-git`). References `facelock.install` file. `just test-arch-pkg` builds and installs it. |
-| Nix flake | `dist/nix/flake.nix` | Exists with NixOS module (`module.nix`), derivation (`default.nix`), and dev shell. Not in nixpkgs. `doCheck = false` (needs camera). |
-| openrc | `dist/openrc/facelock-daemon` | Init script exists. |
-| runit | `dist/runit/run`, `dist/runit/log/run` | Service scripts exist. |
-| s6 | `dist/s6/facelock-daemon/run` | Service script exists. |
-
-Every format above that installs files (`.deb`, `.rpm`, the three PKGBUILDs,
-and the Nix derivation) also installs compiled gettext catalogs, via
-`scripts/install-locale-catalogs.sh`. openrc, runit and s6 have no packaging
-path of their own; those systems install from source through
-`just install-files`, which calls the same installer.
-`just test-locale-install-contract` is the gate. `po/` holds only `.pot`
-templates, so nothing else would exercise these paths until the first
-translation landed.
-
-### Model hosting
-- Default: upstream URLs (visomaster GitHub releases, HuggingFace)
-- Self-hosted mirror: GitHub release tag `v0.1.0-models` (documented in `models/manifest.toml`)
-- Models are downloaded at runtime via `facelock setup`, not bundled in packages
-- 4 models total: scrfd_2.5g (3MB), arcface_r50 (166MB), scrfd_10g (17MB, optional), arcface_r100 (249MB, optional)
-- SHA256 verified at download time and at model load time
-
-### Arch package coverage
-
-`just test-arch-pkg` is the only path that executes `dist/PKGBUILD` rather than
-reading it. `makepkg` runs as a non-root builder against the real recipe, so
-`source=`, `depends`, `makedepends`, `prepare()`, `build()`, `check()` and
-`package()` all run; `pacman -U` then installs the result and the installed
-package is validated against what `package()` declared, what the
-`facelock.install` scriptlet did on `post_install`, the first commands
-`quickstart.md` tells a user to type, and the libalpm hook that clears PAM
-references before removal.
-
-The recipe fetches a GitHub archive tarball for the released tag. Downloading it
-would test the last release rather than the candidate, so the working tree is
-staged and repacked inside the container under exactly the file name the recipe
-declares, in the directory shape a GitHub archive unpacks to. Source retrieval
-then runs under the same fail-closed network sandbox the Debian lane uses, which
-is what makes "it did not download" enforced rather than asserted.
-
-Only `dist/PKGBUILD` is built. `PKGBUILD-git` differs from it in `source=` and
-`pkgver()` alone, and `PKGBUILD-bin` installs binaries that exist only after a
-release is published. Neither can be built against a working tree without
-substituting away the part that differs. What all three do share is a list of
-package names, which is where #209 went wrong, so every name all three declare
-is resolved against the pinned repository snapshot before the build starts.
-
-Nothing in this tier starts the daemon or runs inference, so unlike the Debian
-and Fedora package gates it needs no ONNX models and no booted systemd, and can
-run unattended. It is also the slowest recipe in the tree: the recipe compiles
-the workspace twice, release for `build()` and debug for `check()`.
-
-Integrity is exercised the way the shipped recipe gets it. `dist/PKGBUILD`
-declares a fail-closed `__SRC_SHA256__` placeholder that `publish-aur.sh`
-replaces with the release tarball's digest at publish time (#283); a tarball
-repacked from the working tree can never match a published sum, so the lane
-applies the same transformation to the staged tarball — it refuses a recipe
-that declares `SKIP`, proves `makepkg --verifysource` rejects a wrong digest,
-then writes the staged file's real digest and requires verification to pass.
-What remains uncovered: the declared `source=` URL is never fetched, so a wrong
-or dead URL still passes here, and the published tarball's true digest is
-computed by CI at publish time rather than asserted in this lane.
-
-Historical note: the first run of this lane caught a genuine shipping bug.
-`check()` runs `cargo test --workspace`, and the `*_non_root` cases in
-`crates/facelock-cli/tests/cli_smoke.rs` failed on any machine with no
-`/etc/facelock/config.toml`, which is every first AUR install. CI runs the suite
-as root, where those cases skip themselves, and a developer machine already has
-the file, so nothing else was positioned to see it. #264 fixed the ordering.
-
-### Debian source-build coverage
-
-Debian-family release support is exactly Debian 13 Trixie and Ubuntu 26.04
-Resolute. Each suite gate builds the one TPM-enabled `facelock` package from an
-exact-tag quilt source package, then rebuilds the emitted `.dsc` with networking
-denied and empty Cargo/Rustup caches. Trixie selects official Backports
-Rust/Cargo; Resolute selects its native distro toolchain. The source inputs are
-the main archive, reviewed ORT component, deterministic lock-bound Cargo-vendor
-component, and Debian delta. The release build and clean rebuild must agree on
-package metadata, paths, and installed bytes before booted lifecycle and swtpm
-PCR validation run.
-
-### GitHub release workflow
-- Triggered by pushing a `v*` tag
-- Builds release binaries, two suite-specific `.deb` artifacts (trixie and resolute), and the direct Fedora `.rpm` artifact
-- Uploads all artifacts to the GitHub Release with auto-generated release notes
-- Single architecture: x86_64 only
-
-### Distro submission path
-
-| Target | Effort | Blockers |
-|--------|--------|----------|
-| AUR | Low | PKGBUILD exists. Needs `source=()` array pointing to release tarball, `.SRCINFO`, and AUR account. |
-| PPA (Ubuntu/Debian) | Medium | .deb builds work. Needs Launchpad account, GPG signing, and `dput` integration. |
-| COPR (Fedora) | Medium | .spec exists. Needs COPR account and source RPM workflow. |
-| nixpkgs | Medium | Flake works. Needs PR to nixpkgs with proper `fetchFromGitHub` source, maintainer entry. |
-| Distro main repos | High | Requires stable release, maintainer adoption, and review process per distro. Long-term goal. |
-
-## 5. Recommended Improvements
-
-Listed in priority order (highest impact, lowest effort first).
-
-### P0: Supply chain security
-Add `cargo-audit` and `cargo-deny` to CI. Single step: add a job that runs
-`cargo audit` and `cargo deny check`. Catches known CVEs in dependencies
-before they ship.
-
-### P1: Coverage reporting
-Add `cargo-llvm-cov` to CI with a coverage summary comment on PRs. Provides
-visibility into what the ~270+ tests actually cover and highlights dead code.
-
-### P2: PAM module unit tests
-Add unit tests to `pam-facelock` for config parsing, D-Bus client fallback
-logic, and PAM_IGNORE edge cases. The crate is security-critical but has
-zero in-crate tests.
-
-### P3: Property-based tests for embeddings
-Add `proptest` tests in `facelock-daemon` and `facelock-face` for:
-- Cosine similarity: symmetry, range [0,1], identity property
-- Rate limiter: monotonic window advancement, never exceeds limit
-- Config round-trip: serialize/deserialize identity
-
-### P4: Fuzz targets
-Create `cargo-fuzz` targets for ONNX model loading and image preprocessing.
-These are the primary attack surfaces (untrusted model files, malformed
-camera frames).
-
-### P5: AUR submission
-The PKGBUILD is ready. Submit to AUR to get early adopters and feedback from
-the Arch Linux community.
-
-### P6: Benchmark regression detection
-Run `facelock bench` in CI on a consistent runner and store results. Flag
-PRs that regress inference latency by more than 10%. Can use
-`criterion`-based benchmarks with `github-action-benchmark`.
-
-### P7: Self-hosted runner for hardware tests
-Set up a self-hosted GitHub Actions runner with a USB IR camera to run
-Tiers 2, 3b, and 3c automatically. Only worthwhile once the project has
-regular contributors.
+# Testing Strategy and Remaining Gaps
+
+This page describes the current strategy, not the test counts or publication
+state recorded by older releases. Counts drift with every patch; the test tree,
+CI workflows, release matrix, and generated
+[Developer Commands](developer-commands.md) inventory are authoritative.
+
+## Current layers
+
+| Layer | Scope | Typical entry point |
+|-------|-------|---------------------|
+| Unit and static | workspace logic, formatting, clippy, contracts, docs, supply chain | `just check` |
+| Hardware | ignored camera/model tests | `cargo test --workspace -- --ignored` |
+| Container | PAM smoke, camera-free E2E, real-camera daemon/oneshot flows | `just test-arch-pam`, `just test-arch-integration`, `just test-arch-oneshot` |
+| Package | Debian suites, Fedora direct RPM and COPR modes, Arch package, upgrade/lifecycle behavior | package matrix recipes and `.github/workflows/packaging.yml` |
+| Booted guest | clean-install and authentication walkthrough evidence | [Testing Walkthrough](testing-walkthrough.md) |
+| Host PAM | final manual confidence only, with retained root recovery shell | [Testing Safety](testing-safety.md) |
+
+The PAM crate is not untested: it has Rust tests and isolated module/dependency
+checks, and the container tiers exercise PAM loading and conversations. The
+polkit crate also has unit tests and a container D-Bus boundary. That does not
+make the experimental polkit agent production-ready; live desktop agent
+selection and password-agent fallback remain separate evidence gaps.
+
+Supply-chain auditing is active. `just audit` runs `cargo audit` with the
+repository policy, and `.github/workflows/ci.yml` has a dedicated
+`cargo-audit` job. Do not repeat the historical claim that no RustSec audit
+exists.
+
+## What CI establishes
+
+The main CI workflow covers build/test/clippy, the PAM dependency ceiling,
+RustSec, TPM tests, agent-document consistency, catalogs, PAM smoke, and the
+camera-free E2E tier. Packaging has its own workflow and change classifier. A
+green pull request does not imply that path-filtered packaging jobs ran; the
+nightly and release preflight provide the unfiltered package evidence.
+
+Camera-required tests do not run on ordinary hosted runners. Their evidence is
+commit-bound at release time. Keep new assertions in the camera-free tier
+unless they genuinely require a frame.
+
+## Remaining gaps
+
+- no hosted real-camera CI or maintained self-hosted camera runner
+- no broad hardware matrix beyond the devices named in
+  [Compatibility](compatibility.md)
+- no production claim for live desktop polkit-agent coexistence/fallback
+- no continuous inference-performance regression gate across CPU/GPU hardware
+- no fuzzing or property-test program for config, image, and protocol inputs
+- no repository-wide coverage percentage reporting
+- no packaged distribution claim for the source-only OpenRC, runit, s6, or Nix
+  integration fragments
+
+These are limits, not implied support. A source template, successful local
+build, staged artifact, or passing rebuilt package is evidence only for the
+case it actually exercised.
+
+## Release and packaging status
+
+v0.1.4 is the latest published stable release. The v0.2.0-alpha.1 tag exists,
+but no matching GitHub Release is currently published. Prereleases do not enter
+stable APT, AUR, or production COPR. The production COPR currently serves
+v0.1.3; Fedora staging is a candidate channel. The exact supported release
+matrix is Fedora 43/44/45, Debian 13, and Ubuntu 26.04, not RHEL.
+
+The Nix flake/module and OpenRC, runit, and s6 templates live in the source
+tree. Nix is not in nixpkgs and its derivation disables `doCheck`; the init
+templates have no independent package channel. Their existence is not a
+published or boot-tested distribution result.

@@ -6,12 +6,20 @@ output contracts.
 
 ## `facelock-bench`
 
-`facelock-bench` is a source-only benchmark binary. Current Debian, RPM, Arch,
-and release artifact paths do not install or publish it. Build it from a
-checkout and run the resulting path explicitly:
+`facelock-bench` is a developer benchmark binary. Current Debian, RPM, Arch,
+and release artifact paths do not install or publish it; the Nix derivation's
+workspace-wide install result has not been established as a delivery contract.
+Build it from a checkout and run the resulting path explicitly:
 
 ```bash
 cargo build --release --bin facelock-bench
+target/release/facelock-bench --help
+```
+
+After providing a configuration, models, camera access, and any per-command
+prerequisites in the table below, for example:
+
+```bash
 target/release/facelock-bench camera-reopen --iterations 10
 ```
 
@@ -88,5 +96,5 @@ not deploy it as a universal replacement. The internal
 `FACELOCK_POLKIT_SKIP_REGISTER` test hook is not a supported user setting.
 
 For per-action policy and the fallback limitation, see
-[`security.md`](security.md#7-polkit--sudo-face-auth-implemented). For build, test and maintenance
+[`contracts.md`](contracts.md#polkit-agent-semantics). For build, test and maintenance
 commands, see [`developer-commands.md`](developer-commands.md).

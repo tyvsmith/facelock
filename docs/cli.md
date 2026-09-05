@@ -959,7 +959,10 @@ facelock pam status --service hyprlock --service swaylock --if-present
 ```
 
 A service whose file is a local copy hiding a package's own of the same name
-reads `facelock PAM line present (local override of <vendor path>)` rather than
+reads
+<!-- docs-example: manual literal PAM provenance marker, not a command -->
+`facelock PAM line present (local override of <vendor path>)` rather than
+<!-- docs-example: manual literal PAM provenance marker, not a command -->
 `facelock PAM line present`, and its JSON row carries a `shadows` key naming
 that file. It is configured either way; the note says the copy will not follow
 the package's updates. This is a property of the row, so it appears with
@@ -1081,7 +1084,9 @@ facelock audit --follow                 # long form
 
 Manage retained Facelock state on this machine. One verb today, `purge`.
 
-`data` is a noun group with a single subcommand on purpose. A top-level
+`data` is a noun group with a single subcommand on purpose. A top-level name was
+rejected:
+<!-- docs-example: negative InvalidSubcommand -->
 `facelock purge` would sit beside `facelock clear`, which already means "remove
 all face models for a user", and the two would differ only in blast radius —
 naming the object first makes that difference the first word you read.

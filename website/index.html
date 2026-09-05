@@ -43,7 +43,7 @@
         <a href="https://github.com/tyvsmith/facelock" class="btn btn-secondary">View on GitHub</a>
       </div>
 
-      <div class="hero-trust">Arch &middot; Debian/Ubuntu &middot; Fedora &middot; NixOS &middot; MIT/Apache 2.0 &middot; No telemetry</div>
+      <div class="hero-trust">Published and candidate channels are labeled separately &middot; MIT/Apache 2.0 &middot; No telemetry</div>
 
       <div class="terminal">
         <div class="terminal-bar">
@@ -54,28 +54,11 @@
         </div>
         <div class="terminal-body">
           <div><span class="prompt">$</span> <span class="command">sudo facelock setup</span></div>
-          <div>&nbsp;</div>
-          <div><span class="output">  Facelock v0.1.4</span></div>
-          <div><span class="output">  Linux face authentication</span></div>
-          <div>&nbsp;</div>
-          <div><span class="comment">  # 9 interactive steps: camera, models, encryption,</span></div>
-          <div><span class="comment">  # enrollment, recognition test, daemon, PAM ...</span></div>
-          <div>&nbsp;</div>
-          <div><span class="success">  --- Setup Complete ---</span></div>
-          <div>&nbsp;</div>
-          <div><span class="output">  Camera:     /dev/video2</span></div>
-          <div><span class="output">  Models:     /var/lib/facelock/models (standard)</span></div>
-          <div><span class="output">  Inference:  CPU</span></div>
-          <div><span class="output">  Database:   /var/lib/facelock/facelock.db</span></div>
-          <div><span class="output">  Encryption: AES-256-GCM (TPM-sealed key)</span></div>
-          <div><span class="output">  Daemon:   enabled (D-Bus activation)</span></div>
-          <div><span class="output">  PAM:      sudo, hyprlock</span></div>
-          <div><span class="output">  Face:     enrolled</span></div>
+          <div><span class="comment">  # Interactive choices include camera, models, encryption,</span></div>
+          <div><span class="comment">  # daemon, enrollment, and optional PAM services.</span></div>
           <div>&nbsp;</div>
           <div><span class="prompt">$</span> <span class="command">sudo facelock test</span></div>
-          <div><span class="output">Testing face recognition for user 'ty'...</span></div>
-          <div><span class="output">Look at the camera.</span></div>
-          <div><span class="success">Matched</span><span class="output"> model #1 '2026-05-30-1' (similarity: 0.92) in 0.19s</span></div>
+          <div><span class="comment">  # Read the result: exit 0 alone does not prove a scan or match.</span></div>
         </div>
       </div>
     </div>
@@ -124,7 +107,7 @@
       <div class="section-header center">
         <div class="section-label">Security</div>
         <h2 class="section-title">Defense in depth, on by default</h2>
-        <p class="section-desc">Multiple independent layers protect against spoofing, tampering, and unauthorized access &mdash; without any configuration after install.</p>
+        <p class="section-desc">Multiple independent layers reduce static-presentation, tampering, and unauthorized-access risk. They do not claim complete spoof resistance.</p>
       </div>
 
       <div class="security-grid">
@@ -132,7 +115,7 @@
           <div class="security-marker">IR</div>
           <div>
             <h4>IR Camera Enforcement</h4>
-            <p>Enabled by default. Rejects RGB cameras that are trivially spoofed with a printed photo. IR captures skin texture invisible to screens.</p>
+            <p>Enabled by default. Rejects RGB-only operation and applies an IR texture check where a verified IR path is available.</p>
           </div>
         </div>
 
@@ -194,7 +177,7 @@
             <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
           </div>
           <h3>Sudo without typing</h3>
-          <p>Every <code>sudo</code> prompt becomes a glance at the camera. The daemon keeps ONNX models loaded, so no authentication waits for a model load &mdash; only a cold camera pays a reopen. Measure yours with <code>facelock bench camera-reopen</code>.</p>
+          <p>A configured <code>sudo</code> PAM service can offer face before password fallback. The daemon keeps models loaded; measure the camera-specific reopen cost with <code>sudo facelock bench camera-reopen</code>.</p>
         </div>
 
         <div class="feature-card">
@@ -202,7 +185,7 @@
             <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
           </div>
           <h3>Screen lock unlock</h3>
-          <p>Drop-in PAM for Hyprlock, swaylock, and KDE Plasma's screen locker. Wake the display, look at the camera, you're back in.</p>
+          <p>Facelock can be added to an existing locker's PAM service. Hyprlock has a built-in user-side adapter; other lockers must own and validate their UI integration.</p>
         </div>
 
         <div class="feature-card">
@@ -210,7 +193,7 @@
             <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><polyline points="10 17 15 12 10 7"></polyline><line x1="15" y1="12" x2="3" y2="12"></line></svg>
           </div>
           <h3>Display manager login</h3>
-          <p>GDM, SDDM, and LightDM (experimental). Camera initialization at the login screen is system-dependent &mdash; see <a href="docs/quickstart.html">docs</a> for caveats.</p>
+          <p>Display-manager PAM is sensitive and system-dependent. It is not part of the current validated matrix; test in a disposable guest with a recovery path.</p>
         </div>
       </div>
     </div>
@@ -231,7 +214,7 @@
             <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
           </div>
           <h3>IR Anti-Spoofing</h3>
-          <p>Enforces infrared cameras by default. Phone screens and printed photos lack IR skin texture, blocking the most common attack vector.</p>
+          <p>Requires an IR-classified camera by default. Frame variance and IR texture checks target static presentations; they are not a video-replay guarantee.</p>
         </div>
 
         <div class="feature-card">
@@ -239,7 +222,7 @@
             <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
           </div>
           <h3>Sub-Second Auth</h3>
-          <p>Persistent daemon keeps ONNX models loaded, so no authentication waits for a model load. A retry after a miss reuses the still-warm camera and skips the reopen too; <code>facelock bench camera-reopen</code> measures what that reopen costs on your hardware.</p>
+          <p>Persistent daemon keeps ONNX models loaded, so repeated authentication avoids model reload. <code>sudo facelock bench camera-reopen</code> measures the hardware-specific cold-camera cost.</p>
         </div>
 
         <div class="feature-card">
@@ -255,7 +238,7 @@
             <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
           </div>
           <h3>PAM Integration</h3>
-          <p>Drop-in PAM module for sudo, polkit, hyprlock, swaylock, KDE, and login managers. Installs as a single <code>pam_facelock.so</code> &mdash; the wizard wires the rest.</p>
+          <p>The PAM module can be added to named Linux-PAM services. The wizard edits only services you select; sensitive shared and login stacks require explicit authorization.</p>
         </div>
 
         <div class="feature-card">
@@ -327,15 +310,15 @@
     <div class="container">
       <div class="section-header center">
         <div class="section-label">Quick Install</div>
-        <h2 class="section-title">One package. One wizard. Done.</h2>
-        <p class="section-desc">Install the package for your distro and run <code>sudo facelock setup</code>. The wizard detects your camera, downloads models, sets up encryption, enrolls your face, and wires up PAM for sudo and your screen locker. No further commands needed.</p>
+        <h2 class="section-title">Install from a verified channel</h2>
+        <p class="section-desc">v0.1.4 is the latest published stable release. This tree is v0.2.0-alpha.1, whose tag exists without a corresponding GitHub Release. Prereleases do not enter stable AUR, APT, or production COPR.</p>
       </div>
 
       <div class="install-block">
         <div class="install-tabs" role="tablist">
           <button class="install-tab active" role="tab" aria-selected="true" data-target="install-arch">Arch Linux</button>
           <button class="install-tab" role="tab" aria-selected="false" data-target="install-debian">Debian / Ubuntu</button>
-          <button class="install-tab" role="tab" aria-selected="false" data-target="install-fedora">Fedora / RHEL</button>
+          <button class="install-tab" role="tab" aria-selected="false" data-target="install-fedora">Fedora</button>
           <button class="install-tab" role="tab" aria-selected="false" data-target="install-nixos">NixOS</button>
           <button class="install-tab" role="tab" aria-selected="false" data-target="install-source">From source</button>
         </div>
@@ -367,25 +350,14 @@
               <span class="terminal-title">terminal</span>
             </div>
             <div class="terminal-body">
-              <div><span class="comment"># Debian 13 — trixie — TPM required</span></div>
-              <div><span class="comment"># Ubuntu 26.04 — resolute — TPM required</span></div>
-              <div><span class="comment"># Add signing key</span></div>
-              <div><span class="prompt">$</span> <span class="command">sudo install -d -m 0755 /etc/apt/keyrings</span></div>
-              <div><span class="prompt">$</span> <span class="command">curl -fsSL https://tysmith.me/facelock/apt/tysmith-archive-keyring.gpg \</span></div>
-              <div>&nbsp;&nbsp;&nbsp;&nbsp;<span class="command">| sudo tee /etc/apt/keyrings/tysmith-archive-keyring.gpg &gt;/dev/null</span></div>
+              <div><span class="comment"># Planned 0.2.0 stable suites:</span></div>
+              <div><span class="output">Debian 13 (trixie), Ubuntu 26.04 (resolute), amd64, TPM</span></div>
               <div>&nbsp;</div>
-              <div><span class="comment"># Set the exact suite above; trixie is the Debian 13 example</span></div>
-              <div><span class="prompt">$</span> <span class="command">APT_SUITE=trixie</span></div>
-              <div><span class="prompt">$</span> <span class="command">echo "deb [signed-by=/etc/apt/keyrings/tysmith-archive-keyring.gpg] \</span></div>
-              <div>&nbsp;&nbsp;&nbsp;&nbsp;<span class="command">https://tysmith.me/facelock/apt ${APT_SUITE} facelock" \</span></div>
-              <div>&nbsp;&nbsp;&nbsp;&nbsp;<span class="command">| sudo tee /etc/apt/sources.list.d/facelock.list</span></div>
-              <div>&nbsp;</div>
-              <div><span class="comment"># Install + run setup wizard</span></div>
-              <div><span class="prompt">$</span> <span class="command">sudo apt update &amp;&amp; sudo apt install facelock</span></div>
-              <div><span class="prompt">$</span> <span class="command">sudo facelock setup</span></div>
+              <div><span class="comment"># Not currently installable: the clean trixie Release check returns 404.</span></div>
+              <div><span class="comment"># Use source until a stable 0.2.0 release publishes these suites.</span></div>
             </div>
           </div>
-          <p class="install-note migration">Source entries written for v0.1.4 name the <code>main</code> or <code>legacy</code> suite. They keep working until 0.3.0: <code>main</code> serves the trixie package and <code>legacy</code> serves no package. On Debian 13 or Ubuntu 26.04, replace the suite with <code>trixie</code> or <code>resolute</code>. Bookworm, noble, and Ubuntu 25.x have no suite: 0.1.4 was the last release for those hosts, so remove <code>/etc/apt/sources.list.d/facelock.list</code>. At 0.3.0 the old suites disappear and <code>apt update</code> fails until the entry is removed. Reinstalling or downloading 0.1.4 through APT stops working at 0.2.0, because the pool is rebuilt at each release.</p>
+          <p class="install-note migration">Existing v0.1.4 source entries use transitional <code>main</code>/<code>legacy</code> names. Do not rewrite them to <code>trixie</code> or <code>resolute</code> before those suites are actually published.</p>
         </div>
 
         <div id="install-fedora" class="install-panel" role="tabpanel" hidden>
@@ -397,7 +369,7 @@
               <span class="terminal-title">terminal</span>
             </div>
             <div class="terminal-body">
-              <div><span class="comment"># Enable COPR + install</span></div>
+              <div><span class="comment"># Fedora 43/44/45 only; production currently serves v0.1.3.</span></div>
               <div><span class="prompt">$</span> <span class="command">sudo dnf copr enable tyvsmith/facelock</span></div>
               <div><span class="prompt">$</span> <span class="command">sudo dnf install facelock</span></div>
               <div>&nbsp;</div>
@@ -416,16 +388,14 @@
               <span class="terminal-title">configuration.nix</span>
             </div>
             <div class="terminal-body">
-              <div><span class="comment"># flake.nix inputs</span></div>
+              <div><span class="comment"># Source-tree module shape (experimental; pin a reviewed commit)</span></div>
               <div><span class="output">inputs.facelock.url = "github:tyvsmith/facelock?dir=dist/nix";</span></div>
               <div>&nbsp;</div>
               <div><span class="comment"># configuration.nix (import the module + enable)</span></div>
               <div><span class="output">imports = [ inputs.facelock.nixosModules.default ];</span></div>
               <div><span class="output">services.facelock.enable = true;</span></div>
               <div>&nbsp;</div>
-              <div><span class="comment"># Rebuild + run setup wizard</span></div>
-              <div><span class="prompt">$</span> <span class="command">sudo nixos-rebuild switch</span></div>
-              <div><span class="prompt">$</span> <span class="command">sudo facelock setup</span></div>
+              <div><span class="comment"># Not in nixpkgs; doCheck is disabled and no clean-system result is claimed.</span></div>
             </div>
           </div>
         </div>
@@ -439,7 +409,8 @@
               <span class="terminal-title">terminal</span>
             </div>
             <div class="terminal-body">
-              <div><span class="comment"># Requires Rust 1.88+, just, libv4l-dev, libpam0g-dev, clang</span></div>
+              <div><span class="comment"># Requires Rust 1.88+, just, PAM/V4L2/Wayland/xkbcommon/TPM2-TSS headers,</span></div>
+              <div><span class="comment"># clang, gettext, and pkg-config (package names vary by distribution).</span></div>
               <div><span class="prompt">$</span> <span class="command">git clone https://github.com/tyvsmith/facelock</span></div>
               <div><span class="prompt">$</span> <span class="command">cd facelock</span></div>
               <div><span class="prompt">$</span> <span class="command">just install</span></div>
@@ -451,7 +422,7 @@
         </div>
       </div>
 
-      <p class="install-note">Need finer control? See <a href="docs/quickstart.html">docs</a> for manual model paths, custom PAM stacks, GPU provider tuning, and <code>--non-interactive</code> automation.</p>
+      <p class="install-note">The setup wizard includes enrollment and only edits PAM when selected. Keep a root recovery shell open. See <a href="docs/quickstart.html">docs</a> for exact release status, source prerequisites, and safe testing.</p>
     </div>
   </section>
 

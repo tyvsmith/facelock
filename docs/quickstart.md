@@ -1,129 +1,134 @@
 # Quickstart
 
-## Prerequisites
+## Published packages
 
-- Rust 1.88+ (`rustup update`)
-- [just](https://github.com/casey/just) task runner
-- Linux with V4L2 support
-- System dependencies: `libv4l-dev libpam0g-dev clang` (Debian/Ubuntu) or `v4l-utils pam clang` (Arch)
-- A webcam (IR recommended for production; RGB works for development)
+v0.1.4 is the latest published stable release. Prerelease tags do not enter
+the stable AUR, APT, or production COPR channels. The v0.2.0-alpha.1 tag exists
+but currently has no corresponding GitHub Release; a checkout, staged package,
+or local rebuild is not proof that a release artifact was published.
 
-## Development Setup
+Arch users can install the stable AUR package:
 
-### 1. Build
+```bash
+yay -S facelock
+```
+
+Debian 13 (`trixie`) and Ubuntu 26.04 LTS (`resolute`) on amd64 are the exact
+0.2.0 stable APT targets. They are not currently served: the clean-system
+check of the documented `trixie` Release URL returns 404. Do not add either
+source until a stable 0.2.0 release publishes it. Existing v0.1.4 sources used
+the transitional `main`/`legacy` names; the current alpha tree is a source
+build, not an APT publication.
+
+The production COPR targets Fedora 43, 44, and 45 only. It currently serves
+v0.1.3, behind stable v0.1.4. `tyvsmith/facelock-testing` is a staging/candidate
+project, not a stable channel. RHEL is not in the supported matrix.
+
+```bash
+sudo dnf copr enable tyvsmith/facelock
+sudo dnf install facelock
+```
+
+After any package install, keep a separate root shell open and run the wizard:
+
+```bash
+sudo facelock setup
+sudo facelock test
+```
+
+The wizard offers camera selection, model download, encryption, daemon setup,
+enrollment, and PAM configuration. If enrollment is selected there, do not run
+a redundant initial `facelock enroll`. `facelock test` may exit zero when no
+scan ran or when a completed scan did not match; verify the printed result,
+then test `sudo` from a new terminal before closing the recovery shell.
+
+## Build from source
+
+Use Rust 1.88 or newer and `just`. Build dependencies follow the package
+manifests: PAM and V4L2 development headers, Clang, Wayland and libxkbcommon
+headers, gettext, pkg-config, and TPM2-TSS headers. The system ONNX Runtime is a
+runtime/package concern; Cargo's source build obtains the pinned runtime crate
+dependency.
 
 ```bash
 just build
+target/debug/facelock --help
+just check
 ```
 
-### 2. Download Models and Enroll
+`just build` does not install anything or put `facelock` on `PATH`; use the
+explicit `target/debug/facelock` path. Unit and static checks need neither a
+camera nor host authentication changes.
+
+For camera development, first provide the checksum-verified model files and
+use the development configuration explicitly:
 
 ```bash
-sudo facelock setup     # interactive wizard (camera, models, encryption)
-sudo facelock enroll    # capture your face (look at camera)
-sudo facelock test      # verify recognition works
+just link-models
+sudo target/debug/facelock --config "$PWD/dev/config.toml" devices
+sudo target/debug/facelock --config "$PWD/dev/config.toml" enroll --skip-setup-check
+sudo target/debug/facelock --config "$PWD/dev/config.toml" test
 ```
 
-No daemon needed — the CLI auto-falls back to direct mode when no daemon is running.
+These commands are privileged because the management CLI enforces its normal
+root gate even with `dev/config.toml`. `FACELOCK_CONFIG` cannot replace the
+explicit flag under `sudo`: all effective-UID-0 processes ignore that variable.
+The development configuration uses direct/oneshot operation and temporary
+state; it is not an installed PAM setup.
 
-### 3. Explore
+For a source-based system install:
 
 ```bash
-sudo facelock devices            # list cameras
-sudo facelock list               # see enrolled models
-sudo facelock preview --json     # live detection output, one JSON object per frame
-sudo facelock status             # check system status
-sudo facelock bench warm-auth    # measure auth latency
+just install
+sudo facelock setup
+sudo facelock test
 ```
 
-### 4. Run Tests
+`just install` builds as the invoking user and prompts for sudo only for the
+file installation. It installs the binary, PAM module, service units, D-Bus
+policy, configuration and supporting assets, but does not edit any PAM service.
+Only the later wizard or `facelock pam add` does that.
+
+## Explore safely
+
+After models and a development or installed configuration exist:
 
 ```bash
-just check                # unit tests + clippy + fmt
-just test-arch-pam          # Arch container PAM smoke tests (no camera)
-just test-arch-integration  # end-to-end with camera (daemon mode)
-just test-arch-oneshot      # end-to-end with camera (no daemon)
-just test-arch-dev-shell    # interactive container shell
+sudo facelock devices
+sudo facelock list
+sudo facelock preview --json
+sudo facelock status
+sudo facelock bench camera-reopen
 ```
 
-## System Installation
+Camera commands touch real hardware. See [Testing Safety](testing-safety.md)
+before changing PAM, and [Developer Commands](developer-commands.md) for the
+full validation inventory.
 
-**A broken PAM module can lock you out.** Keep a root shell open until you've verified face auth works. See [testing-safety.md](testing-safety.md) for details.
-
-### Install
-
-```bash
-just install              # build release + install everything
-sudo facelock setup       # download models
-sudo facelock enroll      # register your face
-```
-
-This installs the binary, PAM module, systemd service, D-Bus policy, and adds face auth to `/etc/pam.d/sudo`.
-
-### Verify
-
-Open a **new terminal** and run:
-
-```bash
-sudo echo "face auth works"
-```
-
-You should see "Identifying face..." and authenticate by looking at the camera.
-
-### GPU Acceleration (Optional)
-
-GPU support is runtime-only -- no special build flags needed. The setup wizard (`facelock setup`) offers CPU or CUDA selection and warns if dependencies are missing.
-
-For manual configuration, install a GPU-enabled ONNX Runtime package:
-
-```bash
-sudo pacman -S onnxruntime-opt-cuda      # NVIDIA
-sudo pacman -S onnxruntime-opt-rocm      # AMD
-```
-
-Arch packages no OpenVINO build of ONNX Runtime, in the repositories or the AUR. Build ONNX Runtime with the OpenVINO execution provider yourself to use `execution_provider = "openvino"`.
-
-Set `execution_provider` in `/etc/facelock/config.toml` to `"cuda"`, `"rocm"`, or `"openvino"`. CPU is the default.
-
-### Uninstall
+## Uninstall and retained data
 
 ```bash
 just uninstall
 ```
 
-### Package lifecycle and retained data
-
 Ordinary package removal and `just uninstall` preserve the face database,
-encryption keys, downloaded models, enrollment markers, audit logs, snapshots,
-and setup state. Debian also retains its conffile until `purge`; RPM follows
-`%config(noreplace)`, removing an unmodified config and retaining an
-administrator-modified one as `config.toml.rpmsave`.
+encryption keys, models, enrollment markers, logs, snapshots, and setup state.
+To inspect the supported bounded erasure path while Facelock is still installed:
 
-Debian purge removes only provably safe entries inside the three compiled
-Facelock roots. Unsafe or externally configured remnants are retained and
-reported. The helper leaves the three compiled roots in place; dpkg may then
-remove an empty `/etc/facelock` conffile parent, while admitted files
-and empty descendant directories are removed.
+```bash
+sudo facelock data purge --dry-run
+sudo facelock data purge --allow-destruction
+```
 
-The Facelock CLI does not currently expose a safe "remove everything" command.
-Do not replace package lifecycle handling with a broad recursive deletion:
-configured state paths can live outside the default directories, and links,
-mounts, or wrong-owner remnants require inspection rather than traversal. See
-[Package Lifecycle Ownership](contracts.md#package-lifecycle-ownership) for the
-fixed roots, retained-data rules, and the limits of filesystem deletion.
+Purge admits only safe entries inside the three compiled Facelock roots. It
+does not follow links, cross mounts, remove unsafe/wrong-owner objects, or chase
+configured paths outside those roots. Its report may therefore list remnants
+that require manual review; it never promises whole-disk erasure. See
+[Package Lifecycle Ownership](contracts.md#package-lifecycle-ownership).
 
-## Configuration
+## Configuration highlights
 
-Config file: `/etc/facelock/config.toml` (installed) or `config/facelock.toml` (source).
-
-Key settings:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `device.path` | auto-detect | Camera path (prefers IR cameras) |
-| `recognition.threshold` | `0.80` | Cosine similarity threshold |
-| `recognition.execution_provider` | `"cpu"` | `"cpu"`, `"cuda"`, `"rocm"`, or `"openvino"` |
-| `daemon.mode` | `"daemon"` | `"daemon"` or `"oneshot"` |
-| `security.require_ir` | `true` | Reject RGB-only cameras |
-
-Full reference: `config/facelock.toml` (all keys documented with comments).
+The installed file is `/etc/facelock/config.toml`; source development uses
+`dev/config.toml`. The default encryption method is `keyfile`, IR is required,
+and plaintext enrollment is refused unless explicitly enabled. See the
+[Configuration Reference](configuration.md).

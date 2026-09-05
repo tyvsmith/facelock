@@ -4,11 +4,11 @@
 
 | Component | Requirement |
 |-----------|-----------|
-| OS | Linux (kernel 4.14+ for V4L2) |
-| Architecture | x86_64 (ONNX Runtime binaries) |
+| OS | Linux with V4L2 and Linux-PAM |
+| Architecture | x86_64 for current published artifacts |
 | Rust | 1.88+ (edition 2024) |
 | Camera | V4L2-compatible (USB webcam, built-in IR) |
-| PAM | Linux-PAM (pam 1.5+) |
+| PAM | Linux-PAM |
 
 ## Tested Distributions
 
@@ -21,18 +21,14 @@ LTS (Resolute). Other Debian and Ubuntu releases are unsupported.
 | Arch Linux | systemd | oneshot | Tested |
 | Debian 13 (Trixie) | systemd | daemon + D-Bus activation | Booted package gate |
 | Ubuntu 26.04 LTS (Resolute) | systemd | daemon + D-Bus activation | Booted package gate |
+| Fedora 43 and 44 | systemd | daemon + D-Bus activation | Required full-lifecycle COPR targets |
+| Fedora 45 | systemd | daemon + D-Bus activation | Required build/install/runtime target |
 | Container (Arch) | none | daemon (manual) | CI-tested |
 | Container (Arch) | none | oneshot | CI-tested |
 
-### Expected to Work (untested)
-
-| Distribution | Init System | Mode |
-|-------------|-------------|------|
-| Fedora 38+ | systemd | daemon + D-Bus activation |
-| Any Linux | any / none | oneshot |
-| Void Linux | runit | oneshot or manual daemon |
-| Alpine Linux | OpenRC | oneshot or manual daemon |
-| Gentoo | OpenRC / systemd | oneshot or daemon |
+No RHEL release target is claimed. OpenRC, runit, and s6 service templates are
+provided in the source tree, but their presence is not a claim that a named
+distribution has passed package or hardware validation.
 
 ## Camera Compatibility
 
@@ -191,13 +187,12 @@ Use oneshot mode (no daemon needed):
 mode = "oneshot"
 ```
 
-Or manage the daemon manually:
-```bash
-facelock daemon &                    # start
-kill $(pidof facelock)               # stop
-```
-
-For process supervisors (runit, s6, dinit, OpenRC), create a service that runs `facelock daemon`. The daemon handles SIGTERM for graceful shutdown.
+After a source install, a supervisor may run `/usr/bin/facelock daemon` as root;
+the daemon itself refuses non-root execution. Reviewed templates are supplied
+for OpenRC (`dist/openrc/facelock-daemon`), runit (`dist/runit/`), and s6
+(`dist/s6/facelock-daemon/`). They are not installed by the systemd-oriented
+packages, and there is no dinit template. Install and enable the one matching
+the local supervisor, preserving its root ownership and state-directory setup.
 
 ## PAM Stack Compatibility
 

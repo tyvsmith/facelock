@@ -1,183 +1,42 @@
-# Testing & Safety Strategy
+# Testing and Safety
 
-**READ THIS BEFORE implementing anything PAM-related.**
-
-## The Golden Rule
-
-**Never install `pam_facelock.so` on the host or edit `/etc/pam.d/*` until validated in container.** A broken PAM module can lock you out of sudo, login, and su.
-
-## Testing Tiers
-
-### Tier 1: Unit Tests (always safe)
+Unit, lint, audit, documentation, and contract checks need no host
+authentication changes:
 
 ```bash
-cargo test --workspace
-cargo clippy --workspace -- -D warnings
+just check
 ```
 
-Covers: config parsing, format conversion, NMS, cosine similarity, IPC serialization, SQLite CRUD, frame variance logic. No hardware, no root.
+Camera tests, package lifecycle tests, and live authentication have different
+risk. Use containers for isolated PAM smoke coverage and an explicitly marked
+disposable guest for booted package/login scenarios. The walkthrough runner
+does not provision the guest and refuses ordinary hosts. See the canonical
+[Testing and Safety](../../docs/testing-safety.md) and
+[Testing Walkthrough](../../docs/testing-walkthrough.md).
 
-### Tier 2: Hardware Integration (camera + models)
+The development configuration is not rootless. Management commands retain
+their root gate, and effective-UID-0 processes ignore `FACELOCK_CONFIG`:
 
 ```bash
-cargo test --workspace -- --ignored
+just build
+just link-models
+sudo target/debug/facelock --config "$PWD/dev/config.toml" devices
 ```
 
-Requires camera and downloaded ONNX models. Tests capture, model loading, full pipeline.
-
-### Tier 3: Container Tests (requires podman)
+Do not use development setup as a shortcut into host PAM. Before any host PAM
+test, validate the isolated tiers, retain a separate root shell, start with
+`sudo`, and test from a new terminal. Prefer validated removal:
 
 ```bash
-just test-arch-pam          # Arch PAM smoke tests (no camera needed)
-just test-arch-integration  # full E2E with camera (daemon mode)
-just test-arch-oneshot      # full E2E with camera (no daemon)
-just test-arch-dev-shell    # interactive shell for manual testing
+facelock pam add --service sudo
+facelock pam remove --service sudo
 ```
 
-The two camera tiers time-box each live enroll/auth step at 90s. If you need
-longer in front of the camera, set `FACELOCK_LIVE_TIMEOUT` -- the recipes
-forward it into the container:
+Run those two commands from the retained root shell. Current managed backups
+are versioned beneath `/var/lib/facelock/pam-backups/` and carry JSON
+provenance. Facelock does not automatically create
+`/etc/pam.d/sudo.facelock-backup`; that path exists only if an operator or an
+older release made it. Review any copy before restoring it.
 
-```bash
-FACELOCK_LIVE_TIMEOUT=300s just test-arch-integration
-```
-
-The value goes straight into `timeout --foreground`, so pass a `timeout(1)`
-duration (`300s`, `5m`); anything else is rejected before the container starts.
-
-Container tests validate:
-- PAM module loads without crashing
-- Returns PAM_IGNORE when daemon unavailable
-- Handles missing/invalid config
-- Exports correct PAM symbols
-- End-to-end: enroll, list, test, PAM auth, clear
-- Both daemon and oneshot modes
-
-### Tier 4: VM Testing (optional, recommended)
-
-Disposable VM with snapshots. USB camera passthrough for real hardware testing. Verify sudo, su, login scenarios with rollback safety.
-
-### Tier 5: Host PAM Installation
-
-Safety checklist:
-1. Open root shell in separate terminal -- **keep it open**
-2. `sudo cp /etc/pam.d/sudo /etc/pam.d/sudo.facelock-backup`
-3. `sudo facelock setup --pam --service sudo`
-4. Test in NEW terminal: `sudo echo test`
-5. If broken, revert from root shell: `sudo cp /etc/pam.d/sudo.facelock-backup /etc/pam.d/sudo`
-6. **Never** modify `system-auth` or `login` until sudo works perfectly
-
-Emergency recovery: boot from USB, mount partition, remove PAM line, reboot.
-
-## Development Workflow
-
-### Setup
-```bash
-export FACELOCK_CONFIG=dev/config.toml
-cargo build --workspace
-cargo run --bin facelock -- setup       # download models
-```
-
-`models/*.onnx` is gitignored, so a fresh clone -- and every `git worktree add`
--- starts without models, while tiers 2 and 3 need them. Rather than download
-435MB per checkout, populate the new one from any checkout on the machine that
-already has them, or from what `sudo facelock setup` put in
-`/var/lib/facelock/models`:
-
-```bash
-just link-models                  # main checkout first, then the install tree
-just link-models /path/to/models  # or say where to look
-```
-
-It hardlinks where it can (a worktree shares a filesystem with its main
-checkout, so that is free and instant), copies where it cannot, and verifies
-every file against the sha256 in `models/manifest.toml`. The camera tiers run
-it themselves, hardlink-only, so a fresh worktree usually provisions itself
-before you notice it was empty.
-
-### No-Daemon Development
-All CLI commands work without a daemon -- the CLI falls back to direct mode silently:
-```bash
-facelock enroll
-facelock test
-facelock list
-facelock devices
-```
-
-### Daemon Development
-```bash
-facelock daemon &
-facelock enroll       # uses daemon (faster for repeated commands)
-facelock test
-kill %1             # stop daemon
-```
-
-### Logging
-Control via `RUST_LOG` environment variable:
-```bash
-RUST_LOG=facelock_daemon=debug facelock daemon    # verbose daemon
-RUST_LOG=facelock_cli=debug facelock test         # verbose CLI
-```
-
-## Dev Config
-
-`dev/config.toml` -- temp paths, no root, camera auto-detected:
-
-```toml
-[device]
-max_height = 480
-
-[daemon]
-model_dir = "./models"
-
-[storage]
-db_path = "/tmp/facelock-dev.db"
-
-[security]
-require_ir = true
-require_frame_variance = true
-```
-
-## CI
-
-GitHub Actions runs two workflows on a pull request.
-
-`.github/workflows/ci.yml`:
-- Build + test + clippy + fmt check
-- Container PAM smoke tests and the camera-free E2E tier
-
-`.github/workflows/packaging.yml`:
-- Both Debian suite package gates, every declared Fedora lane, the Arch package
-  built from `dist/PKGBUILD`, and the native version-ordering matrix
-- Path-filtered on a pull request, so these lanes run only when the diff reaches
-  a package. They run unfiltered nightly, and `just release-preflight` refuses
-  to pass without a green run at HEAD. `docs/releasing.md` covers the filter and
-  the residual risk it leaves.
-
-Local full CI: `bash test/run-tests.sh`
-
-## Test Files
-
-| File | Purpose |
-|------|---------|
-| `test/Containerfile` | Container image (Arch + pamtester) |
-| `test/run-tests.sh` | CI script (unit + lint + PAM symbols) |
-| `test/run-container-tests.sh` | PAM smoke tests |
-| `test/run-integration-tests.sh` | E2E with camera (daemon) |
-| `test/run-oneshot-tests.sh` | E2E with camera (oneshot) |
-| `test/pam.d/facelock-test` | Test PAM config |
-
-## Just Recipes
-
-| Recipe | Description |
-|--------|-------------|
-| `just link-models` | Populate `models/*.onnx` from an existing checkout or install tree |
-| `just test` | Unit tests |
-| `just lint` | Clippy |
-| `just check` | test + lint + fmt |
-| `just check-package-names-live` | Re-check documented package names against live Arch, AUR, Debian and Fedora (network; not part of `just check`) |
-| `just test-arch-pam` | Arch container PAM smoke |
-| `just test-arch-integration` | E2E daemon mode |
-| `just test-arch-oneshot` | E2E oneshot mode |
-| `just test-arch-dev-shell` | Interactive container |
-| `just install` | System install (root) |
+`facelock test` can return zero without a match or camera scan. Treat its human
+output, not exit status alone, as the result.

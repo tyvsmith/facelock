@@ -13,6 +13,10 @@
 cargo build --workspace
 ```
 
+This leaves the unified development binary at `target/debug/facelock`; it does
+not install it on `PATH`. The complete recipe inventory and prerequisites are
+in [Developer Commands](docs/developer-commands.md).
+
 ## Workspace structure
 
 Facelock is a Cargo workspace with 11 crates:
@@ -25,7 +29,7 @@ Facelock is a Cargo workspace with 11 crates:
 | `facelock-store` | lib | SQLite face embedding storage |
 | `facelock-daemon` | lib | Auth/enroll logic, rate limiting, liveness, audit |
 | `facelock-cli` | bin | Unified CLI (`facelock` binary, includes `bench` subcommand) |
-| `facelock-bench` | bin | Standalone benchmark and calibration utility |
+| `facelock-bench` | bin | Source-only standalone benchmark utility; see [Auxiliary Commands](docs/auxiliary-commands.md) |
 | `pam-facelock` | cdylib | PAM module (libc, toml, serde, zbus only) |
 | `facelock-tpm` | lib | Optional TPM encryption |
 | `facelock-polkit` | bin | Polkit face authentication agent |
@@ -111,7 +115,9 @@ Container tests validate PAM integration without risking host lockout.
 
 ### Tier 4: VM testing
 
-Use a disposable VM with snapshots for testing PAM changes against real login flows.
+Use an explicitly marked disposable guest with snapshots for PAM, package and
+login-flow testing. The evidence-producing runner does not provision a VM; see
+[Testing Walkthrough](docs/testing-walkthrough.md).
 
 ### Tier 5: Host PAM testing
 

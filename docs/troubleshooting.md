@@ -2,7 +2,8 @@
 
 ## Camera not detected
 
-**Symptom**: `facelock devices` shows no cameras, or `facelock enroll` fails with "no camera found".
+**Symptom**: `sudo facelock devices` shows no cameras, or enrollment fails
+with "no camera found".
 
 **Steps**:
 
@@ -11,11 +12,9 @@
    ls /dev/video*
    v4l2-ctl --list-devices
    ```
-2. Verify your user has access to the video device:
-   ```bash
-   groups  # should include "video"
-   sudo usermod -aG video $USER  # add yourself, then log out and back in
-   ```
+2. Facelock's management commands and daemon run as root; adding the desktop
+   user to `video` does not fix their access. Check the node and any device
+   cgroup/sandbox policy instead.
 3. If `/dev/video*` exists but Facelock skips it, set the device explicitly:
    ```toml
    [device]
@@ -31,7 +30,7 @@
 
 1. Check what Facelock detects:
    ```bash
-   facelock devices
+   sudo facelock devices
    ```
 2. IR detection is derived from the pixel formats the camera reports, **not** its name. A node classifies as IR only when it enumerates *exclusively* IR-typical mono formats (GREY, Y8, Y10, Y12, Y16) with no color format (YUYV/MJPG) mixed in, or when a hardware quirk matches it. The device name is never used to classify a camera as IR (it is only a tiebreak during auto-detection), so a genuine IR camera whose single node also advertises a color format will **not** auto-classify.
 3. Inspect the formats your camera actually reports:
@@ -65,8 +64,8 @@
    refuses to open it with an error listing the advertised formats. Point
    `device.path` at a processed camera instead — see "Intel IPU6/IPU7 MIPI
    cameras" in `docs/compatibility.md`.
-3. **Verify frames are usable**: run `facelock preview --json` (or
-   `facelock preview`) and check that you see a live image with your face
+3. **Verify frames are usable**: run `sudo facelock preview --json` (or
+   `sudo facelock preview`) and check that you see a live image with your face
    detected.
 4. Run with `RUST_LOG=facelock_daemon=debug` to see per-frame rejection
    reasons (dark frame, no face detected, low quality).
@@ -115,11 +114,7 @@ threads = 4  # increase if you have more cores
    ```bash
    mount -o remount,rw /
    ```
-3. Restore the PAM backup:
-   ```bash
-   cp /var/lib/facelock/pam-backups/sudo.TIMESTAMP /etc/pam.d/sudo
-   ```
-   Or remove the Facelock line from `/etc/pam.d/sudo`:
+3. Remove the exact Facelock line from `/etc/pam.d/sudo`:
    ```bash
    sed -i '/pam_facelock/d' /etc/pam.d/sudo
    ```
@@ -127,10 +122,15 @@ threads = 4  # increase if you have more cores
 
 ### If you still have a root shell open
 
-```bash
-# From your root shell:
-cp /var/lib/facelock/pam-backups/sudo.TIMESTAMP /etc/pam.d/sudo
-```
+Run `facelock pam remove --service sudo` from that root shell. This uses the
+validated removal and rollback state rather than guessing a backup. Managed
+backups are versioned beneath `/var/lib/facelock/pam-backups/` as
+`sudo.<seconds>-<nine-digit-nanoseconds>` with adjacent JSON provenance. Review
+the provenance and current service before any manual restoration; never copy
+the newest-looking file blindly. `/etc/pam.d/sudo.facelock-backup` is not a
+current managed path and exists only if an operator or older release created
+it. A separately created emergency copy is useful only when its origin was
+recorded and its contents are reviewed.
 
 ### Prevention
 
@@ -179,14 +179,12 @@ The ONNX runtime requires access to `/dev/null`, `/dev/urandom`, and `/proc/sys`
 **Steps**:
 
 1. Check network connectivity.
-2. Try downloading manually:
-   ```bash
-   curl -L -o /var/lib/facelock/models/scrfd_2.5g_bnkps.onnx \
-     "https://github.com/visomaster/visomaster-assets/releases/download/v0.1.0/scrfd_2.5g_bnkps.onnx"
-   curl -L -o /var/lib/facelock/models/w600k_r50.onnx \
-     "https://github.com/visomaster/visomaster-assets/releases/download/v0.1.0/w600k_r50.onnx"
-   ```
-3. Verify SHA256 checksums match (Facelock checks these at model load time and rejects tampered files).
+2. Re-run `sudo facelock setup --non-interactive`; setup downloads to a
+   temporary file and verifies the manifest digest before publication.
+3. If provisioning manually, obtain the URLs and SHA256 values from
+   `models/manifest.toml`, verify before moving files into the model directory,
+   and preserve root ownership. Do not treat a successful download alone as
+   verification.
 4. Ensure the model directory exists and has correct permissions:
    ```bash
    sudo mkdir -p /var/lib/facelock/models
@@ -222,7 +220,7 @@ lingers:
 sudo groupdel facelock
 ```
 Face unlock is turned off per user by removing that user's models
-(`sudo facelock remove` / `sudo facelock clear`).
+(`sudo facelock remove MODEL_ID` / `sudo facelock clear`).
 
 ### Database permission errors
 
@@ -251,7 +249,7 @@ Commands print warnings and errors only. `-v` adds the informational lines,
 `-vv` debug, `-vvv` trace:
 
 ```bash
-facelock -v test
+sudo facelock -v test
 sudo facelock -vv daemon run
 ```
 
@@ -266,13 +264,13 @@ picks a level per crate rather than one level for all of them. It outranks
 
 ```bash
 # Verbose output for all facelock crates:
-RUST_LOG=debug facelock test
+sudo env RUST_LOG=debug facelock test
 
 # Trace a specific crate:
-RUST_LOG=facelock_camera=trace facelock devices
+sudo env RUST_LOG=facelock_camera=trace facelock devices
 
 # Multiple filters:
-RUST_LOG=facelock_daemon=debug,facelock_face=trace facelock daemon
+sudo env RUST_LOG=facelock_daemon=debug,facelock_face=trace facelock daemon
 ```
 
 ### sudo strips environment variables

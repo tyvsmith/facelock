@@ -579,7 +579,7 @@ Automated after setup. The release workflow publishes to AUR when `AUR_SSH_KEY` 
 
 After this, every non-prerelease tag push automatically updates the AUR package.
 
-#### COPR (Fedora/RHEL)
+#### COPR (Fedora)
 
 Packit reads `.packit.yaml` from the released tag. Packit's documented
 `upstream_tag_exclude` filtering applies to downstream synchronization jobs,
@@ -1099,4 +1099,3 @@ every pull request.
 downgrade, so the predecessor is handed the file production would hand it. V6
 has no down-migration and the schema stays at 6 after the package rolls back.
 See `docs/contracts.md` for what that does and does not guarantee.
-

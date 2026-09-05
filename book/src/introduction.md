@@ -5,13 +5,15 @@ Facelock is a modern face authentication system for Linux PAM. It provides Windo
 ## Quick Start
 
 ```bash
-cargo build --workspace
-FACELOCK_CONFIG=dev/config.toml cargo run --bin facelock -- setup    # download models
-FACELOCK_CONFIG=dev/config.toml cargo run --bin facelock -- enroll   # capture face
-FACELOCK_CONFIG=dev/config.toml cargo run --bin facelock -- test     # verify recognition
+just build
+target/debug/facelock --help
+just check
 ```
 
-No daemon needed -- the CLI auto-falls back to direct mode when no daemon is running.
+`just build` does not install the binary. Camera-facing development uses the
+explicit built path and `--config "$PWD/dev/config.toml"`; management commands
+remain root-gated and root ignores `FACELOCK_CONFIG`. See [Quick Start](quickstart.md)
+before enrolling or changing host authentication.
 
 ## Operating Modes
 
@@ -27,7 +29,8 @@ The CLI works in all modes -- it connects to the daemon if available, otherwise 
 
 ## Architecture
 
-```
+<!-- docs-example: schematic command overview, not executable shell -->
+```text
 facelock (unified binary)
 ├── facelock setup          Download models, validate systemd, configure PAM
 ├── facelock enroll         Capture and store a face

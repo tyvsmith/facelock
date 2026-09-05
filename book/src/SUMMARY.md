@@ -13,4 +13,7 @@
 - [Contracts](contracts.md)
 - [Compatibility](compatibility.md)
 - [Testing](testing.md)
+- [Testing Safety](testing-safety.md)
+- [Clean-System Walkthrough](testing-walkthrough.md)
+- [Releasing](releasing.md)
 - [Contributing](contributing.md)

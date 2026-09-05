@@ -47,7 +47,7 @@ sudo facelock daemon restart
 ### 4. Verify
 
 ```bash
-facelock bench warm-auth
+sudo facelock bench warm-auth
 ```
 
 Compare latency with `execution_provider = "cpu"` to confirm GPU acceleration is active.

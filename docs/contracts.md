@@ -46,7 +46,7 @@ follow it.
 | Binary | Crate | Purpose |
 |--------|-------|---------|
 | `facelock` | facelock-cli | Unified CLI (daemon, auth, enroll, test, setup, etc.) |
-| `facelock-bench` | facelock-bench | Source-only standalone benchmark utility; not installed by current packages |
+| `facelock-bench` | facelock-bench | Developer benchmark utility; not shipped by current Arch, Debian, RPM, or release-artifact recipes |
 | `pam_facelock.so` | pam-facelock | PAM authentication module |
 | `facelock-polkit-agent` | facelock-polkit | Polkit face authentication agent |
 
@@ -109,8 +109,10 @@ fit an existing domain before it may claim a top-level name. Commands named by
 exception rather than drift.** The domain is retained state on this machine —
 distinct from `config` (the config file) and from the per-user face models the
 top-level verbs reach. It is spelled as a group because the alternative is
-worse: a top-level `facelock purge` would sit immediately beside `facelock
-clear`, which already means "remove all face models for a user", and the two
+worse. The rejected spelling illustrates the ambiguity:
+<!-- docs-example: negative InvalidSubcommand -->
+`facelock purge` would sit immediately beside `facelock clear`, which already
+means "remove all face models for a user", and the two
 would differ only in blast radius. Naming the object first makes that
 difference the first word a reader sees, which on an irreversible command is
 worth a group that ADR 009's two-subcommand rule would otherwise refuse.
@@ -1242,7 +1244,9 @@ answers for every verb and a row that knows the fact does not withhold it. On an
 `overridden` row it is the vendor file the copy was made from, which is what
 that row has just started shadowing. The human line gained the same fact at the
 same time: a configured service whose file shadows a vendor one reads
+<!-- docs-example: manual literal PAM provenance marker, not a command -->
 `facelock PAM line present (local override of <path>)` instead of
+<!-- docs-example: manual literal PAM provenance marker, not a command -->
 `facelock PAM line present`, on every form of `pam status`. Exit codes are
 unchanged by it.
 
@@ -3373,7 +3377,7 @@ key path never holds a partial file — true of the *create* path
 `--generate-key` calls) truncates the key file in place instead. A **symlink at the key
 path is refused** by both the creating and the reading path; the reader opens `O_NOFOLLOW`.
 The same gate governs every writer of that key — the daemon, the one-shot
-commands, `facelock setup`'s automatic encryption policy, and `facelock encrypt` with and
+commands, `facelock setup`'s automatic encryption policy, and `facelock tpm encrypt` with and
 without `--generate-key`; `--generate-key` replaces a live key and is refused over
 encrypted rows, naming `facelock clear` as the deliberate destructive step.
 
