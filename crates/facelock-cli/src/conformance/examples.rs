@@ -22,6 +22,7 @@ pub(super) struct Segment {
 #[derive(Debug, Deserialize)]
 pub(super) struct Occurrence {
     pub source: Source,
+    pub raw: String,
     pub classification: String,
     pub segments: Vec<Segment>,
     pub reason: Option<String>,
@@ -89,11 +90,80 @@ fn is_facelock(argv: &[String]) -> bool {
 /// Inline syntax may omit required arguments, but every concrete command
 /// name before the options/positionals must exist in the real command tree.
 fn validate_command_prefix(argv: &[String], root: &clap::Command) -> Result<(), String> {
+    validate_template_prefix(argv, root)?;
+    if argv.iter().any(|token| syntax_template(token)) {
+        return Ok(());
+    }
+    match root.clone().try_get_matches_from(argv) {
+        Ok(_) => Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                clap::error::ErrorKind::MissingRequiredArgument
+                    | clap::error::ErrorKind::MissingSubcommand
+                    | clap::error::ErrorKind::DisplayHelp
+                    | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+                    | clap::error::ErrorKind::DisplayVersion
+            ) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(format!(
+            "{:?}: {}",
+            error.kind(),
+            error
+                .to_string()
+                .lines()
+                .next()
+                .unwrap_or("parser rejected schematic syntax")
+        )),
+    }
+}
+
+fn syntax_template(text: &str) -> bool {
+    text.contains(['<', '>', '[', ']', '|', '…'])
+        || text.contains("...")
+        || text.split_whitespace().any(|word| {
+            word.chars().any(|c| c.is_ascii_uppercase())
+                && word
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+        })
+}
+
+fn validate_template_prefix(argv: &[String], root: &clap::Command) -> Result<(), String> {
     let mut command = root;
     let mut path = root.get_name().to_owned();
-    for token in argv.iter().skip(1) {
-        if token.starts_with('-') || command.get_subcommands().next().is_none() {
+    let mut tokens = argv.iter().skip(1);
+    while let Some(token) = tokens.next() {
+        if command.get_subcommands().next().is_none() {
             break;
+        }
+        if token.starts_with('-') {
+            let spelling = token.split('=').next().expect("option spelling");
+            let option = command.get_arguments().find(|arg| {
+                spelling.strip_prefix("--").is_some_and(|long| {
+                    arg.get_long() == Some(long)
+                        || arg.get_all_aliases().unwrap_or_default().contains(&long)
+                }) || (!spelling.starts_with("--")
+                    && spelling
+                        .chars()
+                        .nth(1)
+                        .is_some_and(|short| arg.get_short() == Some(short)))
+            });
+            let Some(option) = option else {
+                return Err(format!("{path}: unknown documented option {spelling}"));
+            };
+            if !token.contains('=') {
+                for _ in 0..option
+                    .get_num_args()
+                    .map(|range| range.min_values())
+                    .unwrap_or(0)
+                {
+                    tokens.next();
+                }
+            }
+            continue;
         }
         if token.contains(['<', '>', '[', ']', '|', '/', '…']) || token == "..." {
             break; // Explicit syntax metavariables/alternatives, not concrete argv.
@@ -119,6 +189,10 @@ fn schematic_command_prefix_rejects_invented_nested_verbs() {
     };
     assert!(validate_command_prefix(&argv(&["facelock", "nonexistent"]), &root).is_err());
     assert!(validate_command_prefix(&argv(&["facelock", "pam", "nonexistent"]), &root).is_err());
+    assert!(
+        validate_command_prefix(&argv(&["facelock", "--quiet", "nonexistent"]), &root).is_err()
+    );
+    assert!(validate_command_prefix(&argv(&["facelock", "--bogus", "status"]), &root).is_err());
     assert!(validate_command_prefix(&argv(&["facelock", "auth"]), &root).is_ok());
     assert!(validate_command_prefix(&argv(&["facelock", "remove", "<MODEL_ID>"]), &root).is_ok());
     assert!(
@@ -138,7 +212,12 @@ fn schematic_documentation_names_real_commands() {
             if !is_facelock(&segment.argv) {
                 continue;
             }
-            if let Err(error) = validate_command_prefix(&segment.argv, &root) {
+            let result = if syntax_template(&entry.raw) {
+                validate_template_prefix(&segment.argv, &root)
+            } else {
+                validate_command_prefix(&segment.argv, &root)
+            };
+            if let Err(error) = result {
                 failures.push(format!(
                     "{}:{}: {error}",
                     entry.source.path, entry.source.line

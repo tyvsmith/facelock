@@ -1046,7 +1046,11 @@ mod tests {
                             entry["source"]
                         );
                     }
-                    continue;
+                    if entry["raw"].as_str().is_some_and(|raw| {
+                        raw.contains(['<', '>', '[', ']', '|', '…']) || raw.contains("...")
+                    }) {
+                        continue;
+                    }
                 }
                 parsed += 1;
                 match Cli::try_parse_from(&argv) {
@@ -1057,6 +1061,7 @@ mod tests {
                             clap::error::ErrorKind::DisplayHelp
                                 | clap::error::ErrorKind::DisplayVersion
                         ) => {}
+                    Err(error) if entry["classification"] == "schematic" && matches!(error.kind(), clap::error::ErrorKind::MissingRequiredArgument | clap::error::ErrorKind::MissingSubcommand | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand) => {}
                     Err(error) => panic!("{}: {argv:?}: {error}", entry["source"]),
                 }
             }
