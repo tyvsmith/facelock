@@ -1332,14 +1332,14 @@
           "path": "README.md",
           "anchor": "fedora-copr",
           "ordinal": 1,
-          "line": 45,
+          "line": 54,
           "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
         },
         {
           "path": "README.md",
           "anchor": "fedora-copr",
           "ordinal": 2,
-          "line": 46,
+          "line": 55,
           "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
         }
       ],
@@ -1407,21 +1407,21 @@
           "path": "README.md",
           "anchor": "from-source",
           "ordinal": 1,
-          "line": 52,
+          "line": 61,
           "sha256": "d091076a0b6859d8a04b9e50b052b819a80d6a4fe3b6336bdbbda387de310be0"
         },
         {
           "path": "README.md",
           "anchor": "from-source",
           "ordinal": 2,
-          "line": 53,
+          "line": 62,
           "sha256": "6082e4887a6f179f954cd8675b9e9f70206b23a40a9585b84f3fe9cb5f19bdef"
         },
         {
           "path": "README.md",
           "anchor": "from-source",
           "ordinal": 3,
-          "line": 54,
+          "line": 63,
           "sha256": "eb299e25573b6ee163d6fdcc275497b0219332e1a8345bf4bb6c26c4e20bf162"
         }
       ],
@@ -1501,7 +1501,7 @@
           "path": "README.md",
           "anchor": "post-install",
           "ordinal": 1,
-          "line": 60,
+          "line": 69,
           "sha256": "13ece4f24ba1175dd24829a6e605712bee3c028c5505562d6f7dc6616ef1bb63"
         }
       ],
@@ -1556,7 +1556,7 @@
           "path": "README.md",
           "anchor": "uninstall",
           "ordinal": 1,
-          "line": 88,
+          "line": 97,
           "sha256": "4547cf4ed51d13a8755d4c904f2a1773778fb1af9481d51ac64373378ec09873"
         }
       ],
@@ -1610,28 +1610,28 @@
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 2,
-          "line": 201,
+          "line": 210,
           "sha256": "270315a785e93c84e21e959de6561428bf475b40b6096a19a5bdfc20555fa93d"
         },
         {
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 3,
-          "line": 202,
+          "line": 211,
           "sha256": "599de770b8b0e87ca01f6837e309d01e9847d347fd850d18ded4eb14e86cc015"
         },
         {
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 4,
-          "line": 203,
+          "line": 212,
           "sha256": "d3a74681ef70d90250e1ac050d1d8510753888e9da5dfee69b81ba6b1e5b3a3b"
         },
         {
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 5,
-          "line": 204,
+          "line": 213,
           "sha256": "88017a21a68eb150eaaf2a5217d35e9b4d930661a74cdda87f8b3938f6073d15"
         }
       ],
@@ -1727,35 +1727,35 @@
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 1,
-          "line": 218,
+          "line": 227,
           "sha256": "f1c7b61a74c050d3b5044973e899c70b74cad56ae0d775a1c370227b2554e558"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 2,
-          "line": 219,
+          "line": 228,
           "sha256": "b4e7755cb3b54ed9400756f86c10c858a95d4439686e2d0a9bdb1752fd673066"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 3,
-          "line": 220,
+          "line": 229,
           "sha256": "501e0bb7eed827cbc90d37b2aa9536777f4893de0b075ef6269dacfba8f94671"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 4,
-          "line": 221,
+          "line": 230,
           "sha256": "0491e9aacca737903a046d7da3901ae168145ed83b3b07ce7ca67d1803b58d41"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 5,
-          "line": 222,
+          "line": 231,
           "sha256": "0d288d69cd7407b7c4f02c4f4d616356203ec2ae445f211d922317dbae06d6fb"
         }
       ],
@@ -1863,21 +1863,21 @@
           "path": "README.md",
           "anchor": "releasing",
           "ordinal": 1,
-          "line": 251,
+          "line": 260,
           "sha256": "29e78a6c2780f8195dd6def758c19769a7af32bb935dcff29d1cc51025473ffa"
         },
         {
           "path": "README.md",
           "anchor": "releasing",
           "ordinal": 2,
-          "line": 252,
+          "line": 261,
           "sha256": "c932b35fc3a91076a733f7102c49400e6bf24507e8de7243f9789c898295d73c"
         },
         {
           "path": "README.md",
           "anchor": "releasing",
           "ordinal": 3,
-          "line": 253,
+          "line": 262,
           "sha256": "2a4f6d2e6732e2f4816ee15011101bdda9a56aea8068ac90a4c8a332cc11c8a4"
         }
       ],
@@ -2775,21 +2775,21 @@
           "path": "book/src/quickstart.md",
           "anchor": "system-installation",
           "ordinal": 1,
-          "line": 28,
+          "line": 39,
           "sha256": "ee643003c3bebb06741967affae1785b90ae552fcbf30142419a9d7fa0415d59"
         },
         {
           "path": "book/src/quickstart.md",
           "anchor": "system-installation",
           "ordinal": 2,
-          "line": 29,
+          "line": 40,
           "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
         },
         {
           "path": "book/src/quickstart.md",
           "anchor": "system-installation",
           "ordinal": 3,
-          "line": 30,
+          "line": 41,
           "sha256": "f64e829871b2f7998fdbf8a8f7c4a36f917acc719880c9d14bc6565a6f1607ca"
         }
       ],
@@ -2871,29 +2871,29 @@
         {
           "path": "book/src/quickstart.md",
           "anchor": "development",
-          "ordinal": 1,
-          "line": 46,
+          "ordinal": 2,
+          "line": 58,
           "sha256": "fad0225732307d9b8666dc48f93369322752b5acd641d744cde3a6d1c99155de"
         },
         {
           "path": "book/src/quickstart.md",
           "anchor": "development",
-          "ordinal": 2,
-          "line": 47,
+          "ordinal": 3,
+          "line": 59,
           "sha256": "21df8681af24fdd4a24c8e7533d7c69725728fedd70374ac46b437b03686b526"
         },
         {
           "path": "book/src/quickstart.md",
           "anchor": "development",
-          "ordinal": 3,
-          "line": 48,
+          "ordinal": 4,
+          "line": 60,
           "sha256": "e1a93dce67650786cc6126129be6427d1a8a96c0560e61b310b30e44e61bde57"
         },
         {
           "path": "book/src/quickstart.md",
           "anchor": "development",
-          "ordinal": 4,
-          "line": 49,
+          "ordinal": 5,
+          "line": 61,
           "sha256": "db33444f34d115dce2f155297f23c717c86dd22e1e95cd0e44bf71ad6bec9fcf"
         }
       ],
@@ -2953,7 +2953,7 @@
       ]
     },
     {
-      "id": "manual-section-824db6ff74ad",
+      "id": "manual-section-45f9c75668bf",
       "target": "section-specific-guest",
       "channel": "github-alpha",
       "adapter": "manual",
@@ -2961,7 +2961,7 @@
       "source_role": "ordered-occurrence",
       "review_status": "candidate",
       "review_reason": "mechanically grouped commands; a human must review section fixtures, exit expectations and applicability before execution",
-      "title": "book/src/quickstart.md#retained-data",
+      "title": "book/src/quickstart.md#package-lifecycle-and-retained-data",
       "minimum_level": "booted-vm",
       "requirements": [
         "human-command-review",
@@ -2984,16 +2984,16 @@
       "sources": [
         {
           "path": "book/src/quickstart.md",
-          "anchor": "retained-data",
+          "anchor": "package-lifecycle-and-retained-data",
           "ordinal": 1,
-          "line": 58,
+          "line": 70,
           "sha256": "b2eaa0d6e49d61a0a83ddb30434dfff25bda1608545252375dd2eeca201b320a"
         },
         {
           "path": "book/src/quickstart.md",
-          "anchor": "retained-data",
+          "anchor": "package-lifecycle-and-retained-data",
           "ordinal": 2,
-          "line": 59,
+          "line": 71,
           "sha256": "cd370c0da2fc6b4b0a0c94762df10329fb29a2eec64e260f87f372c4856d9178"
         }
       ],
@@ -3734,6 +3734,123 @@
           "id": "example-4",
           "adapter": "manual",
           "raw": "sudo facelock -vv daemon run",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        }
+      ]
+    },
+    {
+      "id": "manual-section-7c517ac05baf",
+      "target": "section-specific-guest",
+      "channel": "github-alpha",
+      "adapter": "manual",
+      "generated_section": true,
+      "source_role": "ordered-occurrence",
+      "review_status": "candidate",
+      "review_reason": "mechanically grouped commands; a human must review section fixtures, exit expectations and applicability before execution",
+      "title": "config/facelock.toml#configuration-comments",
+      "minimum_level": "booted-vm",
+      "requirements": [
+        "human-command-review",
+        "section-prerequisites",
+        "fixture-bindings",
+        "observed-postconditions",
+        "tpm-environment-selection",
+        "key-backup",
+        "pcr-change-recovery",
+        "human-pam-recovery"
+      ],
+      "prerequisites": [
+        "restore a pristine disposable guest for this section",
+        "read the enclosing section and earlier prerequisite headings",
+        "bind every user, path, service, device, package and secret placeholder to guest-local fixtures",
+        "record intentionally failing commands with their documented expected outcome"
+      ],
+      "fixtures": {
+        "binding_policy": "explicit reviewer-supplied guest-local bindings; no host paths or credentials"
+      },
+      "restore": "restore the recorded pristine snapshot; retain sanitized evidence outside the guest",
+      "timeout_seconds": 1800,
+      "sources": [
+        {
+          "path": "config/facelock.toml",
+          "anchor": "configuration-comments",
+          "ordinal": 1,
+          "line": 8,
+          "sha256": "24c8320c6c201a01f034f8bfa86c19e3736d2d6afc7d690223010cd87c120074"
+        },
+        {
+          "path": "config/facelock.toml",
+          "anchor": "configuration-comments",
+          "ordinal": 2,
+          "line": 344,
+          "sha256": "913896039eb1dca965a8c6a5e027de65b67adc885a02a9a942cda7e022107188"
+        },
+        {
+          "path": "config/facelock.toml",
+          "anchor": "configuration-comments",
+          "ordinal": 3,
+          "line": 345,
+          "sha256": "390e7eaae8157fb444e3d7a23a5ab3ac7dcabe92e9d0cef91bce5f5668120f9b"
+        },
+        {
+          "path": "config/facelock.toml",
+          "anchor": "configuration-comments",
+          "ordinal": 4,
+          "line": 346,
+          "sha256": "6b25d943787a107878794eea277f92b9e400fe26aaa8f33dc0bf8a2e9d2023ef"
+        }
+      ],
+      "steps": [
+        {
+          "id": "example-1",
+          "adapter": "manual",
+          "raw": "env FACELOCK_CONFIG=/path/to/config.toml facelock config show",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-2",
+          "adapter": "manual",
+          "raw": "sudo facelock tpm seal-key    # keyfile \u2192 tpm",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-3",
+          "adapter": "manual",
+          "raw": "sudo facelock tpm unseal-key  # tpm \u2192 keyfile",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-4",
+          "adapter": "manual",
+          "raw": "sudo facelock tpm reseal      # re-seal under current PCRs (recovery)",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -7030,7 +7147,7 @@
           "path": "docs/compatibility.md",
           "anchor": "systemd-recommended",
           "ordinal": 1,
-          "line": 173,
+          "line": 179,
           "sha256": "e75d40fad8fc39564478eb4a79fc737f644f9b056e395a761231e9d5ba87526a"
         }
       ],
@@ -7771,29 +7888,29 @@
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
-          "ordinal": 2,
-          "line": 28,
+          "ordinal": 3,
+          "line": 33,
           "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
-          "ordinal": 3,
-          "line": 29,
+          "ordinal": 4,
+          "line": 34,
           "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
-          "ordinal": 4,
-          "line": 35,
+          "ordinal": 5,
+          "line": 40,
           "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
-          "ordinal": 5,
-          "line": 36,
+          "ordinal": 6,
+          "line": 41,
           "sha256": "f64e829871b2f7998fdbf8a8f7c4a36f917acc719880c9d14bc6565a6f1607ca"
         }
       ],
@@ -7902,70 +8019,70 @@
           "path": "docs/quickstart.md",
           "anchor": "build-from-source",
           "ordinal": 2,
-          "line": 54,
+          "line": 59,
           "sha256": "48d6b8aecaf932ce9c5e7f8943e9e680f516bd62a91a97583bbdf775c9f4c911"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "build-from-source",
           "ordinal": 3,
-          "line": 55,
+          "line": 60,
           "sha256": "6082e4887a6f179f954cd8675b9e9f70206b23a40a9585b84f3fe9cb5f19bdef"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "build-from-source",
           "ordinal": 4,
-          "line": 56,
+          "line": 61,
           "sha256": "017092419ea31d5de3fd4b6e7a52b2dd239d134f423f81bd0f5c38992c212208"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "build-from-source",
           "ordinal": 8,
-          "line": 67,
+          "line": 72,
           "sha256": "fad0225732307d9b8666dc48f93369322752b5acd641d744cde3a6d1c99155de"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "build-from-source",
           "ordinal": 9,
-          "line": 68,
+          "line": 73,
           "sha256": "21df8681af24fdd4a24c8e7533d7c69725728fedd70374ac46b437b03686b526"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "build-from-source",
           "ordinal": 10,
-          "line": 69,
+          "line": 74,
           "sha256": "e1a93dce67650786cc6126129be6427d1a8a96c0560e61b310b30e44e61bde57"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "build-from-source",
           "ordinal": 11,
-          "line": 70,
+          "line": 75,
           "sha256": "db33444f34d115dce2f155297f23c717c86dd22e1e95cd0e44bf71ad6bec9fcf"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "build-from-source",
           "ordinal": 12,
-          "line": 82,
+          "line": 87,
           "sha256": "ee643003c3bebb06741967affae1785b90ae552fcbf30142419a9d7fa0415d59"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "build-from-source",
           "ordinal": 13,
-          "line": 83,
+          "line": 88,
           "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "build-from-source",
           "ordinal": 14,
-          "line": 84,
+          "line": 89,
           "sha256": "f64e829871b2f7998fdbf8a8f7c4a36f917acc719880c9d14bc6565a6f1607ca"
         }
       ],
@@ -8139,35 +8256,35 @@
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 1,
-          "line": 97,
+          "line": 102,
           "sha256": "7047dae1de5957a90be1c7a3cfcc6abe298930cbfcdd6838f4a06295a7d565ce"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 2,
-          "line": 98,
+          "line": 103,
           "sha256": "97fe7e4851d163ea954392ba9c6fbfa704c8f3e1ef28996b794b45a7b4551907"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 3,
-          "line": 99,
+          "line": 104,
           "sha256": "d8e28448d4f6a66c71332ec6cc573065c0863083d2dde4dbd395d6fe1c8882a1"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 4,
-          "line": 100,
+          "line": 105,
           "sha256": "b01a1ffc2b4ef9721bb5ce35a004dd6ce17743083fa0670424a5caeb985dd7a6"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 5,
-          "line": 101,
+          "line": 106,
           "sha256": "c5daf997e938d2c8a1aeed87aaf0e3f000d211290ff0fdd9861be7ce2fa738ed"
         }
       ],
@@ -8240,7 +8357,7 @@
       ]
     },
     {
-      "id": "manual-section-ddbd6642bde6",
+      "id": "manual-section-8a28095c0b0d",
       "target": "section-specific-guest",
       "channel": "github-alpha",
       "adapter": "manual",
@@ -8248,7 +8365,7 @@
       "source_role": "ordered-occurrence",
       "review_status": "candidate",
       "review_reason": "mechanically grouped commands; a human must review section fixtures, exit expectations and applicability before execution",
-      "title": "docs/quickstart.md#uninstall-and-retained-data",
+      "title": "docs/quickstart.md#package-lifecycle-and-retained-data",
       "minimum_level": "booted-vm",
       "requirements": [
         "human-command-review",
@@ -8272,23 +8389,23 @@
       "sources": [
         {
           "path": "docs/quickstart.md",
-          "anchor": "uninstall-and-retained-data",
+          "anchor": "package-lifecycle-and-retained-data",
           "ordinal": 1,
-          "line": 111,
+          "line": 116,
           "sha256": "4547cf4ed51d13a8755d4c904f2a1773778fb1af9481d51ac64373378ec09873"
         },
         {
           "path": "docs/quickstart.md",
-          "anchor": "uninstall-and-retained-data",
+          "anchor": "package-lifecycle-and-retained-data",
           "ordinal": 3,
-          "line": 119,
+          "line": 127,
           "sha256": "b2eaa0d6e49d61a0a83ddb30434dfff25bda1608545252375dd2eeca201b320a"
         },
         {
           "path": "docs/quickstart.md",
-          "anchor": "uninstall-and-retained-data",
+          "anchor": "package-lifecycle-and-retained-data",
           "ordinal": 4,
-          "line": 120,
+          "line": 128,
           "sha256": "cd370c0da2fc6b4b0a0c94762df10329fb29a2eec64e260f87f372c4856d9178"
         }
       ],
@@ -10878,21 +10995,21 @@
           "path": "docs/testing-walkthrough.md",
           "anchor": "inspect-and-validate-the-catalog",
           "ordinal": 4,
-          "line": 51,
+          "line": 52,
           "sha256": "e8abb26d2c294726a2a63ff7bf6d467226560317dbe638d5a3b49a61a317c3b2"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "inspect-and-validate-the-catalog",
           "ordinal": 5,
-          "line": 52,
+          "line": 53,
           "sha256": "da3e3cab3febe935eacbb2ed8ab5197f6067d6602914c606c3e5a2e9dd90f466"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "inspect-and-validate-the-catalog",
           "ordinal": 6,
-          "line": 53,
+          "line": 54,
           "sha256": "ed8cefe2c6aae8a8d154ee7319f10167426bd7d212a91c05e7063316cc9dfb71"
         }
       ],
@@ -11011,29 +11128,29 @@
           "path": "docs/testing-walkthrough.md",
           "anchor": "pin-release-identity",
           "ordinal": 1,
-          "line": 72,
+          "line": 76,
           "sha256": "46b588f236861b22e16d4506c840402ef7af1a1c7fb1a067f18fac78fa8ad16e"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "pin-release-identity",
           "ordinal": 2,
-          "line": 73,
+          "line": 77,
           "sha256": "789424aa2b819fd06d477be82f864da83a750469c9a64dc125b71a4ee755d4ab"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "pin-release-identity",
           "ordinal": 3,
-          "line": 74,
-          "sha256": "3e22fa2ebb5ca65fd4c05a06a1b20c5f79bbfe1d7092049f96636b7f33182644"
+          "line": 78,
+          "sha256": "9e9e15bf80d35bdc16b094f4d7a05ffb257be11fc65df64a2790be966061f87f"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "pin-release-identity",
           "ordinal": 4,
-          "line": 75,
-          "sha256": "a0309ea10c8fe40bf8d7c192bbd121173ddcba12d9fc09be4cf7b25c79254d57"
+          "line": 79,
+          "sha256": "ed35b03d4150fa9ef0808c7ea30f414d1ba54b588b42d98b3361f12b84d1e306"
         }
       ],
       "steps": [
@@ -11066,7 +11183,7 @@
         {
           "id": "example-3",
           "adapter": "manual",
-          "raw": "READINESS_DIR=/tmp/facelock-walkthrough-readiness",
+          "raw": "READINESS_FILE=/tmp/facelock-walkthrough-readiness.json",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -11079,7 +11196,7 @@
         {
           "id": "example-4",
           "adapter": "manual",
-          "raw": "python3 test/docs-walkthrough/run.py readiness --release \"$RELEASE_TAG\" --channel \"$CHANNEL\" --output \"$READINESS_DIR\"",
+          "raw": "python3 test/docs-walkthrough/run.py readiness --release \"$RELEASE_TAG\" --channel \"$CHANNEL\" --output \"$READINESS_FILE\"",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -11128,63 +11245,63 @@
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 1,
-          "line": 96,
+          "line": 102,
           "sha256": "5a7211b99ca9728f8afbb236ac53f8a36ff502d06586bd5d276c2ee432be5915"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 2,
-          "line": 97,
+          "line": 103,
           "sha256": "aa8c2abd3623343cad4f0e045f27d48b8de89f0ee061777d5f4687c3e8078cc8"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 3,
-          "line": 98,
+          "line": 104,
           "sha256": "555cc17957baa7417c937fcbfb8e7b00dea851574cd5464af6e03217b357c77d"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 4,
-          "line": 99,
+          "line": 105,
           "sha256": "69e35f84cb4848964dfb9af088411835f6f0cdc93720c25bbfdf2766b1a4cfe2"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 5,
-          "line": 100,
+          "line": 106,
           "sha256": "5735b17047aed2e9d9492588d917883d26c1b6f648fe03de62efe0a91722198a"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 6,
-          "line": 112,
+          "line": 120,
           "sha256": "ee8c244970e65416bdf8f175b9736c6676906fc8a3aaf859ca1e6522d48a88bc"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 7,
-          "line": 113,
+          "line": 121,
           "sha256": "aa8c2abd3623343cad4f0e045f27d48b8de89f0ee061777d5f4687c3e8078cc8"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 8,
-          "line": 114,
+          "line": 122,
           "sha256": "1419bb823083e542307c48dd13d68fa2f80820b85ebd0d465c688b7b5b8ae0ab"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 9,
-          "line": 115,
+          "line": 123,
           "sha256": "c893317d67d3e9bb5acb756669f318f262070fec1459248991ece9cd30bd3666"
         }
       ],
@@ -11342,35 +11459,35 @@
           "path": "docs/testing-walkthrough.md",
           "anchor": "rootless-container-launcher",
           "ordinal": 1,
-          "line": 125,
+          "line": 133,
           "sha256": "e66d2e14752389d0afc58fc680ec519fbce0d1003023958ec7f26c6824bb40d2"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "rootless-container-launcher",
           "ordinal": 2,
-          "line": 126,
+          "line": 134,
           "sha256": "32b6d085476bb7b6f7f3fc1768622e86701530c9eec9149f62f00e7f61e04e6a"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "rootless-container-launcher",
           "ordinal": 3,
-          "line": 127,
+          "line": 135,
           "sha256": "3a4a1478c1a21d542475ebd5f704e50b2b3d892efd2b7c0f05c2dec49efc7dbd"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "rootless-container-launcher",
           "ordinal": 4,
-          "line": 128,
+          "line": 136,
           "sha256": "383ad23303456f22191e7106ee63fab36f0905422c96f9a7e8c58b7effbb3f2f"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "rootless-container-launcher",
           "ordinal": 5,
-          "line": 129,
+          "line": 137,
           "sha256": "f07913ad528fa639108e515d8490407734124f5bb26b5c012969b27b3940fec4"
         }
       ],
@@ -11476,21 +11593,21 @@
           "path": "docs/testing-walkthrough.md",
           "anchor": "aggregate-evidence",
           "ordinal": 1,
-          "line": 138,
+          "line": 146,
           "sha256": "975389f1b33f489173c8efcc092c70d61e99cf31e0eededf947bbf0f9019b3e2"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "aggregate-evidence",
           "ordinal": 2,
-          "line": 139,
+          "line": 147,
           "sha256": "682d84cd95206b7800fb6c66b76e11d37da9f36cc7c88a59cae5bf49c6d27884"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "aggregate-evidence",
           "ordinal": 3,
-          "line": 140,
+          "line": 148,
           "sha256": "1ff98069a710f8c7f3fd87b2ac8c099f58d7e7323c4a6e4dc075cec2f989e2b5"
         }
       ],
@@ -13009,28 +13126,35 @@
           "path": "website/index.html",
           "anchor": "install-debian",
           "ordinal": 1,
-          "line": 360,
+          "line": 362,
           "sha256": "0d6e4079e36703ebd37c00722f5891d28b0e2811dc114b129215123adcce3605"
         },
         {
           "path": "website/index.html",
           "anchor": "install-debian",
           "ordinal": 2,
-          "line": 360,
+          "line": 362,
           "sha256": "c49fea7425fa7f8699897a97c159c6690267d9003bb78c53fafa8fc15c325d84"
         },
         {
           "path": "website/index.html",
           "anchor": "install-debian",
           "ordinal": 3,
-          "line": 360,
-          "sha256": "50573ac999b4f7516852df798aafddb1ef893a0352b7c1c7559b984eb5a40bbc"
+          "line": 362,
+          "sha256": "b3f70d1b1c9cab5524d00a5c658ebd69e63cf592ffbbf1e7ea456604846747fc"
         },
         {
           "path": "website/index.html",
           "anchor": "install-debian",
           "ordinal": 4,
-          "line": 360,
+          "line": 362,
+          "sha256": "50573ac999b4f7516852df798aafddb1ef893a0352b7c1c7559b984eb5a40bbc"
+        },
+        {
+          "path": "website/index.html",
+          "anchor": "install-debian",
+          "ordinal": 5,
+          "line": 362,
           "sha256": "8d5c472cde3f3e4834455ea132df1cd26fa7eb26b5a2ef18148e9e316d5571eb"
         }
       ],
@@ -13064,7 +13188,7 @@
         {
           "id": "example-3",
           "adapter": "manual",
-          "raw": "trixie",
+          "raw": "apt update",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -13076,6 +13200,19 @@
         },
         {
           "id": "example-4",
+          "adapter": "manual",
+          "raw": "trixie",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-5",
           "adapter": "manual",
           "raw": "resolute",
           "classification": "executable",
@@ -13123,21 +13260,21 @@
           "path": "website/index.html",
           "anchor": "install-fedora",
           "ordinal": 1,
-          "line": 373,
+          "line": 375,
           "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
         },
         {
           "path": "website/index.html",
           "anchor": "install-fedora",
           "ordinal": 2,
-          "line": 374,
+          "line": 376,
           "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
         },
         {
           "path": "website/index.html",
           "anchor": "install-fedora",
           "ordinal": 3,
-          "line": 377,
+          "line": 379,
           "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
         }
       ],
@@ -13218,28 +13355,28 @@
           "path": "website/index.html",
           "anchor": "install-source",
           "ordinal": 1,
-          "line": 414,
+          "line": 416,
           "sha256": "a3fc2994d459b28929eddd20bb7e85f077845642fb89e330c3e03cbe66264bb3"
         },
         {
           "path": "website/index.html",
           "anchor": "install-source",
           "ordinal": 2,
-          "line": 415,
+          "line": 417,
           "sha256": "ec83c5e11815f6e2c810bbf770be6d0cb5e4403614eb8810a2f59278e0a1170b"
         },
         {
           "path": "website/index.html",
           "anchor": "install-source",
           "ordinal": 3,
-          "line": 416,
+          "line": 418,
           "sha256": "ee643003c3bebb06741967affae1785b90ae552fcbf30142419a9d7fa0415d59"
         },
         {
           "path": "website/index.html",
           "anchor": "install-source",
           "ordinal": 4,
-          "line": 419,
+          "line": 421,
           "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
         }
       ],

@@ -42,7 +42,7 @@ class EvidenceTests(unittest.TestCase):
             "environment": {
                 "guest_id": "test-guest", "os": "debian-13", "image": "debian@sha256:" + "e" * 64,
                 "init": "systemd", "snapshot": "clean-001", "pristine": True,
-                "pristine_observations": {"binary_absent": True, "config_absent": True, "state_absent": True, "package_absent": True},
+                "pristine_observations": {"binary_absent": True, "config_absent": True, "state_absent": True, "package_absent": True, "pam_absent": True, "service_assets_absent": True},
                 "isolation_verified": True, "hardware": [],
             },
             "steps": [{"id": "install", "status": "pass", "executed": True, "command": ["apt", "install", "./facelock.deb"], "exit_code": 0, "output": "", "states": {"installed": True}, "log": {"path": "install.log", "sha256": "f" * 64, "sanitized": True}}],
@@ -54,6 +54,13 @@ class EvidenceTests(unittest.TestCase):
 
     def test_accepts_complete_published_vm_record(self):
         self.check(require_pass=True)
+
+    def test_completion_requires_clean_pam_and_service_observations(self):
+        for key in ('pam_absent', 'service_assets_absent'):
+            self.record['environment']['pristine_observations'][key] = False
+            with self.assertRaisesRegex(ValueError, 'pristine observation'):
+                self.check(require_pass=True)
+            self.record['environment']['pristine_observations'][key] = True
 
     def test_rejects_stale_source(self):
         self.record["sources"][0]["sha256"] = "0" * 64

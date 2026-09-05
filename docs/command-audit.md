@@ -87,6 +87,11 @@ public recipes. The isolated workspace run passed 1,713 tests with 12 ignored
 hardware tests; all-target Clippy, formatting, source-archive extraction, site
 links, mandoc and package-lifecycle documentation checks were also exercised.
 These are local verification results, not release or hardware attestations.
+The final extractor records 1,349 occurrences: 417 executable, 21 manual-only,
+732 schematic references, 177 historical and two intentional negative examples.
+The catalog has 28 route/hardware definitions and 134 manual section candidates;
+all 438 executable/manual occurrences have pending definitions, with none
+unmapped. Definition coverage is not reviewed-scenario or execution completion.
 
 The production COPR observations used build `10489915` and these retained
 package hashes:

@@ -446,7 +446,7 @@
         "path": "README.md",
         "anchor": "fedora-copr",
         "ordinal": 1,
-        "line": 45,
+        "line": 54,
         "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
       }
     ],
@@ -455,7 +455,7 @@
         "path": "README.md",
         "anchor": "fedora-copr",
         "ordinal": 1,
-        "line": 45,
+        "line": 54,
         "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
       }
     ],
@@ -464,7 +464,7 @@
         "path": "README.md",
         "anchor": "from-source",
         "ordinal": 3,
-        "line": 54,
+        "line": 63,
         "sha256": "eb299e25573b6ee163d6fdcc275497b0219332e1a8345bf4bb6c26c4e20bf162"
       }
     ],
@@ -482,7 +482,7 @@
         "path": "docs/compatibility.md",
         "anchor": "non-systemd",
         "ordinal": 1,
-        "line": 190,
+        "line": 196,
         "sha256": "4048f94d4e94a019ea8fce71887f6614b1bb0cec5f2847a54745ee8c5157d02d"
       }
     ],
@@ -491,7 +491,7 @@
         "path": "docs/compatibility.md",
         "anchor": "non-systemd",
         "ordinal": 1,
-        "line": 190,
+        "line": 196,
         "sha256": "4048f94d4e94a019ea8fce71887f6614b1bb0cec5f2847a54745ee8c5157d02d"
       }
     ],
@@ -500,7 +500,7 @@
         "path": "docs/compatibility.md",
         "anchor": "non-systemd",
         "ordinal": 1,
-        "line": 190,
+        "line": 196,
         "sha256": "4048f94d4e94a019ea8fce71887f6614b1bb0cec5f2847a54745ee8c5157d02d"
       }
     ],
@@ -509,28 +509,28 @@
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 1,
-        "line": 60,
+        "line": 69,
         "sha256": "13ece4f24ba1175dd24829a6e605712bee3c028c5505562d6f7dc6616ef1bb63"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 4,
-        "line": 68,
+        "line": 77,
         "sha256": "e75d40fad8fc39564478eb4a79fc737f644f9b056e395a761231e9d5ba87526a"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 5,
-        "line": 69,
+        "line": 78,
         "sha256": "ffd01420441dd9f03d93c8cc6ee904634a47010b453fdb05d06b7bfee0c455b2"
       },
       {
         "path": "README.md",
         "anchor": "hyprlock-integration",
         "ordinal": 1,
-        "line": 198,
+        "line": 207,
         "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
       }
     ],
@@ -578,28 +578,28 @@
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 1,
-        "line": 60,
+        "line": 69,
         "sha256": "13ece4f24ba1175dd24829a6e605712bee3c028c5505562d6f7dc6616ef1bb63"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 4,
-        "line": 68,
+        "line": 77,
         "sha256": "e75d40fad8fc39564478eb4a79fc737f644f9b056e395a761231e9d5ba87526a"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 5,
-        "line": 69,
+        "line": 78,
         "sha256": "ffd01420441dd9f03d93c8cc6ee904634a47010b453fdb05d06b7bfee0c455b2"
       },
       {
         "path": "README.md",
         "anchor": "hyprlock-integration",
         "ordinal": 1,
-        "line": 198,
+        "line": 207,
         "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
       }
     ],

@@ -106,6 +106,9 @@ def validate(record, case, require_pass=False):
     pristine = environment.get("pristine_observations", {})
     for key in ("binary_absent", "config_absent", "state_absent", "package_absent"):
         need(pristine.get(key) is True, f"pristine observation {key} missing or false")
+    if require_pass:
+        for key in ("pam_absent", "service_assets_absent"):
+            need(pristine.get(key) is True, f"pristine observation {key} missing or false")
     steps = record.get("steps", [])
     need([step.get("id") for step in steps] == [step["id"] for step in case["steps"]], "ordered steps missing, duplicated or reordered")
     for observed, expected in zip(steps, case["steps"]):
