@@ -702,10 +702,17 @@ real release event: `just test-copr` builds its SRPM through the CLI, which
 reads package-level config, so that lane still carries the snapshot suffix and
 proves the package builds rather than the EVR it will be published under.
 **The first stable tag after this change is the proof.** If that release
-publishes a suffixed EVR anyway, `verify-copr` fails on an otherwise healthy
-build; the fix is to move `update_release` from the job to the top level of
-`.packit.yaml` and flip staging's `served_evr_exact` accordingly, not to loosen
-the comparison.
+publishes a suffixed EVR anyway, the service ignored the job-level flag and
+`verify-copr` fails on an otherwise healthy build. The response is to delete
+`update_release` from the production job and set its `served_evr_exact` back to
+false, taking the suffix on both channels again.
+
+Do **not** hoist `update_release` to the top level to force it. Top level
+reaches staging too, and staging builds every pull request into one project:
+without the snapshot suffix two pull requests produce the same NVR. Scoping the
+flag to the production job is the whole reason production and staging can differ
+here, so the fallback for a flag the service ignores is to stop asking for the
+canonical EVR, not to ask for it somewhere that breaks the other channel.
 
 `just release-preflight` asks the same question about the previous release:
 `test/check-live-release-channels.py --expect-predecessor` requires production
