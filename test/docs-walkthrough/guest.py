@@ -83,6 +83,8 @@ def observe(case, identity, work, state, actual_hash):
     version = version_text.split()[-1]
     native = native_version(case)
     installed = {"version": version, "native_version": native, "artifact_sha256": actual_hash}
+    installed["payload_binding"] = {"deb": "hash-verified local artifact passed to apt", "rpm": "hash-verified local artifact passed to dnf", "apt": "same-version package downloaded after install; not transaction-byte identity proof", "copr": "matching retained cache payload; same-version replacement not independently excluded", "arch": "matching locally built package version and reviewed recipe; not a reproducible-build assertion", "source": "hash-verified published source archive used for guest build"}[case["adapter"]]
+    installed["transaction_payload_verification"] = {"verified": case["adapter"] in ("deb", "rpm", "source"), "method": "local-payload-input" if case["adapter"] in ("deb", "rpm", "source") else "not-established", "sha256": actual_hash}
     provenance = work / "source-commit-verification.json"
     installed["source_commit_verification"] = json.loads(provenance.read_text()) if provenance.exists() else {"asserted_commit": identity["artifact_commit"], "tag_commit_verified": False, "build_commit_verified": False, "reason": "package version and payload verified; source commit was asserted, not established by package-manager metadata"}
     if case["adapter"] == "arch":

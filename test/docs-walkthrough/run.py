@@ -234,19 +234,70 @@ def verify_guest(marker=MARKER):
         raise ValueError("guest evidence level differs from detected virtualization")
     # Refuse shared host paths and hardware. The launcher copies files instead
     # of mounting the checkout, host /run, PAM, devices, or a system bus.
-    for line in Path("/proc/self/mountinfo").read_text().splitlines():
-        columns = line.split()
-        target = columns[4]
-        suffix = line.split(" - ", 1)[1].split()
-        if suffix[0] in ("9p", "virtiofs", "nfs", "nfs4", "cifs"):
-            raise ValueError("shared host filesystem is not allowed in a walkthrough guest")
-        protected = ("/etc/pam.d", "/run/dbus", "/var/run/dbus", "/var/lib/facelock", "/etc/facelock")
-        if any(target == path or target.startswith(path + "/") for path in protected):
-            raise ValueError(f"protected host exposure or unexpected mount: {target}")
+    check_mounts(Path("/proc/self/mountinfo").read_text())
     if any(Path("/dev").glob("video*")) or any(Path("/dev").glob("tpm*")):
         raise ValueError("generic runner forbids camera/TPM passthrough; use the manual hardware protocol")
     guest["isolation_verified"] = True
     return guest
+
+
+def check_mounts(mountinfo):
+    for line in mountinfo.splitlines():
+        columns = line.split()
+        target = columns[4].replace(r"\040", " ")
+        suffix = line.split(" - ", 1)[1].split()
+        if suffix[0] in ("9p", "virtiofs", "nfs", "nfs4", "cifs"):
+            raise ValueError("shared host filesystem is not allowed in a walkthrough guest")
+        protected = ("/etc/pam.d", "/run/dbus", "/var/run/dbus", "/var/lib/facelock", "/etc/facelock")
+        parent = target != "/" and any(path.startswith(target.rstrip("/") + "/") for path in protected)
+        # A guest's own /run tmpfs is normal. A subtree bind has a different
+        # filesystem root; disk-backed parent mounts are never admitted here.
+        guest_run = target == "/run" and suffix[0] == "tmpfs" and columns[3] == "/"
+        if any(target == path or target.startswith(path + "/") for path in protected) or (parent and not guest_run):
+            raise ValueError(f"protected host exposure or unexpected mount: {target}")
+
+
+def check_guest_case(guest, case, observed_init):
+    if guest["os"] != case["target"]:
+        raise ValueError("guest OS does not match scenario target")
+    if case.get("image") and guest["image"] != case["image"]:
+        raise ValueError("guest image differs from the scenario matrix image")
+    expected = "systemd" if guest["level"] == "booted-vm" else "sleep"
+    claimed = "systemd" if guest["init"] == "systemd" else "sleep" if guest["init"] == "container" else guest["init"]
+    if observed_init != expected or claimed != observed_init:
+        raise ValueError("guest init does not match the scenario and observed PID 1")
+    guest["observed_init"] = observed_init
+    guest["image_verification"] = "launcher-selected exact matrix reference" if guest.get("launcher_no_host_mounts") is True else "provisioner assertion; image digest not independently observable from inside a VM"
+
+
+def pristine_files(root=Path("/")):
+    pam_absent = True
+    for directory in (root / "etc/pam.d", root / "usr/lib/pam.d"):
+        if directory.exists():
+            for path in directory.iterdir():
+                if path.is_dir():
+                    continue
+                try:
+                    if not path.is_file() or path.stat().st_size > 1024 * 1024:
+                        pam_absent = False
+                        continue
+                    lines = path.read_text(errors="replace").splitlines()
+                    if any("pam_facelock.so" in line for line in lines if not line.lstrip().startswith("#")):
+                        pam_absent = False
+                except OSError:
+                    pam_absent = False
+    # Include the package-owned vendor paths and the administrator/runtime
+    # overrides enumerated by source-install-daemon-lifecycle.sh. Any remnant
+    # invalidates a fresh-install claim; this check never removes it.
+    patterns = (
+        "etc/systemd/**/facelock*", "run/systemd/**/facelock*",
+        "usr/lib/systemd/**/facelock*", "usr/local/lib/systemd/**/facelock*", "lib/systemd/**/facelock*",
+        "etc/dbus-1/**/org.facelock*", "run/dbus-1/**/org.facelock*", "usr/share/dbus-1/**/org.facelock*", "usr/local/share/dbus-1/**/org.facelock*",
+        "etc/polkit-1/**/*facelock*", "usr/share/polkit-1/**/*facelock*",
+        "etc/xdg/autostart/*facelock*", "usr/lib/tmpfiles.d/*facelock*",
+        "usr/lib/security/*facelock*", "usr/lib64/security/*facelock*", "lib/security/*facelock*",
+    )
+    return {"pam_absent": pam_absent, "service_assets_absent": not any(any(root.glob(pattern)) for pattern in patterns)}
 
 
 def pristine_guest():
@@ -261,6 +312,7 @@ def pristine_guest():
         "config_absent": not Path("/etc/facelock").exists(),
         "state_absent": not Path("/var/lib/facelock").exists() and not Path("/var/log/facelock").exists(),
         "package_absent": package_absent,
+        **pristine_files(),
     }
     if not all(observations.values()):
         raise ValueError(f"guest is not pristine: {observations}")
@@ -289,14 +341,16 @@ def initial_record(case, identity):
 
 
 def harness_identity():
-    provenance = ROOT / "walkthrough-provenance.json"
-    if provenance.exists():
-        recorded = load_json(provenance)
-        return {key: recorded[key] for key in ("harness_sha256", "harness_tree_dirty")}
     files = sorted(path for path in HERE.iterdir() if path.suffix in (".py", ".sh", ".json"))
     digest = hashlib.sha256()
     for path in files:
         digest.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
+    provenance = ROOT / "walkthrough-provenance.json"
+    if provenance.exists():
+        recorded = load_json(provenance)
+        if digest.hexdigest() != recorded["harness_sha256"]:
+            raise ValueError("copied guest harness no longer matches its recorded source digest")
+        return {key: recorded[key] for key in ("harness_sha256", "harness_tree_dirty")}
     dirty = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain"], capture_output=True, text=True, check=True)
     return {"harness_sha256": digest.hexdigest(), "harness_tree_dirty": bool(dirty.stdout)}
 
@@ -326,8 +380,7 @@ def run_guest(case, identity, output):
     check_sources([case])
     evidence.validate_identity(identity, case)
     guest = verify_guest()
-    if guest["os"] != case["target"]:
-        raise ValueError("guest OS does not match scenario target")
+    check_guest_case(guest, case, Path("/proc/1/comm").read_text().strip())
     guest["pristine_observations"] = pristine_guest()
     guest["pristine"] = True
     if case["adapter"] == "manual":
@@ -405,7 +458,7 @@ def launch_container(case, identity, image, output):
         write_json(tree / "walkthrough-provenance.json", {"harness_commit": commit(), **harness_identity(), "source_files": {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in source_files}})
         write_json(tree / "walkthrough-occurrences.json", occurrences)
         write_json(stage / "identity.json", identity)
-        marker = {"disposable": True, "guest_id": name, "os": case["target"], "image": image, "init": "container", "snapshot": f"fresh:{name}", "level": "container", "hardware": []}
+        marker = {"disposable": True, "guest_id": name, "os": case["target"], "image": image, "init": "container", "snapshot": f"fresh:{name}", "level": "container", "hardware": [], "launcher_no_host_mounts": True}
         write_json(stage / "marker.json", marker)
         subprocess.run(["podman", "run", "-d", "--name", name, "--network", "pasta", image, "sleep", "infinity"], check=True)
         try:

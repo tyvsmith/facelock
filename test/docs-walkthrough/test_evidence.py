@@ -137,6 +137,22 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "manual"):
             self.check(require_pass=True)
 
+    def test_candidate_manual_cannot_be_completed_by_attestation(self):
+        self.case.update(adapter="manual", review_status="candidate", generated_section=True)
+        self.record["manual_review"] = {"operator": "tester", "notes": "observed", "expectations_reviewed": True, "fixture_bindings": {}}
+        with self.assertRaisesRegex(ValueError, "candidate"):
+            self.check(require_pass=True)
+
+    def test_repository_cache_hash_does_not_complete_a_walkthrough(self):
+        self.case.update(channel="copr-production", chroot="fedora-44-x86_64")
+        identity = self.record["identity"]
+        identity.update(channel="copr-production", release="v0.1.4", version="0.1.4", package_sha256="d" * 64, repository={"url": "https://copr.fedorainfracloud.org/coprs/tyvsmith/facelock/", "chroot": "fedora-44-x86_64"})
+        self.record["installed"]["version"] = "0.1.4"
+        self.record["installed"]["payload_binding"] = "matching retained cache only"
+        self.check()
+        with self.assertRaisesRegex(ValueError, "transaction"):
+            self.check(require_pass=True)
+
     def test_file_validation_rejects_tampered_missing_and_escaping_logs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

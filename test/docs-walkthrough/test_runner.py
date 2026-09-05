@@ -1,5 +1,6 @@
 """Exercise safety refusals without package installation or host changes."""
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -78,6 +79,45 @@ class RunnerTests(unittest.TestCase):
         route = {"id": "deb-direct", "source_role": "route-reference", "sources": [row["source"]]}
         self.assertEqual(runner().coverage([route], [row])["unmapped"], 1)
         self.assertEqual(len(runner().manual_sections([route], [row])), 1)
+
+    def test_guard_rejects_protected_parent_bind_mounts(self):
+        for target in ("/etc", "/run", "/var", "/var/lib"):
+            with self.subTest(target=target):
+                line = f"35 22 8:1 /host{target} {target} rw - ext4 /dev/sda rw"
+                with self.assertRaisesRegex(ValueError, "protected"):
+                    runner().check_mounts(line)
+
+    def test_pristine_files_detect_stale_pam_and_policy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "etc/pam.d").mkdir(parents=True)
+            (root / "etc/pam.d/sudo").write_text("auth sufficient pam_facelock.so\n")
+            policy = root / "usr/share/dbus-1/system.d/org.facelock.Daemon.conf"
+            policy.parent.mkdir(parents=True)
+            policy.write_text("stale")
+            observations = runner().pristine_files(root)
+            self.assertFalse(observations["pam_absent"])
+            self.assertFalse(observations["service_assets_absent"])
+
+    def test_scenario_checks_guest_image_and_observed_init(self):
+        case = {"target": "debian-13", "image": "debian@sha256:" + "a" * 64}
+        guest = {"os": "debian-13", "image": "wrong", "init": "systemd", "level": "booted-vm"}
+        with self.assertRaisesRegex(ValueError, "image"):
+            runner().check_guest_case(guest, case, "systemd")
+        guest["image"] = case["image"]
+        with self.assertRaisesRegex(ValueError, "init"):
+            runner().check_guest_case(guest, case, "bash")
+
+    def test_copied_guest_harness_cannot_claim_a_stale_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            module = runner()
+            module.ROOT = Path(directory)
+            module.HERE = module.ROOT / "harness"
+            module.HERE.mkdir()
+            (module.HERE / "run.py").write_text("changed")
+            (module.ROOT / "walkthrough-provenance.json").write_text(json.dumps({"harness_sha256": "a" * 64, "harness_tree_dirty": False}))
+            with self.assertRaisesRegex(ValueError, "harness"):
+                module.harness_identity()
 
 
 if __name__ == "__main__":

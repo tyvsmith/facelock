@@ -144,12 +144,22 @@ def validate(record, case, require_pass=False):
     else:
         need(installed.get("artifact_sha256") == expected_hash, "installed artifact hash mismatches requested identity")
     if require_pass:
+        if identity["channel"] in ("apt", "aur", "copr-production", "copr-staging"):
+            transaction = installed.get("transaction_payload_verification", {})
+            need(transaction.get("verified") is True and transaction.get("sha256") == installed["artifact_sha256"] and transaction.get("method") == "package-manager-transaction", "repository walkthrough lacks verified transaction-bound package bytes")
+        provenance = installed.get("source_commit_verification", {})
+        if provenance.get("build_commit_verified") is True:
+            need(provenance.get("observed_build_commit") == identity["artifact_commit"] and nonempty(provenance.get("provenance_url")), "claimed source build commit lacks matching verified provenance")
         requirements = set(case.get("requirements", []))
         hardware = environment.get("hardware", [])
         need(requirements <= set(hardware), "required hardware/manual observations missing")
         if any(item in requirements for item in ("ir-camera", "physical-tpm", "gpu", "y16-camera")):
             need(record["level"] == "physical-hardware", "physical hardware evidence required")
         if case.get("adapter") == "manual":
+            need(case.get("review_status") == "reviewed", "manual candidate must first become a checked-in reviewed concrete scenario")
+            for step in case["steps"]:
+                need(bool(step.get("expected_invocations")) and type(step.get("expect_exit")) is int and nonempty(step.get("expect_output")) and bool(step.get("expect_state")) and "documented-effect-observed" not in step["expect_state"], "manual scenario needs concrete reviewed invocations, exits, output and postconditions")
+            need(isinstance(case.get("fixtures", {}).get("bindings"), dict), "manual scenario needs checked-in fixture bindings")
             review = record.get("manual_review", {})
             need(nonempty(review.get("operator")) and nonempty(review.get("notes")) and review.get("expectations_reviewed") is True and isinstance(review.get("fixture_bindings"), dict), "manual operator, fixture bindings and reviewed expectations are required")
 
