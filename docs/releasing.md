@@ -585,12 +585,12 @@ Packit reads `.packit.yaml` from the released tag. Packit's documented
 `upstream_tag_exclude` filtering applies to downstream synchronization jobs,
 not to `copr_build`, so it is not a prerelease safety boundary.
 
-The prerelease-capable configuration keeps the production
-`tyvsmith/facelock` job at `trigger: ignore`. That makes an alpha-tagged config
-structurally incapable of selecting a release-triggered production project.
-Before a stable release, the maintainer deliberately changes that trigger to
-`release` in the stable-tagged config. `just release-preflight` rejects a
-production release job for a prerelease and rejects its absence for a stable.
+The production `tyvsmith/facelock` job sits at `trigger: release`, restored by
+hand for the stable release. A prerelease-capable configuration parks it back
+at `trigger: ignore`, which makes an alpha-tagged config structurally incapable
+of selecting a release-triggered production project. `just release-preflight`
+rejects a production release job for a prerelease and rejects its absence for a
+stable, so the trigger moves with the version instead of drifting away from it.
 The deliberate stable restoration targets `fedora-43-x86_64`,
 `fedora-44-x86_64`, and the separate `fedora-45-x86_64` branched target.
 Rawhide is Fedora 46 development in this matrix, not an alias for Fedora 45,
