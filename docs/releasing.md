@@ -684,6 +684,19 @@ Packit's default `fix-spec-file` action rewrites `Release: 1%{?dist}` to
 job therefore carries `update_release: false`, and production's served
 comparison is an equality.
 
+The mismatch would not stay cosmetic. RPM ranks the suffixed build above the
+canonical one:
+
+```text
+0.2.0-1.fc44 < 0.2.0-1.20260904220135575676.master.0.g7d9ffe7.fc44
+```
+
+So on a machine with both the COPR repo and a directly installed RPM of the same
+release, COPR wins every `dnf update` and the version the other channels ship
+never takes hold. Packit's own documentation warns that an inherited release
+suffix breaks NVR ordering. Pinning the release is what keeps every channel's
+0.2.0 the same 0.2.0.
+
 Staging keeps the default. It builds every pull request into one project, so
 its NVRs have to differ from each other, and the snapshot suffix is what makes
 them; its comparison ends at the boundary dot instead, accepting `0.2.0-1` and
