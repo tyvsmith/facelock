@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The release workflow's container steps run under the shell they are written
+  in**: tagging v0.2.0-alpha.2 built both Debian packages and then threw away
+  the result, because the step that reads the package version back died with
+  `source: not found`. A container job's steps run under the image's `/bin/sh`,
+  which is dash on Debian and Ubuntu and bash on Fedora, so the same step
+  passed in the RPM job and exited 127 in both Debian jobs. Swapping `source`
+  for `.` would not have helped: `scripts/release-versions.sh` is bash itself,
+  and a POSIX shell fails on its first line instead. Both steps now declare
+  `shell: bash`. `test/release-artifacts-contract.sh` fails any containerized
+  release step that uses bash-only syntax without declaring it, since a tag is
+  the only thing that runs this workflow and no local recipe or packaging lane
+  reaches these steps.
+
 ## [0.2.0-alpha.2] - 2026-09-05
 
 ### Added

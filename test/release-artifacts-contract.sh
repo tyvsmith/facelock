@@ -387,6 +387,87 @@ done
 [ "$trusting_jobs" -gt 0 ] ||
     fail "no containerized release job installs git; the checkout-ownership rule stopped covering anything"
 
+# ------------------------------------------------------- container step shells
+#
+# A container job's `run:` steps execute under the image's /bin/sh, not bash.
+# Debian and Ubuntu point /bin/sh at dash; Fedora points it at bash. The same
+# step therefore runs green in build-rpm and exits 127 in build-deb, which is
+# what v0.2.0-alpha.2 (run 33992475158) found: `source scripts/release-versions.sh`
+# died with `source: not found` in both Debian legs, after build-deb.sh had
+# already built the package.
+#
+# Swapping `source` for `.` fixes nothing. scripts/release-versions.sh is bash
+# itself (`[[ =~ ]]`, BASH_REMATCH, `local -a`), so a POSIX shell fails on its
+# first line instead of on the sourcing. The rule is that the step declares the
+# shell it is written in, not that it avoids one builtin.
+#
+# Nothing else covers this: every local recipe and every packaging-CI lane runs
+# these scripts under bash, and a tag is the only thing that runs this workflow.
+bash_only_syntax='(^|[[:space:]])source[[:space:]]|\[\[|(^|[[:space:]])(mapfile|readarray)[[:space:]]|(^|[[:space:]])declare[[:space:]]|(^|[[:space:]])local[[:space:]]+-|<\(|<<<|\$\{#?[A-Za-z_][A-Za-z0-9_]*\[@\]\}'
+
+# Each step of one job as a NUL-separated record, so a body can be read whole.
+job_step_bodies() {
+    awk '
+        function flush() { if (step != "") printf "%s%c", step, 0; step = "" }
+        /^      - / { flush() }
+        { step = step $0 "\n" }
+        END { flush() }
+    ' <<<"$1"
+}
+
+# Only the script a step runs, never its name or its keys. `Validate Debian
+# source contract` is a step name carrying the word source, and matching it
+# would report a POSIX step as a bash one.
+#
+# All three spellings of `run:` count. A one-line `run: <command>` carries its
+# whole script on the key's own line, and a step written `- run: <command>`
+# carries it there with no name at all; reading only the indented block below
+# the key would skip both and leave the rule enforcing nothing on them.
+step_run_script() {
+    awk '
+        function emit(text) {
+            sub(/^[[:space:]]*-?[[:space:]]*run:[[:space:]]*/, "", text)
+            # A block scalar indicator introduces the script, it is not script.
+            if (text ~ /^[|>][0-9+-]*$/) return
+            if (text != "") print text
+        }
+        /^      - run:/ || /^        run:/ { emit($0); inside = 1; next }
+        inside && (/^      - / || /^        [A-Za-z]/) { inside = 0 }
+        inside { print }
+    ' <<<"$1"
+}
+
+bash_shelled_steps=0
+for job in "${expected_jobs[@]}"; do
+    statements="$(job_statements "$job")"
+    grep -Eq '^    container:' <<<"$statements" || continue
+    while IFS= read -r -d '' step; do
+        script="$(step_run_script "$step")"
+        [ -n "$script" ] || continue
+        grep -Eq "$bash_only_syntax" <<<"$script" || continue
+        bash_shelled_steps=$((bash_shelled_steps + 1))
+        step_name="$(sed -n 's/^      - name: //p' <<<"$step" | head -n 1)"
+        grep -Eq '^        shell: bash$' <<<"$step" ||
+            fail "container job $job runs bash-only syntax under the image's /bin/sh; declare 'shell: bash' on step: $step_name"
+    done < <(job_step_bodies "$statements")
+done
+# Both the syntax pattern and the container scan have to keep matching
+# something, or a rewrite of either turns the loop into a no-op.
+[ "$bash_shelled_steps" -gt 0 ] ||
+    fail "no containerized release step uses bash-only syntax; the step-shell rule stopped covering anything"
+
+# Positive control against the obvious over-match. `Validate Debian source
+# contract` carries the word source in its name and runs nothing bash, so it
+# stays on the image's /bin/sh. A rule that read step names instead of step
+# scripts would demand a shell key here and be wrong.
+posix_step="$(named_step "$(job_statements build-deb)" 'Validate Debian source contract')"
+[ -n "$posix_step" ] ||
+    fail "build-deb lost the Debian source contract step; the step-shell positive control proves nothing"
+if grep -Eq '^        shell:' <<<"$posix_step"; then
+    fail "the Debian source contract step declares a shell; the step-shell rule is matching step names"
+fi
+echo "release artifacts case: POSIX container step left on the image shell"
+
 # The attesting set the helper pins must be exactly the artifacts the workflow
 # uploads, each bound to a job output. The artifact store is writable by every
 # job in the run; a job output is recorded under the job that produced it and
@@ -1388,6 +1469,43 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
         echo "release artifacts mutation: $context rejected"
     }
 
+    assert_workflow_mutation_rejected "the deb step left on the image shell" \
+        '/^      - name: Build suite-specific \.deb package$/,/^        run: \|$/{/^        shell: bash$/d}' \
+        "declare 'shell: bash' on step: Build suite-specific .deb package"
+    assert_workflow_mutation_rejected "the rpm step left on the image shell" \
+        '/^      - name: Select the packages the validated metadata names$/,/^        run: \|$/{/^        shell: bash$/d}' \
+        "declare 'shell: bash' on step: Select the packages the validated metadata names"
+    assert_workflow_mutation_rejected "a container step shell weakened to sh" \
+        's/^        shell: bash$/        shell: sh/' \
+        "runs bash-only syntax under the image's /bin/sh"
+    assert_workflow_mutation_rejected "a one-line container step turning bash" \
+        's|^        run: scripts/prepare-cargo-vendor\.sh verify cargo-vendor$|        run: [[ -d cargo-vendor ]] \&\& scripts/prepare-cargo-vendor.sh verify cargo-vendor|' \
+        "declare 'shell: bash' on step: Verify exact Cargo vendor bundle"
+    assert_workflow_mutation_rejected "a nameless container step turning bash" \
+        '/^      - name: Verify exact Cargo vendor bundle$/,+1c\      - run: [[ -d cargo-vendor ]] && scripts/prepare-cargo-vendor.sh verify cargo-vendor' \
+        "runs bash-only syntax under the image's /bin/sh"
+
+    # The other direction of the step-shell rule: a workflow it must not
+    # reject. Whole-line YAML comments never reach the scanner because
+    # job_statements strips them first, so a comment illustrating bash syntax
+    # is documentation and not a step written in bash. Pinned because the
+    # stripping happens a long way from the scan, and a later rewrite reading
+    # job_body directly would make this comment look like script.
+    assert_workflow_mutation_accepted() {
+        local context="$1" expression="$2"
+        local mutated
+        mutated="$mutation_root/release-$(printf '%s' "$context" | tr ' ' '-').yml"
+        sed -E "$expression" "$workflow_path" >"$mutated"
+        if cmp -s "$workflow_path" "$mutated"; then
+            fail "$context mutation did not change the workflow"
+        fi
+        FACELOCK_RELEASE_WORKFLOW="$mutated" bash "$self" >/dev/null 2>&1 ||
+            fail "release artifacts contract rejected $context"
+        echo "release artifacts case: $context accepted"
+    }
+
+    assert_workflow_mutation_accepted "a container step commented with bash syntax" \
+        's|^        run: scripts/prepare-cargo-vendor\.sh verify cargo-vendor$|&\n        # example: [[ -f file ]] \&\& mapfile -t x < <(echo hi)|'
     assert_workflow_mutation_rejected "public release creation" \
         's/^          draft: true$//' \
         "must create the GitHub release as a draft"
