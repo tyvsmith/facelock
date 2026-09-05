@@ -45,8 +45,10 @@ authentication rejects those Y16 paths. A 16-bit V4L2 container does not prove
 the sensor's meaningful bit depth. Auto-detection excludes devices with no
 decodable format and reports the advertised formats.
 
-RGB operation requires `security.require_ir = false` and is for development;
-it does not provide the default IR boundary. See the canonical
+RGB operation requires `security.require_ir = false` and is for development.
+Frame variance and any enabled landmark-liveness check still apply, but they
+do not restore the default IR boundary or guarantee resistance to presentation
+attacks. See the canonical
 [Compatibility page on GitHub](https://github.com/tyvsmith/facelock/blob/main/docs/compatibility.md)
 for the IPU6/IPU7 relay notes, exact negotiation order, and current validation
 evidence.

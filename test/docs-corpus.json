@@ -144,7 +144,7 @@
     },
     "book/src/quickstart.md": {
       "role": "summary",
-      "reason": "Published book chapter; current command examples and links are checked"
+      "reason": "Published include of the canonical Quickstart; prerequisites and install commands share one source"
     },
     "book/src/security.md": {
       "role": "summary",

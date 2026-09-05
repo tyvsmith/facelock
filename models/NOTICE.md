@@ -17,19 +17,22 @@ detection and recognition.
 ### InsightFace License
 
 The InsightFace models are released under a **non-commercial research license**.
-See: https://github.com/deepinsight/insightface/blob/master/LICENSE
+See the upstream [model license policy](https://github.com/deepinsight/insightface#license)
+(checked 2026-09-05). The code's MIT license is not the model-weight license.
 
 Key points:
 - The models are free for **non-commercial research use**
-- **Commercial use requires a separate license** from InsightFace/ArcSoft
-- Contact: https://insightface.ai for commercial licensing inquiries
+- **Commercial use requires separate permission** from the model rights holder
+- Upstream directs open-source recognition-model licensing inquiries to
+  `recognition-oss-pack@insightface.ai`
 
 ### Implications for Facelock Users
 
-- **Personal use** (authenticating on your own Linux machine): Permitted under
-  the non-commercial research license
-- **Enterprise/commercial deployment**: You must obtain a commercial license
-  from InsightFace/ArcSoft before deploying these models
+- **Personal use**: Non-commercial use is not automatically research use.
+  Facelock does not grant permission for ordinary desktop authentication;
+  confirm that your intended use is covered by the upstream model terms
+- **Enterprise/commercial deployment**: Obtain appropriate model licensing
+  before deploying these weights
 
 ### Facelock Code License
 

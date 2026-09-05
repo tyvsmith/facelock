@@ -72,11 +72,11 @@ with "no camera found".
 
 ## Auth too slow
 
-### First-start latency (~700ms -- 2s)
+### First-start latency
 
 The first authentication after boot (or after the daemon starts) is slow because ONNX models must be loaded into memory. This is normal. Subsequent auths in daemon mode never reload the models; a cold one additionally pays a camera reopen, a warm one does not. What that reopen costs is a property of your camera and driver — measure it with `sudo facelock bench camera-reopen` (it prints the open / STREAMON / warmup split) rather than comparing against someone else's figure.
 
-### Consistently slow (~700ms+ every time)
+### Consistently slow on every attempt
 
 You may be running in oneshot mode. Check your config:
 
@@ -200,9 +200,11 @@ The ONNX runtime requires access to `/dev/null`, `/dev/urandom`, and `/proc/sys`
 command fails with a D-Bus `AccessDenied` error as a normal user (root works
 fine).
 
-Every management command is root-only; the CLI offers to re-run itself under
-`sudo` on a terminal. Face unlock itself (hyprlock, swaylock, the polkit
-agent, `facelock is-enrolled`) needs no group and no re-login: the bus admits
+Camera/state management and sensitive inspection commands are root-only; the
+CLI offers to re-run those commands under `sudo` on a terminal. Public
+read-only probes such as `facelock capabilities`, `facelock is-enrolled`, and
+`facelock pam status` are deliberately unprivileged. Face unlock itself
+(hyprlock, swaylock, the polkit agent) needs no group and no re-login: the bus admits
 any local user's `Authenticate` for their own account (ADR 010). If a lock
 screen still reports `AccessDenied` right after an upgrade, the bus may not
 have re-read the policy yet. `sudo facelock setup --systemd` validates the
@@ -230,7 +232,7 @@ sudo chown root:root /var/lib/facelock/facelock.db
 sudo chmod 600 /var/lib/facelock/facelock.db
 # The daemon (root) writes the -wal/-shm sidecars next to the database; the
 # state directory and enrolled/ ship at 711 root:root (traversable by every
-# local user, listable by none):
+# local user, listable only by root):
 sudo chown root:root /var/lib/facelock /var/lib/facelock/enrolled
 sudo chmod 711 /var/lib/facelock /var/lib/facelock/enrolled
 ```

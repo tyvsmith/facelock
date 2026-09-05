@@ -9,7 +9,7 @@ The following flags are accepted by every subcommand (declared `global = true`):
 | Flag | Description |
 |------|-------------|
 | `-c`, `--config <PATH>` | Override the config file path. Takes precedence over `FACELOCK_CONFIG`. The packaged daemon reads only the default file, so under a non-default path `enroll` and `test` use direct camera access and `setup --systemd` refuses, except `--disable`, which stays allowed since stopping the packaged unit reads no config file; a symlink or `..` spelling of the default counts as the default (see [facelock setup](#facelock-setup)). |
-| `-q`, `--quiet` | Suppress stdout: informational text, and on commands whose stdout is the payload, the payload too. Errors (stderr), prompts and exit codes are unaffected. |
+| `-q`, `--quiet` | Suppress informational stdout and machine payloads where supported. Prompts, required notices, diagnostics and exit codes are unaffected; exceptions are listed below. |
 | `-v`, `--verbose` | Raise diagnostic verbosity on stderr, one level per repeat. The CLI starts at `warn`, `daemon run` at `info`. `RUST_LOG` overrides it. |
 
 Diagnostics default to `warn`, so a command prints warnings and errors on
@@ -23,7 +23,7 @@ payloads are identical at every level.
 `--quiet` and `-v` are separate knobs on separate streams, so `--quiet -v` is a
 real combination (silent report, loud diagnostics) rather than a contradiction.
 
-`--quiet` is complete for every command whose output goes through the message
+`--quiet` suppresses ordinary informational output for commands using the message
 seam: `setup`, `enroll`, `test`, `remove`, `clear`, `is-enrolled`,
 `capabilities`, `pam`, and the `--json` payloads of `list`, `devices` and
 `status`. Seven still write human text straight to stdout and stay noisy under
@@ -34,6 +34,9 @@ it until [#140](https://github.com/tyvsmith/facelock/issues/140) is finished:
 `status --quiet` is not. `preview --json` is on neither list: its frame stream
 is stdout by design and `--quiet` is documented not to reach it.
 
+Required notices on the human setup/PAM paths also remain on stdout, including
+rollback guidance and the edit context shown before a confirmation.
+
 ## Privilege model
 
 Enrollment, model management, camera inspection/preview, system status, the
@@ -41,13 +44,15 @@ unified benchmarks, TPM operations, and audit access use protected system state
 and require root. Many interactive management commands offer to re-execute via
 `sudo`; examples without an explicit `sudo` rely on that terminal prompt.
 Scripts and redirected/non-interactive calls must provide the required
-privilege themselves. `daemon run`, PAM writes, `data purge`, and scripted
-audit access do not rely on an elevation prompt.
+privilege themselves. `daemon run`, PAM writes, `data purge`, and all audit
+access refuse non-root callers without an elevation prompt.
 
 `is-enrolled`, `capabilities`, `config show`, and `pam status` are deliberately
-unprivileged reads. `hyprlock` is user-owned and refuses root. `auth` is the PAM
-helper: `--user` is required, and the daemon independently restricts a
-non-root caller to its own account. Command-specific exceptions and hard-root
+unprivileged reads. `hyprlock` is user-owned and refuses root. `auth` is the
+direct, one-shot PAM helper: `--user` is required and it needs access to the
+protected database and camera; it does not connect to the daemon or offer
+elevation. The daemon separately restricts non-root D-Bus authentication
+callers to their own accounts. Command-specific exceptions and hard-root
 behavior are stated below.
 
 ## Machine-readable output
@@ -76,8 +81,8 @@ print their payload and now print nothing; the exit code is unchanged.
 ## facelock setup
 
 Interactive setup wizard. Walks through camera selection, model quality,
-inference device (CPU / CUDA / ROCm / OpenVINO), model downloads, encryption,
-the daemon, enrollment and PAM configuration. Every step can also be answered,
+inference device (CPU or CUDA in the menu; ROCm and OpenVINO via flags), model
+downloads, encryption, the daemon, enrollment and PAM configuration. Every step can also be answered,
 or declined, from the command line.
 
 The daemon is configured before enrollment on purpose. `enroll` and `test`
@@ -146,10 +151,10 @@ whether to skip the prompt, and whether to authorize the sensitive write.
 
 Precedence for all four: **CLI flag > config file > built-in default.**
 Supplying the flag suppresses the corresponding wizard step and writes the
-value back to `/etc/facelock/config.toml`. A value that cannot be honoured is
-fatal, never a silent fallback: `--camera /dev/video9` on a machine without
-that node aborts, and `--encryption tpm` with no usable TPM aborts rather than
-quietly writing a software keyfile.
+value back to the selected config file (normally `/etc/facelock/config.toml`).
+An unavailable explicit camera or TPM choice is fatal: `--camera /dev/video9`
+on a machine without that node aborts, and `--encryption tpm` with no usable
+TPM aborts. Provider selection has its own fallback behavior, described below.
 
 | Flag | Values | What `auto` does | Wizard step |
 |------|--------|------------------|-------------|
@@ -233,18 +238,25 @@ Runtime and selects the first available provider in this order: CUDA, ROCm,
 OpenVINO, CPU. It does not probe the GPU or install a provider. An ONNX Runtime
 built with CPU support only therefore resolves `auto` to `cpu`, even on a
 machine with a supported GPU. Setup prints the resolved provider before it
-writes the configuration.
+writes the configuration. If the runtime cannot be queried, `auto` warns and
+selects `cpu`.
 
-Every `setup` run reconciles the per-user enrollment markers behind
+An explicit provider name is written without proving it is usable. CUDA gets
+driver/runtime presence warnings, but setup does not install those dependencies;
+inference may still fail or fall back to CPU later.
+
+Both base setup flows reconcile the per-user enrollment markers behind
 [`facelock is-enrolled`](#facelock-is-enrolled) against the database, which is
-what backfills users who enrolled before markers existed.
+what backfills users who enrolled before markers existed. Standalone PAM or
+systemd actions do not perform this reconciliation.
 
 ## facelock is-enrolled
 
 Report whether a user has a usable face enrollment. Unprivileged and cheap
-enough to call repeatedly from a lock screen: it reads one marker file under
-`/var/lib/facelock/enrolled/` and never activates the daemon, opens a camera,
-or reads the face database.
+enough to call repeatedly from a lock screen: it reads the selected config to
+derive the `enrolled/` directory beside `storage.db_path`, then reads one marker.
+An unreadable or invalid config falls back to `/var/lib/facelock/enrolled/`.
+It never activates the daemon, opens a camera, or reads the face database.
 
 No group is involved (ADR 010): the marker sits under two `0711 root:root`
 directories, so any local user can open its own marker by name. A missing or
@@ -264,7 +276,7 @@ The exit code is the contract — branch on it rather than parsing stdout:
 |------|---------|
 | 0 | the user has a usable enrollment |
 | 1 | not enrolled; an absent or unreadable marker reports this way |
-| 2 | error — an invalid `--user`, or a marker that exists but cannot be parsed |
+| 2 | error — an invalid `--user`, an unparseable marker, or an I/O failure other than absence or access denial |
 
 `--json` emits one object and does not change the exit code:
 
@@ -320,7 +332,12 @@ facelock enroll -l "office"             # specific label (-l/--label)
 facelock enroll --skip-setup-check      # enroll on a tree setup never marked complete
 ```
 
-Captures 3-10 frames over ~15 seconds. Requires exactly one face per frame. Re-enrolling with the same label replaces the previous model on success; a cancelled or failed re-enrollment leaves the previous model in place.
+Accepts 3–10 quality-filtered captures with exactly one face per accepted frame
+and checks angle diversity. The capture deadline is
+`3 × max(recognition.timeout_secs, 5)` seconds (15 seconds by default); it can
+finish sooner after ten accepted captures. Re-enrolling with the same label
+replaces the previous model on success; a cancelled or failed re-enrollment
+leaves the previous model in place.
 
 Under a non-default `--config`, enrollment uses direct camera access under that
 file and never the running daemon, which reads only `/etc/facelock/config.toml`;
@@ -329,8 +346,11 @@ when `daemon.mode = "daemon"` a note on stderr says so. The same holds for
 its text preview).
 
 Without `--skip-setup-check`, an install whose setup-complete marker is missing
-is offered `facelock setup` first and enrolls through it, since setup enrolls a
-face itself. `--skip-setup-check` goes straight to the capture loop. It is for a
+is offered `facelock setup` first. Accepting runs setup and then returns without
+a separate enrollment; setup can itself enroll, but that step can be declined.
+The original `enroll --user` and `--label` choices are not forwarded into the
+wizard. Declining setup also returns successfully without enrolling.
+`--skip-setup-check` bypasses that offer. It is for a
 tree assembled by hand or by a configuration manager, where the marker was never
 written but the models, database and encryption key are all in place; enrollment
 still fails on its own terms if any of them is not.
@@ -369,22 +389,27 @@ facelock list --json                    # JSON output
     "label": "office",
     "user": "alice",
     "created_at": 1700000000,
-    "embedder_model": "arcface_r50"
+    "embedder_model": "w600k_r50.onnx",
+    "device_id": ""
   }
 ]
 ```
 
 ## facelock remove
 
-Remove a specific face model by `MODEL_ID`. Decimal IDs and the hexadecimal
-model IDs shown by `facelock list` are accepted; hexadecimal input is
-case-insensitive.
+Remove a specific face model by its decimal `MODEL_ID`, as shown by
+`facelock list`. The argument is an unsigned 32-bit integer; hexadecimal
+spellings are not accepted.
 
 ```bash
 facelock remove 3                       # remove model #3
 facelock remove 3 -u alice              # for specific user (-u/--user)
 facelock remove 3 -y                    # skip confirmation (-y/--yes)
 ```
+
+The selected user scopes the removal. Declining confirmation exits 0 without
+deleting. A nonexistent model also returns 0; the direct backend reports that
+it was not found, while the daemon's empty reply cannot distinguish that case.
 
 ## facelock clear
 
@@ -394,6 +419,10 @@ Remove all face models for a user.
 facelock clear                          # current user
 facelock clear -u alice -y              # -u/--user; -y/--yes skips confirmation
 ```
+
+Only that user's models are removed. No models or a declined confirmation is
+a successful no-op. This command does not remove keys, model files, audit logs,
+or other users' enrollments; machine-wide retained state belongs to `data purge`.
 
 ## facelock preview
 
@@ -508,7 +537,8 @@ Show or edit the configuration file. Bare `facelock config` is
 ### facelock config show
 
 Print the config file path and its contents, then report whether it parses.
-Unprivileged — it reads a `0644` file.
+Unprivileged — it reads a `0644` file. A missing file or invalid configuration
+is reported on stdout with exit 0; an actual read failure returns an error.
 
 ```bash
 facelock config                         # show config path and contents
@@ -518,8 +548,11 @@ facelock config show                    # the same, spelled out
 ### facelock config edit
 
 Open the config file in `$EDITOR` (then `$VISUAL`, then `nano`/`vi`/`vim`),
-validate it on save, and restart the daemon when a setting it caches at startup
-changed. Requires root.
+validate it on save, and request a daemon restart when both the old and new
+configurations are valid and a setting in the command's restart list changed.
+Requires root. An invalid saved file is left in place with a warning and exit
+0; it is not rolled back. `$EDITOR` and `$VISUAL` must name an executable, not
+a shell command with arguments.
 
 ```bash
 sudo facelock config edit
@@ -548,9 +581,12 @@ sudo facelock daemon --config /path/to/config.toml
 
 ### facelock daemon restart
 
-Restart the persistent daemon. On systemd systems, runs `systemctl restart
-facelock-daemon.service`. Otherwise, sends a D-Bus shutdown request and the
-daemon restarts on next use via D-Bus activation.
+Request a restart of the persistent daemon with `systemctl restart
+facelock-daemon.service`. If that command fails or cannot be launched, try a
+D-Bus shutdown request so the service manager or later D-Bus activation can
+start it again. The fallback result is not checked: exit 0 does not prove the
+daemon restarted. Use `facelock status` to check reachability. `--config` does
+not change which service is restarted or the configuration that service reads.
 
 Requires root. If run interactively as a non-root user, the CLI prompts to
 re-run via `sudo`.
@@ -564,8 +600,8 @@ sudo facelock daemon restart
 One-shot authentication. Used by the PAM module in oneshot mode.
 
 ```bash
-facelock auth -u alice                   # authenticate (-u/--user)
-facelock auth --user alice --config /etc/facelock/config.toml
+sudo facelock auth -u alice              # authenticate (-u/--user)
+sudo facelock auth --user alice --config /etc/facelock/config.toml
 ```
 
 Exit codes: 0 = matched, 1 = scanned and not matched, 2 = error / no
@@ -583,7 +619,9 @@ software AES-256-GCM with no TPM involved.
 
 ### facelock tpm status
 
-Report TPM availability and configuration.
+Report the configured TPM path's presence, sealed-key presence, encryption method
+and encrypted/plaintext row counts. Requires a readable database; it does not
+test whether the TPM can unseal the key. Use `unseal-check` for that.
 
 ```bash
 sudo facelock tpm status
@@ -591,7 +629,10 @@ sudo facelock tpm status
 
 ### facelock tpm seal-key
 
-Seal the AES encryption key with the TPM, migrating from a plaintext keyfile to TPM-backed storage.
+Seal the existing AES encryption key with the TPM and set `encryption.method`
+to `tpm`. Requires a plaintext keyfile and refuses an existing sealed blob.
+The plaintext keyfile is retained as a recovery backup; embeddings are not
+re-encrypted.
 
 ```bash
 sudo facelock tpm seal-key
@@ -599,7 +640,10 @@ sudo facelock tpm seal-key
 
 ### facelock tpm unseal-key
 
-Unseal the AES key from the TPM back to a plaintext keyfile, migrating from TPM-backed to keyfile storage.
+Unseal the AES key from the TPM into a plaintext keyfile and set
+`encryption.method` to `keyfile`. Requires a sealed blob and refuses an existing
+plaintext keyfile, including the backup retained by `seal-key`. It leaves the
+sealed blob in place and does not re-encrypt embeddings.
 
 ```bash
 sudo facelock tpm unseal-key
@@ -608,8 +652,11 @@ sudo facelock tpm unseal-key
 ### facelock tpm unseal-check
 
 Read-only check that the sealed AES key still unseals under the current PCR
-values. Writes nothing, and exits non-zero when it does not — which is the
-signal to run [`facelock tpm reseal`](#facelock-tpm-reseal).
+values. Writes nothing and exits non-zero on failure. Diagnose the reported
+cause first: an unavailable TPM, wrong encryption method, or missing/corrupt
+blob is not evidence that resealing will help. A PCR-policy mismatch may call
+for [`facelock tpm reseal`](#facelock-tpm-reseal) when the key is recoverable
+from the current TPM policy or a protected plaintext backup.
 
 ```bash
 sudo facelock tpm unseal-check
@@ -617,7 +664,9 @@ sudo facelock tpm unseal-check
 
 ### facelock tpm pcr-baseline
 
-Display the current PCR values for all configured PCR indices.
+Display the current PCR values for all configured PCR indices. Device operations
+(`seal-key`, `unseal-key`, `unseal-check`, `pcr-baseline`, `reseal`) require a
+build with the optional `tpm` feature and a usable configured TPM connection.
 
 ```bash
 sudo facelock tpm pcr-baseline
@@ -633,13 +682,20 @@ sudo facelock tpm encrypt                 # encrypt using the configured key
 sudo facelock tpm encrypt --generate-key  # generate a new key file (or seal a new TPM key) WITHOUT re-encrypting embeddings
 ```
 
-`--generate-key` only creates the key material. Run `facelock tpm encrypt`
-(without the flag) afterwards to encrypt the embeddings.
+`--generate-key` creates or replaces key material, without changing the
+configured method. It refuses when encrypted templates exist or the database
+cannot be checked. With method `none`, it writes a keyfile; configure `keyfile`
+before running `facelock tpm encrypt` without the flag. In-place encryption
+refuses while `security.bind_device_aad = true` activates hard device binding;
+use enrollment to create bound templates.
 
 ### facelock tpm decrypt
 
-Decrypt all software-encrypted embeddings in the database (reverting
-AES-256-GCM encryption).
+Decrypt AES-256-GCM embeddings and legacy per-embedding TPM blobs into plaintext
+rows. Legacy TPM blobs require a build with TPM support. The command does not
+change the configured encryption method or remove key files; updates happen
+row by row, so a later failure can leave a partly converted database. It cannot
+decrypt templates sealed with device-bound additional authenticated data.
 
 ```bash
 sudo facelock tpm decrypt
@@ -656,20 +712,30 @@ under any other method it errors rather than quietly doing nothing.
 sudo facelock tpm reseal
 ```
 
-It prefers unsealing the existing blob, which still works while the PCR policy
-is satisfied, so it is safe to run proactively before a firmware update; once
-the PCRs have moved it falls back to the plaintext key backup. With neither
-available there is nothing to re-seal and it fails. Run
-`facelock tpm unseal-check` to find out which of those you are in.
+It requires an existing sealed blob and prefers unsealing it. Once the PCRs
+have moved it falls back to the plaintext key backup. It seals against the
+current PCRs, so running it before an update does not authorize the future PCR
+values. Without a recoverable key it fails. `facelock tpm unseal-check` checks
+the current TPM path; it does not validate the availability of a plaintext
+recovery backup.
 
 ## facelock bench
 
 Benchmark and calibration tools.
 
 **Every `bench` subcommand requires root** (DEC-6): direct-mode access needs the
-`0600` root:root database whatever the subcommand, and the auth benchmarks may
-need TPM access besides. `cold-auth`, `warm-auth`, `calibrate`, and `report`
-additionally require enrolled faces.
+`0600` root:root database on the enrollment-dependent measurements, and the
+auth benchmarks may need TPM access besides. `cold-auth`, `warm-auth`, and
+`calibrate` require enrolled faces; `report` requires the database but can
+report timing with no enrolled faces.
+
+These are direct capture/inference measurements, not full PAM or daemon
+authentication: the benchmarks do not run the authentication policy, rate
+limiter or liveness checks. They do not change configuration or save captures.
+The user is selected from `SUDO_USER`, then `USER`, then `LOGNAME`, then
+`unknown`; the benchmark group has no `--user` option and does not use
+`DOAS_USER` or a UID lookup. Missing a timing target or face match does not
+itself make a benchmark exit non-zero.
 
 `camera-reopen` needs no enrolled face and loads no models — but is root like
 the rest: it closes and reopens the camera `--iterations` times (default 5) and
@@ -689,7 +755,7 @@ Measure ten authentication attempts with models already loaded:
 
 ### facelock bench preview
 
-Measure frame capture and face-detection latency:
+Measure frame capture and face-processing latency (detection and embedding):
 `sudo facelock bench preview`.
 
 ### facelock bench enrollment
@@ -703,8 +769,12 @@ Measure SCRFD and ArcFace model loading: `sudo facelock bench model-load`.
 
 ### facelock bench calibrate
 
-Sweep FAR/FRR thresholds and recommend a threshold from enrolled samples:
-`sudo facelock bench calibrate`.
+Compare faces from ten live captures with the selected user's enrolled
+templates, sweeping thresholds from 0.20 through 0.80 in steps of 0.05. Recommend
+the threshold whose pairwise match rate is closest to 90%, then sweep detector
+confidence from 0.30 through 0.90 on another frame:
+`sudo facelock bench calibrate`. This does not measure false-accept rates or
+write the recommendation to configuration.
 
 ### facelock bench camera-reopen
 
@@ -718,7 +788,13 @@ sudo facelock bench camera-reopen --iterations 10
 
 ### facelock bench report
 
-Run the full benchmark report: `sudo facelock bench report`.
+Report environment details plus model-load, preview and enrollment-snapshot
+timings: `sudo facelock bench report`. With enrolled faces it also measures
+warm capture/match and an approximate cold-auth time (model reload plus one
+capture on the already-open camera); otherwise those rows say `N/A`/`SKIP`.
+It does not run the standalone `cold-auth` loop, `calibrate` or `camera-reopen`.
+The printed model-pack and build labels are fixed text, not detected facts;
+use the actual configuration and build metadata when interpreting them.
 
 ## facelock pam
 
@@ -993,8 +1069,9 @@ the package's updates. This is a property of the row, so it appears with
 `module_path` is where `pam_facelock.so` was found, or `null` when no candidate
 hit — a property of the machine rather than of a service, and what tells an
 integrator that a service carries the line while the module it names is at a
-path nothing looks at. `add` and `remove` refuse before writing when the module
-is missing, so their documents do not carry the key.
+path nothing looks at. `add` refuses before writing when the module is missing;
+`remove` can clean up a stale reference even then. Neither write verb includes
+this key in its document.
 
 The document's shape, the `action` vocabulary, and the rule that a consumer
 must tolerate an `action` it does not recognize rather than treat it as an
@@ -1049,16 +1126,21 @@ and logged.
 Manage hyprlock lock-screen integration: the face glyph in `placeholder_text`,
 and the `ignore_empty_input = false` setting that lets a bare Enter submit to
 PAM. Runs as your normal user and refuses to run as root, since it edits
-`~/.config/hypr/hyprlock.conf` and root would leave root-owned files in `$HOME`.
-A backup is taken before the first edit.
+`$XDG_CONFIG_HOME/hypr/hyprlock.conf` (falling back to
+`~/.config/hypr/hyprlock.conf`). The config must already exist. `enable` creates
+an adjacent `.facelock-backup` if none exists; `disable` leaves it in place.
 
 `--no-icon` is for a hyprlock font with no Nerd Font glyphs; it flips the
-functional setting and leaves any existing icon alone. `disable` restores
-`ignore_empty_input` only when no fingerprint icon coexists, so a machine using
-both keeps working.
+functional setting and leaves any existing icon alone. `disable` sets
+`ignore_empty_input = true` only when neither `pam_fprintd.so` in
+`/etc/pam.d/hyprlock` nor `fingerprint:enabled = true` in the config is detected.
+The fingerprint glyph alone does not preserve the setting. It does not restore
+the backup or remember the setting's original value.
 
 Wiring `/etc/pam.d/hyprlock` itself is a separate, root step — see
-[`facelock pam`](#facelock-pam). This command touches no file outside `$HOME`.
+[`facelock pam`](#facelock-pam). `disable` and `status` read
+`/etc/pam.d/hyprlock` for integration hints; writes are limited to the selected
+hyprlock configuration and its backup.
 
 ### facelock hyprlock enable
 
@@ -1072,7 +1154,8 @@ facelock hyprlock enable --no-icon
 
 ### facelock hyprlock disable
 
-Undo Facelock's hyprlock changes: `facelock hyprlock disable`.
+Remove the face glyph and apply the fingerprint-aware setting change above:
+`facelock hyprlock disable`.
 
 ### facelock hyprlock status
 
@@ -1084,17 +1167,22 @@ Report the current integration state without changing it:
 View the structured audit log of authentication events.
 
 ```bash
-facelock audit                          # show last 20 entries (default)
-facelock audit -l 50                    # show last 50 entries
-facelock audit --lines 50               # long form
-facelock audit -f                       # follow mode: stream new entries as they arrive
-facelock audit --follow                 # long form
+sudo facelock audit                     # show last 20 entries (default)
+sudo facelock audit -l 50               # show last 50 entries
+sudo facelock audit --lines 50          # long form
+sudo facelock audit -f                  # follow mode: stream appended entries
+sudo facelock audit --follow            # long form
 ```
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
 | `--follow` | `-f` | false | Watch for new entries (like `tail -f`) |
 | `--lines N` | `-l` | 20 | Number of recent entries to display |
+
+Requires root and never offers elevation. Disabled logging or a missing log
+prints an explanation and exits 0, including in follow mode. Follow mode polls
+file growth every 500 ms; it does not reset its offset after truncation or
+rotation, so restart it after the log is replaced.
 
 ## facelock data
 
@@ -1121,16 +1209,16 @@ there is no removal path that also destroys data — see
 [`contracts.md`](contracts.md) under "Fixed-root purge boundary".
 
 ```bash
-facelock data purge --dry-run                       # report what purge would find; removes nothing
-facelock data purge --allow-destruction             # destroy, after a confirmation prompt
-facelock data purge --allow-destruction --yes       # destroy without the prompt
-facelock data purge --allow-destruction --json      # destroy and emit the machine document
-facelock data purge --allow-destruction --yes --leave-activation-barred
+sudo facelock data purge --dry-run                  # classify configured paths; removes nothing
+sudo facelock data purge --allow-destruction        # destroy, after a confirmation prompt
+sudo facelock data purge --allow-destruction --yes  # destroy without the prompt
+sudo facelock data purge --allow-destruction --json # destroy and emit the machine document
+sudo facelock data purge --allow-destruction --yes --leave-activation-barred
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--allow-destruction` | false | Authorize irreversible destruction. Required; nothing else implies it |
+| `--allow-destruction` | false | Authorize irreversible destruction. Required except with `--dry-run`; nothing else implies it |
 | `--yes` | false | Skip the confirmation prompt (also `--no-confirm`, `-y`) |
 | `--dry-run` | false | Classify configured paths and remove nothing. Does **not** examine the contents of the roots |
 | `--leave-activation-barred` | false | Keep the daemon stopped and D-Bus activation barred afterwards |

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Facelock is a face authentication system for Linux PAM. It detects faces via SCRFD, extracts embeddings via ArcFace, and matches against stored models using cosine similarity. All processing is local -- no network calls, no cloud services, no telemetry.
+Facelock is a face authentication system for Linux PAM. It detects faces via SCRFD, extracts embeddings via ArcFace, and matches against stored models using cosine similarity. Authentication and inference are local: they make no network calls and use no cloud service or telemetry. The separately invoked setup flow may download model files.
 
 ## System Diagram
 
@@ -221,18 +221,25 @@ The daemon (`facelock daemon`) runs persistently, holding ONNX models and camera
 ### Oneshot Mode
 The PAM module spawns `facelock auth --user X` for each auth attempt. The process loads models, opens camera, runs one auth cycle, and exits. Benefits:
 - No background process
-- No systemd dependency
-- Works on any Linux system
+- Does not require systemd; it still requires the documented Linux-PAM,
+  V4L2, model, and runtime prerequisites
 
 ### Direct CLI Mode
-The CLI silently detects whether the daemon via D-Bus is available. If yes, uses IPC. If no, operates directly (opens camera, loads models inline). The user doesn't need to know which mode is active.
+The CLI detects whether the daemon is available over the system bus. If it is,
+the CLI uses IPC; if daemon mode is configured but unavailable, it warns and
+falls back to direct access (opening the camera and loading models inline).
+Configured oneshot mode uses direct access without the degraded-fallback
+warning. A non-default explicit `--config` also forces direct access, without
+probing a daemon that may use different state or security settings. Commands
+such as benchmarking, TPM maintenance and oneshot authentication are always
+direct; unprivileged capability and enrollment-marker probes use no backend.
 
 ## Security Layers
 
-1. **IR enforcement**: Only IR cameras allowed by default (prevents RGB photo attacks)
-2. **Frame variance**: Multiple frames must show micro-movement (prevents static photo)
-3. **Rate limiting**: 5 attempts per user per 60 seconds
+1. **IR enforcement**: IR-classified capture required by default; not sensor attestation
+2. **Frame variance**: Matched embeddings must vary; not a video-replay guarantee
+3. **Rate limiting**: 5 face-detected authentication failures per user per 60 seconds by default; successful and no-face attempts do not consume this budget
 4. **Model integrity**: SHA256 verification at every load
 5. **D-Bus security**: System bus policy restricts access
-6. **Audit trail**: All auth events logged to syslog
+6. **Audit trail**: PAM messages use syslog; structured JSONL auditing is opt-in
 7. **Process hardening**: systemd service runs with ProtectSystem=strict, NoNewPrivileges, etc.

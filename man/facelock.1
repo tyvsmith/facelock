@@ -29,7 +29,11 @@ Path to the config file. Takes precedence over
 .BR FACELOCK_CONFIG .
 .TP
 .B \-q\fR, \fB\-\-quiet
-Suppress informational stdout; errors, prompts and exit codes are unchanged.
+Suppress informational stdout and JSON payloads where supported; errors,
+prompts, required notices and exit codes are unchanged. Human output from
+status, bench, tpm, config, daemon restart, hyprlock, audit, list and devices
+still prints. The JSON payloads of status, list and devices are suppressed;
+the preview frame stream is not.
 .TP
 .B \-v\fR, \fB\-\-verbose
 Raise diagnostic verbosity on stderr, one level per repeat. A command starts at
@@ -184,10 +188,12 @@ after the fashion of
 .BR "systemctl is\-active" .
 See
 .B EXIT STATUS
-below. It reads only the per-user marker file under
+below. Its enrollment answer comes from the per-user marker, normally under
 .IR /var/lib/facelock/enrolled/ ;
-it does not activate the daemon over D-Bus, does not open a camera, and does
-not read the face database. No group is involved (ADR 010): the marker sits
+it first reads the selected config to locate the marker directory beside the
+database, falling back to this default directory if config cannot be loaded.
+It does not activate the daemon over D-Bus, open a camera, or read the face
+database. No group is involved (ADR 010): the marker sits
 under two 0711 root:root directories, so any local user can open its own
 marker by name. A missing or unreadable marker (ENOENT or EACCES) is
 reported
@@ -245,16 +251,18 @@ Username to enroll (default: current user).
 Label for this face model.
 .TP
 .B \-\-skip\-setup\-check
-Go straight to the capture loop. Without it, an install whose setup\-complete
-marker is missing is offered \fBfacelock setup\fR first and enrolls through it,
-since setup enrolls a face itself. This is for a tree assembled by hand or by a
+Bypass the setup offer. Without it, an install whose setup\-complete marker is
+missing is offered \fBfacelock setup\fR first. Accepting runs setup and returns
+without a separate enrollment; setup's enrollment can be declined and does not
+inherit this command's user or label. Declining setup also returns successfully
+without enrolling. This flag is for a tree assembled by hand or by a
 configuration manager, where the marker was never written but the models,
 database and encryption key are in place; enrollment still fails on its own
 terms if any of them is not.
 .RE
 .SS "facelock remove"
-Remove the required \fIMODEL_ID\fR. Decimal and hexadecimal list IDs are
-accepted; hexadecimal input is case-insensitive.
+Remove the required decimal \fIMODEL_ID\fR shown by \fBfacelock list\fR.
+The argument is an unsigned 32-bit integer; hexadecimal spellings are rejected.
 .RS
 .TP
 .B \-u\fR, \fB\-\-user \fIusername\fR
@@ -310,17 +318,22 @@ User to match faces against (defaults to current user).
 Show or edit configuration. With no subcommand, shows.
 .SS "facelock config show"
 Print the config file path and contents, and whether the file parses. Reads a
-0644 file and needs no root.
+0644 file and needs no root. Missing or invalid config is reported with exit 0;
+an actual file-read failure returns an error.
 .SS "facelock config edit"
-Open the config file in \fB$EDITOR\fR, validate it on save, and restart the
-daemon when a setting it caches at startup changed. Requires root.
+Open the config file in \fB$EDITOR\fR (then \fB$VISUAL\fR, then nano/vi/vim),
+validate on save, and request a restart when both old and new configurations
+are valid and a setting in the restart list changed. Requires root. An invalid
+saved file is retained with a warning and exit 0. Editor variables must name an
+executable, not a command with arguments.
 .SS "facelock status"
 Check system status including daemon connectivity, enrolled faces, camera
-availability, and model integrity. Also reports whether the PAM module's
-oneshot fallback could authenticate with the daemon unreachable, and whether
+availability, and model-file presence. Also reports whether the binary, models
+and database needed by the PAM module's oneshot fallback exist, and whether
 the target user's
 .B is\-enrolled
-marker agrees with the database. Requires root. A check that cannot be
+marker agrees with the database. These presence checks do not prove a working
+camera, valid model hashes, or successful authentication. Requires root. A check that cannot be
 performed is reported as such; the report never substitutes a guessed value.
 The \fBPAM services\fR line lists every service that carries the facelock
 line, from the same scan
@@ -359,9 +372,11 @@ Run the daemon in the foreground. Registers on the D-Bus system bus as
 \fBorg.facelock.Daemon\fR to service authentication and enrollment requests
 from the PAM module and CLI.
 .SS "facelock daemon restart"
-Restart the facelock daemon via systemd, or via a D-Bus shutdown request when
-systemd is unavailable, in which case the daemon restarts on next use through
-D-Bus activation. Requires root.
+Request a restart with systemctl. If it fails or cannot be launched, try a
+D-Bus shutdown request so the service manager or later activation can restart
+the daemon. The fallback result is unchecked: exit 0 does not prove a restart.
+Requires root. The global config option does not change the target service or
+the configuration it reads.
 .IP
 Takes \fB\-c\fR, \fB\-\-config\fR from GLOBAL OPTIONS above.
 .SS "facelock auth"
@@ -377,19 +392,24 @@ subject, and it must never fall back to the process owner.
 .IP
 Takes \fB\-\-config\fR from GLOBAL OPTIONS above.
 .SS "facelock bench"
-Benchmark and calibration tools.
+Direct capture/inference measurements, requiring root. They do not exercise
+PAM/daemon authentication policy, rate limiting or liveness. User selection is
+SUDO_USER, then USER, then LOGNAME, then unknown; there is no user option.
+Missing a timing target or face match does not itself make the command fail.
 .SS "facelock bench cold-auth"
 Measure cold auth latency (model load + first auth).
 .SS "facelock bench warm-auth"
 Measure warm auth latency (models already loaded).
 .SS "facelock bench preview"
-Measure preview frame capture latency.
+Measure frame capture and face processing (detection and embedding) latency.
 .SS "facelock bench enrollment"
 Measure enrollment time.
 .SS "facelock bench model-load"
 Measure ONNX model load time.
 .SS "facelock bench calibrate"
-Sweep thresholds and measure FAR/FRR.
+Compare ten live captures with the selected user's templates and recommend the
+threshold nearest a 90% pairwise match rate. Then sweep detector confidence on
+another frame. This does not measure false-accept rates or update configuration.
 .SS "facelock bench camera-reopen"
 Measure what reopening the camera costs, reporting the open / STREAMON / warmup
 split over \fIn\fR close\(->open\(->first\-usable\-frame cycles (default 5) as a
@@ -400,39 +420,59 @@ trades LED\-on time against.
 .B \-\-iterations \fIn\fR
 Number of reopen cycles (default: 5).
 .SS "facelock bench report"
-Generate a comprehensive benchmark report.
+Report environment details plus model-load, preview and enrollment-snapshot
+timings. With enrolled faces it adds warm capture/match and approximate cold
+auth (model reload and one capture on the already-open camera); otherwise
+those rows are skipped. Requires a readable database. It does not run the
+standalone cold-auth loop, calibrate or camera-reopen; its model-pack and build
+labels are fixed text rather than detected metadata.
 .SS "facelock tpm"
 Manage the embedding encryption key and the TPM that can seal it. The group
 owns the key's whole lifecycle, so \fBencrypt\fR, \fBdecrypt\fR and
 \fBreseal\fR live here \(em the cipher is software AES-256-GCM either way, and
 \fBencryption.method\fR decides only where the key lives.
 .SS "facelock tpm status"
-Report TPM availability and configuration.
+Report configured TPM-path and sealed-key presence, method and embedding counts.
+Requires a readable database; it does not test whether the TPM can unseal.
 .SS "facelock tpm seal-key"
-Seal the AES encryption key with TPM (migrate keyfile to TPM).
+Seal the existing AES key with TPM and set the encryption method to tpm.
+Requires a plaintext keyfile, refuses an existing sealed blob, and retains the
+plaintext keyfile as a recovery backup. Embeddings are unchanged.
 .SS "facelock tpm unseal-key"
-Unseal the AES key from TPM back to a plaintext keyfile (migrate TPM to keyfile).
+Unseal the AES key into a plaintext keyfile and set the method to keyfile.
+Requires a sealed blob and refuses an existing plaintext keyfile, including
+the backup retained by seal-key. The sealed blob and embeddings are unchanged.
 .SS "facelock tpm unseal-check"
 Read-only check that the sealed AES key currently unseals, verifying the PCR
-policy is still satisfied. Writes nothing and exits non-zero if the unseal
-fails, which is the signal to run
-.BR "facelock tpm reseal" .
+policy is still satisfied. Writes nothing and exits non-zero on failure.
+Diagnose the reported cause first: a missing/corrupt blob, wrong method, or
+unavailable TPM is not repaired merely by resealing. A PCR-policy mismatch
+may call for
+.B "facelock tpm reseal"
+when the key is recoverable through the current policy or a protected
+plaintext backup.
 .SS "facelock tpm pcr-baseline"
-Display current PCR values for configured indices.
+Display current PCR values for configured indices. This and the seal/unseal/
+reseal operations require a build with TPM support and a usable TPM connection.
 .SS "facelock tpm encrypt"
 Encrypt all unencrypted embeddings in the database with AES-256-GCM.
 \fB\-\-generate\-key\fR generates a new encryption key without encrypting
-embeddings.
+embeddings. Key generation refuses when encrypted templates exist or the
+database cannot be checked; it does not change the configured method.
+In-place encryption refuses when hard device binding is active.
 .SS "facelock tpm decrypt"
-Decrypt all software-encrypted embeddings in the database.
+Decrypt AES-256-GCM embeddings and legacy per-embedding TPM blobs into plaintext
+rows. TPM blobs require TPM support. Does not change configuration or delete
+keys. A later failure can leave earlier rows converted; device-bound encrypted
+templates cannot be decrypted by this command.
 .SS "facelock tpm reseal"
 Re-seal the TPM AES key under the current PCR values \(em the recovery step
 after a firmware or kernel change moves a measured PCR and the sealed key stops
 unsealing. Requires root, and applies only when \fBencryption.method\fR is
 \fBtpm\fR; under any other method it errors rather than quietly doing nothing.
-It prefers unsealing the existing blob, which still works while the PCR policy
-is satisfied, so it is safe to run proactively before a firmware update; once
-the PCRs have moved it falls back to the plaintext key backup. Use
+It requires an existing sealed blob and prefers unsealing it, falling back to
+the plaintext key backup if unsealing fails. Resealing before an update binds
+the current PCRs, not the future values. Use
 .B "facelock tpm unseal\-check"
 to find out which of those applies.
 .SS "facelock pam"
@@ -603,9 +643,9 @@ Manage hyprlock lock-screen integration: the face glyph in
 lets a bare Enter submit to PAM. Runs as your normal user and refuses to run as
 root, since it edits
 .I ~/.config/hypr/hyprlock.conf
-and root would leave root-owned files under
-.IR $HOME .
-A backup is taken before the first edit. Wiring
+by default, or \fB$XDG_CONFIG_HOME/hypr/hyprlock.conf\fR when set.
+The config must already exist. Enable creates an adjacent
+\fI.facelock-backup\fR if absent; disable leaves it in place. Wiring
 .I /etc/pam.d/hyprlock
 itself is a separate, root step \(em see \fBpam add\fR above.
 .SS "facelock hyprlock enable"
@@ -613,12 +653,17 @@ Add the face icon and set \fBignore_empty_input = false\fR. \fB\-\-no\-icon\fR
 sets only the functional flag, for a hyprlock font with no Nerd Font glyphs, and
 leaves any existing icon alone.
 .SS "facelock hyprlock disable"
-Remove the face icon, and restore \fBignore_empty_input\fR only when no
-fingerprint icon coexists, so a machine using both keeps working.
+Remove the face icon and set \fBignore_empty_input = true\fR unless
+pam_fprintd.so is detected in /etc/pam.d/hyprlock or fingerprint:enabled is
+true in the selected config. A fingerprint glyph alone does not preserve the
+setting. Does not restore the backup or the setting's original value.
 .SS "facelock hyprlock status"
 Show the current hyprlock integration state.
 .SS "facelock audit"
-View the structured audit log.
+View the structured audit log. Requires root with no elevation prompt.
+Disabled logging or a missing log prints an explanation and exits 0, including
+in follow mode. Follow polls growth every 500 ms and does not reset its offset
+after rotation or truncation; restart it after the log is replaced.
 .RS
 .TP
 .B \-f\fR, \fB\-\-follow
@@ -757,7 +802,7 @@ verbatim and is never rewritten.
 Enrollment markers read by
 .BR "facelock is\-enrolled" .
 Permissions should be 711, owned by root:root: traversable to a known
-filename by any local user, listable by none. No group is involved (ADR 010).
+filename by any local user, listable by root only. No group is involved (ADR 010).
 .TP
 .I /var/lib/facelock/enrolled/<user>
 One user's marker, 600 and owned by that user. Contains the model count and
@@ -804,7 +849,7 @@ unreadable one are both reported this way.
 .B 2
 Error: an invalid
 .BR \-\-user ,
-or a marker that exists but cannot be parsed.
+an unparseable marker, or an I/O failure other than absence or access denial.
 .PP
 .B facelock pam status
 uses the same 0/1/2 scale, for the same reason \(em it is a boolean query whose
@@ -852,9 +897,10 @@ table and its compatibility invariants are in
 .SH SECURITY
 The default configuration requires an IR camera
 .RB ( security.require_ir=true ).
-Frame variance checks are performed during authentication to prevent
-photo-based spoofing. Rate limiting is enforced by the daemon (5 attempts
-per user per 60 seconds by default). IPC uses the D-Bus system bus; the
+Frame variance checks reject sufficiently static input during authentication;
+they do not stop video replay. Daemon and oneshot authentication limit
+face-detected failures (5 per user per 60 seconds by default). Successful and
+no-face attempts do not consume this budget. IPC uses the D-Bus system bus; the
 daemon verifies caller UID via
 .B GetConnectionUnixUser
 before executing any method, and the system bus policy in

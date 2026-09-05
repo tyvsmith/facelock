@@ -54,7 +54,10 @@ hardware validation record yet.
 
 ### RGB Cameras (development only)
 
-RGB cameras work with `security.require_ir = false` but provide no anti-spoofing. Any photo of the enrolled user will authenticate.
+RGB cameras require `security.require_ir = false` and lose the default IR
+boundary. Frame variance and any enabled landmark-liveness check still apply,
+but they do not make RGB authentication resistant to presentation attacks;
+use RGB only for development and testing.
 
 ### Format Support
 
@@ -121,7 +124,14 @@ Working configuration (verified on a Dell XPS 14 with IPU7, issue #89):
    ```toml
    [device]
    path = "/dev/video50"
+
+   [security]
+   require_ir = false # processed relay is RGB; development/testing only
    ```
+
+   The default `require_ir = true` correctly refuses this RGB relay. Disabling
+   it is required to authenticate through the relay and weakens presentation-
+   attack resistance; it does not expose or recover the laptop's IR sensor.
 
 3. The relay's default `FORMAT=NV12` is supported natively. If you need a
    different format, set it in the v4l2-relayd config — but note that a bare
@@ -145,30 +155,27 @@ Working configuration (verified on a Dell XPS 14 with IPU7, issue #89):
 
 #### IR sensors on IPU6/IPU7: not supported out of the box
 
-These laptops ship an IR sensor for Windows Hello (Himax HM1092 on recent Dell
-XPS models), but no **in-tree or Intel-shipped** Linux driver exists for it —
-neither `intel/ipu6-drivers` nor `intel/ipu7-drivers` includes one, and the
-`v4l2-relayd` path relays the RGB sensor only. On a stock distro,
-`security.require_ir = true` (the default) cannot be satisfied on this
-hardware.
+The affected Dell configurations include a Himax HM1092 IR sensor for Windows
+Hello. The RGB `v4l2-relayd` recipe above does not expose that sensor. It cannot
+satisfy `security.require_ir = true` (the default) merely by selecting the
+processed RGB node; a working separate IR capture path is required.
 
 Facelock classifying the relay node as non-IR is therefore correct, not a
 detection bug: that pipeline really is RGB. Disabling `require_ir` does not
-recover the IR sensor — it trades away the spoof resistance that IR provides,
-leaving a camera that a printed photo or a phone screen can drive. See
+recover the IR sensor — it removes the IR boundary while the remaining passive
+checks provide no guarantee against a printed photo or phone-screen replay. See
 `docs/security.md` §1 for what each IR-dependent check stops covering.
 
 **Experimental community IR support exists.** The out-of-tree
 [svp7500-camera-fix-pack](https://github.com/jibsta210/svp7500-camera-fix-pack)
-(DKMS) has the HM1092 IR sensor streaming — including face unlock with the IR
-flood illuminator — on SVP7500-bridged IPU7 laptops (verified on a Dell XPS 16
-DA16260; see [intel/ipu7-drivers#26](https://github.com/intel/ipu7-drivers/issues/26)
-for the full history). The illuminator side is already in mainline
-(`intel_skl_int3472_discrete` registers `ir_flood_led` on kernels ≥ 7.1.4), and
-kernel 7.2-rc1 gained an in-tree `intel_cvs` bridge driver. Facelock does not
-yet consume that IR node (capture-node format and IR classification for
-`hm1092` are tracked in issue #101) — treat this path as experimental until the
-sensor driver lands upstream.
+reports HM1092 IR streaming and Howdy face unlock on its author's Dell XPS 16
+DA16260 (upstream checked 2026-09-05). That is not a Facelock validation result
+or a guarantee for other IPU7 laptops. Driver, illuminator and bridge support
+depends on the precise sensor, kernel and module combination; consult that
+project's current hardware checks and support matrix rather than inferring
+support from a kernel version alone. Facelock capture-node format and IR
+classification work for `hm1092` is tracked in issue #101; treat this path as
+experimental until the complete Facelock capture path is established.
 
 ## Init System Support
 
@@ -181,7 +188,7 @@ sudo facelock setup --systemd
 
 Features:
 - D-Bus activation (daemon starts on first D-Bus call)
-- Idle timeout (daemon stops when idle)
+- Optional idle timeout (`daemon.idle_timeout_secs`; zero disables it by default)
 - Service hardening (ProtectSystem, NoNewPrivileges, etc.)
 - Automatic restart on failure
 
@@ -220,22 +227,17 @@ auth  sufficient  pam_facelock.so
 |---------|--------|
 | system-auth | Affects ALL auth — test sudo first |
 | login | Console login — hard to recover if broken |
-| sshd | SSH has no camera — always fails |
+| sshd | Remote authentication is refused by the default `abort_if_ssh = true` policy; do not weaken that boundary |
 
 ## Build Dependencies
 
-### Runtime
-- `pam` (Linux-PAM library)
-- `gcc-libs` (C runtime)
-
-### Build
-- `rust` + `cargo` (1.88+)
-- `clang` (for ONNX Runtime bindings)
-- System headers: `libv4l-dev`, `libxkbcommon-dev`, `libpam0g-dev` (names vary by distro)
-
-### Optional
-- `tpm2-tss` — TPM2 support for embedding encryption
-- `podman` or `docker` — container testing
+Use the distro-specific [source prerequisites](quickstart.md#build-from-source).
+Build-time headers and tools are separate from the shared libraries needed on
+the installed machine. In particular, source installation needs a trusted,
+compatible ONNX Runtime; compiling the workspace does not install that runtime.
+The `just install` release build enables TPM support and therefore needs
+TPM2-TSS development files, even when the eventual configuration uses keyfile
+encryption. The supplied container recipes invoke Podman, not Docker.
 
 ## ONNX Runtime
 
@@ -250,7 +252,7 @@ GPU support is runtime-only -- no special build flags needed. Install a GPU-enab
 
 | Provider | Config | Runtime Requirement | Status |
 |----------|--------|---------------------|--------|
-| CPU | `execution_provider = "cpu"` | none (default) | Working |
+| CPU | `execution_provider = "cpu"` | compatible CPU ONNX Runtime (default provider) | Working |
 | CUDA (NVIDIA) | `execution_provider = "cuda"` | CUDA toolkit + GPU-enabled ORT | Config ready, untested |
 | ROCm (AMD) | `execution_provider = "rocm"` | ROCm runtime + GPU-enabled ORT | Config ready, untested |
 | OpenVINO (Intel) | `execution_provider = "openvino"` | OpenVINO runtime + GPU-enabled ORT | Config ready, untested |

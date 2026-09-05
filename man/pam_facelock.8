@@ -78,7 +78,8 @@ stack (typically
 .BR pam_unix (8))
 will prompt for a password.
 .PP
-For stricter security, use
+To make a face non-match or rate-limit rejection fail the stack even if a later
+password succeeds, use
 .B required
 instead of
 .BR sufficient :
@@ -89,11 +90,14 @@ auth    required    pam_facelock.so
 .fi
 .RE
 .PP
-The recommended way to manage PAM configuration is via the setup command:
+This does not enforce mandatory face-plus-password authentication: the module
+still returns PAM_IGNORE for disabled, unavailable or cancelled attempts.
+.PP
+The recommended way to manage PAM configuration is:
 .PP
 .RS
 .nf
-facelock setup --pam --service sudo
+sudo facelock pam add --service sudo
 .fi
 .RE
 .SH SECURITY
@@ -104,11 +108,12 @@ in the configuration file). IR cameras are resistant to photo\-based spoofing
 attacks. Do not disable this requirement unless you understand the security
 implications.
 .SS Anti\-Spoofing
-Frame variance checks are performed during authentication to detect
-presentation attacks (e.g., holding a photo or video in front of the camera).
+Frame variance checks reject sufficiently static input during authentication.
+They provide passive anti-photo protection and do not stop video replay.
 .SS Rate Limiting
-The daemon enforces rate limiting (5 attempts per user per 60 seconds by
-default) to prevent brute\-force attacks.
+Daemon and oneshot authentication limit face-detected failures (5 per user
+per 60 seconds by default). Successful and no-face attempts do not consume this
+budget. Oneshot mode uses persistent accounting across process invocations.
 .SS IPC Security
 Communication between the PAM module and the daemon uses the D\-Bus system bus.
 The system bus policy
@@ -175,7 +180,9 @@ Per\-service allow and deny lists, matched against the PAM service name.
 .B [recognition]
 .BR timeout_secs
 .br
-How long the module waits for a decision before abstaining.
+Base recognition timeout. The D-Bus method budget adds 5 seconds and its overall
+connection/method deadline adds another 5; the one-shot child budget adds 3.
+Exceeding a PAM-side deadline returns PAM_AUTH_ERR, not PAM_IGNORE.
 .TP
 .B [notification]
 .BR mode ,

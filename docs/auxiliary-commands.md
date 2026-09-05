@@ -27,14 +27,14 @@ It has exactly eight verbs:
 
 | Command | Measurement | Additional prerequisite |
 |---------|-------------|-------------------------|
-| `facelock-bench cold-auth` | config, model load, camera open, first authentication | plaintext enrolled templates |
+| `facelock-bench cold-auth` | model load, camera/store open and captures until first detected face or timeout; config loading precedes the timer | plaintext enrolled templates |
 | `facelock-bench warm-auth` | ten captures and matches with models loaded | plaintext enrolled templates |
-| `facelock-bench preview` | camera capture and face detection | camera and models |
+| `facelock-bench preview` | camera capture and face processing (detection and embedding) | camera and models |
 | `facelock-bench enrollment` | five capture-and-embed snapshots, without storing them | camera and models |
 | `facelock-bench model-load` | detector and embedder load | models |
 | `facelock-bench calibrate` | ten live captures compared with the current user's enrolled templates, sweeping thresholds from 0.20 through 0.80 toward a 90% match rate | camera, models and current-user plaintext enrollment; it does not estimate false-accept rates |
 | `facelock-bench camera-reopen` | open, STREAMON, warm-up and total reopen latency | camera; optional `--iterations <N>`, default `5` |
-| `facelock-bench report` | combined environment and benchmark report | camera, models and plaintext enrolled templates |
+| `facelock-bench report` | environment plus model-load, preview and enrollment-snapshot timings; warm and approximate cold-auth timings when plaintext templates exist | camera, models and a readable database; templates are optional for timing |
 
 There are no `--config`, `--quiet`, `--verbose`, `--json`, or `--user` options
 and no automatic root gate. `FACELOCK_CONFIG` selects the configuration only
@@ -54,6 +54,15 @@ uses the literal name `unknown`. It does not use `--user`, `SUDO_USER`,
 selects `root`, not the invoking desktop user. Measurement reports go to
 stdout; diagnostics go to stderr. `RUST_LOG` controls diagnostic filtering.
 
+These measurements do not run PAM/daemon policy, rate limiting or liveness
+checks, and a missed timing target or non-match does not itself fail the
+command. `report` approximates cold authentication by reloading models and
+capturing once on its already-open camera; it does not run the standalone
+`cold-auth` loop, `calibrate` or `camera-reopen`. Its model-pack and build labels
+are fixed text rather than detected metadata.
+The ordinary capture paths open with an empty quirks database; `camera-reopen`
+loads the real quirks database for its reopen measurement.
+
 ## `facelock-polkit-agent`
 
 `facelock-polkit-agent` is an experimental session service, not a CLI. It has
@@ -66,13 +75,15 @@ The binary needs all of the following:
 - a working system D-Bus and polkit authority
 - the user's session D-Bus
 - a usable Facelock daemon and enrollment
-- a real local session (`XDG_SESSION_ID`, or polkit's `auto` lookup)
+- a valid local session ID in `XDG_SESSION_ID` for registration
 - an action ID listed in `[polkit].face_eligible_actions`
 
 It reads the ordinary configuration as the session user. If that load fails,
 it uses the restrictive default allowlist containing only
 `org.freedesktop.login1.lock-sessions`. `LANG` supplies the registration
-locale, with `en_US.UTF-8` as the fallback.
+locale, with `en_US.UTF-8` as the fallback. If `XDG_SESSION_ID` is missing, the
+binary submits the literal string `auto`; it does not resolve a session ID
+itself. Registration must succeed before the agent can handle requests.
 
 Packages may install the executable, but they intentionally do not install an
 autostart entry. A desktop-session integrator that has tested the agent can use

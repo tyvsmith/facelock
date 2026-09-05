@@ -1172,14 +1172,14 @@
           "anchor": "all-checks-at-once",
           "ordinal": 1,
           "line": 129,
-          "sha256": "3c594d58f1aa1915fffcaca88a51d08a95bbdc0d5f86549ad76fb7001a241ff9"
+          "sha256": "dc1a40ad83e6ea42b3c97744ad95a79c0908a7f93fb55dae69d752382156433f"
         }
       ],
       "steps": [
         {
           "id": "example-1",
           "adapter": "manual",
-          "raw": "just check  # runs test + clippy + fmt + audit + agent-doc consistency",
+          "raw": "just check  # local validation aggregate, including docs and install/release contracts",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -1225,7 +1225,7 @@
           "path": "CONTRIBUTING.md",
           "anchor": "translations",
           "ordinal": 2,
-          "line": 163,
+          "line": 168,
           "sha256": "7a8660ea280f63d9a65e251e2096b63a67ccec628d3d0e5e3b8a7f6823ae141e"
         }
       ],
@@ -1278,7 +1278,7 @@
           "path": "README.md",
           "anchor": "arch-linux-aur",
           "ordinal": 1,
-          "line": 21,
+          "line": 25,
           "sha256": "d362fd362389741be7a261a22cf3cb04edfabb48d43d545e4685ca00b4a1c743"
         }
       ],
@@ -1332,20 +1332,40 @@
           "path": "README.md",
           "anchor": "fedora-copr",
           "ordinal": 1,
-          "line": 54,
-          "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
+          "line": 60,
+          "sha256": "2e795222d6d436e587ec1690c6a50343257ba9c66f6e2510ee0bd6fd65cfa5be"
         },
         {
           "path": "README.md",
           "anchor": "fedora-copr",
           "ordinal": 2,
-          "line": 55,
+          "line": 61,
+          "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
+        },
+        {
+          "path": "README.md",
+          "anchor": "fedora-copr",
+          "ordinal": 3,
+          "line": 62,
           "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
         }
       ],
       "steps": [
         {
           "id": "example-1",
+          "adapter": "manual",
+          "raw": "sudo dnf install dnf5-plugins",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-2",
           "adapter": "manual",
           "raw": "sudo dnf copr enable tyvsmith/facelock",
           "classification": "executable",
@@ -1358,7 +1378,7 @@
           "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
         },
         {
-          "id": "example-2",
+          "id": "example-3",
           "adapter": "manual",
           "raw": "sudo dnf install facelock",
           "classification": "executable",
@@ -1388,7 +1408,6 @@
         "section-prerequisites",
         "fixture-bindings",
         "observed-postconditions",
-        "human-pam-recovery",
         "published-source-build-prerequisites"
       ],
       "prerequisites": [
@@ -1407,22 +1426,15 @@
           "path": "README.md",
           "anchor": "from-source",
           "ordinal": 1,
-          "line": 61,
+          "line": 72,
           "sha256": "d091076a0b6859d8a04b9e50b052b819a80d6a4fe3b6336bdbbda387de310be0"
         },
         {
           "path": "README.md",
           "anchor": "from-source",
           "ordinal": 2,
-          "line": 62,
+          "line": 73,
           "sha256": "6082e4887a6f179f954cd8675b9e9f70206b23a40a9585b84f3fe9cb5f19bdef"
-        },
-        {
-          "path": "README.md",
-          "anchor": "from-source",
-          "ordinal": 3,
-          "line": 63,
-          "sha256": "eb299e25573b6ee163d6fdcc275497b0219332e1a8345bf4bb6c26c4e20bf162"
         }
       ],
       "steps": [
@@ -1443,19 +1455,6 @@
           "id": "example-2",
           "adapter": "manual",
           "raw": "target/debug/facelock --help",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        },
-        {
-          "id": "example-3",
-          "adapter": "manual",
-          "raw": "just install              # optional host install; prompts for sudo, does not edit PAM",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -1501,7 +1500,7 @@
           "path": "README.md",
           "anchor": "post-install",
           "ordinal": 1,
-          "line": 69,
+          "line": 91,
           "sha256": "13ece4f24ba1175dd24829a6e605712bee3c028c5505562d6f7dc6616ef1bb63"
         }
       ],
@@ -1556,15 +1555,15 @@
           "path": "README.md",
           "anchor": "uninstall",
           "ordinal": 1,
-          "line": 97,
-          "sha256": "4547cf4ed51d13a8755d4c904f2a1773778fb1af9481d51ac64373378ec09873"
+          "line": 125,
+          "sha256": "d51310f315784b2a9c33e5d9294b3c51087ed1e1372dcfa10a29f3d34b1efbde"
         }
       ],
       "steps": [
         {
           "id": "example-1",
           "adapter": "manual",
-          "raw": "just uninstall",
+          "raw": "just uninstall  # source installations only; remove native packages with their package manager",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -1610,28 +1609,28 @@
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 2,
-          "line": 210,
+          "line": 238,
           "sha256": "270315a785e93c84e21e959de6561428bf475b40b6096a19a5bdfc20555fa93d"
         },
         {
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 3,
-          "line": 211,
+          "line": 239,
           "sha256": "599de770b8b0e87ca01f6837e309d01e9847d347fd850d18ded4eb14e86cc015"
         },
         {
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 4,
-          "line": 212,
+          "line": 240,
           "sha256": "d3a74681ef70d90250e1ac050d1d8510753888e9da5dfee69b81ba6b1e5b3a3b"
         },
         {
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 5,
-          "line": 213,
+          "line": 241,
           "sha256": "88017a21a68eb150eaaf2a5217d35e9b4d930661a74cdda87f8b3938f6073d15"
         }
       ],
@@ -1727,35 +1726,35 @@
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 1,
-          "line": 227,
+          "line": 255,
           "sha256": "f1c7b61a74c050d3b5044973e899c70b74cad56ae0d775a1c370227b2554e558"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 2,
-          "line": 228,
+          "line": 256,
           "sha256": "b4e7755cb3b54ed9400756f86c10c858a95d4439686e2d0a9bdb1752fd673066"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 3,
-          "line": 229,
+          "line": 257,
           "sha256": "501e0bb7eed827cbc90d37b2aa9536777f4893de0b075ef6269dacfba8f94671"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 4,
-          "line": 230,
+          "line": 258,
           "sha256": "0491e9aacca737903a046d7da3901ae168145ed83b3b07ce7ca67d1803b58d41"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 5,
-          "line": 231,
+          "line": 259,
           "sha256": "0d288d69cd7407b7c4f02c4f4d616356203ec2ae445f211d922317dbae06d6fb"
         }
       ],
@@ -1863,21 +1862,21 @@
           "path": "README.md",
           "anchor": "releasing",
           "ordinal": 1,
-          "line": 260,
+          "line": 288,
           "sha256": "29e78a6c2780f8195dd6def758c19769a7af32bb935dcff29d1cc51025473ffa"
         },
         {
           "path": "README.md",
           "anchor": "releasing",
           "ordinal": 2,
-          "line": 261,
+          "line": 289,
           "sha256": "c932b35fc3a91076a733f7102c49400e6bf24507e8de7243f9789c898295d73c"
         },
         {
           "path": "README.md",
           "anchor": "releasing",
           "ordinal": 3,
-          "line": 262,
+          "line": 290,
           "sha256": "2a4f6d2e6732e2f4816ee15011101bdda9a56aea8068ac90a4c8a332cc11c8a4"
         }
       ],
@@ -2310,7 +2309,7 @@
           "path": "book/src/contributing.md",
           "anchor": "translations",
           "ordinal": 2,
-          "line": 108,
+          "line": 113,
           "sha256": "7a8660ea280f63d9a65e251e2096b63a67ccec628d3d0e5e3b8a7f6823ae141e"
         }
       ],
@@ -2366,14 +2365,14 @@
           "path": "book/src/gpu.md",
           "anchor": "1-install-a-gpu-enabled-onnx-runtime",
           "ordinal": 1,
-          "line": 18,
+          "line": 24,
           "sha256": "8549d3bdd567da8fa44759ce1df15340c20cea95965a5b4552d3f28eb7db260b"
         },
         {
           "path": "book/src/gpu.md",
           "anchor": "1-install-a-gpu-enabled-onnx-runtime",
           "ordinal": 2,
-          "line": 19,
+          "line": 25,
           "sha256": "cb399c9af047e49bd615d99cc5aae456c5bb43ba3b82edc450174d01d964cc65"
         }
       ],
@@ -2440,7 +2439,7 @@
           "path": "book/src/gpu.md",
           "anchor": "2-set-the-execution-provider",
           "ordinal": 1,
-          "line": 29,
+          "line": 40,
           "sha256": "8ab0201ecb433c9b671839f1d2eb3a8515c892a1072ca3da96c78a0ece21761c"
         }
       ],
@@ -2494,7 +2493,7 @@
           "path": "book/src/gpu.md",
           "anchor": "3-restart-the-daemon",
           "ordinal": 1,
-          "line": 44,
+          "line": 55,
           "sha256": "b021d1e37ed78848e5433303a291f2b10a6fca9c9f4f0fe8d649d2e721fc0b0d"
         }
       ],
@@ -2550,13 +2549,33 @@
           "path": "book/src/gpu.md",
           "anchor": "4-verify",
           "ordinal": 1,
-          "line": 50,
+          "line": 61,
+          "sha256": "b01a1ffc2b4ef9721bb5ce35a004dd6ce17743083fa0670424a5caeb985dd7a6"
+        },
+        {
+          "path": "book/src/gpu.md",
+          "anchor": "4-verify",
+          "ordinal": 2,
+          "line": 62,
           "sha256": "076dd07a5f26d5ee0e9014a3dcd2ead3eaa99afdc80844e556231f971cb1a2ff"
         }
       ],
       "steps": [
         {
           "id": "example-1",
+          "adapter": "manual",
+          "raw": "sudo facelock status",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-2",
           "adapter": "manual",
           "raw": "sudo facelock bench warm-auth",
           "classification": "executable",
@@ -2613,13 +2632,6 @@
           "ordinal": 2,
           "line": 13,
           "sha256": "6082e4887a6f179f954cd8675b9e9f70206b23a40a9585b84f3fe9cb5f19bdef"
-        },
-        {
-          "path": "book/src/introduction.md",
-          "anchor": "quick-start",
-          "ordinal": 3,
-          "line": 14,
-          "sha256": "017092419ea31d5de3fd4b6e7a52b2dd239d134f423f81bd0f5c38992c212208"
         }
       ],
       "steps": [
@@ -2640,381 +2652,6 @@
           "id": "example-2",
           "adapter": "manual",
           "raw": "target/debug/facelock --help",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        },
-        {
-          "id": "example-3",
-          "adapter": "manual",
-          "raw": "just check",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        }
-      ]
-    },
-    {
-      "id": "manual-section-c7d98dcb4b7e",
-      "target": "section-specific-guest",
-      "channel": "github-alpha",
-      "adapter": "manual",
-      "generated_section": true,
-      "source_role": "ordered-occurrence",
-      "review_status": "candidate",
-      "review_reason": "mechanically grouped commands; a human must review section fixtures, exit expectations and applicability before execution",
-      "title": "book/src/quickstart.md#release-availability-summary",
-      "minimum_level": "booted-vm",
-      "requirements": [
-        "human-command-review",
-        "section-prerequisites",
-        "fixture-bindings",
-        "observed-postconditions",
-        "published-source-build-prerequisites"
-      ],
-      "prerequisites": [
-        "restore a pristine disposable guest for this section",
-        "read the enclosing section and earlier prerequisite headings",
-        "bind every user, path, service, device, package and secret placeholder to guest-local fixtures",
-        "record intentionally failing commands with their documented expected outcome"
-      ],
-      "fixtures": {
-        "binding_policy": "explicit reviewer-supplied guest-local bindings; no host paths or credentials"
-      },
-      "restore": "restore the recorded pristine snapshot; retain sanitized evidence outside the guest",
-      "timeout_seconds": 1800,
-      "sources": [
-        {
-          "path": "book/src/quickstart.md",
-          "anchor": "release-availability-summary",
-          "ordinal": 1,
-          "line": 12,
-          "sha256": "48d6b8aecaf932ce9c5e7f8943e9e680f516bd62a91a97583bbdf775c9f4c911"
-        },
-        {
-          "path": "book/src/quickstart.md",
-          "anchor": "release-availability-summary",
-          "ordinal": 2,
-          "line": 13,
-          "sha256": "6082e4887a6f179f954cd8675b9e9f70206b23a40a9585b84f3fe9cb5f19bdef"
-        }
-      ],
-      "steps": [
-        {
-          "id": "example-1",
-          "adapter": "manual",
-          "raw": "just build",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        },
-        {
-          "id": "example-2",
-          "adapter": "manual",
-          "raw": "target/debug/facelock --help",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        }
-      ]
-    },
-    {
-      "id": "manual-section-c80d9e31dacb",
-      "target": "section-specific-guest",
-      "channel": "github-alpha",
-      "adapter": "manual",
-      "generated_section": true,
-      "source_role": "ordered-occurrence",
-      "review_status": "candidate",
-      "review_reason": "mechanically grouped commands; a human must review section fixtures, exit expectations and applicability before execution",
-      "title": "book/src/quickstart.md#system-installation",
-      "minimum_level": "physical-hardware",
-      "requirements": [
-        "human-command-review",
-        "section-prerequisites",
-        "fixture-bindings",
-        "observed-postconditions",
-        "ir-camera",
-        "models",
-        "human-pam-recovery",
-        "published-source-build-prerequisites"
-      ],
-      "prerequisites": [
-        "restore a pristine disposable guest for this section",
-        "read the enclosing section and earlier prerequisite headings",
-        "bind every user, path, service, device, package and secret placeholder to guest-local fixtures",
-        "record intentionally failing commands with their documented expected outcome"
-      ],
-      "fixtures": {
-        "binding_policy": "explicit reviewer-supplied guest-local bindings; no host paths or credentials"
-      },
-      "restore": "restore the recorded pristine snapshot; retain sanitized evidence outside the guest",
-      "timeout_seconds": 1800,
-      "sources": [
-        {
-          "path": "book/src/quickstart.md",
-          "anchor": "system-installation",
-          "ordinal": 1,
-          "line": 39,
-          "sha256": "ee643003c3bebb06741967affae1785b90ae552fcbf30142419a9d7fa0415d59"
-        },
-        {
-          "path": "book/src/quickstart.md",
-          "anchor": "system-installation",
-          "ordinal": 2,
-          "line": 40,
-          "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
-        },
-        {
-          "path": "book/src/quickstart.md",
-          "anchor": "system-installation",
-          "ordinal": 3,
-          "line": 41,
-          "sha256": "f64e829871b2f7998fdbf8a8f7c4a36f917acc719880c9d14bc6565a6f1607ca"
-        }
-      ],
-      "steps": [
-        {
-          "id": "example-1",
-          "adapter": "manual",
-          "raw": "just install",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        },
-        {
-          "id": "example-2",
-          "adapter": "manual",
-          "raw": "sudo facelock setup",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        },
-        {
-          "id": "example-3",
-          "adapter": "manual",
-          "raw": "sudo facelock test",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        }
-      ]
-    },
-    {
-      "id": "manual-section-111b088bf26b",
-      "target": "section-specific-guest",
-      "channel": "github-alpha",
-      "adapter": "manual",
-      "generated_section": true,
-      "source_role": "ordered-occurrence",
-      "review_status": "candidate",
-      "review_reason": "mechanically grouped commands; a human must review section fixtures, exit expectations and applicability before execution",
-      "title": "book/src/quickstart.md#development",
-      "minimum_level": "physical-hardware",
-      "requirements": [
-        "human-command-review",
-        "section-prerequisites",
-        "fixture-bindings",
-        "observed-postconditions",
-        "ir-camera",
-        "models",
-        "human-pam-recovery",
-        "published-source-build-prerequisites"
-      ],
-      "prerequisites": [
-        "restore a pristine disposable guest for this section",
-        "read the enclosing section and earlier prerequisite headings",
-        "bind every user, path, service, device, package and secret placeholder to guest-local fixtures",
-        "record intentionally failing commands with their documented expected outcome"
-      ],
-      "fixtures": {
-        "binding_policy": "explicit reviewer-supplied guest-local bindings; no host paths or credentials"
-      },
-      "restore": "restore the recorded pristine snapshot; retain sanitized evidence outside the guest",
-      "timeout_seconds": 1800,
-      "sources": [
-        {
-          "path": "book/src/quickstart.md",
-          "anchor": "development",
-          "ordinal": 2,
-          "line": 58,
-          "sha256": "fad0225732307d9b8666dc48f93369322752b5acd641d744cde3a6d1c99155de"
-        },
-        {
-          "path": "book/src/quickstart.md",
-          "anchor": "development",
-          "ordinal": 3,
-          "line": 59,
-          "sha256": "21df8681af24fdd4a24c8e7533d7c69725728fedd70374ac46b437b03686b526"
-        },
-        {
-          "path": "book/src/quickstart.md",
-          "anchor": "development",
-          "ordinal": 4,
-          "line": 60,
-          "sha256": "e1a93dce67650786cc6126129be6427d1a8a96c0560e61b310b30e44e61bde57"
-        },
-        {
-          "path": "book/src/quickstart.md",
-          "anchor": "development",
-          "ordinal": 5,
-          "line": 61,
-          "sha256": "db33444f34d115dce2f155297f23c717c86dd22e1e95cd0e44bf71ad6bec9fcf"
-        }
-      ],
-      "steps": [
-        {
-          "id": "example-1",
-          "adapter": "manual",
-          "raw": "just link-models",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        },
-        {
-          "id": "example-2",
-          "adapter": "manual",
-          "raw": "sudo target/debug/facelock --config \"$PWD/dev/config.toml\" devices",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        },
-        {
-          "id": "example-3",
-          "adapter": "manual",
-          "raw": "sudo target/debug/facelock --config \"$PWD/dev/config.toml\" enroll --skip-setup-check",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        },
-        {
-          "id": "example-4",
-          "adapter": "manual",
-          "raw": "sudo target/debug/facelock --config \"$PWD/dev/config.toml\" test",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        }
-      ]
-    },
-    {
-      "id": "manual-section-45f9c75668bf",
-      "target": "section-specific-guest",
-      "channel": "github-alpha",
-      "adapter": "manual",
-      "generated_section": true,
-      "source_role": "ordered-occurrence",
-      "review_status": "candidate",
-      "review_reason": "mechanically grouped commands; a human must review section fixtures, exit expectations and applicability before execution",
-      "title": "book/src/quickstart.md#package-lifecycle-and-retained-data",
-      "minimum_level": "booted-vm",
-      "requirements": [
-        "human-command-review",
-        "section-prerequisites",
-        "fixture-bindings",
-        "observed-postconditions",
-        "human-pam-recovery"
-      ],
-      "prerequisites": [
-        "restore a pristine disposable guest for this section",
-        "read the enclosing section and earlier prerequisite headings",
-        "bind every user, path, service, device, package and secret placeholder to guest-local fixtures",
-        "record intentionally failing commands with their documented expected outcome"
-      ],
-      "fixtures": {
-        "binding_policy": "explicit reviewer-supplied guest-local bindings; no host paths or credentials"
-      },
-      "restore": "restore the recorded pristine snapshot; retain sanitized evidence outside the guest",
-      "timeout_seconds": 1800,
-      "sources": [
-        {
-          "path": "book/src/quickstart.md",
-          "anchor": "package-lifecycle-and-retained-data",
-          "ordinal": 1,
-          "line": 70,
-          "sha256": "b2eaa0d6e49d61a0a83ddb30434dfff25bda1608545252375dd2eeca201b320a"
-        },
-        {
-          "path": "book/src/quickstart.md",
-          "anchor": "package-lifecycle-and-retained-data",
-          "ordinal": 2,
-          "line": 71,
-          "sha256": "cd370c0da2fc6b4b0a0c94762df10329fb29a2eec64e260f87f372c4856d9178"
-        }
-      ],
-      "steps": [
-        {
-          "id": "example-1",
-          "adapter": "manual",
-          "raw": "sudo facelock data purge --dry-run",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        },
-        {
-          "id": "example-2",
-          "adapter": "manual",
-          "raw": "sudo facelock data purge --allow-destruction",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -3059,21 +2696,21 @@
           "path": "book/src/security.md",
           "anchor": "b-file-permissions-on-model-directory-required",
           "ordinal": 1,
-          "line": 85,
+          "line": 88,
           "sha256": "44764e874cf32de59ee693c075fef10ae1e445589db5c298c702d1eac5830a07"
         },
         {
           "path": "book/src/security.md",
           "anchor": "b-file-permissions-on-model-directory-required",
           "ordinal": 2,
-          "line": 86,
+          "line": 89,
           "sha256": "a6f8ceeddc36281567c4a54f80afb193197ace38613b270e9b741a951f3353df"
         },
         {
           "path": "book/src/security.md",
           "anchor": "b-file-permissions-on-model-directory-required",
           "ordinal": 3,
-          "line": 87,
+          "line": 90,
           "sha256": "638d17753a414738b53af11c039550b04c8ef3678c9b4eb0a80ce9997cacfcdf"
         }
       ],
@@ -3152,14 +2789,14 @@
           "path": "book/src/security.md",
           "anchor": "a-database-file-permissions-required",
           "ordinal": 1,
-          "line": 100,
+          "line": 103,
           "sha256": "066cc635c68054c673637cc8321b1f1986997030c5c0c15baa2df039ad12dfdc"
         },
         {
           "path": "book/src/security.md",
           "anchor": "a-database-file-permissions-required",
           "ordinal": 2,
-          "line": 101,
+          "line": 104,
           "sha256": "37caf46b305e47b2c4dafd28589fb6017717ea250aed00dd95c198935cf9ec65"
         }
       ],
@@ -3229,7 +2866,7 @@
           "path": "book/src/security.md",
           "anchor": "c-encryption-at-rest-implemented",
           "ordinal": 1,
-          "line": 119,
+          "line": 122,
           "sha256": "ca52638beb8b81752047d1c4cfbeb5f5163e88c7236a263be28b86a84ad799a9"
         }
       ],
@@ -3789,21 +3426,21 @@
           "path": "config/facelock.toml",
           "anchor": "configuration-comments",
           "ordinal": 2,
-          "line": 344,
+          "line": 348,
           "sha256": "913896039eb1dca965a8c6a5e027de65b67adc885a02a9a942cda7e022107188"
         },
         {
           "path": "config/facelock.toml",
           "anchor": "configuration-comments",
           "ordinal": 3,
-          "line": 345,
+          "line": 349,
           "sha256": "390e7eaae8157fb444e3d7a23a5ab3ac7dcabe92e9d0cef91bce5f5668120f9b"
         },
         {
           "path": "config/facelock.toml",
           "anchor": "configuration-comments",
           "ordinal": 4,
-          "line": 346,
+          "line": 350,
           "sha256": "6b25d943787a107878794eea277f92b9e400fe26aaa8f33dc0bf8a2e9d2023ef"
         }
       ],
@@ -3996,84 +3633,84 @@
           "path": "docs/cli.md",
           "anchor": "facelock-setup",
           "ordinal": 3,
-          "line": 109,
+          "line": 114,
           "sha256": "f896fd115da3e48188365f2dcf1f30052ade83348cbdaf525cbb70f00bb7df19"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-setup",
           "ordinal": 4,
-          "line": 110,
+          "line": 115,
           "sha256": "de41ec67990386cf7ccf400bc7f37edcc73ff13dd69f6af4f8595eb244f55670"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-setup",
           "ordinal": 5,
-          "line": 111,
+          "line": 116,
           "sha256": "3d77a80fcc723646dac7cd49d4d0b33e71afa53cf0e896aca213c425b2b115d8"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-setup",
           "ordinal": 6,
-          "line": 112,
+          "line": 117,
           "sha256": "cee01d5044f15314d16ccc6be105c8f10067a050a2beec3b94288ea609d0701c"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-setup",
           "ordinal": 7,
-          "line": 113,
+          "line": 118,
           "sha256": "3b7c15f6cfd77dc93024f1a79b463cc23f99e4d72818329fe7533f63cf974c93"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-setup",
           "ordinal": 8,
-          "line": 114,
+          "line": 119,
           "sha256": "dd6bbe7d1d102ddb909b6510a8af73450ffe0ac2af9d183de78b9d29a5823847"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-setup",
           "ordinal": 9,
-          "line": 115,
+          "line": 120,
           "sha256": "60e8399571a6784bfe66ba62e05f0b24fe4fb327f5dac1e6f227424722037b8a"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-setup",
           "ordinal": 10,
-          "line": 116,
+          "line": 121,
           "sha256": "faa3c91f7d7043a34cd893d5639227fd2a12f79a89b1aada8fdb628323108a63"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-setup",
           "ordinal": 11,
-          "line": 117,
+          "line": 122,
           "sha256": "c5f5f8d8a3ce5aba97e0745ef1dddf3e043b8f8bbd25e714a828f1650aaca924"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-setup",
           "ordinal": 12,
-          "line": 118,
+          "line": 123,
           "sha256": "fa256cf043ed8a9e8de3fd8cd484cb226a0552c8c97275faff2ef745b5167925"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-setup",
           "ordinal": 13,
-          "line": 119,
+          "line": 124,
           "sha256": "f0e7269e0331ea3a4d255c7e80d3a7e3269787e55e794be13031b9a0b95300f9"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-setup",
           "ordinal": 14,
-          "line": 120,
+          "line": 125,
           "sha256": "13ba82d490fae309857f88d2855f859425968389ab8ae9380b0ad83ae0f320e5"
         }
       ],
@@ -4269,28 +3906,28 @@
           "path": "docs/cli.md",
           "anchor": "facelock-is-enrolled",
           "ordinal": 1,
-          "line": 255,
+          "line": 267,
           "sha256": "2bd04842c99e96a83a5ea4270a6b7be94cf54afd8f25cfaae9e1e2093c2a9c1f"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-is-enrolled",
           "ordinal": 2,
-          "line": 256,
+          "line": 268,
           "sha256": "52ee2339e6c1539f932c433cd9e80088a27d3e37adb985733c8f97443218c3c5"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-is-enrolled",
           "ordinal": 3,
-          "line": 257,
+          "line": 269,
           "sha256": "fa486cf3d2d4ca438dcb3f9524f2159cd00826386c6fd08955322b911fcc05d7"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-is-enrolled",
           "ordinal": 4,
-          "line": 258,
+          "line": 270,
           "sha256": "b7ebc7970099f018a9ac8db1e4b5e58038a24b5c1fecdc1777a748d7dca8a735"
         }
       ],
@@ -4382,14 +4019,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-capabilities",
           "ordinal": 1,
-          "line": 292,
+          "line": 304,
           "sha256": "28a89b2a0f73fd0d933b4ff0feca92dcb4f25b91483b6e75ab387a38c199e388"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-capabilities",
           "ordinal": 2,
-          "line": 293,
+          "line": 305,
           "sha256": "149e6d0858b93c8412ee2af9f7cf52f286ee92ced7dfcc2897450d781a7e299b"
         }
       ],
@@ -4458,28 +4095,28 @@
           "path": "docs/cli.md",
           "anchor": "facelock-enroll",
           "ordinal": 1,
-          "line": 317,
+          "line": 329,
           "sha256": "c4690fbd7fc9c8306ad09a3c9908dc8705b6b432c357ef42feefdb9a364e56ec"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-enroll",
           "ordinal": 2,
-          "line": 318,
+          "line": 330,
           "sha256": "f6258456e1c316bf195463b75d4cc3ca46505e310b4f647148666799f433ab59"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-enroll",
           "ordinal": 3,
-          "line": 319,
+          "line": 331,
           "sha256": "1d6fbfd963d2c16abc573dd78da48ef57c0d217acc29a134e1aecaa85f35d614"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-enroll",
           "ordinal": 4,
-          "line": 320,
+          "line": 332,
           "sha256": "81c7de8a62e99df3226e7e1bb6f63cdb9cce4d5091b285b192bbdb5c9264353e"
         }
       ],
@@ -4574,14 +4211,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-test",
           "ordinal": 1,
-          "line": 343,
+          "line": 363,
           "sha256": "5ab4f1b6fedde6787c4fb43b69eeb1c159f1ff183919367a4ac9cb51820a350f"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-test",
           "ordinal": 2,
-          "line": 344,
+          "line": 364,
           "sha256": "28722151cac514aa003f48f72e4321595e66cb19d8a816f9085dbf04c18f728b"
         }
       ],
@@ -4647,21 +4284,21 @@
           "path": "docs/cli.md",
           "anchor": "facelock-list",
           "ordinal": 1,
-          "line": 358,
+          "line": 378,
           "sha256": "7f220563e04bc45a76f02a61b8eb0afb298dd33cfd8972f361770f61c20399aa"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-list",
           "ordinal": 2,
-          "line": 359,
+          "line": 379,
           "sha256": "524ea3ba083a3a38ebb44924a684ce8583847864158d305a133141f856b149fc"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-list",
           "ordinal": 3,
-          "line": 360,
+          "line": 380,
           "sha256": "d1e86905d9d838b8eb49771aebf9687895f0b3211597595073b6c55d8c14fda4"
         }
       ],
@@ -4740,21 +4377,21 @@
           "path": "docs/cli.md",
           "anchor": "facelock-remove",
           "ordinal": 2,
-          "line": 384,
+          "line": 405,
           "sha256": "27338f9ae2413e2ef21b38e42e05a2a2490b1f780d8e7e817d52339d683a7324"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-remove",
           "ordinal": 3,
-          "line": 385,
+          "line": 406,
           "sha256": "0af0948744c8bafa140deb7089dcf9719da1ac10be9ae2868d76243779ea1bd7"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-remove",
           "ordinal": 4,
-          "line": 386,
+          "line": 407,
           "sha256": "cbea5ca7d1e12e8561a612b2057301bf3c512b6b8b3d691fb322accfcd7b6530"
         }
       ],
@@ -4833,14 +4470,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-clear",
           "ordinal": 1,
-          "line": 394,
+          "line": 419,
           "sha256": "d2dfce10542560cbe6122a63df9aeb9755e63469dd0c21c3719f878b2ec9f685"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-clear",
           "ordinal": 2,
-          "line": 395,
+          "line": 420,
           "sha256": "4e0e038ae39d1490654a07db5f43aed34ebb10983743eddabae75b4b5800e00c"
         }
       ],
@@ -4910,21 +4547,21 @@
           "path": "docs/cli.md",
           "anchor": "facelock-preview",
           "ordinal": 1,
-          "line": 403,
+          "line": 432,
           "sha256": "c8908606f325342085d3495d74311a130d5e691391c890bc378d30e1521deb30"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-preview",
           "ordinal": 2,
-          "line": 404,
+          "line": 433,
           "sha256": "4c3f386571095d38a30ac9d3a006fed92c34bd14956d42ae1c589e2bd937c284"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-preview",
           "ordinal": 3,
-          "line": 405,
+          "line": 434,
           "sha256": "9f4f6abe61aa4b300f4a546043710abdf2ca149b2061b9c5ec1c24d52612aae3"
         }
       ],
@@ -5003,14 +4640,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-devices",
           "ordinal": 1,
-          "line": 439,
+          "line": 468,
           "sha256": "6f6b179ea3830b95038c6708805c55ec33823224dc1b072d3e0173b1dc50f478"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-devices",
           "ordinal": 2,
-          "line": 440,
+          "line": 469,
           "sha256": "b9599e555bfca95fe805614377cdc83dfad7fea07c59141141f966e7e1d9ff54"
         }
       ],
@@ -5076,21 +4713,21 @@
           "path": "docs/cli.md",
           "anchor": "facelock-status",
           "ordinal": 1,
-          "line": 464,
+          "line": 493,
           "sha256": "86f52ed2f7666bdedf55c234a0dbb3ac1a7adc82d3950ec5f6598e7320037716"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-status",
           "ordinal": 2,
-          "line": 465,
+          "line": 494,
           "sha256": "2fa0aa24fbff10a809db35ede0b836a2e359bab74c2648b3761cff7d06514b25"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-status",
           "ordinal": 3,
-          "line": 466,
+          "line": 495,
           "sha256": "7805400e991b5e839d46f70fa49a6b7fa7bf0b4bb1783a4c5333993b5ac23171"
         }
       ],
@@ -5169,14 +4806,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-config-show",
           "ordinal": 1,
-          "line": 514,
+          "line": 544,
           "sha256": "dee8b1721c24583cb06dd78ce2884faf096a1962011dbd560968a175d3153b7e"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-config-show",
           "ordinal": 2,
-          "line": 515,
+          "line": 545,
           "sha256": "401a6a00db8783b2c58c603aeaf4026ad1052b54ea54a973522cd9a696594641"
         }
       ],
@@ -5243,7 +4880,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-config-edit",
           "ordinal": 1,
-          "line": 525,
+          "line": 558,
           "sha256": "fe77ea967f972a8c0e8bd2eda3f3076e2a630a8924e60d5374634199d0e49c9d"
         }
       ],
@@ -5297,28 +4934,28 @@
           "path": "docs/cli.md",
           "anchor": "facelock-daemon-run",
           "ordinal": 1,
-          "line": 543,
+          "line": 576,
           "sha256": "b80f6d5f764cde7ab522b3cbf22c7986e20f51fc039796257228f1f51c5fc845"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-daemon-run",
           "ordinal": 2,
-          "line": 544,
+          "line": 577,
           "sha256": "00dd98162d7092ee106e9894406e1b1e06a042a03dabb54d7d4f84aa26b4d2a3"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-daemon-run",
           "ordinal": 3,
-          "line": 545,
+          "line": 578,
           "sha256": "be639265e3883d4fc1d455da35ca8cce93ed68f3c8bf7903ae256a3b654d4002"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-daemon-run",
           "ordinal": 4,
-          "line": 546,
+          "line": 579,
           "sha256": "a4552a1fb14a6b33b56e8261c9ab64ce1ce066e77c64423975b91337e52ea73f"
         }
       ],
@@ -5410,8 +5047,8 @@
         {
           "path": "docs/cli.md",
           "anchor": "facelock-daemon-restart",
-          "ordinal": 1,
-          "line": 559,
+          "ordinal": 2,
+          "line": 595,
           "sha256": "b021d1e37ed78848e5433303a291f2b10a6fca9c9f4f0fe8d649d2e721fc0b0d"
         }
       ],
@@ -5467,22 +5104,22 @@
           "path": "docs/cli.md",
           "anchor": "facelock-auth",
           "ordinal": 1,
-          "line": 567,
-          "sha256": "f2a7424d30774bf4011936a08c3367f588f794addc61ac88b47dbb84bf6933b9"
+          "line": 603,
+          "sha256": "fb9b7999909b796262e02103e1b0a1cef2841e0b467d70311a3e3ee168ad9acb"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-auth",
           "ordinal": 2,
-          "line": 568,
-          "sha256": "824ab195d724b719f59f2aecd2377ce489b94891e1db12f0e5caa6042566e0e9"
+          "line": 604,
+          "sha256": "47631a002fea60873a34d234a14601bfc74585d9acf15dfe9407a0ba83bf37c6"
         }
       ],
       "steps": [
         {
           "id": "example-1",
           "adapter": "manual",
-          "raw": "facelock auth -u alice                   # authenticate (-u/--user)",
+          "raw": "sudo facelock auth -u alice              # authenticate (-u/--user)",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -5495,7 +5132,7 @@
         {
           "id": "example-2",
           "adapter": "manual",
-          "raw": "facelock auth --user alice --config /etc/facelock/config.toml",
+          "raw": "sudo facelock auth --user alice --config /etc/facelock/config.toml",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -5544,7 +5181,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-status",
           "ordinal": 1,
-          "line": 589,
+          "line": 627,
           "sha256": "1e37647a931e4a204b63afb5cd33a5f25ea3429de9f8ca4c70eeda14d78553e7"
         }
       ],
@@ -5601,7 +5238,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-seal-key",
           "ordinal": 1,
-          "line": 597,
+          "line": 638,
           "sha256": "1190debc41af06e46fd2389583ef769beecb0d863da2648c2d4ca8c87c6796a4"
         }
       ],
@@ -5658,7 +5295,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-unseal-key",
           "ordinal": 1,
-          "line": 605,
+          "line": 649,
           "sha256": "23e1b19479c52044c5beb15e88d8c969cded85fa052156e43c7e652652061678"
         }
       ],
@@ -5715,7 +5352,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-unseal-check",
           "ordinal": 2,
-          "line": 615,
+          "line": 662,
           "sha256": "b08f379bf0dc441d4272942db0fbbd3cfb5d56d6bec9614a1ac437f3a94e2c51"
         }
       ],
@@ -5772,7 +5409,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-pcr-baseline",
           "ordinal": 1,
-          "line": 623,
+          "line": 672,
           "sha256": "d39176967362ebf744cb8147f4fe56538330745e332223ad615c945aac03088e"
         }
       ],
@@ -5829,14 +5466,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-encrypt",
           "ordinal": 1,
-          "line": 632,
+          "line": 681,
           "sha256": "ba5854cd2e6c8f85e6f187b4afd3e879295ceeac97fbd11028b6ddbe3f469865"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-encrypt",
           "ordinal": 2,
-          "line": 633,
+          "line": 682,
           "sha256": "d1e061e0eb1b1ac145c49d977d3ec275eb33706ac9a6c3276ec743b466bcf891"
         }
       ],
@@ -5906,7 +5543,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-decrypt",
           "ordinal": 1,
-          "line": 645,
+          "line": 701,
           "sha256": "457a78faf1b8f34a332835610ec0d72777c05910471e258ab484aa1f83220859"
         }
       ],
@@ -5963,7 +5600,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-reseal",
           "ordinal": 1,
-          "line": 656,
+          "line": 712,
           "sha256": "ca52638beb8b81752047d1c4cfbeb5f5163e88c7236a263be28b86a84ad799a9"
         }
       ],
@@ -6019,14 +5656,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-bench-camera-reopen",
           "ordinal": 1,
-          "line": 715,
+          "line": 785,
           "sha256": "c5daf997e938d2c8a1aeed87aaf0e3f000d211290ff0fdd9861be7ce2fa738ed"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-bench-camera-reopen",
           "ordinal": 2,
-          "line": 716,
+          "line": 786,
           "sha256": "ff32430cb4d6cbed8cfa526a7b04cbc76c2ce2162ed5a38a88b92a205022d84a"
         }
       ],
@@ -6094,42 +5731,42 @@
           "path": "docs/cli.md",
           "anchor": "facelock-pam-add",
           "ordinal": 1,
-          "line": 765,
+          "line": 841,
           "sha256": "121d1c12b2cf9010d5ce3e7f50340d05bc9c33bb76569cc9ac4a75afcad08b06"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-add",
           "ordinal": 2,
-          "line": 766,
+          "line": 842,
           "sha256": "0d218379aefa72e43b0ef742495161e6c43581f3263c388e15fd7cc663f23ce1"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-add",
           "ordinal": 3,
-          "line": 767,
+          "line": 843,
           "sha256": "105a666417784cdb4a3d6cf2a3e66616ff4dabb7809f12eb6148acb0d9dc7852"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-add",
           "ordinal": 4,
-          "line": 768,
+          "line": 844,
           "sha256": "3d403d3690fb75798f7f56e04b09cb78be9d8034e6040e60978d3d18cee583ca"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-add",
           "ordinal": 5,
-          "line": 769,
+          "line": 845,
           "sha256": "761596cf101f9b504259d30685c0fe5ec54798826d3ef0c6370c9f9c1d9a92c9"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-add",
           "ordinal": 6,
-          "line": 770,
+          "line": 846,
           "sha256": "4a8f2227f6aaf1308e3549e415662c6701cee8c644770e8ee204de8f3af1ba07"
         }
       ],
@@ -6249,49 +5886,49 @@
           "path": "docs/cli.md",
           "anchor": "facelock-pam-remove",
           "ordinal": 1,
-          "line": 829,
+          "line": 905,
           "sha256": "3d763dbb98539599b04d2bd7b1e65cc615e794c98b964ee91ac74add464cc8f2"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-remove",
           "ordinal": 2,
-          "line": 830,
+          "line": 906,
           "sha256": "84b751818484731f6257fa479bf0a889316baa840f9b496361cf19493223f3cd"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-remove",
           "ordinal": 3,
-          "line": 831,
+          "line": 907,
           "sha256": "a097975710fc37db87341fe7beafc0cbaba3554587a588806a44d6ae45d32545"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-remove",
           "ordinal": 4,
-          "line": 832,
+          "line": 908,
           "sha256": "ec131f97827d440dd2bbfa4d680b3b5d8f4160e882afedecb46cdd2a84fe7ac2"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-remove",
           "ordinal": 5,
-          "line": 833,
+          "line": 909,
           "sha256": "65db2f597cd3f5b975ced31c36fa0358a82082a5fccec30c30e1f7f7894329dd"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-remove",
           "ordinal": 6,
-          "line": 834,
+          "line": 910,
           "sha256": "7c22f4e8bc91a8aa47089d45e94d767cd6a04401aa45a7a7b898822f9e7cf334"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-remove",
           "ordinal": 7,
-          "line": 835,
+          "line": 911,
           "sha256": "2d41ff9caee74fa64ba8b0f0648abe1df6777fc6e4b129bdd73833bceb28f97f"
         }
       ],
@@ -6424,63 +6061,63 @@
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 1,
-          "line": 944,
+          "line": 1020,
           "sha256": "c2d4cb81a70a757b5ea3473440877c7b25e72ecd0f6a38e0277f9eb341d30703"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 2,
-          "line": 945,
+          "line": 1021,
           "sha256": "9d52e3f8347950cbf75dd51946862472634fea266dd6476763677f64ce7b4162"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 3,
-          "line": 946,
+          "line": 1022,
           "sha256": "a0c9375582b346cb8d10fdce38847fd6dfb83eaf9c39948ba145f3c80548f89d"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 4,
-          "line": 947,
+          "line": 1023,
           "sha256": "dd40b2b7b6743ae13cee5613deb0e484a0dc1dbd59fb81fde26f4bf2ed80feed"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 5,
-          "line": 948,
+          "line": 1024,
           "sha256": "3e0732a8246a050783f5191ddeb5e69148e38eecbf3b832c4cce59668c7b3319"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 6,
-          "line": 973,
+          "line": 1049,
           "sha256": "197fafab4e331240a63b84541bebe5377a0a64d5bb22d5637a5fadeed73ffec7"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 7,
-          "line": 974,
+          "line": 1050,
           "sha256": "e0adde2c2e12d45e595be824b229aa6d10a914d10f8422b1a4585bc2f798fb5e"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 8,
-          "line": 980,
+          "line": 1056,
           "sha256": "b42d490b43c9e19854dbbc972bb984c86718ddb4ce20ba0807d478791c80f93f"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 9,
-          "line": 982,
+          "line": 1058,
           "sha256": "9d893de87b927d4a16bf54f82add2a2e2b2a9c56d12e4d04d2a27cbed5ef49c7"
         }
       ],
@@ -6638,14 +6275,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status---all",
           "ordinal": 1,
-          "line": 1015,
+          "line": 1092,
           "sha256": "55d6d60023b921ebdfcef3376ad8aaac593085268fc8fce245a026da7fb5e28e"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status---all",
           "ordinal": 2,
-          "line": 1016,
+          "line": 1093,
           "sha256": "3e0732a8246a050783f5191ddeb5e69148e38eecbf3b832c4cce59668c7b3319"
         }
       ],
@@ -6712,14 +6349,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-hyprlock-enable",
           "ordinal": 1,
-          "line": 1069,
+          "line": 1151,
           "sha256": "5ecc5a03020ca8e1ec8385d0afae5fee9b6b03a77b018e8f162f56c563b247d2"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-hyprlock-enable",
           "ordinal": 2,
-          "line": 1070,
+          "line": 1152,
           "sha256": "7d4ad0e136316dea8a5aebc50f9f4ea4b72a4fd8cba14e81275d5ec7132fa996"
         }
       ],
@@ -6767,7 +6404,8 @@
         "human-command-review",
         "section-prerequisites",
         "fixture-bindings",
-        "observed-postconditions"
+        "observed-postconditions",
+        "human-pam-recovery"
       ],
       "prerequisites": [
         "restore a pristine disposable guest for this section",
@@ -6785,43 +6423,43 @@
           "path": "docs/cli.md",
           "anchor": "facelock-audit",
           "ordinal": 1,
-          "line": 1087,
-          "sha256": "b9df12c81b19149ee8baf920a21752475295e924067757a32af69b8629ece8a8"
+          "line": 1170,
+          "sha256": "8b94b4691397f468db79cb6bc793a8ae9d14f93f161d7355e7ee8fe702c85644"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-audit",
           "ordinal": 2,
-          "line": 1088,
-          "sha256": "f32040434a5bc43d6597cb8690f6c0772676199c6101ec8290cb0cb3981e6cd9"
+          "line": 1171,
+          "sha256": "725334ef5505ffa9d950d85cc604913a47cbfe0ca734ebe533477d5c9b12b20b"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-audit",
           "ordinal": 3,
-          "line": 1089,
-          "sha256": "df6bee8bcb9d85a531283c5cc654123393fd6bd5f2d24c05bb500eb46ac35367"
+          "line": 1172,
+          "sha256": "212c16a1e2e2020d56641528f8f7bbd4be1cdd29d7786cc38790cc1006a4d979"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-audit",
           "ordinal": 4,
-          "line": 1090,
-          "sha256": "f7c1f367d0ce45b7b12232bbd4ecdda93ca08e0d78b1b78912d91c103594fc32"
+          "line": 1173,
+          "sha256": "4980897d49919a4c97a89db2eab19c20964e7c7bfaf6f3274c6a6636a00a20a1"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-audit",
           "ordinal": 5,
-          "line": 1091,
-          "sha256": "9ceddf3452b9df96da68ee71a9141d7a47a45af4b3a0447f04d05e2d5214e394"
+          "line": 1174,
+          "sha256": "69ebe923517fe3317aa47a44965a38691a55d4699e61b2eef6cf93e10918387a"
         }
       ],
       "steps": [
         {
           "id": "example-1",
           "adapter": "manual",
-          "raw": "facelock audit                          # show last 20 entries (default)",
+          "raw": "sudo facelock audit                     # show last 20 entries (default)",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -6834,7 +6472,7 @@
         {
           "id": "example-2",
           "adapter": "manual",
-          "raw": "facelock audit -l 50                    # show last 50 entries",
+          "raw": "sudo facelock audit -l 50               # show last 50 entries",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -6847,7 +6485,7 @@
         {
           "id": "example-3",
           "adapter": "manual",
-          "raw": "facelock audit --lines 50               # long form",
+          "raw": "sudo facelock audit --lines 50          # long form",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -6860,7 +6498,7 @@
         {
           "id": "example-4",
           "adapter": "manual",
-          "raw": "facelock audit -f                       # follow mode: stream new entries as they arrive",
+          "raw": "sudo facelock audit -f                  # follow mode: stream appended entries",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -6873,7 +6511,7 @@
         {
           "id": "example-5",
           "adapter": "manual",
-          "raw": "facelock audit --follow                 # long form",
+          "raw": "sudo facelock audit --follow            # long form",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -6919,43 +6557,43 @@
           "path": "docs/cli.md",
           "anchor": "facelock-data-purge",
           "ordinal": 1,
-          "line": 1124,
-          "sha256": "8bcabec0d67eb9dee7063a03820dd39cbf35d78a892b610729105ebb9ba2161e"
+          "line": 1212,
+          "sha256": "d969551ca077f316f66d95970d4fdd344494b89937bf1e628e86f39f377b1738"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-data-purge",
           "ordinal": 2,
-          "line": 1125,
-          "sha256": "477a5157b47d2cbf3334f1c054ed84a55f719d925f43e624615499ad73065645"
+          "line": 1213,
+          "sha256": "89dcedd16b34cf3f6649b498056125110ec7c590ccb9962b6c74503a7f198a5d"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-data-purge",
           "ordinal": 3,
-          "line": 1126,
-          "sha256": "f0786ce3c6dee0053c31ff868b7c2ccae6a7d1834adcf288e01a16b130ba5031"
+          "line": 1214,
+          "sha256": "41d4befd24c1488ef5e8e6c1a0cee6cffc6996150cbceebb30ec3c2c6bd8202c"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-data-purge",
           "ordinal": 4,
-          "line": 1127,
-          "sha256": "d9876f0a0d1105b31e9f670002c577d64f126e5f31e49c470f6d0de6341fbb8b"
+          "line": 1215,
+          "sha256": "1f108183f61e82e3789fc6d6513c7ee72f49045ef12d4228a67445c414c9a38a"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-data-purge",
           "ordinal": 5,
-          "line": 1128,
-          "sha256": "81b8f9b57ba032ceefe1a784a24264c78e929c274121e5d3033354453b761d34"
+          "line": 1216,
+          "sha256": "bf4f5442b682aca00f4dba336a4e211fe28f9c9a4d89679b3cefbeebcf260078"
         }
       ],
       "steps": [
         {
           "id": "example-1",
           "adapter": "manual",
-          "raw": "facelock data purge --dry-run                       # report what purge would find; removes nothing",
+          "raw": "sudo facelock data purge --dry-run                  # classify configured paths; removes nothing",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -6968,7 +6606,7 @@
         {
           "id": "example-2",
           "adapter": "manual",
-          "raw": "facelock data purge --allow-destruction             # destroy, after a confirmation prompt",
+          "raw": "sudo facelock data purge --allow-destruction        # destroy, after a confirmation prompt",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -6981,7 +6619,7 @@
         {
           "id": "example-3",
           "adapter": "manual",
-          "raw": "facelock data purge --allow-destruction --yes       # destroy without the prompt",
+          "raw": "sudo facelock data purge --allow-destruction --yes  # destroy without the prompt",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -6994,7 +6632,7 @@
         {
           "id": "example-4",
           "adapter": "manual",
-          "raw": "facelock data purge --allow-destruction --json      # destroy and emit the machine document",
+          "raw": "sudo facelock data purge --allow-destruction --json # destroy and emit the machine document",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -7007,7 +6645,7 @@
         {
           "id": "example-5",
           "adapter": "manual",
-          "raw": "facelock data purge --allow-destruction --yes --leave-activation-barred",
+          "raw": "sudo facelock data purge --allow-destruction --yes --leave-activation-barred",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -7053,21 +6691,21 @@
           "path": "docs/command-audit.md",
           "anchor": "reproduce-the-deterministic-checks",
           "ordinal": 1,
-          "line": 37,
+          "line": 47,
           "sha256": "97cb36206062c8d1c15984ed1bd7efda27536b9da5242ac62d0c5a414f986392"
         },
         {
           "path": "docs/command-audit.md",
           "anchor": "reproduce-the-deterministic-checks",
           "ordinal": 2,
-          "line": 38,
+          "line": 48,
           "sha256": "a343d0b86aed917cbb93321ed301a5798f6493e944ae98ac9396621f4d55851c"
         },
         {
           "path": "docs/command-audit.md",
           "anchor": "reproduce-the-deterministic-checks",
           "ordinal": 3,
-          "line": 44,
+          "line": 54,
           "sha256": "9dc5eaf0168252533c0ea8c86a0ad30258b5a9e8bb9aa2adf9f52c3e6994af6b"
         }
       ],
@@ -7147,7 +6785,7 @@
           "path": "docs/compatibility.md",
           "anchor": "systemd-recommended",
           "ordinal": 1,
-          "line": 179,
+          "line": 186,
           "sha256": "e75d40fad8fc39564478eb4a79fc737f644f9b056e395a761231e9d5ba87526a"
         }
       ],
@@ -7200,14 +6838,14 @@
           "path": "docs/contracts.md",
           "anchor": "facelock-pam-semantics",
           "ordinal": 13,
-          "line": 1251,
+          "line": 1253,
           "sha256": "63c460d2967465f764a77bec938f1ab6183bba3b9758048020ee3de0d5dc3e82"
         },
         {
           "path": "docs/contracts.md",
           "anchor": "facelock-pam-semantics",
           "ordinal": 14,
-          "line": 1253,
+          "line": 1255,
           "sha256": "9d893de87b927d4a16bf54f82add2a2e2b2a9c56d12e4d04d2a27cbed5ef49c7"
         }
       ],
@@ -7882,35 +7520,42 @@
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
           "ordinal": 1,
-          "line": 13,
+          "line": 15,
           "sha256": "9593a0eb481eee53b056644aa9c6086216e05d959961113efacd5a304b99699d"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
-          "ordinal": 3,
-          "line": 33,
-          "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
-        },
-        {
-          "path": "docs/quickstart.md",
-          "anchor": "published-packages",
           "ordinal": 4,
-          "line": 34,
-          "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
+          "line": 45,
+          "sha256": "2e795222d6d436e587ec1690c6a50343257ba9c66f6e2510ee0bd6fd65cfa5be"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
           "ordinal": 5,
-          "line": 40,
-          "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
+          "line": 46,
+          "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
           "ordinal": 6,
-          "line": 41,
+          "line": 47,
+          "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
+        },
+        {
+          "path": "docs/quickstart.md",
+          "anchor": "published-packages",
+          "ordinal": 7,
+          "line": 53,
+          "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
+        },
+        {
+          "path": "docs/quickstart.md",
+          "anchor": "published-packages",
+          "ordinal": 8,
+          "line": 54,
           "sha256": "f64e829871b2f7998fdbf8a8f7c4a36f917acc719880c9d14bc6565a6f1607ca"
         }
       ],
@@ -7931,7 +7576,7 @@
         {
           "id": "example-2",
           "adapter": "manual",
-          "raw": "sudo dnf copr enable tyvsmith/facelock",
+          "raw": "sudo dnf install dnf5-plugins",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -7944,7 +7589,7 @@
         {
           "id": "example-3",
           "adapter": "manual",
-          "raw": "sudo dnf install facelock",
+          "raw": "sudo dnf copr enable tyvsmith/facelock",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -7957,7 +7602,7 @@
         {
           "id": "example-4",
           "adapter": "manual",
-          "raw": "sudo facelock setup",
+          "raw": "sudo dnf install facelock",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -7969,6 +7614,19 @@
         },
         {
           "id": "example-5",
+          "adapter": "manual",
+          "raw": "sudo facelock setup",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-6",
           "adapter": "manual",
           "raw": "sudo facelock test",
           "classification": "executable",
@@ -7983,7 +7641,7 @@
       ]
     },
     {
-      "id": "manual-section-250261742a28",
+      "id": "manual-section-764700032e2a",
       "target": "section-specific-guest",
       "channel": "github-alpha",
       "adapter": "manual",
@@ -7991,7 +7649,7 @@
       "source_role": "ordered-occurrence",
       "review_status": "candidate",
       "review_reason": "mechanically grouped commands; a human must review section fixtures, exit expectations and applicability before execution",
-      "title": "docs/quickstart.md#build-from-source",
+      "title": "docs/quickstart.md#source-build-prerequisites",
       "minimum_level": "physical-hardware",
       "requirements": [
         "human-command-review",
@@ -8017,72 +7675,114 @@
       "sources": [
         {
           "path": "docs/quickstart.md",
-          "anchor": "build-from-source",
+          "anchor": "source-build-prerequisites",
+          "ordinal": 1,
+          "line": 78,
+          "sha256": "ff8195c4ae6218ff221c52bc8fddd04740ffe18424173f6bae17f94a689e13a2"
+        },
+        {
+          "path": "docs/quickstart.md",
+          "anchor": "source-build-prerequisites",
           "ordinal": 2,
-          "line": 59,
+          "line": 86,
+          "sha256": "bec61f0cc5aa5062a5d2ff6b8fabf8bbaf4973e379679cf1408a26d13d3ee0ca"
+        },
+        {
+          "path": "docs/quickstart.md",
+          "anchor": "source-build-prerequisites",
+          "ordinal": 3,
+          "line": 87,
+          "sha256": "d083d8c1835c7a878a0028ffe95a9d8657a34bf54d9c77df60cf96f48fe8c42d"
+        },
+        {
+          "path": "docs/quickstart.md",
+          "anchor": "source-build-prerequisites",
+          "ordinal": 4,
+          "line": 88,
+          "sha256": "688d76820168760e13f5199233f25c2fa8f6e0b0f4da4b0d4b6eee06564398b6"
+        },
+        {
+          "path": "docs/quickstart.md",
+          "anchor": "source-build-prerequisites",
+          "ordinal": 5,
+          "line": 94,
+          "sha256": "bec61f0cc5aa5062a5d2ff6b8fabf8bbaf4973e379679cf1408a26d13d3ee0ca"
+        },
+        {
+          "path": "docs/quickstart.md",
+          "anchor": "source-build-prerequisites",
+          "ordinal": 6,
+          "line": 95,
+          "sha256": "01d7cf22bcecf66729c8d81a6ed4b9e9b796968f7d83ab5fe387b53eb8ea1ae0"
+        },
+        {
+          "path": "docs/quickstart.md",
+          "anchor": "source-build-prerequisites",
+          "ordinal": 8,
+          "line": 103,
+          "sha256": "d75ce10dd306f1d3969df3610179fe1364f05b90fa2be6b3d087c4badc3db984"
+        },
+        {
+          "path": "docs/quickstart.md",
+          "anchor": "source-build-prerequisites",
+          "ordinal": 9,
+          "line": 113,
           "sha256": "48d6b8aecaf932ce9c5e7f8943e9e680f516bd62a91a97583bbdf775c9f4c911"
         },
         {
           "path": "docs/quickstart.md",
-          "anchor": "build-from-source",
-          "ordinal": 3,
-          "line": 60,
+          "anchor": "source-build-prerequisites",
+          "ordinal": 10,
+          "line": 114,
           "sha256": "6082e4887a6f179f954cd8675b9e9f70206b23a40a9585b84f3fe9cb5f19bdef"
         },
         {
           "path": "docs/quickstart.md",
-          "anchor": "build-from-source",
-          "ordinal": 4,
-          "line": 61,
-          "sha256": "017092419ea31d5de3fd4b6e7a52b2dd239d134f423f81bd0f5c38992c212208"
-        },
-        {
-          "path": "docs/quickstart.md",
-          "anchor": "build-from-source",
-          "ordinal": 8,
-          "line": 72,
+          "anchor": "source-build-prerequisites",
+          "ordinal": 15,
+          "line": 125,
           "sha256": "fad0225732307d9b8666dc48f93369322752b5acd641d744cde3a6d1c99155de"
         },
         {
           "path": "docs/quickstart.md",
-          "anchor": "build-from-source",
-          "ordinal": 9,
-          "line": 73,
+          "anchor": "source-build-prerequisites",
+          "ordinal": 16,
+          "line": 126,
           "sha256": "21df8681af24fdd4a24c8e7533d7c69725728fedd70374ac46b437b03686b526"
         },
         {
           "path": "docs/quickstart.md",
-          "anchor": "build-from-source",
-          "ordinal": 10,
-          "line": 74,
+          "anchor": "source-build-prerequisites",
+          "ordinal": 17,
+          "line": 127,
           "sha256": "e1a93dce67650786cc6126129be6427d1a8a96c0560e61b310b30e44e61bde57"
         },
         {
           "path": "docs/quickstart.md",
-          "anchor": "build-from-source",
-          "ordinal": 11,
-          "line": 75,
+          "anchor": "source-build-prerequisites",
+          "ordinal": 18,
+          "line": 128,
           "sha256": "db33444f34d115dce2f155297f23c717c86dd22e1e95cd0e44bf71ad6bec9fcf"
         },
         {
           "path": "docs/quickstart.md",
-          "anchor": "build-from-source",
-          "ordinal": 12,
-          "line": 87,
+          "anchor": "source-build-prerequisites",
+          "ordinal": 19,
+          "line": 140,
           "sha256": "ee643003c3bebb06741967affae1785b90ae552fcbf30142419a9d7fa0415d59"
         },
         {
           "path": "docs/quickstart.md",
-          "anchor": "build-from-source",
-          "ordinal": 13,
-          "line": 88,
+          "anchor": "source-build-prerequisites",
+          "ordinal": 20,
+          "line": 141,
           "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
         },
         {
           "path": "docs/quickstart.md",
-          "anchor": "build-from-source",
-          "ordinal": 14,
-          "line": 89,
+          "anchor": "source-build-prerequisites",
+          "ordinal": 21,
+          "line": 142,
           "sha256": "f64e829871b2f7998fdbf8a8f7c4a36f917acc719880c9d14bc6565a6f1607ca"
         }
       ],
@@ -8090,7 +7790,7 @@
         {
           "id": "example-1",
           "adapter": "manual",
-          "raw": "just build",
+          "raw": "sudo pacman -Syu --needed base-devel git rust just clang gettext pkgconf pam v4l-utils wayland libxkbcommon tpm2-tss onnxruntime-cpu",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -8103,7 +7803,7 @@
         {
           "id": "example-2",
           "adapter": "manual",
-          "raw": "target/debug/facelock --help",
+          "raw": "sudo apt update",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -8116,7 +7816,7 @@
         {
           "id": "example-3",
           "adapter": "manual",
-          "raw": "just check",
+          "raw": "sudo apt install build-essential git just clang gettext pkg-config libpam0g-dev libv4l-dev libwayland-dev libxkbcommon-dev libtss2-dev",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -8129,7 +7829,7 @@
         {
           "id": "example-4",
           "adapter": "manual",
-          "raw": "just link-models",
+          "raw": "sudo apt install -t trixie-backports rustc cargo",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -8142,7 +7842,7 @@
         {
           "id": "example-5",
           "adapter": "manual",
-          "raw": "sudo target/debug/facelock --config \"$PWD/dev/config.toml\" devices",
+          "raw": "sudo apt update",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -8155,7 +7855,7 @@
         {
           "id": "example-6",
           "adapter": "manual",
-          "raw": "sudo target/debug/facelock --config \"$PWD/dev/config.toml\" enroll --skip-setup-check",
+          "raw": "sudo apt install build-essential git rustc cargo just clang gettext pkg-config libpam0g-dev libv4l-dev libwayland-dev libxkbcommon-dev libtss2-dev",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -8168,7 +7868,7 @@
         {
           "id": "example-7",
           "adapter": "manual",
-          "raw": "sudo target/debug/facelock --config \"$PWD/dev/config.toml\" test",
+          "raw": "sudo dnf install git rust cargo just gcc gcc-c++ clang-devel gettext pkgconf-pkg-config pam-devel libv4l-devel wayland-devel libxkbcommon-devel tpm2-tss-devel onnxruntime",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -8181,7 +7881,7 @@
         {
           "id": "example-8",
           "adapter": "manual",
-          "raw": "just install",
+          "raw": "just build",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -8194,7 +7894,7 @@
         {
           "id": "example-9",
           "adapter": "manual",
-          "raw": "sudo facelock setup",
+          "raw": "target/debug/facelock --help",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -8206,6 +7906,84 @@
         },
         {
           "id": "example-10",
+          "adapter": "manual",
+          "raw": "just link-models",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-11",
+          "adapter": "manual",
+          "raw": "sudo target/debug/facelock --config \"$PWD/dev/config.toml\" devices",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-12",
+          "adapter": "manual",
+          "raw": "sudo target/debug/facelock --config \"$PWD/dev/config.toml\" enroll --skip-setup-check",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-13",
+          "adapter": "manual",
+          "raw": "sudo target/debug/facelock --config \"$PWD/dev/config.toml\" test",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-14",
+          "adapter": "manual",
+          "raw": "just install",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-15",
+          "adapter": "manual",
+          "raw": "sudo facelock setup",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-16",
           "adapter": "manual",
           "raw": "sudo facelock test",
           "classification": "executable",
@@ -8256,35 +8034,35 @@
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 1,
-          "line": 102,
+          "line": 179,
           "sha256": "7047dae1de5957a90be1c7a3cfcc6abe298930cbfcdd6838f4a06295a7d565ce"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 2,
-          "line": 103,
+          "line": 180,
           "sha256": "97fe7e4851d163ea954392ba9c6fbfa704c8f3e1ef28996b794b45a7b4551907"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 3,
-          "line": 104,
+          "line": 181,
           "sha256": "d8e28448d4f6a66c71332ec6cc573065c0863083d2dde4dbd395d6fe1c8882a1"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 4,
-          "line": 105,
+          "line": 182,
           "sha256": "b01a1ffc2b4ef9721bb5ce35a004dd6ce17743083fa0670424a5caeb985dd7a6"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 5,
-          "line": 106,
+          "line": 183,
           "sha256": "c5daf997e938d2c8a1aeed87aaf0e3f000d211290ff0fdd9861be7ce2fa738ed"
         }
       ],
@@ -8391,21 +8169,21 @@
           "path": "docs/quickstart.md",
           "anchor": "package-lifecycle-and-retained-data",
           "ordinal": 1,
-          "line": 116,
+          "line": 195,
           "sha256": "4547cf4ed51d13a8755d4c904f2a1773778fb1af9481d51ac64373378ec09873"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "package-lifecycle-and-retained-data",
           "ordinal": 3,
-          "line": 127,
+          "line": 210,
           "sha256": "b2eaa0d6e49d61a0a83ddb30434dfff25bda1608545252375dd2eeca201b320a"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "package-lifecycle-and-retained-data",
           "ordinal": 4,
-          "line": 128,
+          "line": 211,
           "sha256": "cd370c0da2fc6b4b0a0c94762df10329fb29a2eec64e260f87f372c4856d9178"
         }
       ],
@@ -8487,21 +8265,21 @@
           "path": "docs/releasing.md",
           "anchor": "automated-recommended",
           "ordinal": 1,
-          "line": 65,
+          "line": 74,
           "sha256": "a9f574ec661d3125f29382308db0eb3bbf7652389b49d1bf41c4728f7b5f3885"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "automated-recommended",
           "ordinal": 2,
-          "line": 67,
+          "line": 76,
           "sha256": "1a220c2385020dbc6d853be67d1d89243424d6bc01da6391b73745a94eb51cdb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "automated-recommended",
           "ordinal": 7,
-          "line": 80,
+          "line": 89,
           "sha256": "090133abf7496a183de2ede915b3c07456de52d4d69186c20414253349729ab0"
         }
       ],
@@ -8584,112 +8362,112 @@
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 1,
-          "line": 295,
+          "line": 304,
           "sha256": "21fbb4c9a7b22a0439e070e8122853880927532ba554ea0204fd0ede5fa3ebbb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 2,
-          "line": 296,
+          "line": 305,
           "sha256": "d5ce836f401484bd835100b165e1c2234b437780616e27bb92f5403d0f22bc40"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 3,
-          "line": 297,
+          "line": 306,
           "sha256": "b2b12dbf5cd38fc21d68548042e8eae1e66f65faa6491f3564e75c7cb60abc22"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 4,
-          "line": 298,
+          "line": 307,
           "sha256": "5595bcc3f9aa3517450a5185fe037e24b0a8ec079eff27020bf5c5aef68ffdb0"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 5,
-          "line": 299,
+          "line": 308,
           "sha256": "d0d568788326024851d047fe1e316af83028cbf98b17a777fd64c4e784151809"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 6,
-          "line": 300,
+          "line": 309,
           "sha256": "05d5991182864fc115e36763667a0d555cf256358ed52830129f8fd32ab925de"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 7,
-          "line": 301,
+          "line": 310,
           "sha256": "4830a79699c4a1fa28bbcdc2eb8e5712c7ac46f3fd2533bad0b097ab936e8413"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 8,
-          "line": 302,
+          "line": 311,
           "sha256": "b1b141623a6849ba1a180dfa8e3d7eb504da148110c930be20e240eabd2323f1"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 9,
-          "line": 303,
+          "line": 312,
           "sha256": "9fcc5f55faef0fe3ceebfa0d6e7beb5e0281ab1b037fd3153ace2b72b3a64202"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 10,
-          "line": 304,
+          "line": 313,
           "sha256": "2877908694a9c4d1e9a8e8ca4605edd81026d7666c65b3c69bd180646b513b53"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 11,
-          "line": 305,
+          "line": 314,
           "sha256": "872db5f82702e535cc961ca606e0d46e18f134bfdcd12c06171b9adffc9ef8e8"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 12,
-          "line": 306,
+          "line": 315,
           "sha256": "3bdfbcbee168b92e2cf8f520a54a827c805903faed4712a781af561ea3246037"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 13,
-          "line": 309,
+          "line": 318,
           "sha256": "cbe27321cd6d31c9676b5aa4998fd1b4f9195f719b00cda8f889c3b3b7dae276"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 14,
-          "line": 310,
+          "line": 319,
           "sha256": "0aece5ddd58b51f2dccb3e634e59f06c2a38c4f9bd0439197688c4e548e8895b"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 15,
-          "line": 311,
+          "line": 320,
           "sha256": "a10a4c45881ab16f35605739e0375de3e5558bc495111b49c7929d9b2d1603a0"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 16,
-          "line": 312,
+          "line": 321,
           "sha256": "640b0dca78c96225ae70191f4312212e60c6367fca24cab33a803b0ee94c7847"
         }
       ],
@@ -8943,49 +8721,49 @@
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 1,
-          "line": 446,
+          "line": 455,
           "sha256": "dedfaf04fd23448baa602a476c6e384ab674dfd1ad445e0c3e935b5a96a9a2f1"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 2,
-          "line": 447,
+          "line": 456,
           "sha256": "a07a3db4c0fd5697107f1591eb62f6a2c9a2ac0d3801e25844e5c244f6688915"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 3,
-          "line": 448,
+          "line": 457,
           "sha256": "d9a223daf1f784e1bd0313866cfbfcff4b2b4958708dfab4674bc3ddc63de570"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 4,
-          "line": 449,
+          "line": 458,
           "sha256": "108c5e8edc6582d4ee70c2b8573afe99a7be3f4ad8ddd11fc2b12c44e7079568"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 5,
-          "line": 450,
+          "line": 459,
           "sha256": "017092419ea31d5de3fd4b6e7a52b2dd239d134f423f81bd0f5c38992c212208"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 6,
-          "line": 451,
+          "line": 460,
           "sha256": "a77a5aea7a4e8dcf9901e8ac5ee041109d525ce2f2bd7f018a21918d70da1326"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 7,
-          "line": 452,
+          "line": 461,
           "sha256": "2b5e31a5fe163cb0998c87a9f505faf73a26e025df540bc210550dcb6cc27142"
         }
       ],
@@ -9118,231 +8896,231 @@
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 1,
-          "line": 526,
+          "line": 537,
           "sha256": "ce117958431b95a2b1b7736900f985d21b06e2b5672c9332ca300f7e2f728cec"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 2,
-          "line": 529,
+          "line": 540,
           "sha256": "496912e98f06a6851cefff636f7f9a738aea9093d8ca87d32427a71fc0d4e710"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 3,
-          "line": 530,
+          "line": 541,
           "sha256": "db66421d7339cfe66576a3d1816ccd849e3cce082609ed202f033e8766850f5e"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 4,
-          "line": 531,
+          "line": 542,
           "sha256": "eade2495c1c8af468788a81f22b4748844fb7e378dcb7b838f5b6a94478eca4a"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 5,
-          "line": 532,
+          "line": 543,
           "sha256": "436f245d1d2ff52f45e4708def3db88264f00a69f14ac45f3974e91213865413"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 6,
-          "line": 537,
+          "line": 548,
           "sha256": "5b6566b30a1c74929651fbf4d529d0b2bc03d901c23fb56fccf98720af6a3f52"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 7,
-          "line": 538,
+          "line": 549,
           "sha256": "d91ae6717b7b7778b93b9020d48bc3759649decdaa9abad31f36fa82cf0964e2"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 8,
-          "line": 540,
+          "line": 551,
           "sha256": "c9a3615c4b78b410f6374730cc6ae2a6f84f3cfc991e1d62afefeafdea301e7a"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 9,
-          "line": 541,
+          "line": 552,
           "sha256": "80b4949070e5c55d722d81d45af49fe18736316ae34f61992bb2500c59fbf83e"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 10,
-          "line": 542,
-          "sha256": "fe9e350dccdf906c3c342fa6d20e264cf09012c885bbc76709d25df82a557eec"
-        },
-        {
-          "path": "docs/releasing.md",
-          "anchor": "aur-arch-linux",
-          "ordinal": 11,
-          "line": 543,
-          "sha256": "9b13396a2d62293086b0bfda57435689ba59dde26f4398d2eba7624ef80916eb"
-        },
-        {
-          "path": "docs/releasing.md",
-          "anchor": "aur-arch-linux",
-          "ordinal": 12,
-          "line": 544,
-          "sha256": "c1fe02ee74644b70083160af86534e360016dcbd5aa98097d7a570640e508a14"
-        },
-        {
-          "path": "docs/releasing.md",
-          "anchor": "aur-arch-linux",
-          "ordinal": 13,
-          "line": 545,
-          "sha256": "c32f2b1a66f8a79deadb74f533f3075c60a629df343b89e8c4477d40fa960ba8"
-        },
-        {
-          "path": "docs/releasing.md",
-          "anchor": "aur-arch-linux",
-          "ordinal": 14,
-          "line": 546,
-          "sha256": "ecc78bda27b832c6956a35bdf1ee8fb759f85425a9e8c85d28edb523bb6779f5"
-        },
-        {
-          "path": "docs/releasing.md",
-          "anchor": "aur-arch-linux",
-          "ordinal": 15,
-          "line": 549,
-          "sha256": "a1d2a470e9757ca1a468b4129de0e79687de54106b68c041ce621be96ad5f4f9"
-        },
-        {
-          "path": "docs/releasing.md",
-          "anchor": "aur-arch-linux",
-          "ordinal": 16,
-          "line": 550,
-          "sha256": "aa17fd000eb5853bf3764379438d5d60e6b847ef03e6028108af9563da1226d4"
-        },
-        {
-          "path": "docs/releasing.md",
-          "anchor": "aur-arch-linux",
-          "ordinal": 17,
-          "line": 551,
-          "sha256": "69a5e09dc6213aebcc57177e7aae3f399a2d5d3aae7842563b239795c0f3b0da"
-        },
-        {
-          "path": "docs/releasing.md",
-          "anchor": "aur-arch-linux",
-          "ordinal": 18,
-          "line": 552,
-          "sha256": "436f245d1d2ff52f45e4708def3db88264f00a69f14ac45f3974e91213865413"
-        },
-        {
-          "path": "docs/releasing.md",
-          "anchor": "aur-arch-linux",
-          "ordinal": 19,
           "line": 553,
           "sha256": "fe9e350dccdf906c3c342fa6d20e264cf09012c885bbc76709d25df82a557eec"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
-          "ordinal": 20,
+          "ordinal": 11,
           "line": 554,
           "sha256": "9b13396a2d62293086b0bfda57435689ba59dde26f4398d2eba7624ef80916eb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
-          "ordinal": 21,
+          "ordinal": 12,
           "line": 555,
           "sha256": "c1fe02ee74644b70083160af86534e360016dcbd5aa98097d7a570640e508a14"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
-          "ordinal": 22,
+          "ordinal": 13,
           "line": 556,
           "sha256": "c32f2b1a66f8a79deadb74f533f3075c60a629df343b89e8c4477d40fa960ba8"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
-          "ordinal": 23,
+          "ordinal": 14,
           "line": 557,
           "sha256": "ecc78bda27b832c6956a35bdf1ee8fb759f85425a9e8c85d28edb523bb6779f5"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
-          "ordinal": 24,
+          "ordinal": 15,
           "line": 560,
-          "sha256": "760d01df3d4b65d21ee36ae04052a37b260f722c68cf58ce52947c41720e08aa"
+          "sha256": "a1d2a470e9757ca1a468b4129de0e79687de54106b68c041ce621be96ad5f4f9"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
-          "ordinal": 25,
+          "ordinal": 16,
           "line": 561,
-          "sha256": "88d89d47a06c2521dd75cba1300449b6861770cc6db54e68046a24baac5a5770"
+          "sha256": "aa17fd000eb5853bf3764379438d5d60e6b847ef03e6028108af9563da1226d4"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
-          "ordinal": 26,
+          "ordinal": 17,
           "line": 562,
-          "sha256": "7e3163129541b685b8df8bb22a871dfcff84227081f53a25599b5cffd3900af2"
+          "sha256": "69a5e09dc6213aebcc57177e7aae3f399a2d5d3aae7842563b239795c0f3b0da"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
-          "ordinal": 27,
+          "ordinal": 18,
           "line": 563,
           "sha256": "436f245d1d2ff52f45e4708def3db88264f00a69f14ac45f3974e91213865413"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
-          "ordinal": 28,
+          "ordinal": 19,
           "line": 564,
           "sha256": "fe9e350dccdf906c3c342fa6d20e264cf09012c885bbc76709d25df82a557eec"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
-          "ordinal": 29,
+          "ordinal": 20,
           "line": 565,
           "sha256": "9b13396a2d62293086b0bfda57435689ba59dde26f4398d2eba7624ef80916eb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
-          "ordinal": 30,
+          "ordinal": 21,
           "line": 566,
           "sha256": "c1fe02ee74644b70083160af86534e360016dcbd5aa98097d7a570640e508a14"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
-          "ordinal": 31,
+          "ordinal": 22,
           "line": 567,
           "sha256": "c32f2b1a66f8a79deadb74f533f3075c60a629df343b89e8c4477d40fa960ba8"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
-          "ordinal": 32,
+          "ordinal": 23,
+          "line": 568,
+          "sha256": "ecc78bda27b832c6956a35bdf1ee8fb759f85425a9e8c85d28edb523bb6779f5"
+        },
+        {
+          "path": "docs/releasing.md",
+          "anchor": "aur-arch-linux",
+          "ordinal": 24,
           "line": 571,
+          "sha256": "760d01df3d4b65d21ee36ae04052a37b260f722c68cf58ce52947c41720e08aa"
+        },
+        {
+          "path": "docs/releasing.md",
+          "anchor": "aur-arch-linux",
+          "ordinal": 25,
+          "line": 572,
+          "sha256": "88d89d47a06c2521dd75cba1300449b6861770cc6db54e68046a24baac5a5770"
+        },
+        {
+          "path": "docs/releasing.md",
+          "anchor": "aur-arch-linux",
+          "ordinal": 26,
+          "line": 573,
+          "sha256": "7e3163129541b685b8df8bb22a871dfcff84227081f53a25599b5cffd3900af2"
+        },
+        {
+          "path": "docs/releasing.md",
+          "anchor": "aur-arch-linux",
+          "ordinal": 27,
+          "line": 574,
+          "sha256": "436f245d1d2ff52f45e4708def3db88264f00a69f14ac45f3974e91213865413"
+        },
+        {
+          "path": "docs/releasing.md",
+          "anchor": "aur-arch-linux",
+          "ordinal": 28,
+          "line": 575,
+          "sha256": "fe9e350dccdf906c3c342fa6d20e264cf09012c885bbc76709d25df82a557eec"
+        },
+        {
+          "path": "docs/releasing.md",
+          "anchor": "aur-arch-linux",
+          "ordinal": 29,
+          "line": 576,
+          "sha256": "9b13396a2d62293086b0bfda57435689ba59dde26f4398d2eba7624ef80916eb"
+        },
+        {
+          "path": "docs/releasing.md",
+          "anchor": "aur-arch-linux",
+          "ordinal": 30,
+          "line": 577,
+          "sha256": "c1fe02ee74644b70083160af86534e360016dcbd5aa98097d7a570640e508a14"
+        },
+        {
+          "path": "docs/releasing.md",
+          "anchor": "aur-arch-linux",
+          "ordinal": 31,
+          "line": 578,
+          "sha256": "c32f2b1a66f8a79deadb74f533f3075c60a629df343b89e8c4477d40fa960ba8"
+        },
+        {
+          "path": "docs/releasing.md",
+          "anchor": "aur-arch-linux",
+          "ordinal": 32,
+          "line": 582,
           "sha256": "1548e502c894199d945d62477c663ac76551ae0a415c54d023829c8374fc5e20"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 33,
-          "line": 575,
+          "line": 586,
           "sha256": "2bb449e3f1e527e7ecac90a956b1a6b5722b264c3cfae4611d0cc62aa0265ba3"
         }
       ],
@@ -9813,21 +9591,21 @@
           "path": "docs/releasing.md",
           "anchor": "why-v014-never-reached-copr",
           "ordinal": 8,
-          "line": 744,
+          "line": 755,
           "sha256": "4f8c8f6471b5acc7be9447a1cc5a4ef869157bce60d91c20e453570df45d3af5"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "why-v014-never-reached-copr",
           "ordinal": 9,
-          "line": 745,
+          "line": 756,
           "sha256": "330b0e0d48e5cadecc7312bd0e67d8fe2c885d0d4ff881e165c92d12cd5de072"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "why-v014-never-reached-copr",
           "ordinal": 10,
-          "line": 746,
+          "line": 757,
           "sha256": "eafacd9bcae280d0368ab135f72ec91b7e2d8399382e1050b67ef96cd5e94ff8"
         }
       ],
@@ -9909,14 +9687,14 @@
           "path": "docs/releasing.md",
           "anchor": "pre-tag-attestation",
           "ordinal": 2,
-          "line": 814,
+          "line": 825,
           "sha256": "4fc7ae86753f046827e1eaf821e79f8502c861494f431ee06e627c16a0f582c5"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "pre-tag-attestation",
           "ordinal": 3,
-          "line": 815,
+          "line": 826,
           "sha256": "9daf87a90676b422783ead7510dc9cd9df3f7d35ec73a7f6b720b249814ed638"
         }
       ],
@@ -9984,21 +9762,21 @@
           "path": "docs/releasing.md",
           "anchor": "apt-debianubuntu",
           "ordinal": 1,
-          "line": 839,
+          "line": 853,
           "sha256": "3a7b17c8cfba23ce48b71f39c7a8e55fa570bf8596dac8e00622eaa2fd8f67b6"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "apt-debianubuntu",
           "ordinal": 2,
-          "line": 846,
+          "line": 860,
           "sha256": "2120970caf76141c5840f3c94b1f591cfd64be5b8b0909ba582421dcfc2130a2"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "apt-debianubuntu",
           "ordinal": 3,
-          "line": 851,
+          "line": 865,
           "sha256": "07aef43e7726b1c28642fe5034e46b275bb0175b1a8bf8b2ab09125586f97c02"
         }
       ],
@@ -10079,56 +9857,56 @@
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 1,
-          "line": 890,
+          "line": 904,
           "sha256": "bd978c87c0aadfa54d4ba4f05b48f51ea4197e79703f972a5b6e2e7db17facd1"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 2,
-          "line": 892,
+          "line": 906,
           "sha256": "6fbda588a984496fe15cc3910c5759c7f24c1920e358e38865bdf3f599bf2eaf"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 3,
-          "line": 896,
+          "line": 910,
           "sha256": "496912e98f06a6851cefff636f7f9a738aea9093d8ca87d32427a71fc0d4e710"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 4,
-          "line": 902,
+          "line": 916,
           "sha256": "db66421d7339cfe66576a3d1816ccd849e3cce082609ed202f033e8766850f5e"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 5,
-          "line": 903,
+          "line": 917,
           "sha256": "fe9e350dccdf906c3c342fa6d20e264cf09012c885bbc76709d25df82a557eec"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 6,
-          "line": 907,
+          "line": 921,
           "sha256": "9b13396a2d62293086b0bfda57435689ba59dde26f4398d2eba7624ef80916eb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 7,
-          "line": 908,
+          "line": 922,
           "sha256": "1770d6f9d00ebdeba4277b6bd833aebdfe61df440fdc0e7cf518616c0f4fb84d"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 8,
-          "line": 909,
+          "line": 923,
           "sha256": "c32f2b1a66f8a79deadb74f533f3075c60a629df343b89e8c4477d40fa960ba8"
         }
       ],
@@ -10272,21 +10050,21 @@
           "path": "docs/security.md",
           "anchor": "b-file-permissions-on-model-directory-required",
           "ordinal": 1,
-          "line": 338,
+          "line": 346,
           "sha256": "44764e874cf32de59ee693c075fef10ae1e445589db5c298c702d1eac5830a07"
         },
         {
           "path": "docs/security.md",
           "anchor": "b-file-permissions-on-model-directory-required",
           "ordinal": 2,
-          "line": 339,
+          "line": 347,
           "sha256": "a6f8ceeddc36281567c4a54f80afb193197ace38613b270e9b741a951f3353df"
         },
         {
           "path": "docs/security.md",
           "anchor": "b-file-permissions-on-model-directory-required",
           "ordinal": 3,
-          "line": 340,
+          "line": 348,
           "sha256": "638d17753a414738b53af11c039550b04c8ef3678c9b4eb0a80ce9997cacfcdf"
         }
       ],
@@ -10365,14 +10143,14 @@
           "path": "docs/security.md",
           "anchor": "a-database-file-permissions-required",
           "ordinal": 1,
-          "line": 438,
+          "line": 446,
           "sha256": "066cc635c68054c673637cc8321b1f1986997030c5c0c15baa2df039ad12dfdc"
         },
         {
           "path": "docs/security.md",
           "anchor": "a-database-file-permissions-required",
           "ordinal": 2,
-          "line": 439,
+          "line": 447,
           "sha256": "37caf46b305e47b2c4dafd28589fb6017717ea250aed00dd95c198935cf9ec65"
         }
       ],
@@ -10438,7 +10216,7 @@
           "path": "docs/security.md",
           "anchor": "b-systemd-hardening-implemented",
           "ordinal": 3,
-          "line": 1524,
+          "line": 1532,
           "sha256": "8798eab946c173be56a1f11cc506ac362d12ba935d90fa159ae04196d6e6c692"
         }
       ],
@@ -10974,42 +10752,42 @@
           "path": "docs/testing-walkthrough.md",
           "anchor": "inspect-and-validate-the-catalog",
           "ordinal": 1,
-          "line": 40,
+          "line": 46,
           "sha256": "5c876b80682c1c17b00b99555c29b4103118b3ea9cdab2939e93af03d5e1391f"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "inspect-and-validate-the-catalog",
           "ordinal": 2,
-          "line": 41,
+          "line": 47,
           "sha256": "06df5a76a60f23623deb07d1ba781795748d4fe476290fe6d77075ca655ab150"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "inspect-and-validate-the-catalog",
           "ordinal": 3,
-          "line": 42,
+          "line": 48,
           "sha256": "7976463ce2741b6b3a3fd7bce5fe690bc6045641937bcdc4d53244749219bb6a"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "inspect-and-validate-the-catalog",
           "ordinal": 4,
-          "line": 52,
+          "line": 58,
           "sha256": "e8abb26d2c294726a2a63ff7bf6d467226560317dbe638d5a3b49a61a317c3b2"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "inspect-and-validate-the-catalog",
           "ordinal": 5,
-          "line": 53,
+          "line": 59,
           "sha256": "da3e3cab3febe935eacbb2ed8ab5197f6067d6602914c606c3e5a2e9dd90f466"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "inspect-and-validate-the-catalog",
           "ordinal": 6,
-          "line": 54,
+          "line": 60,
           "sha256": "ed8cefe2c6aae8a8d154ee7319f10167426bd7d212a91c05e7063316cc9dfb71"
         }
       ],
@@ -11128,28 +10906,28 @@
           "path": "docs/testing-walkthrough.md",
           "anchor": "pin-release-identity",
           "ordinal": 1,
-          "line": 76,
+          "line": 82,
           "sha256": "46b588f236861b22e16d4506c840402ef7af1a1c7fb1a067f18fac78fa8ad16e"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "pin-release-identity",
           "ordinal": 2,
-          "line": 77,
+          "line": 83,
           "sha256": "789424aa2b819fd06d477be82f864da83a750469c9a64dc125b71a4ee755d4ab"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "pin-release-identity",
           "ordinal": 3,
-          "line": 78,
+          "line": 84,
           "sha256": "9e9e15bf80d35bdc16b094f4d7a05ffb257be11fc65df64a2790be966061f87f"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "pin-release-identity",
           "ordinal": 4,
-          "line": 79,
+          "line": 85,
           "sha256": "ed35b03d4150fa9ef0808c7ea30f414d1ba54b588b42d98b3361f12b84d1e306"
         }
       ],
@@ -11245,63 +11023,63 @@
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 1,
-          "line": 102,
+          "line": 115,
           "sha256": "5a7211b99ca9728f8afbb236ac53f8a36ff502d06586bd5d276c2ee432be5915"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 2,
-          "line": 103,
+          "line": 116,
           "sha256": "aa8c2abd3623343cad4f0e045f27d48b8de89f0ee061777d5f4687c3e8078cc8"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 3,
-          "line": 104,
+          "line": 117,
           "sha256": "555cc17957baa7417c937fcbfb8e7b00dea851574cd5464af6e03217b357c77d"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 4,
-          "line": 105,
+          "line": 118,
           "sha256": "69e35f84cb4848964dfb9af088411835f6f0cdc93720c25bbfdf2766b1a4cfe2"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 5,
-          "line": 106,
+          "line": 119,
           "sha256": "5735b17047aed2e9d9492588d917883d26c1b6f648fe03de62efe0a91722198a"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 6,
-          "line": 120,
+          "line": 133,
           "sha256": "ee8c244970e65416bdf8f175b9736c6676906fc8a3aaf859ca1e6522d48a88bc"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 7,
-          "line": 121,
+          "line": 134,
           "sha256": "aa8c2abd3623343cad4f0e045f27d48b8de89f0ee061777d5f4687c3e8078cc8"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 8,
-          "line": 122,
+          "line": 135,
           "sha256": "1419bb823083e542307c48dd13d68fa2f80820b85ebd0d465c688b7b5b8ae0ab"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "run-one-explicit-case",
           "ordinal": 9,
-          "line": 123,
+          "line": 136,
           "sha256": "c893317d67d3e9bb5acb756669f318f262070fec1459248991ece9cd30bd3666"
         }
       ],
@@ -11459,35 +11237,35 @@
           "path": "docs/testing-walkthrough.md",
           "anchor": "rootless-container-launcher",
           "ordinal": 1,
-          "line": 133,
+          "line": 146,
           "sha256": "e66d2e14752389d0afc58fc680ec519fbce0d1003023958ec7f26c6824bb40d2"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "rootless-container-launcher",
           "ordinal": 2,
-          "line": 134,
+          "line": 147,
           "sha256": "32b6d085476bb7b6f7f3fc1768622e86701530c9eec9149f62f00e7f61e04e6a"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "rootless-container-launcher",
           "ordinal": 3,
-          "line": 135,
+          "line": 148,
           "sha256": "3a4a1478c1a21d542475ebd5f704e50b2b3d892efd2b7c0f05c2dec49efc7dbd"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "rootless-container-launcher",
           "ordinal": 4,
-          "line": 136,
+          "line": 149,
           "sha256": "383ad23303456f22191e7106ee63fab36f0905422c96f9a7e8c58b7effbb3f2f"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "rootless-container-launcher",
           "ordinal": 5,
-          "line": 137,
+          "line": 150,
           "sha256": "f07913ad528fa639108e515d8490407734124f5bb26b5c012969b27b3940fec4"
         }
       ],
@@ -11593,21 +11371,21 @@
           "path": "docs/testing-walkthrough.md",
           "anchor": "aggregate-evidence",
           "ordinal": 1,
-          "line": 146,
+          "line": 159,
           "sha256": "975389f1b33f489173c8efcc092c70d61e99cf31e0eededf947bbf0f9019b3e2"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "aggregate-evidence",
           "ordinal": 2,
-          "line": 147,
+          "line": 160,
           "sha256": "682d84cd95206b7800fb6c66b76e11d37da9f36cc7c88a59cae5bf49c6d27884"
         },
         {
           "path": "docs/testing-walkthrough.md",
           "anchor": "aggregate-evidence",
           "ordinal": 3,
-          "line": 148,
+          "line": 161,
           "sha256": "1ff98069a710f8c7f3fd87b2ac8c099f58d7e7323c4a6e4dc075cec2f989e2b5"
         }
       ],
@@ -11801,7 +11579,7 @@
       ]
     },
     {
-      "id": "manual-section-937ac856825e",
+      "id": "manual-section-efa1ab9f5bf1",
       "target": "section-specific-guest",
       "channel": "github-alpha",
       "adapter": "manual",
@@ -11809,7 +11587,7 @@
       "source_role": "ordered-occurrence",
       "review_status": "candidate",
       "review_reason": "mechanically grouped commands; a human must review section fixtures, exit expectations and applicability before execution",
-      "title": "docs/troubleshooting.md#consistently-slow-700ms-every-time",
+      "title": "docs/troubleshooting.md#consistently-slow-on-every-attempt",
       "minimum_level": "booted-vm",
       "requirements": [
         "human-command-review",
@@ -11832,7 +11610,7 @@
       "sources": [
         {
           "path": "docs/troubleshooting.md",
-          "anchor": "consistently-slow-700ms-every-time",
+          "anchor": "consistently-slow-on-every-attempt",
           "ordinal": 1,
           "line": 90,
           "sha256": "e75d40fad8fc39564478eb4a79fc737f644f9b056e395a761231e9d5ba87526a"
@@ -12229,8 +12007,8 @@
         {
           "path": "docs/troubleshooting.md",
           "anchor": "permission-denied--accessdenied-when-running-facelock-commands",
-          "ordinal": 8,
-          "line": 220,
+          "ordinal": 10,
+          "line": 222,
           "sha256": "fa349dc03a0c4fd2873ef560d09daf944b4f62232ef2f4f5bdc7be4f0483f893"
         }
       ],
@@ -12284,28 +12062,28 @@
           "path": "docs/troubleshooting.md",
           "anchor": "database-permission-errors",
           "ordinal": 1,
-          "line": 229,
+          "line": 231,
           "sha256": "f8d56a3b21950a0dc5c74ad4ec9fea469422f2d47fc15261bad0a6a9451782d3"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "database-permission-errors",
           "ordinal": 2,
-          "line": 230,
+          "line": 232,
           "sha256": "0e020c759951d67065247aef898de3a9784274b5255200758ee3709549db96b3"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "database-permission-errors",
           "ordinal": 3,
-          "line": 234,
+          "line": 236,
           "sha256": "1e221e69b06a9b5651ffbdc7b5860688bc63bef8c6e352c9601d4344a4cb129f"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "database-permission-errors",
           "ordinal": 4,
-          "line": 235,
+          "line": 237,
           "sha256": "757464bd0e163415662f8f5434fa21277c2caaf0cc53ffa54a86ef26dc504d70"
         }
       ],
@@ -12398,14 +12176,14 @@
           "path": "docs/troubleshooting.md",
           "anchor": "pam-module-cannot-reach-daemon",
           "ordinal": 1,
-          "line": 242,
+          "line": 244,
           "sha256": "bcb6e50ed9e9c90b78938d5b99dfe287442ee0f97a61c24a5cf7e95eebab89e6"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "pam-module-cannot-reach-daemon",
           "ordinal": 2,
-          "line": 243,
+          "line": 245,
           "sha256": "dfbe8b9f008880dcc181e25094d804c07a7c4f6218377764dbfda67ee2b5f58f"
         }
       ],
@@ -12472,14 +12250,14 @@
           "path": "docs/troubleshooting.md",
           "anchor": "turning-up-the-log-level",
           "ordinal": 1,
-          "line": 252,
+          "line": 254,
           "sha256": "b71e3793c76c15f20acfcf32c73851f60e7859007bb736c45ef44512afe49f3c"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "turning-up-the-log-level",
           "ordinal": 2,
-          "line": 253,
+          "line": 255,
           "sha256": "487f16174412556ab1080aea37045dc303ee6fe34b356029315dfd4c9e000d41"
         }
       ],
@@ -12548,21 +12326,21 @@
           "path": "docs/troubleshooting.md",
           "anchor": "debugging-with-rust_log",
           "ordinal": 1,
-          "line": 267,
+          "line": 269,
           "sha256": "5ba0f58f70a59b6813c04793a96cf1b12528739f9fbff2f171cee8b9c8743039"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "debugging-with-rust_log",
           "ordinal": 2,
-          "line": 270,
+          "line": 272,
           "sha256": "01dd0a825d0876d8fe17a64f6cd934f852338f8ee393c1a85646ba116ffcaacd"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "debugging-with-rust_log",
           "ordinal": 3,
-          "line": 273,
+          "line": 275,
           "sha256": "2cd082fdd2040892ab478b7d8c521a80fbd6d4f67847c95da1c07785fd701a06"
         }
       ],
@@ -12644,14 +12422,14 @@
           "path": "docs/troubleshooting.md",
           "anchor": "sudo-strips-environment-variables",
           "ordinal": 1,
-          "line": 281,
+          "line": 283,
           "sha256": "5ba0f58f70a59b6813c04793a96cf1b12528739f9fbff2f171cee8b9c8743039"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "sudo-strips-environment-variables",
           "ordinal": 2,
-          "line": 282,
+          "line": 284,
           "sha256": "7c0e5f57f877b0b286e1f3542493ffb3f81ea4cc71b6d1b4bf387f5d6d659cfc"
         }
       ],
@@ -12725,15 +12503,15 @@
           "path": "man/pam_facelock.8",
           "anchor": "examples",
           "ordinal": 2,
-          "line": 88,
+          "line": 89,
           "sha256": "627601089fee23bfa7c2a07dfed1b04d5018f15eb335b0e90529a14b906a98e1"
         },
         {
           "path": "man/pam_facelock.8",
           "anchor": "examples",
           "ordinal": 3,
-          "line": 96,
-          "sha256": "4ed23c34b7952435afbe92d2876208646f93cbbefa1e4bd421f71b9791863bfc"
+          "line": 100,
+          "sha256": "57533d61f5db9744e038da844ec399444c836b186118463e34f90dd9d1815bde"
         }
       ],
       "steps": [
@@ -12766,7 +12544,7 @@
         {
           "id": "example-3",
           "adapter": "manual",
-          "raw": "facelock setup --pam --service sudo",
+          "raw": "sudo facelock pam add --service sudo",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -12967,59 +12745,6 @@
       ]
     },
     {
-      "id": "manual-section-11e6fb880e6b",
-      "target": "section-specific-guest",
-      "channel": "github-alpha",
-      "adapter": "manual",
-      "generated_section": true,
-      "source_role": "ordered-occurrence",
-      "review_status": "candidate",
-      "review_reason": "mechanically grouped commands; a human must review section fixtures, exit expectations and applicability before execution",
-      "title": "website/index.html#privacy",
-      "minimum_level": "booted-vm",
-      "requirements": [
-        "human-command-review",
-        "section-prerequisites",
-        "fixture-bindings",
-        "observed-postconditions"
-      ],
-      "prerequisites": [
-        "restore a pristine disposable guest for this section",
-        "read the enclosing section and earlier prerequisite headings",
-        "bind every user, path, service, device, package and secret placeholder to guest-local fixtures",
-        "record intentionally failing commands with their documented expected outcome"
-      ],
-      "fixtures": {
-        "binding_policy": "explicit reviewer-supplied guest-local bindings; no host paths or credentials"
-      },
-      "restore": "restore the recorded pristine snapshot; retain sanitized evidence outside the guest",
-      "timeout_seconds": 1800,
-      "sources": [
-        {
-          "path": "website/index.html",
-          "anchor": "privacy",
-          "ordinal": 1,
-          "line": 285,
-          "sha256": "e8b6a21bdef65d1aa265ac91f93ca1c2f00a5b44427cfab3245a58c08e1f16a6"
-        }
-      ],
-      "steps": [
-        {
-          "id": "example-1",
-          "adapter": "manual",
-          "raw": "facelock setup",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        }
-      ]
-    },
-    {
       "id": "manual-section-fe9836baabdd",
       "target": "section-specific-guest",
       "channel": "github-alpha",
@@ -13141,19 +12866,33 @@
           "anchor": "install-debian",
           "ordinal": 3,
           "line": 362,
-          "sha256": "b3f70d1b1c9cab5524d00a5c658ebd69e63cf592ffbbf1e7ea456604846747fc"
+          "sha256": "0d6e4079e36703ebd37c00722f5891d28b0e2811dc114b129215123adcce3605"
         },
         {
           "path": "website/index.html",
           "anchor": "install-debian",
           "ordinal": 4,
           "line": 362,
-          "sha256": "50573ac999b4f7516852df798aafddb1ef893a0352b7c1c7559b984eb5a40bbc"
+          "sha256": "c49fea7425fa7f8699897a97c159c6690267d9003bb78c53fafa8fc15c325d84"
         },
         {
           "path": "website/index.html",
           "anchor": "install-debian",
           "ordinal": 5,
+          "line": 362,
+          "sha256": "b3f70d1b1c9cab5524d00a5c658ebd69e63cf592ffbbf1e7ea456604846747fc"
+        },
+        {
+          "path": "website/index.html",
+          "anchor": "install-debian",
+          "ordinal": 6,
+          "line": 362,
+          "sha256": "50573ac999b4f7516852df798aafddb1ef893a0352b7c1c7559b984eb5a40bbc"
+        },
+        {
+          "path": "website/index.html",
+          "anchor": "install-debian",
+          "ordinal": 7,
           "line": 362,
           "sha256": "8d5c472cde3f3e4834455ea132df1cd26fa7eb26b5a2ef18148e9e316d5571eb"
         }
@@ -13188,7 +12927,7 @@
         {
           "id": "example-3",
           "adapter": "manual",
-          "raw": "apt update",
+          "raw": "main",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -13201,7 +12940,7 @@
         {
           "id": "example-4",
           "adapter": "manual",
-          "raw": "trixie",
+          "raw": "legacy",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -13213,6 +12952,32 @@
         },
         {
           "id": "example-5",
+          "adapter": "manual",
+          "raw": "apt update",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-6",
+          "adapter": "manual",
+          "raw": "trixie",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-7",
           "adapter": "manual",
           "raw": "resolute",
           "classification": "executable",
@@ -13260,21 +13025,21 @@
           "path": "website/index.html",
           "anchor": "install-fedora",
           "ordinal": 1,
-          "line": 375,
+          "line": 376,
           "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
         },
         {
           "path": "website/index.html",
           "anchor": "install-fedora",
           "ordinal": 2,
-          "line": 376,
+          "line": 377,
           "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
         },
         {
           "path": "website/index.html",
           "anchor": "install-fedora",
           "ordinal": 3,
-          "line": 379,
+          "line": 380,
           "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
         }
       ],
@@ -13336,7 +13101,6 @@
         "section-prerequisites",
         "fixture-bindings",
         "observed-postconditions",
-        "human-pam-recovery",
         "published-source-build-prerequisites"
       ],
       "prerequisites": [
@@ -13355,29 +13119,29 @@
           "path": "website/index.html",
           "anchor": "install-source",
           "ordinal": 1,
-          "line": 416,
+          "line": 414,
           "sha256": "a3fc2994d459b28929eddd20bb7e85f077845642fb89e330c3e03cbe66264bb3"
         },
         {
           "path": "website/index.html",
           "anchor": "install-source",
           "ordinal": 2,
-          "line": 417,
+          "line": 415,
           "sha256": "ec83c5e11815f6e2c810bbf770be6d0cb5e4403614eb8810a2f59278e0a1170b"
         },
         {
           "path": "website/index.html",
           "anchor": "install-source",
           "ordinal": 3,
-          "line": 418,
-          "sha256": "ee643003c3bebb06741967affae1785b90ae552fcbf30142419a9d7fa0415d59"
+          "line": 416,
+          "sha256": "48d6b8aecaf932ce9c5e7f8943e9e680f516bd62a91a97583bbdf775c9f4c911"
         },
         {
           "path": "website/index.html",
           "anchor": "install-source",
           "ordinal": 4,
-          "line": 421,
-          "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
+          "line": 417,
+          "sha256": "6082e4887a6f179f954cd8675b9e9f70206b23a40a9585b84f3fe9cb5f19bdef"
         }
       ],
       "steps": [
@@ -13410,7 +13174,7 @@
         {
           "id": "example-3",
           "adapter": "manual",
-          "raw": "just install",
+          "raw": "just build",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -13423,7 +13187,7 @@
         {
           "id": "example-4",
           "adapter": "manual",
-          "raw": "sudo facelock setup",
+          "raw": "target/debug/facelock --help",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",

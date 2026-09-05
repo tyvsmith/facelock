@@ -11,10 +11,12 @@ authentication path makes no network request and sends no telemetry.
 ```bash
 just build
 target/debug/facelock --help
-just check
 ```
 
-`just build` does not install the binary. Camera-facing development uses the
+Install the distro-specific native build dependencies first; Rust and the
+dynamically loaded ONNX Runtime are separate prerequisites. `just build` does
+not install the binary, and `--help` does not test inference or load ONNX
+Runtime. Camera-facing development uses the
 explicit built path and `--config "$PWD/dev/config.toml"`; management commands
 remain root-gated and root ignores `FACELOCK_CONFIG`. See [Quick Start](quickstart.md)
 before enrolling or changing host authentication.
@@ -49,7 +51,6 @@ facelock (unified binary)
 
 pam_facelock.so (PAM module)
 ├── daemon mode → D-Bus IPC to daemon
-├── polkit agent → facelock-polkit
 └── oneshot mode → fork/exec facelock auth
 ```
 
@@ -114,7 +115,7 @@ See [Quick Start](quickstart.md) for full instructions.
 - Model SHA256 verification at every load
 - D-Bus system bus policy
 - PAM audit logging to syslog
-- Rate limiting (5 attempts/user/60s)
+- Rate limiting (5 face-detected authentication failures/user/60s by default)
 - systemd service hardening
 
 See [Security](security.md) for the full threat model.

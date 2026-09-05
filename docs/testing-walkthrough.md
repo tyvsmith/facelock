@@ -5,6 +5,12 @@ clean system. It never turns the documentation inventory into a script to run
 blindly. Only explicit cases in `test/docs-walkthrough/cases.json` may execute;
 unmapped executable and manual-only inventory rows remain visible as pending.
 
+Use this workflow when collecting new clean-system execution evidence. It is
+not the completion gate for a documentation-only audit: source review, parser
+conformance, existing behavior tests, and package metadata can establish many
+documentation facts without replaying the commands. A pending execution record
+does not by itself identify a documentation defect.
+
 ## Safety boundary
 
 Booted scenarios run only in a disposable guest you provision and snapshot.
@@ -68,9 +74,9 @@ were reviewed or that it passed.
 
 ## Pin release identity
 
-Every run consumes an identity JSON rather than inferring publication from a
-tag or local build. Generate the readiness report for the intended release and
-channel:
+Every run consumes an identity JSON rather than inferring binary publication
+from a tag or local build. For a GitHub release-asset channel, generate the
+readiness report for the intended release and channel:
 
 ```bash
 RELEASE_TAG=v0.2.0-alpha.1
@@ -81,8 +87,15 @@ python3 test/docs-walkthrough/run.py readiness --release "$RELEASE_TAG" --channe
 
 The identity must bind `release`, normalized `version`, exact native package
 version, a 40-hex `artifact_commit`, channel, runtime policy, and immutable
-artifact evidence: positive asset ID and size, release asset name and URL, and
-64-hex SHA256. The evidence record separately binds `harness_sha256` and
+artifact evidence: name, URL, positive size, and 64-hex SHA256. GitHub binary
+release channels additionally require a positive release asset ID. Source/Nix
+identities instead name the exact GitHub tag archive; a tag archive does not
+require a GitHub Release. The current `readiness` helper nevertheless queries
+the Release API for these channels too, so its missing-release result is not a
+valid source-archive availability check. Check the tag resolution and archive
+identity separately; the source adapter does not require Release metadata.
+
+The evidence record separately binds `harness_sha256` and
 `harness_tree_dirty`. Public-repository identities additionally bind the
 downloaded package digest and repository URL, plus APT suite/signing-key
 digest, COPR chroot, or AUR commit as applicable. An AUR source-built package
@@ -139,8 +152,8 @@ python3 test/docs-walkthrough/run.py launch-container --scenario "$SCENARIO" --i
 
 ## Aggregate evidence
 
-Validate a collection and require all mapped required cases to pass only at
-the release gate that actually has all prerequisites:
+Validate a collection and use the strict aggregate only when intentionally
+requiring complete execution coverage of this walkthrough catalog:
 
 ```bash
 EVIDENCE_ROOT=/root/facelock-evidence
@@ -150,7 +163,8 @@ python3 test/docs-walkthrough/evidence.py aggregate --require-pass "$EVIDENCE_RO
 
 Aggregation reports missing cases and unmapped documentation inventory rows.
 It does not convert manual-only commands into executed coverage or let one
-distribution/channel stand in for another.
+distribution/channel stand in for another. This optional aggregate is not wired
+into `just release-preflight` and is not the documentation-accuracy gate.
 
 ## Manual evidence
 

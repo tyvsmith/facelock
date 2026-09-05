@@ -27,7 +27,7 @@ test-all:
 # dir), and `non_octal_unix_permissions` is exactly the lint that catches a
 # `from_mode(600)` — which means 0o1130, not 0o600 — before it ships.
 
-# Keep in sync with .github/workflows/ci.yml.
+# Lint every workspace target with Clippy, denying warnings (matches CI).
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
 
@@ -42,7 +42,7 @@ fmt:
 # Scan the dependency tree for RustSec advisories (mirrors the CI cargo-audit job).
 # Ignore policy lives in .cargo/audit.toml; deny policy is set here so CI matches.
 
-# Requires cargo-audit: cargo install cargo-audit --locked
+# Scan Cargo.lock for RustSec advisories; requires cargo-audit and applies .cargo/audit.toml.
 audit:
     cargo audit --deny unmaintained --deny unsound
 
@@ -54,7 +54,7 @@ audit:
 # signal-hook-registry, which the correct tokio backend legitimately pulls via
 # tokio's "process" feature. Keep in sync with .github/workflows/ci.yml
 
-# ("Build pam-facelock in isolation" + "Verify pam-facelock dependency surface").
+# Build PAM independently and reject forbidden async-io backend dependencies.
 check-pam-standalone:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -69,7 +69,7 @@ check-pam-standalone:
 
 # Verify agent-facing docs and executable documentation contracts.
 
-# Pass a git ref to also run the coupling check against it.
+# Check repository instructions and lifecycle contracts; optional base ref adds a coupling check.
 check-agent-docs base='':
     #!/usr/bin/env bash
     set -euo pipefail
@@ -98,11 +98,14 @@ test-debian-postrm-purge:
 # documented name to the packaging manifest that declares it. This recipe is
 # what proves the manifests themselves are not naming a package that stopped
 # existing.
+
+# Resolve documented dependency names against live upstream repositories (network required).
 check-package-names-live:
     python3 test/check-package-names-live.py
 
 # Verify instructional coverage, references and parser acceptance (no example execution).
 check-docs:
+    python3 test/check-package-names-live-test.py
     python3 test/docs-inventory-test.py
     python3 test/docs-examples-test.py
     python3 test/check-docs-site-test.py
@@ -129,7 +132,7 @@ docs-site-check:
 test-docs-walkthrough scenario identity output:
     python3 test/docs-walkthrough/run.py run --scenario "{{ scenario }}" --identity "{{ identity }}" --output "{{ output }}"
 
-# Run all checks (test + lint + format + audit + PAM standalone surface + agent docs)
+# Run local tests, lint, format, audit, PAM isolation and documentation/install/release contracts; excludes full packaging and hardware lanes.
 check: test lint fmt-check audit check-pam-standalone check-agent-docs check-docs test-source-install-daemon-lifecycle test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test test-legacy-system-assets test-locale-install-contract test-classify-changes test-arch-package-select check-workflow-policy test-upgrade-v014-contract test-release-artifacts
 
 # The path filter that decides whether the packaging gates run on a pull
@@ -137,6 +140,8 @@ check: test lint fmt-check audit check-pam-standalone check-agent-docs check-doc
 # rpm and Arch lane as skipped and the pull request goes green having built no
 # package. Cheap enough to sit in `just check`; the git work is a dozen
 # one-line commits in a temporary directory.
+
+# Test CI packaging path classification using temporary Git histories.
 test-classify-changes:
     bash test/classify-changes-test.sh
 
@@ -146,12 +151,16 @@ test-classify-changes:
 # nondeterministically, because the losing selection reads directory order
 # (#212). Runs in `just check`: it is a few file names in a temporary directory,
 # and the lane that would otherwise catch it is a full release build.
+
+# Test selection of the main Arch package rather than its debug split.
 test-arch-package-select:
     bash test/arch-package-select-test.sh
 
 # Prove every install path ships compiled gettext catalogs. Static checks run
 # everywhere; the compile check needs gettext and skips without it, so that
 # `just check` keeps working on a machine that has none.
+
+# Check locale installation across package paths; compile a fixture when gettext is available.
 test-locale-install-contract:
     bash test/locale-install-contract.sh
 
@@ -215,6 +224,8 @@ test-arch-pam: _build-test-container
 # that exercises the packaging wiring (install-files modes + the built-in
 
 # defaults) end to end — unit tests cannot.
+
+# Check installed state-directory permissions and enrollment-marker visibility in Arch.
 test-arch-layout: _build-test-container
     podman run --rm facelock-pam-test /run-layout-tests.sh
 
@@ -616,7 +627,7 @@ test-arch-dev-shell: _build-test-container
     podman run --rm -it $devices $mounts facelock-pam-test \
         bash -c "cp /tmp/host-models/* /var/lib/facelock/models/ 2>/dev/null; exec bash"
 
-# Release shell — clean-room Arch container, real user experience (requires camera)
+# Interactive Arch shell with locally staged binaries, no host model mounts (for camera testing).
 test-arch-release-shell: _build-test-container
     #!/usr/bin/env bash
     set -euo pipefail
@@ -659,7 +670,7 @@ test-arch-pkg:
 
 # Build release and install to system
 
-# Run as: just install (builds as you, installs as root)
+# Build release binaries as the invoking user, then elevate for system file installation.
 install: build-release
     /usr/bin/sudo /usr/bin/env PATH=/usr/bin:/bin /usr/bin/just install-files
 
@@ -812,7 +823,7 @@ install-files:
 
 # Uninstall from system
 
-# Run as: just uninstall (elevates to root with a trusted command path)
+# Remove source-installed system assets through sudo; retain biometric state and models.
 uninstall:
     /usr/bin/sudo /usr/bin/env PATH=/usr/bin:/bin /usr/bin/just uninstall-files
 
@@ -885,6 +896,8 @@ uninstall-files:
 # globbed and sorted so a new one is picked up without editing this recipe
 
 # and the output stays byte-stable.
+
+# Regenerate both gettext POT templates from source messages.
 pot:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -983,6 +996,8 @@ pot:
 # typos, drops or invents a placeholder. Dropping --check would silently turn
 
 # that back off.
+
+# Compile and validate available PO catalogs into target/locale (requires msgfmt).
 mo:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -998,7 +1013,7 @@ mo:
 
 # Bump version and prepare a release commit + tag
 
-# Usage: just release 0.2.0
+# Validate and update release versions, then print the commit/tag/push steps; does not publish.
 release version:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1388,7 +1403,7 @@ test-rpm-dev-shell release="44": (_fedora-lane-image release) build-release
     podman run --rm -it $devices $mounts facelock-rpm-pkg-f{{ release }} \
         bash -c "cp /tmp/container-config.toml /etc/facelock/config.toml; cp /tmp/host-models/* /var/lib/facelock/models/ 2>/dev/null; exec bash"
 
-# Release shell — clean-room .deb container, real user experience (requires camera)
+# Interactive Ubuntu 26.04 shell with a locally built .deb and test config, no host model mounts.
 test-deb-release-shell:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1408,7 +1423,7 @@ test-deb-release-shell:
     podman run --rm -it $devices $mounts facelock-deb-resolute-pkg \
         bash -c "/deb-package-lifecycle.sh install; cp /tmp/container-config.toml /etc/facelock/config.toml; exec bash"
 
-# Release shell — clean-room .rpm container, real user experience (requires camera)
+# Interactive Fedora shell with a locally built .rpm and test config, no host model mounts.
 test-rpm-release-shell release="44": (_fedora-lane-image release) build-release
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1432,6 +1447,8 @@ test-rpm-release-shell release="44": (_fedora-lane-image release) build-release
 # prove a clean APT client resolves every declared suite from the tree pages.yml
 # serves: the codenamed pair and the v0.1.4 compatibility names (#310).
 # Needs podman; reprepro, gpg, dpkg-deb and apt all run in the container.
+
+# Test local signed APT publication/client resolution using both supplied manifests or stable stand-in packages.
 test-apt-repo trixie_manifest='' resolute_manifest='':
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1509,9 +1526,9 @@ test-apt-repo trixie_manifest='' resolute_manifest='':
 
 # Quick preflight before tagging a release
 # Usage:
-#   just release-preflight                 # assume stable release
+#   just release-preflight                 # infer the tag from Cargo.toml
 
-# just release-preflight v0.2.0-rc.1     # prerelease (stable channels excluded)
+# Check release prerequisites and pinned evidence; infer tag from Cargo.toml unless supplied.
 release-preflight tag='':
     #!/usr/bin/env bash
     set -euo pipefail

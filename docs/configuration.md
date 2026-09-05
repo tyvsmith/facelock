@@ -62,7 +62,7 @@ Run `sudo facelock test` to see your similarity scores, then set the threshold b
 | Balanced | `scrfd_2.5g_bnkps.onnx` (3MB) | `glintr100.onnx` (249MB) | ~252MB | ~15-30ms slower, better recognition |
 | High accuracy | `det_10g.onnx` (17MB) | `glintr100.onnx` (249MB) | ~266MB | ~40-50ms slower, best accuracy |
 
-Run `facelock setup` to select a model tier interactively and download the required models.
+Run `sudo facelock setup` to select a model tier interactively and download the required models.
 If you point `detector_model` or `embedder_model` at a custom file, you must also set the matching SHA256 so the daemon can verify it at load time.
 
 ## [daemon]
@@ -107,7 +107,7 @@ Controls how the PAM module reaches the face engine.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `max_attempts` | u32 | `5` | Maximum auth attempts per user per window. |
+| `max_attempts` | u32 | `5` | Maximum face-detected authentication failures per user per window; successful and no-face attempts do not consume this budget. |
 | `window_secs` | u64 | `60` | Rate limit window in seconds. |
 
 ### [security.pam_policy]
@@ -147,7 +147,7 @@ Controls how face embeddings are encrypted at rest.
 | `key_path` | string | `"/etc/facelock/encryption.key"` | Path to AES-256-GCM key file for `keyfile` method. |
 | `sealed_key_path` | string | `"/etc/facelock/encryption.key.sealed"` | Path to TPM-sealed AES key for `tpm` method. |
 
-With `method = "tpm"`, the 32-byte AES key is sealed by the TPM at rest. At daemon startup, the key is unsealed and held in memory. Embeddings use the same AES-256-GCM format as `keyfile` — no re-encryption needed when migrating between methods. Migration commands: `facelock tpm seal-key` (keyfile → tpm) and `facelock tpm unseal-key` (tpm → keyfile).
+With `method = "tpm"`, the 32-byte AES key is sealed by the TPM at rest. At daemon startup, the key is unsealed and held in memory. Embeddings use the same AES-256-GCM format as `keyfile` — no re-encryption needed when migrating between methods. The root-gated migration commands are `sudo facelock tpm seal-key` (keyfile → tpm) and `sudo facelock tpm unseal-key` (tpm → keyfile). `seal-key` requires the plaintext key to exist and refuses to overwrite a sealed key; `unseal-key` requires the sealed key and refuses to overwrite a plaintext key. Each command updates `encryption.method` only after writing the destination key.
 
 ## [polkit]
 

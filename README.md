@@ -2,7 +2,7 @@
 
 # Facelock: Face Authentication for Linux
 
-> **Release status:** v0.1.4 is the latest published stable release. This tree
+> **Release status (checked 2026-09-05):** v0.1.4 is the latest published stable release. This tree
 > is v0.2.0-alpha.1; its tag exists, but no corresponding GitHub Release is
 > currently published. A tag, source build, staged package, or successful
 > rebuild is not evidence that an artifact is available to users.
@@ -17,6 +17,10 @@ telemetry. Your biometric data never leaves your machine.
 
 ### Arch Linux (AUR)
 
+This installs the stable source-build package. `facelock-bin` is the prebuilt
+alternative and `facelock-git` follows development; all three AUR entries
+served version 0.1.4-1 when checked on 2026-09-05.
+
 ```bash
 yay -S facelock           # or paru -S facelock
 ```
@@ -25,8 +29,8 @@ yay -S facelock           # or paru -S facelock
 
 Debian-family release support is exactly Debian 13 (Trixie) and Ubuntu 26.04
 LTS (Resolute). Those exact suites are the 0.2.0 stable publication contract,
-but they are not currently served: a clean Debian 13 check of the documented
-`trixie` Release URL returns 404. Do not add that source until a stable 0.2.0
+but they are not currently served: clean checks of both codenamed `Release`
+URLs returned 404 on 2026-09-05. Do not add that source until a stable 0.2.0
 release publishes it.
 
 The future public base is `https://tysmith.me/facelock/apt`; this mapping is a
@@ -37,7 +41,8 @@ release contract, not a currently usable repository:
 | Debian 13 | `trixie` | TPM |
 | Ubuntu 26.04 | `resolute` | TPM |
 
-Source entries written for v0.1.4 name the `main` or `legacy` suite. They
+Source entries written for v0.1.4 name the `main` or `legacy` suite. Both
+returned a signed `Release` file on 2026-09-05. The release policy says they
 keep working until 0.3.0: `main` maps to the Trixie package set and `legacy`
 serves signed empty indexes. At 0.3.0, `apt update` fails until the entry is
 removed. Bookworm, Noble, and Ubuntu 25.x have no future suite. Use the source
@@ -45,25 +50,42 @@ build below for the current alpha tree.
 
 ### Fedora (COPR)
 
-The supported COPR targets are Fedora 43, 44, and 45. The production COPR
-currently serves v0.1.3, behind the v0.1.4 stable release; use the source path
-below if you need the current tree. The staging COPR is a candidate channel,
-not a stable installation source. RHEL is not in the supported matrix.
+The supported COPR targets are Fedora 43, 44, and 45. On 2026-09-05, the
+production COPR served v0.1.3 on all three, behind the v0.1.4 stable release;
+use the source path below if you need the current tree. The staging COPR is a
+candidate channel, not a stable installation source. RHEL is not in the
+supported matrix.
 
 ```bash
+sudo dnf install dnf5-plugins
 sudo dnf copr enable tyvsmith/facelock
 sudo dnf install facelock
 ```
 
 ### From Source
 
+Install the distro-specific build prerequisites first; the Rust dependency and
+the separately loaded ONNX Runtime shared library are not the same thing. See
+the [source-build prerequisites](docs/quickstart.md#source-build-prerequisites).
+
 ```bash
 just build                # build into target/debug; does not install
 target/debug/facelock --help
-just install              # optional host install; prompts for sudo, does not edit PAM
 ```
 
+`just build` does not install Facelock, and `--help` does not prove that an
+ONNX Runtime can be loaded. On Arch, where the system runtime is packaged, the
+optional `just install` command builds and installs the current tree, prompts
+for sudo for file writes, and does not edit PAM. Debian/Ubuntu source builds
+need a separately installed trusted ONNX Runtime to run inference; their future
+Facelock `.deb` packages bundle it. Fedora users should use the RPM/COPR layout,
+and the quickstart records why the current NixOS source-tree module is not yet
+a usable authentication installation.
+
 ### Post-Install
+
+After installing a package, or after a source installation with a working ONNX
+Runtime:
 
 ```bash
 sudo facelock setup       # interactive wizard: camera, models, encryption,
@@ -81,7 +103,9 @@ Every wizard step can also be answered or declined from the command line — `--
 
 ### GPU Acceleration (Optional)
 
-GPU support is runtime-only -- no special build flags needed. Install a GPU-enabled ONNX Runtime package for your hardware and set `execution_provider` in `/etc/facelock/config.toml`:
+GPU support is runtime-only -- no Facelock rebuild is needed. On Arch, replace
+the CPU runtime with the matching official-repository ONNX Runtime variant and
+set `execution_provider` in `/etc/facelock/config.toml`:
 
 | GPU Vendor | Package (Arch) | Config value |
 |------------|---------------|--------------|
@@ -89,12 +113,16 @@ GPU support is runtime-only -- no special build flags needed. Install a GPU-enab
 | AMD | `onnxruntime-opt-rocm` | `"rocm"` |
 | Intel | none packaged | `"openvino"` |
 
-Supports CUDA, ROCm, and OpenVINO execution providers. CPU is the default. Arch packages no OpenVINO build of ONNX Runtime, in the repositories or the AUR. Build ONNX Runtime with the OpenVINO execution provider yourself to use `execution_provider = "openvino"`. See [GPU acceleration](book/src/gpu.md).
+Facelock has configuration support for CUDA, ROCm, and OpenVINO; those GPU
+paths are not part of the release package validation matrix. CPU is the
+default. Arch packages no OpenVINO build of ONNX Runtime, in the repositories
+or the AUR. Build ONNX Runtime with the OpenVINO execution provider yourself to
+use `execution_provider = "openvino"`. See [GPU acceleration](book/src/gpu.md).
 
 ### Uninstall
 
 ```bash
-just uninstall
+just uninstall  # source installations only; remove native packages with their package manager
 ```
 
 Ordinary uninstall preserves biometric and configuration state. Preview the
@@ -249,7 +277,7 @@ See [docs/testing-safety.md](docs/testing-safety.md) before editing PAM config o
 - D-Bus system bus policy: deny-all default; `Authenticate` open to every local user (daemon-checked UID), everything else root-only; no group
 - D-Bus caller UID verification on all daemon methods
 - PAM audit logging to syslog
-- Rate limiting (5 attempts/user/60s)
+- Rate limiting (5 face-detected authentication failures/user/60s by default)
 - systemd service hardening (ProtectSystem=strict, NoNewPrivileges, etc.)
 
 See [docs/security.md](docs/security.md) for the full threat model.
@@ -267,8 +295,8 @@ Fedora `.rpm`. It also attempts two suite-specific `.deb` artifacts, one for
 each supported suite. Those builds are not publication proof: the release and
 every required asset must be present and verified. Stable releases publish
 AUR/APT and enable production COPR handling;
-prereleases must not enter those stable channels. The existing
-v0.2.0-alpha.1 tag currently has no GitHub Release. See
+prereleases must not enter those stable channels. As checked on 2026-09-05,
+the existing v0.2.0-alpha.1 tag has no GitHub Release. See
 [docs/releasing.md](docs/releasing.md) for the gates and versioning contract.
 
 ## License
