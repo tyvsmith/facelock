@@ -42,6 +42,16 @@ class InventoryTest(unittest.TestCase):
         self.assertNotEqual(first, second)
         self.assertIn("just new", second)
 
+    def test_all_cargo_target_spellings_are_validated(self):
+        for argv in (["cargo", "build", "--bin", "invented"], ["cargo", "run", "--bin=invented"]):
+            self.assertIsNotNone(MODULE.check_entrypoint(argv, {"facelock"}, {}, schematic=False))
+        self.assertIsNone(MODULE.check_entrypoint(["cargo", "build", "--bin", "facelock"], {"facelock"}, {}))
+
+    def test_schematic_recipe_requires_real_name_but_may_omit_arguments(self):
+        recipes = {"release": {"parameters": [{"name": "version", "default": None}]}}
+        self.assertIsNotNone(MODULE.check_entrypoint(["just", "invented"], set(), recipes, schematic=True))
+        self.assertIsNone(MODULE.check_entrypoint(["just", "release"], set(), recipes, schematic=True))
+
 
 if __name__ == "__main__":
     unittest.main()

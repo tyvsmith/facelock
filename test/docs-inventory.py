@@ -74,6 +74,30 @@ def check_just_argv(argv, recipes):
     return None
 
 
+def check_entrypoint(argv, targets, recipes, schematic=False):
+    """Check concrete identities even when an inline synopsis omits values."""
+    if not argv:
+        return None
+    if argv[0] == "just":
+        if not schematic:
+            return check_just_argv(argv, recipes)
+        args = argv[1:]
+        while args and "=" in args[0] and not args[0].startswith("-"):
+            args = args[1:]
+        if args and not args[0].startswith(("-", "<", "[", "$")) and args[0] not in recipes:
+            return f"unknown just recipe: {args[0]}"
+    if argv[0] == "cargo":
+        # This also accepts a cargo-run wrapper terminating at `--`.
+        args = argv[1:argv.index("--")] if "--" in argv else argv[1:]
+        for index, token in enumerate(args):
+            target = token.split("=", 1)[1] if token.startswith("--bin=") else args[index + 1] if token == "--bin" and index + 1 < len(args) else None
+            if token == "--bin" and target is None:
+                return "Cargo --bin requires a target"
+            if target is not None and not target.startswith(("<", "[", "$")) and target not in targets:
+                return f"unknown Cargo binary: {target}"
+    return None
+
+
 def render_recipes(recipes, binaries):
     lines = ["# Developer Commands", "", "This index is derived from Cargo targets and the public justfile metadata. Regenerate", "it with `python3 test/docs-inventory.py --write`; `just check-docs` detects drift.", "", "Run recipes from a repository checkout. Recipes can build, download, install, remove,", "or publish state: inspect `just --show RECIPE` and read the linked guide before using", "one. An entry here records an interface, not evidence that a release or hardware test ran.", "", "## Executables", "", "| Executable | Crate | Reference |", "|---|---|---|"]
     for binary in binaries:

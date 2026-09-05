@@ -309,17 +309,13 @@ def main():
         binaries, recipes = inventory.metadata(args.root)
         targets = {binary["name"] for binary in binaries}
         for row in report["occurrences"]:
-            if row["classification"] != "executable":
+            if row["classification"] not in {"executable", "schematic"}:
                 continue
             for part in row["segments"]:
-                argv = part["argv"]
-                if argv and argv[0] == "just":
-                    error = inventory.check_just_argv(argv, recipes)
+                for argv in (part["argv"], part["wrapper"]):
+                    error = inventory.check_entrypoint(argv, targets, recipes, schematic=row["classification"] == "schematic")
                     if error:
                         report["errors"].append(f"{row['source']['path']}:{row['source']['line']}: {error}")
-                wrapper = part["wrapper"]
-                if "cargo" in wrapper and "--bin" in wrapper and argv and argv[0] not in targets:
-                    report["errors"].append(f"{row['source']['path']}:{row['source']['line']}: unknown Cargo binary {argv[0]}")
     if args.json or not args.check:
         print(json.dumps(report, indent=2))
     else:
