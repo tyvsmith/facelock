@@ -956,7 +956,15 @@ options or spacing, corrupt provenance for a candidate, any other linked entry,
 or a reference in a read-only root is an unmanaged blocker. Nothing is changed
 when preflight finds one. The same scan recognizes an exact unchanged
 Facelock-created vendor override even if a previous run already removed its
-module rule, so package cleanup can finish that bounded intermediate.
+module rule, so package cleanup can finish that bounded intermediate. A
+drifted or source-absent override is not a blocker by itself: when its
+Facelock rule is provenance-owned or the exact canonical line, `--all`
+removes the rule and keeps the file, the in-place rewrite named removal
+already performs. A file edited after `add` is judged the same way: the
+recorded hash no longer matching only means the file changed, so a
+conventional service with the exact canonical line is still Facelock's to
+clean. A reference it cannot vouch for blocks the whole run, and that blocker
+names `facelock pam remove --service <name>` as the way out.
 
 With `--dry-run`, an existing PAM backup directory is inspected read-only and
 must already have its trusted owner and mode. The preview does not repair or

@@ -7750,6 +7750,12 @@ fn strict_record_names_for_service(root: &Path, service: &str) -> std::io::Resul
     Ok(names)
 }
 
+/// Appended to the two blockers an operator can clear themselves. Machine-wide
+/// cleanup never rewrites a rule it cannot vouch for; naming the service is the
+/// authorization that does.
+const REMOVE_ALL_REMEDY: &str =
+    "remove that line with `facelock pam remove --service <name>` or by hand, then retry";
+
 fn remove_all_reference_is_owned(
     store: Option<&BackupStore>,
     service: &str,
@@ -7773,7 +7779,16 @@ fn remove_all_reference_is_owned(
     }) {
         return Ok(true);
     }
-    anyhow::bail!("PAM service {service} no longer matches its Facelock provenance")
+    // A record that no longer matches says the file changed after `add`, not
+    // who owns the rule in it. A conventional service is held to the same
+    // exact-bytes rule as one with no record at all; an artifact name was a
+    // candidate only because of its record, so nothing is left to vouch for it.
+    if is_service_name(service) {
+        return Ok(has_only_exact_legacy_facelock_rules(content));
+    }
+    anyhow::bail!(
+        "PAM service {service} no longer matches its Facelock provenance; {REMOVE_ALL_REMEDY}"
+    )
 }
 
 fn remove_all_name_is_candidate(
@@ -7920,41 +7935,35 @@ fn remove_all_services_with_store(
                 identity: Some(identity.clone()),
                 plan: Plan::NoChange,
             };
-            match classify_vendor_override(dirs, &candidate, &content, &identity) {
-                VendorOverrideDisposition::Unchanged
-                    if has_facelock_rule || include_exact_cleanup_intermediates =>
-                {
+            // An exact unchanged Facelock copy is retired whole. Every other
+            // disposition, drifted or source-less included, stays on disk;
+            // whether its module rule comes out is the same ownership question
+            // every other local service answers below. Named `remove` already
+            // rewrites such a file in place rather than refusing it.
+            let disposition = classify_vendor_override(dirs, &candidate, &content, &identity);
+            if disposition == VendorOverrideDisposition::Unchanged {
+                if has_facelock_rule || include_exact_cleanup_intermediates {
                     services.push(service);
-                    continue;
                 }
-                VendorOverrideDisposition::Unchanged => continue,
-                VendorOverrideDisposition::Drifted if has_facelock_rule => {
-                    blockers.push(format!(
-                        "{} is an administrator-modified vendor override",
-                        base.join(&service).display()
-                    ));
-                    continue;
-                }
-                VendorOverrideDisposition::Drifted => continue,
-                VendorOverrideDisposition::SourceAbsent(vendor) if has_facelock_rule => {
-                    blockers.push(format!(
-                        "{} is an administrator-modified vendor override: configured vendor source {} is absent",
-                        base.join(&service).display(),
-                        vendor.display()
-                    ));
-                    continue;
-                }
-                VendorOverrideDisposition::SourceAbsent(_) => continue,
-                VendorOverrideDisposition::NotFacelock if !name_is_candidate => continue,
-                VendorOverrideDisposition::NotFacelock if !has_facelock_rule => continue,
-                VendorOverrideDisposition::NotFacelock => {}
+                continue;
+            }
+            if !name_is_candidate || !has_facelock_rule {
+                continue;
             }
             match remove_all_reference_is_owned(store.as_ref(), &service, &content) {
                 Ok(true) => services.push(service),
-                Ok(false) => blockers.push(format!(
-                    "{} is an administrator-managed PAM reference",
-                    base.join(&service).display()
-                )),
+                Ok(false) => {
+                    let source = match disposition {
+                        VendorOverrideDisposition::SourceAbsent(vendor) => {
+                            format!(" (configured vendor source {} is absent)", vendor.display())
+                        }
+                        _ => String::new(),
+                    };
+                    blockers.push(format!(
+                        "{} is an administrator-managed PAM reference{source}; {REMOVE_ALL_REMEDY}",
+                        base.join(&service).display()
+                    ));
+                }
                 Err(error) => blockers.push(error.to_string()),
             }
         }
@@ -14660,8 +14669,13 @@ account required pam_unix.so\n";
         );
     }
 
+    /// A vendor file the administrator has replaced with their own
+    /// `/etc/pam.d` file, in the shape the bug report carried: an Omarchy-style
+    /// stack that Facelock never created and only ever edited in place.
+    const OMARCHY_OVERRIDE_BODY: &str = "auth      [success=1 default=ignore] pam_exec.so quiet /usr/bin/omarchy-hw-laptop-closed\nauth      sufficient pam_fprintd.so\nauth      required pam_unix.so\n\naccount   required pam_unix.so\npassword  required pam_unix.so\nsession   required pam_unix.so\n";
+
     #[test]
-    fn remove_all_preserves_a_content_drifted_vendor_override_as_a_blocker() {
+    fn remove_all_removes_the_rule_from_a_content_drifted_vendor_override() {
         let (_root, etc, vendor) = pair();
         fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
         let dirs = both(&etc, &vendor);
@@ -14669,17 +14683,25 @@ account required pam_unix.so\n";
         let override_path = etc.join("polkit-1");
         let mut drifted = fs::read(&override_path).unwrap();
         drifted.extend_from_slice(b"# administrator customization\n");
-        fs::write(&override_path, drifted).unwrap();
-        let before = snapshot(&etc);
+        fs::write(&override_path, &drifted).unwrap();
+        let vendor_before = snapshot(&vendor);
 
-        let error = remove_all(&dirs).unwrap_err().to_string();
+        assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);
 
-        assert!(error.contains("administrator"), "got: {error}");
-        assert_eq!(snapshot(&etc), before, "preflight must preserve the file");
+        assert!(
+            override_path.exists(),
+            "a drifted override is rewritten, not retired"
+        );
+        assert_eq!(
+            fs::read(&override_path).unwrap(),
+            with_line_removed(&drifted),
+            "the customization survives and the module rule does not"
+        );
+        assert_eq!(snapshot(&vendor), vendor_before);
     }
 
     #[test]
-    fn remove_all_preserves_a_metadata_drifted_vendor_override_as_a_blocker() {
+    fn remove_all_removes_the_rule_from_a_metadata_drifted_vendor_override() {
         use std::os::unix::fs::PermissionsExt;
 
         let (_root, etc, vendor) = pair();
@@ -14688,13 +14710,177 @@ account required pam_unix.so\n";
         assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
         let override_path = etc.join("polkit-1");
         fs::set_permissions(&override_path, fs::Permissions::from_mode(0o600)).unwrap();
+        let before = fs::read(&override_path).unwrap();
+        let vendor_before = snapshot(&vendor);
+
+        assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);
+
+        assert_eq!(
+            fs::read(&override_path).unwrap(),
+            with_line_removed(&before),
+            "header and payload survive; only the module rule leaves"
+        );
+        assert_eq!(
+            fs::metadata(&override_path).unwrap().mode() & 0o7777,
+            0o600,
+            "an in-place rewrite models the file it replaces"
+        );
+        assert_eq!(snapshot(&vendor), vendor_before);
+    }
+
+    /// The reported shape. `pam add` edits an administrator's own override in
+    /// place, so machine-wide cleanup has to be able to take the same line back
+    /// out: refusing it aborts the package removal that called it.
+    #[test]
+    fn remove_all_removes_the_rule_from_an_administrator_created_override() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let override_path = etc.join("polkit-1");
+        fs::write(&override_path, OMARCHY_OVERRIDE_BODY).unwrap();
+        let dirs = both(&etc, &vendor);
+        let vendor_before = snapshot(&vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+
+        assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);
+
+        assert!(
+            override_path.exists(),
+            "the administrator's own file is not Facelock's to delete"
+        );
+        assert_eq!(
+            fs::read(&override_path).unwrap(),
+            OMARCHY_OVERRIDE_BODY.as_bytes(),
+            "the file returns to exactly what the administrator wrote"
+        );
+        assert_eq!(snapshot(&vendor), vendor_before);
+    }
+
+    #[test]
+    fn remove_all_still_blocks_a_customized_rule_in_a_drifted_override() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        fs::write(
+            etc.join("polkit-1"),
+            format!("auth required pam_facelock.so debug\n{OMARCHY_OVERRIDE_BODY}"),
+        )
+        .unwrap();
+        let dirs = both(&etc, &vendor);
         let before = snapshot(&etc);
 
         let error = remove_all(&dirs).unwrap_err().to_string();
 
-        assert!(error.contains("administrator"), "got: {error}");
+        assert!(error.contains("administrator-managed"), "got: {error}");
+        assert!(error.contains("pam remove --service"), "got: {error}");
         assert_eq!(snapshot(&etc), before, "preflight must preserve the file");
-        assert_eq!(fs::metadata(override_path).unwrap().mode() & 0o7777, 0o600);
+    }
+
+    #[test]
+    fn remove_all_removes_the_rule_when_the_vendor_source_is_absent() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        fs::remove_file(vendor.join("polkit-1")).unwrap();
+        let override_path = etc.join("polkit-1");
+
+        assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);
+
+        let retained = fs::read(&override_path).unwrap();
+        assert!(!PamDocument::new(&retained).has_facelock_rule());
+        assert!(
+            retained.starts_with(b"# Copied from"),
+            "a copy whose source is gone keeps its provenance header"
+        );
+    }
+
+    #[test]
+    fn remove_all_dry_run_previews_a_drifted_override_without_writing() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        fs::write(etc.join("polkit-1"), OMARCHY_OVERRIDE_BODY).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let before = snapshot(&etc);
+        let request = PamRequest {
+            action: PamAction::Remove,
+            all: true,
+            no_confirm: true,
+            dry_run: true,
+            ..PamRequest::default()
+        };
+
+        assert_eq!(
+            remove_all_services_read_only(&dirs).unwrap(),
+            vec!["polkit-1".to_string()],
+            "the preview must admit the drifted override, not skip it"
+        );
+        assert_eq!(remove_all_in(&dirs, &request).unwrap(), WRITE_OK);
+
+        assert_eq!(snapshot(&etc), before);
+    }
+
+    /// A record that no longer matches proves only that the file changed after
+    /// `add`. For a conventional service the exact canonical rule is still the
+    /// recognition rule the contract states, the same one a file with no record
+    /// at all is held to.
+    #[test]
+    fn remove_all_removes_the_exact_rule_after_a_post_add_edit() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let override_path = etc.join("polkit-1");
+        fs::write(&override_path, OMARCHY_OVERRIDE_BODY).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let mut edited = fs::read(&override_path).unwrap();
+        edited.extend_from_slice(b"# added after facelock\n");
+        fs::write(&override_path, &edited).unwrap();
+
+        assert_eq!(remove_all(&dirs).unwrap(), WRITE_OK);
+
+        assert_eq!(
+            fs::read(&override_path).unwrap(),
+            with_line_removed(&edited),
+            "the later edit survives and the module rule does not"
+        );
+    }
+
+    #[test]
+    fn remove_all_still_blocks_a_rule_customized_after_add() {
+        let (_root, etc, vendor) = pair();
+        fs::write(vendor.join("polkit-1"), POLKIT_BEFORE).unwrap();
+        let override_path = etc.join("polkit-1");
+        fs::write(&override_path, OMARCHY_OVERRIDE_BODY).unwrap();
+        let dirs = both(&etc, &vendor);
+        assert_eq!(write_in(&dirs, &add(&["polkit-1"])).unwrap(), WRITE_OK);
+        let customized = String::from_utf8(fs::read(&override_path).unwrap())
+            .unwrap()
+            .replacen(PAM_LINE, "auth required pam_facelock.so debug", 1);
+        fs::write(&override_path, customized).unwrap();
+        let before = snapshot(&etc);
+
+        let error = remove_all(&dirs).unwrap_err().to_string();
+
+        assert!(error.contains("administrator-managed"), "got: {error}");
+        assert_eq!(snapshot(&etc), before, "preflight must preserve the file");
+    }
+
+    /// The fallback is for conventional names only: an artifact name is a
+    /// candidate purely because a record exists for it, so a record that no
+    /// longer matches leaves nothing to vouch for it.
+    #[test]
+    fn remove_all_still_blocks_an_artifact_name_whose_record_went_stale() {
+        let dir = seeded(&[(".custom", SUDO_BEFORE)]);
+        let dirs = only(dir.path());
+        assert_eq!(write_in(&dirs, &add(&[".custom"])).unwrap(), WRITE_OK);
+        let path = dir.path().join(".custom");
+        let mut edited = fs::read(&path).unwrap();
+        edited.extend_from_slice(b"# added after facelock\n");
+        fs::write(&path, &edited).unwrap();
+
+        let error = remove_all(&dirs).unwrap_err().to_string();
+
+        assert!(error.contains("no longer matches"), "got: {error}");
+        assert_eq!(fs::read(&path).unwrap(), edited);
     }
 
     #[test]
