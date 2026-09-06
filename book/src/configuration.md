@@ -1,6 +1,9 @@
 # Configuration Reference
 
-Facelock reads its configuration from `/etc/facelock/config.toml`. Override the path with the `FACELOCK_CONFIG` environment variable. Note: `FACELOCK_CONFIG` is ignored by privileged PAM and root auth flows, which always use either an explicit `--config` path or `/etc/facelock/config.toml`.
+Facelock reads its configuration from `/etc/facelock/config.toml`.
+`FACELOCK_CONFIG` overrides it only when the effective user is non-root. Every
+effective-UID-0 process ignores the environment; use an explicit `--config`
+where supported, or the default path.
 
 All settings are optional. Facelock auto-detects the camera and uses sensible defaults. The annotated config file at `config/facelock.toml` in the repository serves as the canonical example.
 
@@ -32,7 +35,9 @@ Face detection and embedding parameters.
 | `detection_confidence` | f32 | `0.5` | Minimum confidence for the face detector to report a detection. Lower values detect more faces but increase false positives. |
 | `nms_threshold` | f32 | `0.4` | Non-maximum suppression threshold for overlapping detections. |
 | `detector_model` | string | `"scrfd_2.5g_bnkps.onnx"` | ONNX detector model filename. Must exist in `daemon.model_dir`. Bundled models are verified against the manifest; custom models require `detector_sha256`. |
+| `detector_sha256` | string (optional) | unset | Required digest for a custom detector; bundled models use the manifest digest. |
 | `embedder_model` | string | `"w600k_r50.onnx"` | ONNX embedder model filename. Must exist in `daemon.model_dir`. Bundled models are verified against the manifest; custom models require `embedder_sha256`. |
+| `embedder_sha256` | string (optional) | unset | Required digest for a custom embedder; bundled models use the manifest digest. |
 | `execution_provider` | string | `"cpu"` | ONNX Runtime execution provider. Values: `"cpu"`, `"cuda"`, `"rocm"`, `"openvino"`. GPU providers require a GPU-enabled ONNX Runtime package installed on the system. |
 | `threads` | u32 | `4` | Number of CPU threads for ONNX inference. |
 
@@ -46,7 +51,7 @@ Face detection and embedding parameters.
 | 0.80 -- 0.90 | Strict -- rarely accepts wrong person, may reject on bad angles |
 | 0.90+ | Very strict -- may require near-ideal lighting and pose |
 
-Run `facelock test` to see your similarity scores, then set the threshold below your typical match score with some margin.
+Run `sudo facelock test` to see your similarity scores, then set the threshold below your typical match score with some margin. Exit zero alone is not a match verdict; inspect the output.
 
 ### Model tiers
 
@@ -56,7 +61,7 @@ Run `facelock test` to see your similarity scores, then set the threshold below 
 | Balanced | `scrfd_2.5g_bnkps.onnx` (3MB) | `glintr100.onnx` (249MB) | ~252MB | ~15-30ms slower, better recognition |
 | High accuracy | `det_10g.onnx` (17MB) | `glintr100.onnx` (249MB) | ~266MB | ~40-50ms slower, best accuracy |
 
-Run `facelock setup` to select a model tier interactively and download the required models.
+Run `sudo facelock setup` to select a model tier interactively and download the required models.
 If you point `detector_model` or `embedder_model` at a custom file, you must also set the matching SHA256 so the daemon can verify it at load time.
 
 ## [daemon]
@@ -65,7 +70,7 @@ Controls how the PAM module reaches the face engine.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `mode` | string | `"daemon"` | `"daemon"` connects to a persistent daemon via D-Bus system bus (models stay loaded; only a cold attempt pays a camera reopen -- measure it with `facelock bench camera-reopen`). `"oneshot"` spawns `facelock auth` per PAM call (slower: model load on every call, no background process). |
+| `mode` | string | `"daemon"` | `"daemon"` connects to a persistent daemon via D-Bus system bus (models stay loaded; only a cold attempt pays a camera reopen -- measure it with `sudo facelock bench camera-reopen`). `"oneshot"` spawns `facelock auth` per PAM call (slower: model load on every call, no background process). |
 | `model_dir` | string | `"/var/lib/facelock/models"` | Directory containing ONNX model files. |
 | `idle_timeout_secs` | u64 | `0` | Shut down the daemon after this many idle seconds. `0` means never. Useful with D-Bus activation. |
 
@@ -84,17 +89,24 @@ Controls how the PAM module reaches the face engine.
 | `abort_if_lid_closed` | bool | `true` | Refuse face auth when the laptop lid is closed (camera blocked). |
 | `require_ir` | bool | `true` | Require an IR camera for authentication. RGB cameras are trivially spoofed with a printed photo. Only set to `false` for development/testing. |
 | `require_frame_variance` | bool | `true` | Require multiple frames with different embeddings before accepting. Defends against static photo attacks. |
+| `frame_variance_max_similarity` | f32 | `0.985` | Maximum similarity between consecutive matched frames in the variance window. Passive anti-photo check only; it does not stop video replay. |
+| `ir_texture_min_stddev` | f32 | `10.0` | Minimum raw-grayscale standard deviation for the IR texture check. |
 | `require_landmark_liveness` | bool | `false` | Require landmark movement between frames to pass liveness check. Detects static images by tracking facial landmark positions across frames. Experimental; off by default. |
 | `landmark_displacement_px` | f32 | `1.5` | Minimum pixel displacement for a landmark to count as "moving" between frames. Only used when `require_landmark_liveness` is true. |
 | `landmark_min_moving` | u32 | `3` | Number of facial landmarks (out of 5) that must show movement to pass the liveness check. Only used when `require_landmark_liveness` is true. |
 | `suppress_unknown` | bool | `false` | Suppress warnings for unknown users (users with no enrolled face). |
 | `min_auth_frames` | u32 | `3` | Minimum number of matching frames required before accepting. Only applies when `require_frame_variance` is true. |
+| `bind_templates_to_device` | bool | `true` | Skip templates enrolled on a camera that does not match the live camera at the configured granularity. Advisory, not device attestation. |
+| `device_match_granularity` | string | `"model"` | `"model"` compares VID:PID; `"unit"` also requires a stable serial. |
+| `bind_legacy_templates` | bool | `true` | Permit older templates without a device identity, with a re-enrollment warning. |
+| `bind_device_aad` | bool | `false` | Opt-in cryptographic camera binding for encrypted templates; requires re-enrollment and a usable device identity. |
+| `allow_plaintext` | bool | `false` | Permit `encryption.method = "none"`; without it, plaintext enrollment is refused. |
 
 ### [security.rate_limit]
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `max_attempts` | u32 | `5` | Maximum auth attempts per user per window. |
+| `max_attempts` | u32 | `5` | Maximum face-detected authentication failures per user per window; successful and no-face attempts do not consume this budget. |
 | `window_secs` | u64 | `60` | Rate limit window in seconds. |
 
 ### [security.pam_policy]
@@ -130,11 +142,23 @@ Controls how face embeddings are encrypted at rest.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `method` | string | `"none"` | `"none"` -- no encryption. `"keyfile"` -- AES-256-GCM with a plaintext key file. `"tpm"` -- AES-256-GCM with a TPM-sealed key (recommended if TPM available). |
+| `method` | string | `"keyfile"` | `"keyfile"` -- AES-256-GCM with a root-only key file. `"tpm"` -- AES-256-GCM with a TPM-sealed key. `"none"` requires `security.allow_plaintext = true`. |
 | `key_path` | string | `"/etc/facelock/encryption.key"` | Path to AES-256-GCM key file for `keyfile` method. |
 | `sealed_key_path` | string | `"/etc/facelock/encryption.key.sealed"` | Path to TPM-sealed AES key for `tpm` method. |
 
-With `method = "tpm"`, the 32-byte AES key is sealed by the TPM at rest. At daemon startup, the key is unsealed and held in memory. Embeddings use the same AES-256-GCM format as `keyfile` — no re-encryption needed when migrating between methods. Migration commands: `facelock tpm seal-key` (keyfile → tpm) and `facelock tpm unseal-key` (tpm → keyfile).
+With `method = "tpm"`, the 32-byte AES key is sealed by the TPM at rest. At daemon startup, the key is unsealed and held in memory. Embeddings use the same AES-256-GCM format as `keyfile` — no re-encryption needed when migrating between methods. The root-gated migration commands are `sudo facelock tpm seal-key` (keyfile → tpm) and `sudo facelock tpm unseal-key` (tpm → keyfile). `seal-key` requires the plaintext key to exist and refuses to overwrite a sealed key; `unseal-key` requires the sealed key and refuses to overwrite a plaintext key. Each command updates `encryption.method` only after writing the destination key.
+
+## [polkit]
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `face_eligible_actions` | `["org.freedesktop.login1.lock-sessions"]` | Action IDs the optional agent may handle; it declines all others. |
+
+## [pam]
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `config_dirs` | `["/etc/pam.d", "/usr/lib/pam.d"]` | Lookup order. Only the first directory is writable; later entries are vendor roots. |
 
 ## [audit]
 

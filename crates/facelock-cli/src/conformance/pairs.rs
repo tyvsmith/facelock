@@ -215,6 +215,43 @@ fn paths(body: &str) -> BTreeSet<String> {
     found
 }
 
+/// A parent directory cannot vouch for a managed backup filename or a
+/// sibling with the same prefix. Permit only concrete canonical refinements.
+fn path_is_covered(path: &str, known: &BTreeSet<String>) -> bool {
+    if known.contains(path) {
+        return true;
+    }
+    const REFINEMENTS: &[(&str, &str)] = &[
+        ("/var/lib/facelock", "/var/lib/facelock/facelock.db"),
+        ("/var/lib/facelock", "/var/lib/facelock/models"),
+        ("/etc/facelock", "/etc/facelock/config.toml"),
+        (
+            "/usr/share/dbus-1/system.d",
+            "/usr/share/dbus-1/system.d/org.facelock.Daemon.conf",
+        ),
+    ];
+    REFINEMENTS
+        .iter()
+        .any(|(parent, child)| path == *child && known.contains(*parent))
+}
+
+#[test]
+fn managed_path_coverage_rejects_stale_adjacent_backups_and_prefixes() {
+    let known = [
+        "/etc/pam.d".to_owned(),
+        "/etc/pam.d/sudo".to_owned(),
+        "/var/lib/facelock".to_owned(),
+    ]
+    .into_iter()
+    .collect();
+    assert!(!path_is_covered("/etc/pam.d/sudo.facelock-backup", &known));
+    assert!(!path_is_covered(
+        "/var/lib/facelock-old/facelock.db",
+        &known
+    ));
+    assert!(path_is_covered("/var/lib/facelock/facelock.db", &known));
+}
+
 /// Every top-level and nested verb the binary offers.
 fn known_commands() -> BTreeSet<String> {
     let root = Cli::command();
@@ -290,6 +327,7 @@ fn paired_sections_introduce_no_command_the_docs_lack() {
 /// only one copy believes in.
 #[test]
 fn paired_sections_introduce_no_path_the_docs_lack() {
+    let mut failures = Vec::new();
     for (docs_path, docs, book_path, book) in PAIRS {
         let book_sections = sections(book);
         for (heading, docs_body) in sections(docs) {
@@ -298,17 +336,13 @@ fn paired_sections_introduce_no_path_the_docs_lack() {
             };
             let in_docs = paths(&docs_body);
             for path in paths(book_body) {
-                let refines = in_docs
-                    .iter()
-                    .any(|known| *known != path && path.starts_with(known.as_str()));
-                assert!(
-                    in_docs.contains(&path) || refines,
-                    "`{heading}` in {book_path} names `{path}`, which the same \
-                     section of {docs_path} never mentions"
-                );
+                if !path_is_covered(&path, &in_docs) {
+                    failures.push(format!("`{heading}` in {book_path} names `{path}`, which the same section of {docs_path} never mentions"));
+                }
             }
         }
     }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 /// The book carries the facts a reader would otherwise only find in `docs/`.
@@ -393,10 +427,11 @@ fn every_same_named_page_is_paired() {
     );
 
     for name in shared {
-        // `contracts.md` is deduplicated: the book's copy is a one-line
-        // `{{#include}}` of the canonical file (#187), so the two cannot drift
-        // and there is nothing to compare.
-        if name == "contracts.md" {
+        // Exact canonical includes cannot drift; validate the actual target
+        // rather than exempting filenames from coverage.
+        let book =
+            fs::read_to_string(root.join("book/src").join(&name)).expect("read paired book page");
+        if book.trim() == format!("{{{{#include ../../docs/{name}}}}}") {
             continue;
         }
         let book_path = format!("book/src/{name}");

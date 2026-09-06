@@ -46,6 +46,7 @@ follow it.
 | Binary | Crate | Purpose |
 |--------|-------|---------|
 | `facelock` | facelock-cli | Unified CLI (daemon, auth, enroll, test, setup, etc.) |
+| `facelock-bench` | facelock-bench | Developer benchmark utility; not shipped by current Arch, Debian, RPM, or release-artifact recipes |
 | `pam_facelock.so` | pam-facelock | PAM authentication module |
 | `facelock-polkit-agent` | facelock-polkit | Polkit face authentication agent |
 
@@ -63,31 +64,31 @@ follow it.
 | `facelock pam status` | Report whether services carry the line. Reads only, **no root** — the probe to branch on instead of grepping `/etc/pam.d` |
 | `facelock setup` choice flags | `--camera <PATH\|auto>`, `--models <standard\|balanced\|high>`, `--execution-provider <cpu\|cuda\|rocm\|openvino\|auto>`, `--encryption <tpm\|keyfile\|none\|auto>`. Precedence: CLI flag > config file > built-in default |
 | `facelock setup` action opt-outs | `--no-pam`, `--no-systemd`, `--no-enroll` decline an action outright (and their `--pam`/`--systemd`/`--enroll` counterparts force it). Later flag wins |
-| `facelock is-enrolled` | Report whether face auth is operational for a user. Exit code is the contract; no daemon activation, no camera, no group: it opens the caller's own `0600` marker under `0711` directories (ADR 010) |
+| `facelock is-enrolled` | Report the user's enrollment marker state, a hint rather than proof that face auth is operational. Exit code is the contract; no daemon activation, no camera, no group: it opens the user's `0600` marker under `0711` directories (ADR 010) |
 | `facelock capabilities` | Report what this build can do: one capability name per line, or `--json` for `{"version", "capabilities"}`. Unprivileged, reads no config, activates no daemon. The feature probe to branch on instead of grepping `--help` |
 | `facelock enroll` | Capture and store a face |
 | `facelock test` | Test face recognition |
 | `facelock list` | List enrolled face models |
-| `facelock remove <id>` | Remove a specific model |
+| `facelock remove <id>` | Remove a specific model by decimal unsigned 32-bit ID, as printed by `list`; hexadecimal spellings are rejected |
 | `facelock clear` | Remove all models for a user |
 | `facelock preview` | Live camera preview |
 | `facelock devices` | List V4L2 cameras |
 | `facelock status` | Check system status. Root. `--json` renders the same report as one object a script can parse (see "facelock status Semantics") |
 | `facelock config show` | Show configuration. Bare `facelock config` is `config show` |
-| `facelock config edit` | Open the config file in `$EDITOR`, validate on save, restart the daemon when a cached setting changed. Root |
+| `facelock config edit` | Open the config file in `$EDITOR` and report validation on save; request restart for listed settings only when old and new config both parse. Root; invalid saved config is retained with a warning and exit 0 |
 | `facelock daemon run` | Run the persistent daemon. Bare `facelock daemon` is `daemon run` — the form every shipped service unit invokes |
-| `facelock daemon restart` | Restart the daemon (`systemctl restart`, or a D-Bus `Shutdown` when systemd is unavailable). Root |
+| `facelock daemon restart` | Request restart with `systemctl restart`, falling back to D-Bus `Shutdown` on any failure. Root; fallback failure does not change exit 0, and `--config` does not change the service's configuration |
 | `facelock auth --user X` | One-shot auth (PAM helper). `--user` is required here and only here; `--config` is the global flag, not a per-command one |
 | `facelock hyprlock enable\|disable\|status` | Manage hyprlock lock-screen integration (user, no root); `enable` accepts `--no-icon` to skip the cosmetic face glyph |
 | `facelock tpm status` | TPM status, sealed-key presence and encrypted/plaintext embedding counts. Root, like every `tpm` verb |
-| `facelock tpm encrypt` | Encrypt face database |
-| `facelock tpm decrypt` | Decrypt face database |
+| `facelock tpm encrypt` | Encrypt plaintext embedding rows, not the whole database; refuses active hard device binding. `--generate-key` only creates/replaces key material and refuses encrypted templates |
+| `facelock tpm decrypt` | Decrypt AES embedding rows and legacy TPM blobs into plaintext; does not change configuration or keys and cannot decrypt AAD-bound templates. Conversion is per-row, so failure can leave partial progress |
 | `facelock tpm reseal` | Re-seal the TPM AES key under current PCRs (recovery after a firmware/kernel change) |
-| `facelock tpm seal-key` / `unseal-key` | Migrate keyfile↔tpm key protection |
+| `facelock tpm seal-key` / `unseal-key` | Migrate keyfile↔tpm key protection and update the configured method. Require the source key artifact and refuse an existing destination; retain the source artifact and leave embeddings unchanged |
 | `facelock tpm unseal-check` | Read-only: verify the sealed key still unseals (PCR policy satisfied) |
 | `facelock audit` | View audit log |
 | `facelock bench` | Benchmarks |
-| `facelock data purge` | Destroy retained Facelock state inside the compiled roots. Root, and additionally `--allow-destruction`. Holds the lifecycle exclusion lease for the duration; reports every remnant and never claims complete destruction (see "Fixed-root purge boundary") |
+| `facelock data purge` | Remove retained Facelock state inside the compiled roots. Root, and additionally `--allow-destruction`. Holds the lifecycle exclusion lease for the duration; reports retained names and never claims secure erasure (see "Fixed-root purge boundary") |
 | `facelock data purge --dry-run` | Classify configured paths and remove nothing. Root, no authorization flag, no lease — a preview must not stop the daemon as a side effect. Does not traverse the roots, and therefore reports no completeness verdict |
 | `facelock data purge --leave-activation-barred` | Keep the daemon stopped and D-Bus activation barred after purging, for a caller that uninstalls next. Conflicts with `--dry-run` |
 
@@ -108,11 +109,16 @@ fit an existing domain before it may claim a top-level name. Commands named by
 exception rather than drift.** The domain is retained state on this machine —
 distinct from `config` (the config file) and from the per-user face models the
 top-level verbs reach. It is spelled as a group because the alternative is
-worse: a top-level `facelock purge` would sit immediately beside `facelock
-clear`, which already means "remove all face models for a user", and the two
-would differ only in blast radius. Naming the object first makes that
-difference the first word a reader sees, which on an irreversible command is
-worth a group that ADR 009's two-subcommand rule would otherwise refuse.
+worse. The rejected spelling illustrates the ambiguity:
+<!-- docs-example: negative InvalidSubcommand -->
+`facelock purge`
+
+That spelling would sit immediately beside `facelock clear`, which already
+means "remove all face models for a user", and the two would differ only in
+blast radius. Naming the object first makes that difference the first word a
+reader sees, which on an irreversible command is worth a group that ADR 009's
+two-subcommand rule would otherwise refuse.
+
 Bare `facelock data` is a usage error, not an implied `purge`: unlike `daemon`
 and `config`, whose bare forms are load-bearing invocations, nothing invokes
 this one and a destructive default would be a trap.
@@ -242,6 +248,7 @@ someone states who parses the output.
 | `facelock preview --json` | one object per line, one per frame |
 | `facelock status --json` | one object, one key per report section, each carrying an `ok`/`problem`/`unknown` verdict. See "facelock status Semantics" |
 | `facelock pam add\|remove\|status --json` | one object, whose shape is a stability contract. See "facelock pam Semantics" |
+| `facelock data purge --json` | one purge or dry-run report. See "Fixed-root purge boundary" |
 
 `preview` is on the list because it always emitted JSON. It shipped calling the
 flag `--text-only`, which survives as a hidden alias and keeps parsing; the
@@ -631,7 +638,8 @@ exit code is the answer. Across several services the worst outcome wins. A
 **declined** confirmation is exit 0, since the command did what the operator
 asked, and `--json` is how a script tells it from an install.
 
-**`--dry-run`** prints the resolved plan, writes nothing, and exits 0. It is
+**`--dry-run`** validates and prints the resolved plan without applying the
+requested edit; a validation failure still exits non-zero. It is
 honoured *after* the root check (see DEC-6 above). On `remove --all` it performs
 no transaction recovery and creates no state.
 
@@ -1217,8 +1225,8 @@ candidate `pam_facelock.so` was found at, or `null` when none was. It is a
 property of the machine rather than of a service — which is why it is top-level
 and not repeated in every service object — and it is what tells an integrator
 that the line is present but names a module at a path nothing looks at. `add`
-and `remove` refuse before writing when the module is missing, so their
-documents do not carry the key.
+refuses before writing when the module is missing; `remove` can clean up stale
+references without the module installed. Neither write verb carries the key.
 
 `pam status --all --json` carries a second additive top-level key,
 `directories`: every directory searched, in search order, each an object with
@@ -1241,7 +1249,9 @@ answers for every verb and a row that knows the fact does not withhold it. On an
 `overridden` row it is the vendor file the copy was made from, which is what
 that row has just started shadowing. The human line gained the same fact at the
 same time: a configured service whose file shadows a vendor one reads
+<!-- docs-example: manual literal PAM provenance marker, not a command -->
 `facelock PAM line present (local override of <path>)` instead of
+<!-- docs-example: manual literal PAM provenance marker, not a command -->
 `facelock PAM line present`, on every form of `pam status`. Exit codes are
 unchanged by it.
 
@@ -1297,6 +1307,7 @@ one it does not know rather than treat it as an error**:
 | `absent` | all three | the service file does not exist |
 | `declined` | `add` | the operator answered no at the per-file confirmation |
 | `failed` | `add`, `remove` | the write failed; see `error` |
+| `cleanup-failed` | `remove` | the PAM change completed but required rollback-state cleanup failed; see `error` |
 | `present` | `status` | the file exists and carries a facelock line |
 | `missing` | `status` | the file exists and carries none |
 | `unknown` | `status` | the file could not be read, the name was rejected, or the entry is a symlink or a hard link; see `error` |
@@ -1488,7 +1499,7 @@ outer `state` can pass a machine the nested fact condemns:
 | `oneshot_fallback` | are the three files daemon-less auth needs on disk | — |
 | `camera` | under `configured`, does the node exist; under `auto_detect`, **only that auto-detection is enabled** | `camera.device` — whether a device was actually found and interrogated |
 | `models` | is the model directory there, with both configured files | — |
-| `execution_provider` | can the installed ONNX Runtime use the configured provider | — |
+| `execution_provider` | CPU is assumed available without loading ORT; for a GPU provider, whether ORT reports it compiled in, not whether drivers or an inference session work | — |
 | `encryption` | is usable key material in place — `method: none` is a `problem` even though the config asked for nothing, because plaintext storage is a finding rather than a preference | `encryption.embeddings` — whether the stored embeddings could be counted |
 | `enrollment` | does this user have at least one model | `enrollment.marker` — whether the `is-enrolled` marker agrees with the database |
 | `security` | are the checks enabled at all | — |
@@ -1938,7 +1949,12 @@ auth would — surfacing an existing lockout instead of masking it.
 | Daemon | `daemon.mode = "daemon"` (default) | D-Bus IPC to daemon | Uses daemon if available, falls back to direct |
 | Oneshot | `daemon.mode = "oneshot"` | Spawns `facelock auth` | Operates directly (no daemon) |
 
-The CLI silently falls back to direct mode when the daemon is not available on D-Bus, regardless of config mode.
+Backend-using CLI commands select their transport once. With the default
+configuration in daemon mode they check whether the bus name has an owner
+without activating it; when no owner is found they warn on stderr and use
+direct mode. A later daemon method error propagates instead of triggering a
+second direct attempt. Oneshot mode selects direct access without a bus probe
+or fallback warning.
 
 Under a non-default `--config` in daemon mode, backend selection for
 `enroll`, `test` and the other backend-using commands does not ask the bus and
@@ -1962,7 +1978,7 @@ the codes themselves match `grep`'s 0 = match / 1 = no match / 2 = error.
 |------|---------|
 | 0 | User has a usable enrollment |
 | 1 | Not enrolled / not usable (includes an unreadable or absent marker) |
-| 2 | Error — bad arguments, or a marker that exists but cannot be parsed |
+| 2 | Error — bad arguments, an unparseable marker, or an I/O failure other than absence or access denial |
 
 `facelock pam status` uses the same 0/1/2 scale for the same reason; see
 "facelock pam Semantics" above.
@@ -1974,7 +1990,9 @@ invocation. `--json` emits `{"enrolled": bool, "models": N, "updated": "<ISO8601
 when the user is not enrolled there is no marker to read a timestamp from, so
 `models` is `0` and `updated` is `null`.
 
-`is-enrolled` answers from `/var/lib/facelock/enrolled/<user>` alone. It never
+`is-enrolled` reads the selected config to derive the `enrolled/` directory
+beside `storage.db_path`, then answers from the user's marker. An unreadable or
+invalid config falls back to `/var/lib/facelock/enrolled/<user>`. It never
 activates the daemon over D-Bus, never opens a camera, and never reads the
 database — so it is safe to call repeatedly from a lock screen as an
 unprivileged user. The marker is a hint that can drift from the database; **PAM
@@ -1988,7 +2006,7 @@ The scope differs by caller and that difference is contract:
 
 | Caller | Scope |
 |--------|-------|
-| `setup`, daemon startup (`reconcile_all`) | **Every** marker: backfills each enrolled user and prunes every marker the database does not account for |
+| base `setup` flows, daemon startup (`reconcile_all`) | **Every** marker: backfills each enrolled user and prunes every marker the database does not account for; standalone setup PAM/systemd actions do not reconcile |
 | one-shot `facelock auth` | **One** marker — the user being authenticated. It has no reason to read other users' rows and no privileged directory listing to prune with |
 
 An install upgraded from a release that predates markers backfills itself on the
@@ -3178,10 +3196,10 @@ the first could not prove safe.
 | Path | Owner | Mode | Purpose |
 |------|-------|------|---------|
 | `/etc/facelock/config.toml` | root:root | 644 | Configuration |
-| `/var/lib/facelock/` | root:root | 711 | State dir. Traversable by every local user, listable by root only: anyone can open a path it knows by name (its own enrollment marker, a model file) but nobody can enumerate what is there (`models/` is itself `0755` and listable — public data) |
+| `/var/lib/facelock/` | root:root | 711 | State dir. Traversable by every local user, listable by root only: users can open known names subject to each file's permissions (`models/` is itself `0755` and listable — public data) |
 | `/var/lib/facelock/facelock.db` | root:root | 600 | Face embeddings. Read by the daemon (root) only; user-run PAM stacks request authentication through the daemon, they never read templates |
 | `/var/lib/facelock/models/` | root:root | 755 | ONNX models — public, SHA256-verified downloads |
-| `/var/lib/facelock/enrolled/` | root:root | 711 | Enrollment markers; traversable by all, listable by none |
+| `/var/lib/facelock/enrolled/` | root:root | 711 | Enrollment markers; traversable by all, listable by root only |
 | `/var/lib/facelock/enrolled/<user>` | \<user\>:\<user\> | 600 | `{"models": N, "updated": "<ISO8601>"}` — a hint for `is-enrolled`, never authoritative |
 | `/var/lib/facelock/pam-backups/` | root:root | 700 | Fixed-root PAM rollback state; not affected by `[pam].config_dirs` or `storage.db_path` |
 | `/var/lib/facelock/pam-backups/<service>.<seconds>-<nanoseconds>` | root:root | 600 | Original PAM service bytes; nanoseconds are exactly nine digits |
@@ -3201,8 +3219,8 @@ schema fields. `/var/lib/facelock/pam-backups` is deliberately fixed for the
 PAM writer and shared state layout. Neither `[pam].config_dirs` nor
 `storage.db_path` redirects it: the former selects PAM service roots and the
 latter relocates biometric database state only. `FACELOCK_CONFIG` is honored
-for unprivileged processes, but privileged PAM/root auth flows ignore the
-environment and use either an explicit `--config` path or
+for unprivileged processes, but every effective-UID-0 process ignores the
+environment and uses either an explicit `--config` path or
 `/etc/facelock/config.toml`.
 Runtime-created DB sidecars (`-wal`, `-shm`), audit logs, and snapshots are created with explicit restrictive modes. The packaged systemd unit also sets `UMask=0027`.
 
@@ -3212,10 +3230,9 @@ The state directory and `enrolled/` are `0711 root:root`: any local user may
 *enter* them, nobody but root may *list* them. That is the whole grant. Every
 entry below is locked down in its own right — `0600 root:root` database and
 sidecars, `0600 <user>:<user>` markers, and a `0700 root:root` PAM-backup
-directory containing `0600 root:root` state files — and `models/` is the one
-subtree that carries "other" read bits of its own, because its contents are
-public, SHA256-verified downloads. There is no group in the file contract:
-nothing under `/var/lib/facelock` is group-owned or group-readable (ADR 010).
+directory containing `0600 root:root` state files — and `models/` carries
+group/other read bits because its contents are public, SHA256-verified
+downloads. No path relies on membership in a dedicated `facelock` group (ADR 010).
 
 D-Bus is required for user-run screen lockers (hyprlock/swaylock) and the
 polkit agent — their PAM stack runs as the user, and nothing makes the `0600
@@ -3230,7 +3247,7 @@ traversal permits exactly that. Closing it would mean denying the traversal
 that `is-enrolled` and model loading depend on. Accepted; before ADR 010 the
 same residual existed for `facelock` group members.
 
-#### Contract change: permissions tightened (no paths moved)
+#### Historical pre-ADR-010 contract change: permissions tightened (no paths moved)
 
 The default paths are unchanged — the database stays at
 `/var/lib/facelock/facelock.db` and the models at `/var/lib/facelock/models`;
@@ -3252,8 +3269,8 @@ history) and the snapshots (raw face images) — all strictly more sensitive
 than anything the group needs, since every group operation goes through the
 daemon. For an existing install the entire on-disk change is a `chmod`/`chown`
 of the paths above plus `mkdir enrolled/` — idempotent, applied by packaging
-(tmpfiles, install scriptlets) and re-applied by any root invocation of the
-binary; none of it touches the data itself.
+(tmpfiles, install scriptlets) and by the setup, daemon-start and direct/auth
+state-layout paths; none of it touches the data itself.
 
 #### Contract change: traversal opened to every local user (ADR 010)
 
@@ -3266,15 +3283,15 @@ No paths move. The two directories that carried a group grant drop it:
 
 Everything else in the table above is unchanged. For an existing install the
 on-disk change is a `chmod`/`chown` of those two directories — idempotent,
-applied by packaging (tmpfiles, install scriptlets) and re-applied by any root
-invocation of the binary (`ensure_state_layout` on daemon start, best-effort on
+applied by packaging (tmpfiles, install scriptlets), setup and the runtime
+state-layout paths (`ensure_state_layout` on daemon start, best-effort on
 the auth path). `sudo facelock setup`, `just install-files` and the package
 scriptlets remove a leftover `facelock` group best-effort; `sudo groupdel
 facelock` if it lingers.
 
 ### Audit Log Entries
 
-`audit.jsonl` is JSONL; each line carries `timestamp`, `user`, `result` (`success`, `failure`, `error`, `rate_limited`, `suppressed`, `cancelled`) and, when known, `similarity`, `frame_count`, `duration_ms`, `device`, `model_label`, `error`.
+`audit.jsonl` is JSONL; each line carries `timestamp`, `user`, `result` (`success`, `failure`, `error`, `rate_limited`, `suppressed`, `cancelled`) and, when known, `source` (`daemon`, `oneshot`, `test`), `similarity`, `frame_count`, `duration_ms`, `device`, `model_label`, `error`.
 
 `cancelled` (ADR 008 §5) is an attempt that was **abandoned, not answered**: the caller's bus connection went away, the system suspended, `ReleaseCamera` arrived, or a one-shot process was signalled. It is deliberately not a `failure` — no comparison reached a verdict, so it charges no rate-limit budget. The entry carries `frame_count` and `duration_ms` (how far the attempt got) and no `similarity`.
 
@@ -3372,7 +3389,7 @@ key path never holds a partial file — true of the *create* path
 `--generate-key` calls) truncates the key file in place instead. A **symlink at the key
 path is refused** by both the creating and the reading path; the reader opens `O_NOFOLLOW`.
 The same gate governs every writer of that key — the daemon, the one-shot
-commands, `facelock setup`'s automatic encryption policy, and `facelock encrypt` with and
+commands, `facelock setup`'s automatic encryption policy, and `facelock tpm encrypt` with and
 without `--generate-key`; `--generate-key` replaces a live key and is refused over
 encrypted rows, naming `facelock clear` as the deliberate destructive step.
 
@@ -3645,8 +3662,9 @@ these, so tightening them to root-only closes the per-frame similarity
 hill-climbing oracle by construction rather than by redacting fields):
 - `Authenticate`: root or the matching Unix user. The one user-scoped method
   — screen lockers run their PAM stack as the user, so this is architecture,
-  not policy. It is **real authentication**: a failed attempt always
-  consumes rate-limit budget, whatever the caller's UID. When
+  not policy. It is **real authentication**: a failed attempt that saw a face
+  consumes biometric-guess budget, whatever the caller's UID; no-face attempts
+  do not (see "facelock test Semantics"). When
   `security.abort_if_ssh = true`, an authorized non-root caller must also
   prove a live local process/session identity as described below.
 - `TestAuthenticate`: **root only.** Same arguments and same `AuthResult`
@@ -3772,17 +3790,32 @@ Clients (PAM included) must treat a busy error like any other daemon error —
 degrade to the next auth mechanism (password), never a lockout.
 
 ### Signals
-- `AuthAttempted(user: s, matched: b)` — emitted after each camera-backed
-  attempt, from `Authenticate` and `TestAuthenticate` alike. The payload
+- `AuthAttempted(user: s, matched: b)` — emitted best-effort after each successful method
+  return from `Authenticate` and `TestAuthenticate`, including in-band preflight
+  rejections where no camera opened; out-of-band D-Bus errors emit none. The payload
   intentionally carries **no similarity score** (the raw biometric score is
   an information leak / spoof-tuning oracle). The system bus policy
   (`dbus/org.facelock.Daemon.conf`) denies signal reception from the daemon
   by default; only root may receive it (ADR 010: no group policy).
 
 ### Response types
-`AuthResult`, `Enrolled`, `Models`, `Removed`, `Frame`, `DetectFrame`, `Devices`, `Ok`, `Error`
+The D-Bus methods return these values directly; the daemon's internal response
+enum variants are not wire wrappers:
 
-`Models` carries `ModelInfo { id, user, label, created_at, embedder_model, device_id }`. `device_id` (added Plan 02) is the enrolling camera's canonical fingerprint; D-Bus has no Option type, so an **empty string is the NULL sentinel** for legacy/uncoupled templates (same convention as `AuthResult`).
+| Method | Return value |
+|--------|--------------|
+| `Authenticate`, `TestAuthenticate` | `AuthResult { matched, model_id, label, similarity }` |
+| `Enroll` | `(model_id: u32, embedding_count: u32)` |
+| `ListModels` | array of `ModelInfo { id, user, label, created_at, embedder_model, device_id }` |
+| `PreviewFrame` | JPEG byte array |
+| `PreviewDetectFrame` | `(JPEG byte array, array of PreviewFaceInfo { x, y, width, height, confidence, similarity, recognized })` |
+| `ListDevices` | array of `DeviceInfo { path, name, driver, is_ir }` |
+| `Ping` | string |
+| `RemoveModel`, `ClearModels`, `ReleaseCamera`, `Shutdown` | no return fields |
+
+`ModelInfo.device_id` is the enrolling camera's canonical fingerprint; D-Bus
+has no Option type, so an **empty string is the NULL sentinel** for
+legacy/uncoupled templates. `created_at` is a Unix timestamp in seconds.
 
 ### Authenticate error encoding
 

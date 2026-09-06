@@ -1,17 +1,31 @@
 # Introduction
 
-Facelock is a modern face authentication system for Linux PAM. It provides Windows Hello-style facial authentication with IR anti-spoofing, configurable as a persistent daemon or daemonless one-shot. All inference runs locally on your hardware -- no cloud services, no network requests, no telemetry. Your biometric data never leaves your machine.
+Facelock is a modern face authentication system for Linux PAM. It provides
+Windows Hello-style facial authentication with IR-required capture and layered
+static-presentation checks, configurable as a persistent daemon or daemonless
+one-shot. Inference runs locally; model download occurs during setup, while the
+authentication path makes no network request and sends no telemetry.
 
 ## Quick Start
 
+The latest stable release is v0.1.4. The current
+[v0.2.0-alpha.4 prerelease](https://github.com/tyvsmith/facelock/releases/tag/v0.2.0-alpha.4)
+provides direct Debian 13, Ubuntu 26.04, and Fedora 44 packages; it is
+intentionally absent from the stable AUR, APT, and production COPR channels.
+See [Quick Start](quickstart.md) for the exact package filenames.
+
 ```bash
-cargo build --workspace
-FACELOCK_CONFIG=dev/config.toml cargo run --bin facelock -- setup    # download models
-FACELOCK_CONFIG=dev/config.toml cargo run --bin facelock -- enroll   # capture face
-FACELOCK_CONFIG=dev/config.toml cargo run --bin facelock -- test     # verify recognition
+just build
+target/debug/facelock --help
 ```
 
-No daemon needed -- the CLI auto-falls back to direct mode when no daemon is running.
+Install the distro-specific native build dependencies first; Rust and the
+dynamically loaded ONNX Runtime are separate prerequisites. `just build` does
+not install the binary, and `--help` does not test inference or load ONNX
+Runtime. Camera-facing development uses the
+explicit built path and `--config "$PWD/dev/config.toml"`; management commands
+remain root-gated and root ignores `FACELOCK_CONFIG`. See [Quick Start](quickstart.md)
+before enrolling or changing host authentication.
 
 ## Operating Modes
 
@@ -27,7 +41,8 @@ The CLI works in all modes -- it connects to the daemon if available, otherwise 
 
 ## Architecture
 
-```
+<!-- docs-example: schematic command overview, not executable shell -->
+```text
 facelock (unified binary)
 ├── facelock setup          Download models, validate systemd, configure PAM
 ├── facelock enroll         Capture and store a face
@@ -42,7 +57,6 @@ facelock (unified binary)
 
 pam_facelock.so (PAM module)
 ├── daemon mode → D-Bus IPC to daemon
-├── polkit agent → facelock-polkit
 └── oneshot mode → fork/exec facelock auth
 ```
 
@@ -107,7 +121,7 @@ See [Quick Start](quickstart.md) for full instructions.
 - Model SHA256 verification at every load
 - D-Bus system bus policy
 - PAM audit logging to syslog
-- Rate limiting (5 attempts/user/60s)
+- Rate limiting (5 face-detected authentication failures/user/60s by default)
 - systemd service hardening
 
 See [Security](security.md) for the full threat model.

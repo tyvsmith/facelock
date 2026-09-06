@@ -3,8 +3,8 @@
 ## Prerequisites
 
 - Rust 1.88+ (`rustup update`)
-- Linux with V4L2 support
-- A webcam (IR recommended; RGB works for development)
+- Linux and the native build dependencies listed in [Quickstart](quickstart.md#build-from-source)
+- A camera only for live capture/authentication work; IR is required by the default configuration
 - Podman (for container tests)
 
 ## Building
@@ -12,6 +12,9 @@
 ```bash
 cargo build --workspace
 ```
+
+The unified binary is then `target/debug/facelock`; it is not installed on
+`PATH`. See [Developer Commands](developer-commands.md) for the full inventory.
 
 ## Workspace structure
 
@@ -25,7 +28,7 @@ Facelock is a Cargo workspace with 11 crates:
 | `facelock-store` | lib | SQLite face embedding storage |
 | `facelock-daemon` | lib | Auth/enroll logic, liveness, audit, rate limiting, handler |
 | `facelock-cli` | bin | Unified CLI (`facelock` binary, includes `bench` subcommand) |
-| `facelock-bench` | bin | Standalone benchmark and calibration utility |
+| `facelock-bench` | bin | Developer standalone benchmark utility; see [Auxiliary Commands](auxiliary-commands.md) |
 | `pam-facelock` | cdylib | PAM module (libc + toml + serde + zbus only) |
 | `facelock-tpm` | lib | Optional TPM-bound encryption for embeddings at rest |
 | `facelock-polkit` | bin | Polkit authentication agent for face auth |
@@ -88,8 +91,13 @@ Only after tiers 3--4 pass. Always keep a root shell open. Start with `sudo` onl
 ### All checks at once
 
 ```bash
-just check  # runs test + clippy + fmt
+just check  # full local validation aggregate, including audit and docs/contracts
 ```
+
+`just check` does not run the full packaging matrix or camera-required lanes.
+For documentation-only changes, start with `just check-docs` and
+`just docs-site-check`; use source review and the established behavior tests
+to check meaning, and a targeted container probe for uncertain distro commands.
 
 ## Translations
 
@@ -138,7 +146,7 @@ Read the [Security](security.md) chapter before implementing any auth-related co
 - D-Bus message size limits are enforced by the bus daemon. Never allocate unbounded buffers.
 - D-Bus system bus policy restricts daemon access.
 - The PAM module logs all auth attempts to syslog.
-- Rate limiting is enforced in the daemon (5 attempts/user/60s default).
+- Daemon and oneshot authentication limit face-detected failures (5/user/60s by default); successful and no-face attempts do not consume this budget.
 
 ## Contracts
 

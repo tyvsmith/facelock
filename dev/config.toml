@@ -1,5 +1,8 @@
-# Development config — uses temp paths, no root required.
-# Set FACELOCK_CONFIG=dev/config.toml in your shell.
+# Development config — uses checkout models and temporary state.
+# Management commands still enforce Facelock's normal root gate. Because every
+# effective-UID-0 process ignores FACELOCK_CONFIG, invoke the built CLI as:
+#   sudo target/debug/facelock --config "$PWD/dev/config.toml" <command>
+# This file is for direct/oneshot development, not host PAM installation.
 
 [device]
 # path auto-detected (omit for auto-detect, or set explicitly)
@@ -8,11 +11,16 @@ max_height = 480
 [recognition]
 threshold = 0.50
 timeout_secs = 5
+no_face_timeout_secs = 2
+detection_confidence = 0.5
+nms_threshold = 0.4
 detector_model = "det_10g.onnx"
-#embedder_model = "glintr100.onnx"
+# embedder_model = "glintr100.onnx"
+execution_provider = "cpu"
+threads = 4
 
 [daemon]
-# mode = "daemon"  # or "oneshot" for daemonless development
+mode = "oneshot"
 model_dir = "./models"
 
 [storage]
@@ -22,6 +30,18 @@ db_path = "/tmp/facelock-dev.db"
 disabled = false
 require_ir = true
 require_frame_variance = true
+frame_variance_max_similarity = 0.985
+ir_texture_min_stddev = 10.0
+allow_plaintext = false
+
+[encryption]
+method = "keyfile"
+key_path = "/tmp/facelock-dev-encryption.key"
+sealed_key_path = "/tmp/facelock-dev-encryption.key.sealed"
 
 [snapshots]
 dir = "/tmp/facelock-dev-snapshots"
+
+[audit]
+enabled = false
+path = "/tmp/facelock-dev-audit.jsonl"

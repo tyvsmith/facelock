@@ -7,17 +7,20 @@ facelock is a **local biometric authentication system**. The threat model assume
 - **Attacker has physical access** to the machine (the entire point of face auth is physical-presence scenarios like unlocking a laptop)
 - **Attacker may have a photo or video** of the enrolled user
 - **Attacker does not have root** (if they do, game over regardless)
-- **Attacker cannot modify files** in `/etc/facelock/`, `/var/lib/facelock/`, or `/lib/security/`
+- **Attacker cannot modify files** in `/etc/facelock/`, `/var/lib/facelock/`,
+  or the distribution's PAM module directories
 
 ## Privacy Guarantees
 
 Facelock is designed to keep biometric data under the user's exclusive control:
 
 - **Local-only inference**: All face detection and recognition runs on-device via ONNX Runtime. No images, embeddings, or metadata are ever transmitted over the network.
-- **No telemetry**: Facelock contains zero analytics, tracking, or phone-home code. After the one-time model download during `facelock setup`, it never contacts any server.
+- **No telemetry**: Facelock contains zero analytics, tracking, or phone-home
+  code. Authentication makes no network request. The separately invoked
+  `sudo facelock setup` flow downloads model files when they are missing.
 - **No cloud dependencies**: Authentication works fully offline. No account registration, no API keys, no external services.
-- **Data stays on disk**: Face embeddings are stored in a local SQLite database (`/var/lib/facelock/facelock.db`) with restrictive permissions (600, root:root, inside a 711 root:root directory that nobody but root can list). Optional AES-256-GCM encryption with TPM-sealed keys provides defense in depth.
-- **Open source**: All code is MIT/Apache-2.0 licensed. No proprietary blobs or obfuscated network calls. Privacy claims are verifiable by reading the source.
+- **Data stays on disk**: Face embeddings are stored in a local SQLite database (`/var/lib/facelock/facelock.db`) with restrictive permissions (600, root:root, inside a 711 root:root directory that nobody but root can list). New enrollments use AES-256-GCM keyfile encryption by default; TPM sealing is optional.
+- **Open source**: Facelock's source is dual-licensed under MIT or Apache-2.0. Dependencies and model weights have separate licenses; see the [model notice](../models/NOTICE.md). Privacy claims can be checked against the source.
 
 ## Attack Vectors & Mitigations
 
@@ -27,7 +30,8 @@ Facelock is designed to keep biometric data under the user's exclusive control:
 
 **Why this matters**: This is the #1 attack against face authentication. Without mitigation, anyone with a Facebook photo can unlock the machine.
 
-**Mitigations** (layered, implement all):
+**Mitigations** (layered; the configuration reference identifies which are
+enabled by default):
 
 #### A. IR Camera Enforcement (Required)
 
@@ -82,7 +86,11 @@ if config.security.require_ir && !device_is_ir {
 }
 ```
 
-**Rationale**: Phone screens and printed photos do not emit infrared light correctly. An IR camera sees a flat, textureless surface where a real face would have depth and skin texture in IR. This single check eliminates the vast majority of spoofing attacks.
+**Rationale**: Requiring an IR-classified capture path prevents an RGB-only
+camera from silently weakening the default boundary. IR classification and
+the separate IR texture check raise the bar against static presentations, but
+neither authenticates the sensor, measures depth, or establishes resistance
+to video replay.
 
 **Why the name alone is not enough, and what IS the evidence (H1, #98/#99)**: IR classification is derived **solely from queried device evidence** — the pixel formats the device actually enumerates — never from its free-text name. A node qualifies as IR only when it enumerates *exclusively* IR-typical mono formats (GREY/Y8/Y10/Y12/Y16) with **no color format mixed in**. Many ordinary RGB UVC webcams enumerate a GREY format *alongside* YUYV/MJPG; those do **not** qualify (this is what the old "H1" concern was about, now resolved by the mono-**only** requirement rather than by name corroboration). The previous heuristic (`contains("ir")` OR any GREY/Y16 format) misclassified plain webcams as IR and matched the substring "ir" inside unrelated names ("Sirius", "AIR-Cam"), silently defeating `require_ir = true`. Now a crafted `CARD_LABEL` on a color-only v4l2loopback device does not classify as IR no matter what it is named (#98), and the quirk `name_pattern` matcher is **anchored** (it matches the whole device name, not a substring) so it no longer fires on the "ir" inside those unrelated names (#99). The name is used only as a tiebreak hint when auto-detection chooses among nodes that *already* qualify by evidence, and as one corroboration path for a name-only `force_ir` quirk — never as a standalone classification signal. This is why `require_ir` is now load-bearing rather than trivially bypassable.
 
@@ -92,7 +100,7 @@ if config.security.require_ir && !device_is_ir {
 
 **Why `force_ir` is device-level, not node-level (hardware-verified regression)**: on a real Logitech BRIO, treating every quirk-matched node as IR made *both* `/dev/video0` (the RGB sensor) and `/dev/video2` (the IR sensor) classify IR — so setup stopped auto-selecting and auto-detect captured from the RGB sensor (white LED) instead of the IR sensor. The sibling-format disambiguation above restores per-node honesty: exactly one BRIO node is `[IR]`, and auto-detection prefers the format-corroborated IR node. A quirk preference for an RGB format such as MJPG may still guide capture negotiation, but it is not IR evidence and cannot exempt an RGB sibling from demotion.
 
-**Limitation**: classification is capability-based, not a hardware allow-list. A genuine IR camera that exposes its IR and color streams on a *single* V4L2 node (so its format set is not mono-only) and is not covered by a shipped quirk will not auto-classify as IR. Add a quirks `force_ir` entry keyed by **USB vendor:product ID** (`/etc/facelock/quirks.d/`) for such hardware — a VID:PID match is authoritative — and set `format_preference` to the IR node's native format (e.g. `"GREY"`) when the camera exposes multiple capture nodes. Prefer a USB-ID quirk over a name-only one: a name-only `force_ir` is trusted only when corroborated by the device's own mono-format evidence or a real USB identity, so it is not a reliable override on its own. The `facelock devices` command displays whether each camera is detected as IR. Device *identity* pinning (rather than capability heuristics) is implemented as its robust successor — see §1.D Device Coupling (Plan 02).
+**Limitation**: classification is capability-based, not a hardware allow-list. A genuine IR camera that exposes its IR and color streams on a *single* V4L2 node (so its format set is not mono-only) and is not covered by a shipped quirk will not auto-classify as IR. Add a quirks `force_ir` entry keyed by **USB vendor:product ID** (`/etc/facelock/quirks.d/`) for such hardware — a VID:PID match is authoritative — and set `format_preference` to the IR node's native format (e.g. `"GREY"`) when the camera exposes multiple capture nodes. Prefer a USB-ID quirk over a name-only one: a name-only `force_ir` is trusted only when corroborated by the device's own mono-format evidence or a real USB identity, so it is not a reliable override on its own. `sudo facelock devices` displays whether each camera is detected as IR. Device *identity* pinning (rather than capability heuristics) is implemented as its robust successor — see §1.D Device Coupling (Plan 02).
 
 #### B. Frame Variance Check (Required)
 
@@ -572,7 +580,7 @@ makes a later restore of the real key useless, and that is the one loss facelock
 prevent. A store that *cannot be asked* counts as encrypted rows existing — "no rows" and
 "no answer" are different facts, and only the first authorizes writing a key. Every writer
 of that key goes through the same gate: the daemon, `facelock auth` and the other one-shot
-commands, `facelock setup`'s automatic policy, and both branches of `facelock encrypt`
+commands, `facelock setup`'s automatic policy, and both branches of `facelock tpm encrypt`
 (`--generate-key` included, which replaces a live key rather than creating one).
 
 **The check and the write are one exclusive transaction on the store**, so the question and
@@ -586,7 +594,7 @@ says which of the two happened. Automatic creation is further restricted to `met
 `none`, which is how an operator bootstraps a key before switching the method over. The
 guarantee is about ordering a row's commit against a key write through the store; it does
 not invalidate a key a running daemon has already cached in memory — replacing the key file
-while the daemon keeps running (`facelock encrypt --generate-key` against a live system) is
+while the daemon keeps running (`facelock tpm encrypt --generate-key` against a live system) is
 a known limit, not covered here (follow-up).
 
 Creation is atomic and never destructive. The 32 bytes are written to an `O_EXCL |
@@ -622,7 +630,7 @@ operator who has no backup, is `facelock clear` followed by re-enrollment.
   nothing to distinguish it from.
 - Under `ProtectSystem=strict` the shipped daemon unit cannot write `/etc/facelock` at all,
   so it cannot create `/etc/facelock/encryption.key`: on that unit the key is created by
-  installation or by a privileged `facelock setup` / `facelock encrypt` run, and the daemon
+installation or by a privileged `facelock setup` / `facelock tpm encrypt` run, and the daemon
   only ever reads it. A daemon that finds no key refuses enrollment as above rather than
   falling back to plaintext.
 
@@ -807,8 +815,9 @@ journals, and remapped blocks remain outside its guarantee.
 #### A. D-Bus System Bus Policy (Required)
 
 Access to the daemon is governed by the D-Bus system bus policy in
-`dbus/org.facelock.Daemon.conf`, installed to `/usr/share/dbus-1/system.d/`
-and enforced by the bus itself (dbus-daemon or dbus-broker). Package
+`dbus/org.facelock.Daemon.conf`, installed as
+`/usr/share/dbus-1/system.d/org.facelock.Daemon.conf` and enforced by the bus
+itself (dbus-daemon or dbus-broker). Package
 transactions never overwrite a legacy `/etc/dbus-1/system.d/` copy. Setup
 removes one only when it is an exact reviewed historical Facelock file;
 modified or linked copies are preserved and reported. D-Bus merges policy
@@ -1753,7 +1762,7 @@ allowed_services = ["sudo", "polkit-1"]
 denied_services = ["login", "sshd"]
 
 [security.rate_limit]
-max_attempts = 5             # Max auth attempts per user
+max_attempts = 5             # Max face-detected auth failures per user per window
 window_secs = 60             # Rate limit window
 
 [polkit]

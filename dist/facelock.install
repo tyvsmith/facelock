@@ -1,6 +1,6 @@
 # Modes for the current layout, mirroring dist/facelock.tmpfiles for hosts
-# where a bare `systemd-tmpfiles --create` did not run. Nothing here moves,
-# creates, or deletes data: directories are created, existing files are
+# where a bare `systemd-tmpfiles --create` did not run. Nothing here moves
+# or deletes existing data: directories are created, existing files are
 # re-chmod/chowned, and that is all. Every line is idempotent.
 _facelock_secure_paths() {
     # State dir: traversable by everyone, listable by root only (ADR 010).
@@ -9,7 +9,7 @@ _facelock_secure_paths() {
     # Models are public, SHA256-verified downloads.
     chown root:root /var/lib/facelock/models 2>/dev/null || true
     chmod 755 /var/lib/facelock/models 2>/dev/null || true
-    # `facelock is-enrolled` marker dir: traversable by all, listable by none.
+    # `facelock is-enrolled` marker dir: traversable by all, listable by root only.
     install -d -o root -g root -m 0711 /var/lib/facelock/enrolled 2>/dev/null || true
     # PAM rollback state contains complete service files: root-only.
     install -d -o root -g root -m 0700 /var/lib/facelock/pam-backups 2>/dev/null || true
@@ -62,7 +62,7 @@ post_install() {
 
     echo ""
     echo "==> facelock installed. Run 'sudo facelock setup' to complete configuration."
-    echo "    (downloads models, configures PAM services, enrolls your face)"
+    echo "    (downloads models and offers face enrollment and PAM configuration)"
 }
 
 post_upgrade() {
@@ -104,7 +104,7 @@ pre_remove() {
 post_remove() {
     echo ""
     echo "==> facelock uninstalled. User data preserved at:"
-    echo "==>   /etc/facelock/      (config.toml, encryption.key.sealed, setup markers)"
+    echo "==>   /etc/facelock/      (keys, setup state, and any package-manager-retained configuration)"
     echo "==>   /var/lib/facelock/  (face database, ONNX models)"
     echo "==>   /var/log/facelock/  (audit logs and snapshots)"
     echo "==>"

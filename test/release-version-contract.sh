@@ -346,6 +346,12 @@ cp "$repo_root/docs/adr/009-cli-verb-noun-shape.md" "$matrix_root/docs/adr/"
 cp "$repo_root/docs/testing-roadmap.md" "$matrix_root/docs/"
 cp "$repo_root/README.md" "$repo_root/CONTRIBUTING.md" "$repo_root/Cargo.toml" "$matrix_root/"
 cp "$repo_root/book/src/quickstart.md" "$repo_root/book/src/contributing.md" "$repo_root/book/src/compatibility.md" "$matrix_root/book/src/"
+# Mutate the content the release checker actually reads: the book may expose
+# the canonical Quickstart through an include instead of duplicating its text.
+quickstart_fixture="book/src/quickstart.md"
+if [ "$(< "$matrix_root/$quickstart_fixture")" = '{{#include ../../docs/quickstart.md}}' ]; then
+    quickstart_fixture="docs/quickstart.md"
+fi
 cp "$repo_root/.github/ISSUE_TEMPLATE/bug_report.md" "$matrix_root/.github/ISSUE_TEMPLATE/"
 cp "$repo_root/crates/facelock-cli/src/commands/pam.rs" "$matrix_root/crates/facelock-cli/src/commands/"
 cp "$repo_root/crates/facelock-cli/src/commands/setup.rs" "$matrix_root/crates/facelock-cli/src/commands/"
@@ -959,17 +965,17 @@ assert_matrix_mutation_rejected \
 assert_matrix_mutation_rejected \
     "README install instruction configures the main suite" \
     "README.md" \
-    's/apt ${APT_SUITE} facelock/apt main facelock/' \
+    '$a\deb https://tysmith.me/facelock/apt main facelock' \
     "README.md still configures a retired APT suite"
 assert_matrix_mutation_rejected \
     "quickstart migration note dropped" \
-    "book/src/quickstart.md" \
-    's/keep working until 0.3.0/keep working/' \
+    "$quickstart_fixture" \
+    's/keep working until/continue working until/' \
     "book/src/quickstart.md omits the APT compatibility window"
 assert_matrix_mutation_rejected \
     "README 0.3.0 failure mode dropped" \
     "README.md" \
-    's/fails until the entry is removed/fails/' \
+    's/fails until/fails/' \
     "README.md omits the APT compatibility window"
 assert_matrix_mutation_rejected \
     "website migration note dropped" \
@@ -1009,8 +1015,8 @@ awk 'BEGIN { RS = ""; ORS = "\n\n" } !/Codename: (main|legacy)\n/' \
 sed -i 's/`main` and `legacy` are compatibility suites/`main` and `legacy` were compatibility suites/; s/removed at 0.3.0/removed in 0.3.0/' \
     "$retired_root/docs/contracts.md"
 sed -i 's/compatibility suites present until 0.3.0/compatibility suites removed in 0.3.0/' "$retired_root/docs/releasing.md"
-sed -i 's/keep working until 0.3.0/stopped working in 0.3.0/' \
-    "$retired_root/README.md" "$retired_root/book/src/quickstart.md" "$retired_root/website/index.html"
+sed -i 's/keep working until/previously worked until/' \
+    "$retired_root/README.md" "$retired_root/$quickstart_fixture" "$retired_root/website/index.html"
 if ! checker_output=$(RELEASE_MATRIX_VERSION=0.3.0 python3 "$retired_root/test/check-release-matrix.py" 2>&1); then
     fail "release matrix checker rejected the retired compatibility-suite state at 0.3.0: $checker_output"
 fi

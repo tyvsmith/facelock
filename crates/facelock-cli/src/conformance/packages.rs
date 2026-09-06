@@ -69,6 +69,7 @@ impl Distro {
 /// package name.
 const INSTALL_VERBS: &[(&str, Distro)] = &[
     ("pacman -S ", Distro::Arch),
+    ("pacman -Syu ", Distro::Arch),
     ("yay -S ", Distro::Arch),
     ("paru -S ", Distro::Arch),
     ("apt-get install ", Distro::Debian),
@@ -82,13 +83,75 @@ const INSTALL_VERBS: &[(&str, Distro)] = &[
 
 /// Names that are real but that no manifest in this tree declares.
 ///
-/// Empty, and meant to stay that way. An entry here is an assertion made by a
-/// human against a live repository on the date given, which is exactly the
-/// kind of claim that goes stale — `just check-package-names-live` re-checks
-/// these along with the derived set. Prefer declaring the dependency in the
-/// manifest that should have had it.
+/// Keep this narrow: source-development tools, repository setup tools, and
+/// concrete providers of virtual dependencies need not be runtime package
+/// dependencies. Each exception records its purpose and dated repository
+/// evidence. Never add a fabricated name merely to make documentation pass.
 const KNOWN_EXTERNAL: &[(Distro, &str, &str)] = &[
-    // (distro, package, why no manifest declares it + when it was verified)
+    // Official Arch JSON: https://archlinux.org/packages/search/json/?name=NAME
+    // All checked 2026-09-05; package manifests retain their virtual dependencies.
+    (
+        Distro::Arch,
+        "base-devel",
+        "source build tools; implicit makepkg prerequisite, official Core",
+    ),
+    (
+        Distro::Arch,
+        "just",
+        "source checkout recipe runner, official Extra",
+    ),
+    (
+        Distro::Arch,
+        "pkgconf",
+        "concrete source pkg-config implementation, official Core",
+    ),
+    (
+        Distro::Arch,
+        "v4l-utils",
+        "source V4L2 development tools, official Extra",
+    ),
+    (
+        Distro::Arch,
+        "onnxruntime-cpu",
+        "concrete provider of onnxruntime, official Extra",
+    ),
+    // Debian 13 and Ubuntu 26.04 package metadata checked in disposable containers
+    // 2026-09-05; https://packages.debian.org/trixie/{build-essential,just}
+    (
+        Distro::Debian,
+        "build-essential",
+        "implicit Debian build tools, explicit source checkout prerequisite",
+    ),
+    (
+        Distro::Debian,
+        "just",
+        "source checkout recipe runner, not a binary-package dependency",
+    ),
+    (
+        Distro::Debian,
+        "git",
+        "source checkout retrieval, not needed by the release-archive package build",
+    ),
+    // Fedora 43 repoquery checked 2026-09-05; official package descriptions:
+    // https://packages.fedoraproject.org/pkgs/just/just/
+    // https://packages.fedoraproject.org/pkgs/pkgconf/pkgconf-pkg-config/
+    // https://packages.fedoraproject.org/pkgs/dnf5/dnf5-plugins/
+    (Distro::Fedora, "just", "source checkout recipe runner"),
+    (
+        Distro::Fedora,
+        "git",
+        "source checkout retrieval, not needed by the release-archive package build",
+    ),
+    (
+        Distro::Fedora,
+        "pkgconf-pkg-config",
+        "source pkg-config command provider",
+    ),
+    (
+        Distro::Fedora,
+        "dnf5-plugins",
+        "repository setup: provides dnf copr, not a Facelock runtime dependency",
+    ),
 ];
 
 /// Repository root, from the compile-time manifest directory so the walk does
@@ -230,11 +293,15 @@ fn package_tokens(rest: &str) -> Vec<String> {
     const CLOSERS: [char; 7] = ['`', '.', ',', ')', '"', '\'', ';'];
 
     let mut names = Vec::new();
-    for raw in rest.split_whitespace() {
+    let mut tokens = rest.split_whitespace();
+    while let Some(raw) = tokens.next() {
         if raw.starts_with('#') {
             break;
         }
         if raw.starts_with('-') {
+            if matches!(raw, "-t" | "--target-release") {
+                tokens.next();
+            }
             continue;
         }
         let token = raw.trim_end_matches(CLOSERS);
@@ -506,12 +573,12 @@ fn documented_packages() -> Vec<Mention> {
     mentions
 }
 
-/// Every documented package name is declared by the packaging manifest for
-/// its distro.
+/// Every documented package name is declared by its distro's packaging
+/// manifest or the narrow, repository-verified external-tool allowlist.
 ///
-/// This is the whole guard. A name that no manifest declares is either a
-/// dependency the packaging forgot — in which case declare it there, where a
-/// build would have caught it — or a name that does not exist, which is #209.
+/// An undeclared runtime/build dependency belongs in the packaging manifest.
+/// Checkout and repository setup tools can be reviewed external exceptions;
+/// fabricated package names must never be accepted merely to silence the guard.
 #[test]
 fn documented_packages_are_declared_by_packaging() {
     let declared = declared_names();
@@ -529,8 +596,8 @@ fn documented_packages_are_declared_by_packaging() {
         assert!(
             known.contains(&mention.name),
             "`{}` tells a reader to install `{}`, but {} never declares it. \
-             Either the package does not exist (#209) or the dependency is \
-             missing from packaging — say it in {}, not only in prose.",
+             Correct nonexistent names (#209); declare package dependencies \
+             in {}, or document a narrowly verified external-tool exception.",
             mention.source,
             mention.name,
             mention.distro.manifest(),
@@ -606,6 +673,28 @@ fn no_documented_install_uses_an_unverifiable_package_manager() {
 fn install_verbs_do_not_match_a_longer_flag() {
     assert!(install_mentions("pacman -Ss onnxruntime").is_empty());
     assert!(install_mentions("pacman -Qkk facelock").is_empty());
+}
+
+#[test]
+fn source_prerequisite_install_forms_keep_every_package() {
+    assert_eq!(
+        install_mentions("sudo pacman -Syu --needed base-devel onnxruntime-cpu"),
+        vec![
+            (Distro::Arch, "base-devel".into()),
+            (Distro::Arch, "onnxruntime-cpu".into()),
+        ]
+    );
+}
+
+#[test]
+fn apt_target_suite_is_not_a_package() {
+    assert_eq!(
+        install_mentions("sudo apt install -t trixie-backports rustc cargo"),
+        vec![
+            (Distro::Debian, "rustc".into()),
+            (Distro::Debian, "cargo".into()),
+        ]
+    );
 }
 
 #[test]

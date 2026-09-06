@@ -7,17 +7,20 @@ Facelock is a **local biometric authentication system**. The threat model assume
 - **Attacker has physical access** to the machine (the entire point of face auth is physical-presence scenarios like unlocking a laptop)
 - **Attacker may have a photo or video** of the enrolled user
 - **Attacker does not have root** (if they do, game over regardless)
-- **Attacker cannot modify files** in `/etc/facelock/`, `/var/lib/facelock/`, or `/lib/security/`
+- **Attacker cannot modify files** in `/etc/facelock/`, `/var/lib/facelock/`,
+  or the distribution's PAM module directories
 
 ## Privacy Guarantees
 
 Facelock is designed to keep biometric data under the user's exclusive control:
 
 - **Local-only inference**: All face detection and recognition runs on-device via ONNX Runtime. No images, embeddings, or metadata are ever transmitted over the network.
-- **No telemetry**: Facelock contains zero analytics, tracking, or phone-home code. After the one-time model download during `facelock setup`, it never contacts any server.
+- **No telemetry**: Facelock contains zero analytics, tracking, or phone-home
+  code. Authentication makes no network request. The separately invoked
+  `sudo facelock setup` flow downloads model files when they are missing.
 - **No cloud dependencies**: Authentication works fully offline. No account registration, no API keys, no external services.
-- **Data stays on disk**: Face embeddings are stored in a local SQLite database (`/var/lib/facelock/facelock.db`) with restrictive permissions (600, root:root). Optional AES-256-GCM encryption with TPM-sealed keys provides defense in depth.
-- **Open source**: All code is MIT/Apache-2.0 licensed. No proprietary blobs or obfuscated network calls. Privacy claims are verifiable by reading the source.
+- **Data stays on disk**: Face embeddings are stored in a local SQLite database (`/var/lib/facelock/facelock.db`) with restrictive permissions (600, root:root). New enrollments use AES-256-GCM keyfile encryption by default; TPM sealing is optional.
+- **Open source**: Facelock's source is dual-licensed under MIT or Apache-2.0. Dependencies and model weights have separate licenses; see the [model notice](https://github.com/tyvsmith/facelock/blob/main/models/NOTICE.md). Privacy claims can be checked against the source.
 
 ## Attack Vectors & Mitigations
 
@@ -38,9 +41,16 @@ Facelock is designed to keep biometric data under the user's exclusive control:
 require_ir = true  # Refuse to authenticate on RGB-only cameras
 ```
 
-**Rationale**: Phone screens and printed photos do not emit infrared light correctly. An IR camera sees a flat, textureless surface where a real face would have depth and skin texture in IR. This single check eliminates the vast majority of spoofing attacks.
+**Rationale**: Requiring an IR-classified capture path and applying the IR
+texture threshold raises the bar against static RGB presentations. It is one
+layer, not proof of sensor authenticity or resistance to video replay.
 
-**Limitation**: IR camera detection by format/name is heuristic. Some cameras report YUYV but are actually IR. The `facelock devices` command should display whether each camera is detected as IR.
+**Limitation**: IR classification uses an exclusively mono advertised format
+set or an exact hardware quirk; the device name is never evidence. A mixed
+YUYV/mono node is not auto-classified without a matching quirk. Use
+`sudo facelock devices` to inspect the result. `Y16` authentication additionally
+requires a hardware-verified `y16_bit_depth`; `Y8`, `Y10`, and `Y12` are
+classification evidence but are not decoded.
 
 #### B. Frame Variance Check (Required)
 
@@ -191,7 +201,7 @@ allowed_services = ["sudo", "polkit-1"]
 denied_services = ["login", "sshd"]
 
 [security.rate_limit]
-max_attempts = 5             # Max auth attempts per user
+max_attempts = 5             # Max face-detected auth failures per user per window
 window_secs = 60             # Rate limit window
 ```
 

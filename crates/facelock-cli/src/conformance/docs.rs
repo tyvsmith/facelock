@@ -1,8 +1,7 @@
 //! Reference-doc coverage (#172): the docs describe the binary that shipped.
 //!
-//! `docs/cli.md`, the book's copy of it and the man page are embedded rather
-//! than read at run time, so a reference that stops describing the binary
-//! breaks the build rather than the reader.
+//! Reference text is embedded; executable examples come from the shared
+//! classified inventory, which also reaches instructional pages outside it.
 
 use clap::{CommandFactory, Parser};
 
@@ -17,9 +16,7 @@ use crate::{Cli, Commands};
 /// binary breaks the build rather than the reader.
 const CLI_DOC: &str = include_str!("../../../../docs/cli.md");
 
-/// The book ships a second copy of the same reference. It is a near-copy,
-/// not a generated one, so it rots independently — `docs/cli.md` gained
-/// `is-enrolled` long before this file did.
+/// Resolve the book's canonical include without maintaining a second copy.
 const BOOK_CLI_DOC: &str = include_str!("../../../../book/src/cli-reference.md");
 
 /// The man page. Matched only through [`unescaped_man_page`].
@@ -33,10 +30,201 @@ const CONTRACTS_DOC: &str = include_str!("../../../../docs/contracts.md");
 
 /// Both prose copies of the CLI reference, by repository path so a failure
 /// names the file that is missing the entry rather than just the entry.
-const MARKDOWN_REFERENCES: &[(&str, &str)] = &[
-    ("docs/cli.md", CLI_DOC),
-    ("book/src/cli-reference.md", BOOK_CLI_DOC),
-];
+fn markdown_references() -> Vec<(&'static str, &'static str)> {
+    let book = if BOOK_CLI_DOC.trim() == "{{#include ../../docs/cli.md}}" {
+        CLI_DOC
+    } else {
+        BOOK_CLI_DOC
+    };
+    vec![
+        ("docs/cli.md", CLI_DOC),
+        ("book/src/cli-reference.md", book),
+    ]
+}
+
+/// Track fenced examples so reference guards inspect prose, not example text.
+#[derive(Default)]
+pub(super) struct FencedCode {
+    opening: Option<(char, usize)>,
+}
+
+impl FencedCode {
+    /// Consume one line; true means a fence delimiter or fenced content.
+    pub(super) fn consume_line(&mut self, line: &str) -> bool {
+        // CommonMark fences permit up to three leading spaces. A closer
+        // must use the opener's delimiter, be at least as long, and contain
+        // only whitespace afterward; examples can contain shorter/mixed
+        // fences without ending the surrounding code block.
+        let unindented = line.trim_start_matches(' ');
+        let marker = if line.len() - unindented.len() <= 3 {
+            unindented.chars().next().filter(|c| matches!(c, '`' | '~'))
+        } else {
+            None
+        };
+        if let Some(delimiter) = marker {
+            let length = unindented.chars().take_while(|c| *c == delimiter).count();
+            let rest = &unindented[length..];
+            match self.opening {
+                Some((opening_delimiter, opening_length))
+                    if delimiter == opening_delimiter
+                        && length >= opening_length
+                        && rest.trim().is_empty() =>
+                {
+                    self.opening = None;
+                    return true;
+                }
+                None if length >= 3 && (delimiter != '`' || !rest.contains('`')) => {
+                    self.opening = Some((delimiter, length));
+                }
+                _ => {}
+            }
+        }
+        self.opening.is_some()
+    }
+}
+
+fn command_section<'a>(doc: &'a str, path: &str) -> Option<&'a str> {
+    let mut offset = 0;
+    let mut start = None;
+    let mut depth = 0;
+    let mut fence = FencedCode::default();
+    for line in doc.split_inclusive('\n') {
+        if fence.consume_line(line) {
+            offset += line.len();
+            continue;
+        }
+        if line.starts_with('#') {
+            let title = line.trim_start_matches('#').trim();
+            let current_depth = line.len() - line.trim_start_matches('#').len();
+            if let Some(start) = start
+                && (current_depth <= depth || title.starts_with("facelock "))
+            {
+                return Some(&doc[start..offset]);
+            }
+            if title == path {
+                start = Some(offset + line.len());
+                depth = current_depth;
+            }
+        }
+        offset += line.len();
+    }
+    start.map(|start| &doc[start..])
+}
+
+fn declared_flags(body: &str) -> Vec<&str> {
+    body.lines()
+        .filter_map(|line| line.strip_prefix('|')?.split('|').next())
+        .filter(|cell| cell.trim_start().starts_with("`-"))
+        .flat_map(super::surface::flag_tokens)
+        .collect()
+}
+
+#[test]
+fn option_table_rejects_invented_flags_without_treating_prose_as_declarations() {
+    let root = super::surface::command_tree();
+    let command = super::sub(&root, "devices");
+    let body = "| `--json` | Payload; see `--user` on list |\n| `--invented` | Missing option |\nSee `--another-command-flag` elsewhere.\n";
+    assert_eq!(
+        super::surface::unknown_flags(command, &declared_flags(body), true),
+        ["--invented"]
+    );
+}
+
+#[test]
+fn docs_cli_covers_every_public_command_and_local_argument() {
+    let root = super::surface::command_tree();
+    let mut commands = Vec::new();
+    walk(&root, "", &mut commands);
+    let mut failures = Vec::new();
+    for (doc_path, doc) in markdown_references() {
+        for (path, command) in &commands {
+            if path == "facelock" || super::surface::classification(path, command) != "public" {
+                continue;
+            }
+            let Some(body) = command_section(doc, path) else {
+                failures.push(format!("{doc_path}: {path}: missing command heading"));
+                continue;
+            };
+            for missing in super::surface::missing_arguments(command, body, false) {
+                failures.push(format!("{doc_path}: {path}: missing {missing}"));
+            }
+            for unknown in super::surface::unknown_flags(command, &declared_flags(body), true) {
+                failures.push(format!(
+                    "{doc_path}: {path}: declares unknown option {unknown}"
+                ));
+            }
+        }
+        for missing in
+            super::surface::missing_arguments(&root, section_of(doc, "\n## Global flags\n"), true)
+        {
+            failures.push(format!("{doc_path}: global: missing {missing}"));
+        }
+        for unknown in super::surface::unknown_flags(
+            &root,
+            &declared_flags(section_of(doc, "\n## Global flags\n")),
+            false,
+        ) {
+            failures.push(format!(
+                "{doc_path}: global: declares unknown option {unknown}"
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "CLI reference coverage:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn command_sections_do_not_borrow_neighboring_flags() {
+    let doc =
+        "## facelock first\nfirst\n### facelock first child\n--json\n## facelock second\n--user\n";
+    assert!(
+        !command_section(doc, "facelock first")
+            .expect("first")
+            .contains("--json")
+    );
+    assert!(
+        !command_section(doc, "facelock first child")
+            .expect("child")
+            .contains("--user")
+    );
+}
+
+#[test]
+fn command_sections_ignore_headings_comments_and_shebangs_inside_fences() {
+    for fence in ["```", "~~~~", "   ```"] {
+        let doc = format!(
+            "## facelock first\n{fence}bash\n#!/usr/bin/env bash\n# shell comment\n## facelock fake\n{fence}\n| `--json` | real option |\n## facelock second\n--user\n"
+        );
+        let body = command_section(&doc, "facelock first").expect("first");
+        assert!(body.contains("--json"), "premature end with {fence:?}");
+        assert!(!body.contains("--user"), "borrowed neighbor with {fence:?}");
+        assert!(command_section(&doc, "facelock fake").is_none());
+    }
+}
+
+#[test]
+fn command_sections_close_only_matching_fences_of_sufficient_length() {
+    let doc = "## facelock first\n````bash\n```\n# short fence did not close\n~~~~\n# different delimiter did not close\n````not-a-closing-fence\n# trailing text did not close\n`````  \n| `--json` | real option |\n## facelock second\n--user\n";
+    let body = command_section(doc, "facelock first").expect("first");
+    assert!(body.contains("--json"));
+    assert!(!body.contains("--user"));
+}
+
+#[test]
+fn command_sections_do_not_open_invalid_or_overindented_fences() {
+    for invalid in ["``bash", "```bad`info", "    ```bash"] {
+        let doc = format!("## facelock first\n{invalid}\n## facelock second\n--user\n");
+        assert!(
+            !command_section(&doc, "facelock first")
+                .expect("first")
+                .contains("--user"),
+            "opened invalid fence {invalid:?}"
+        );
+    }
+}
 
 /// The man page with its roff hyphen escapes undone. Shared with
 /// [`super::man_pam`], which asks the same question of the other page.
@@ -102,10 +290,10 @@ fn subsection_of<'a>(doc: &'a str, heading: &str) -> &'a str {
 fn docs_cli_documents_every_subcommand() {
     let root = Cli::command();
 
-    for (doc_path, doc) in MARKDOWN_REFERENCES {
+    for (doc_path, doc) in markdown_references() {
         for command in root.get_subcommands() {
             let name = command.get_name();
-            if name == "help" {
+            if name == "help" || command.is_hide_set() {
                 continue;
             }
             let heading = format!("\n## facelock {name}\n");
@@ -117,7 +305,7 @@ fn docs_cli_documents_every_subcommand() {
 
             for nested in command.get_subcommands() {
                 let nested_name = nested.get_name();
-                if nested_name == "help" {
+                if nested_name == "help" || nested.is_hide_set() {
                     continue;
                 }
                 let invocation = format!("facelock {name} {nested_name}");
@@ -233,85 +421,25 @@ fn docs_cli_machine_output_section_names_every_json_command() {
 /// most need root, a camera or a TPM — only that clap accepts it, which is
 /// the half a unit test can own.
 ///
-/// Extraction rules, and why each one is what it is:
-///
-/// - only ```` ```bash ```` blocks, so prose that names a flag inline is
-///   left alone (the `setup` section deliberately cites the invocation
-///   that *refuses*, as prose, to explain the sensitive-service gate);
-/// - a leading `sudo ` is stripped, since half the examples need root;
-/// - a trailing ` # …` comment is stripped;
-/// - the invocation ends at the first shell operator (`|`, `||`, `&&`,
-///   `;`, `&`), so a piped example documents a real pipeline and still
-///   gets its `facelock` half checked;
-/// - **no placeholders.** A `<user>` or `<model_id>` in an example is
-///   rejected outright rather than substituted, because a reference
-///   example should be runnable as written — and a substituted
-///   placeholder would make `--user <user>` pass while `remove <id>`
-///   failed, which is an arbitrary line. Angle brackets are used for
-///   metavariables in the flag *tables*, which are not bash blocks.
-///
-/// Takes the document rather than reading `CLI_DOC` directly, because the
-/// book ships a second, hand-maintained copy of this reference. Checking
-/// only `docs/cli.md` left the copy that rots more freely — the one a
-/// reader is likelier to arrive at from a search engine — free to document
-/// a command line that does not parse.
-fn documented_invocations(doc: &str) -> Vec<Vec<String>> {
-    const OPERATORS: &[&str] = &["|", "||", "&&", ";", "&"];
-
-    let mut invocations = Vec::new();
-    let mut in_bash = false;
-
-    for line in doc.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("```") {
-            in_bash = !in_bash && trimmed == "```bash";
-            continue;
-        }
-        if !in_bash {
-            continue;
-        }
-
-        let command = trimmed.strip_prefix("sudo ").unwrap_or(trimmed).trim();
-        if command != "facelock" && !command.starts_with("facelock ") {
-            continue;
-        }
-        // ` #` rather than `#`: a `#` can legitimately open an argument.
-        let command = match command.split_once(" #") {
-            Some((before, _)) => before.trim(),
-            None => command,
-        };
-
-        let argv: Vec<String> = command
-            .split_whitespace()
-            .take_while(|token| !OPERATORS.contains(token))
-            .map(str::to_string)
-            .collect();
-
-        for token in &argv {
-            assert!(
-                !token.contains('<') && !token.contains('>'),
-                "`{command}` carries a placeholder or redirect (`{token}`); \
-                 a reference example must be runnable as written"
-            );
-        }
-        invocations.push(argv);
-    }
-
-    assert!(
-        invocations.len() > 20,
-        "extracted only {} invocations — the extractor is probably broken, \
-         not the doc",
-        invocations.len()
-    );
-    invocations
-}
-
+/// The shared extractor owns quoting, wrappers, shell operators, source
+/// locations and classification. Schematic and manual records stay visible
+/// in its report without being passed off as executable parser evidence.
 #[test]
 fn docs_cli_examples_all_parse() {
-    for (doc_path, doc) in MARKDOWN_REFERENCES {
-        for argv in documented_invocations(doc) {
-            Cli::try_parse_from(&argv)
-                .unwrap_or_else(|e| panic!("`{}` in {doc_path} must parse: {e}", argv.join(" ")));
+    for (source, argv) in super::examples::executable_invocations() {
+        match Cli::try_parse_from(argv) {
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+                ) => {}
+            Err(error) => panic!(
+                "`{}` in {}:{} must parse: {error}",
+                argv.join(" "),
+                source.path,
+                source.line
+            ),
         }
     }
 }
@@ -335,7 +463,7 @@ fn docs_references_name_every_gated_service() {
     // "login managers". It still catches the failure that matters, which is
     // a name added to `SENSITIVE_SERVICES` and written down nowhere.
     let man = unescaped_man_page();
-    let mut references = MARKDOWN_REFERENCES.to_vec();
+    let mut references = markdown_references();
     references.push(("man/facelock.1", &man));
     for (doc_path, doc) in &references {
         for service in SENSITIVE_SERVICES {
@@ -420,45 +548,55 @@ fn docs_cli_examples_never_install_into_a_gated_service() {
             .cloned()
     };
 
-    for (doc_path, doc) in MARKDOWN_REFERENCES {
-        for argv in documented_invocations(doc) {
-            let rendered = argv.join(" ");
-            let cli = Cli::try_parse_from(&argv).expect("checked by docs_cli_examples_all_parse");
-
-            match cli.command {
-                Commands::Pam { command } => {
-                    let request: facelock_cli::commands::pam::PamRequest = command.into();
-                    if request.action != PamAction::Add || request.allow_sensitive {
-                        continue;
-                    }
-                    if let Some(service) = gated(&request.services) {
-                        panic!(
-                            "`{rendered}` in {doc_path} installs into the gated service \
-                             `{service}` without --allow-sensitive, so it fails as written"
-                        );
-                    }
-                }
-                Commands::Setup(setup) => {
-                    let plan = resolve_setup_plan(SetupArgs::from(setup));
-                    if plan.allow_sensitive {
-                        continue;
-                    }
-                    let PamPref::Install {
-                        service: Some(service),
-                        ..
-                    } = &plan.pam
-                    else {
-                        continue;
-                    };
-                    if let Some(service) = gated(std::slice::from_ref(service)) {
-                        panic!(
-                            "`{rendered}` in {doc_path} installs into the gated service \
-                             `{service}` without --allow-sensitive, so it fails as written"
-                        );
-                    }
-                }
-                _ => {}
+    for (source, argv) in super::examples::executable_invocations() {
+        let doc_path = &source.path;
+        let rendered = argv.join(" ");
+        let cli = match Cli::try_parse_from(argv) {
+            Ok(cli) => cli,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+                ) =>
+            {
+                continue;
             }
+            Err(error) => panic!("{doc_path}: {rendered}: {error}"),
+        };
+
+        match cli.command {
+            Commands::Pam { command } => {
+                let request: facelock_cli::commands::pam::PamRequest = command.into();
+                if request.action != PamAction::Add || request.allow_sensitive {
+                    continue;
+                }
+                if let Some(service) = gated(&request.services) {
+                    panic!(
+                        "`{rendered}` in {doc_path} installs into the gated service \
+                             `{service}` without --allow-sensitive, so it fails as written"
+                    );
+                }
+            }
+            Commands::Setup(setup) => {
+                let plan = resolve_setup_plan(SetupArgs::from(setup));
+                if plan.allow_sensitive {
+                    continue;
+                }
+                let PamPref::Install {
+                    service: Some(service),
+                    ..
+                } = &plan.pam
+                else {
+                    continue;
+                };
+                if let Some(service) = gated(std::slice::from_ref(service)) {
+                    panic!(
+                        "`{rendered}` in {doc_path} installs into the gated service \
+                             `{service}` without --allow-sensitive, so it fails as written"
+                    );
+                }
+            }
+            _ => {}
         }
     }
 }

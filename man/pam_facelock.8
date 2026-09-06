@@ -42,9 +42,10 @@ The user's face was matched against an enrolled model with sufficient
 confidence.
 .TP
 .B PAM_AUTH_ERR
-Authentication failed: a face was scanned and did not match, or the user is
+Authentication failed: a face was scanned and did not match, the user is
 rate limited (the face-auth budget is exhausted; the remaining modules in the
-stack still run). The two transports differ in one case: the daemon abstains
+stack still run), or a D-Bus or one-shot authentication deadline expired. The
+two transports differ in one case: the daemon abstains
 when no face was seen, while the oneshot binary cannot carry that distinction
 in an exit code and reports it here. See the exit-code table in
 .I docs/contracts.md .
@@ -57,7 +58,8 @@ is enabled, so the module declines to reveal whether the user is enrolled.
 .B PAM_IGNORE
 Face authentication has no opinion for this attempt: the module is disabled
 or skipped for this context, the user has no enrolled face models, the camera
-produced no usable image, the attempt was cancelled, or an error occurred.
+produced no usable image, the attempt was cancelled, or a non-timeout error
+occurred.
 The PAM stack falls through to the next module.
 .SH EXAMPLES
 To enable face authentication for
@@ -78,7 +80,8 @@ stack (typically
 .BR pam_unix (8))
 will prompt for a password.
 .PP
-For stricter security, use
+To make a face non-match or rate-limit rejection fail the stack even if a later
+password succeeds, use
 .B required
 instead of
 .BR sufficient :
@@ -89,11 +92,14 @@ auth    required    pam_facelock.so
 .fi
 .RE
 .PP
-The recommended way to manage PAM configuration is via the setup command:
+This does not enforce mandatory face-plus-password authentication: the module
+still returns PAM_IGNORE for disabled, unavailable or cancelled attempts.
+.PP
+The recommended way to manage PAM configuration is:
 .PP
 .RS
 .nf
-facelock setup --pam --service sudo
+sudo facelock pam add --service sudo
 .fi
 .RE
 .SH SECURITY
@@ -104,11 +110,12 @@ in the configuration file). IR cameras are resistant to photo\-based spoofing
 attacks. Do not disable this requirement unless you understand the security
 implications.
 .SS Anti\-Spoofing
-Frame variance checks are performed during authentication to detect
-presentation attacks (e.g., holding a photo or video in front of the camera).
+Frame variance checks reject sufficiently static input during authentication.
+They provide passive anti-photo protection and do not stop video replay.
 .SS Rate Limiting
-The daemon enforces rate limiting (5 attempts per user per 60 seconds by
-default) to prevent brute\-force attacks.
+Daemon and oneshot authentication limit face-detected failures (5 per user
+per 60 seconds by default). Successful and no-face attempts do not consume this
+budget. Oneshot mode uses persistent accounting across process invocations.
 .SS IPC Security
 Communication between the PAM module and the daemon uses the D\-Bus system bus.
 The system bus policy
@@ -175,7 +182,9 @@ Per\-service allow and deny lists, matched against the PAM service name.
 .B [recognition]
 .BR timeout_secs
 .br
-How long the module waits for a decision before abstaining.
+Base recognition timeout. The D-Bus method budget adds 5 seconds and its overall
+connection/method deadline adds another 5; the one-shot child budget adds 3.
+Exceeding a PAM-side deadline returns PAM_AUTH_ERR, not PAM_IGNORE.
 .TP
 .B [notification]
 .BR mode ,

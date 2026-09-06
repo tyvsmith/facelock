@@ -1,6 +1,10 @@
 # GPU Acceleration
 
-GPU support in Facelock is **runtime-only** -- no special build flags or recompilation needed. Install a GPU-enabled ONNX Runtime package for your hardware and set `execution_provider` in the configuration.
+GPU support in Facelock is **runtime-only** -- Facelock itself needs no rebuild.
+Install an ONNX Runtime built with the matching execution provider, satisfy the
+vendor driver/runtime requirements, and set `execution_provider` in the
+configuration. GPU paths are configuration-supported but are not part of the
+release package validation matrix.
 
 ## Setup
 
@@ -8,18 +12,32 @@ GPU support in Facelock is **runtime-only** -- no special build flags or recompi
 
 | GPU Vendor | Arch Linux Package | Other Distros |
 |------------|-------------------|---------------|
-| NVIDIA | `onnxruntime-opt-cuda` | Install CUDA toolkit + ONNX Runtime with CUDA provider |
-| AMD | `onnxruntime-opt-rocm` | Install ROCm runtime + ONNX Runtime with ROCm provider |
-| Intel | none packaged | Install OpenVINO runtime + ONNX Runtime with OpenVINO provider |
+| NVIDIA | `onnxruntime-opt-cuda` | Install a compatible NVIDIA driver and ONNX Runtime with CUDA support |
+| AMD | `onnxruntime-opt-rocm` | Install the ROCm stack and ONNX Runtime with ROCm support |
+| Intel | none packaged | Build ONNX Runtime with the OpenVINO provider and install its required OpenVINO runtime |
 
-On Arch Linux:
+On Arch Linux, these are official Extra repository packages as checked on
+2026-09-05. Each provides and conflicts with the virtual `onnxruntime`
+dependency, so the variants do not install side by side. If another variant is
+installed, pacman prompts to remove it; review and accept that transaction to
+switch providers:
 
 ```bash
 sudo pacman -S onnxruntime-opt-cuda      # NVIDIA
 sudo pacman -S onnxruntime-opt-rocm      # AMD
 ```
 
-Arch packages no OpenVINO build of ONNX Runtime, in the repositories or the AUR. Build ONNX Runtime with the OpenVINO execution provider yourself to use `execution_provider = "openvino"`.
+Arch packages no OpenVINO build of ONNX Runtime, in the repositories or the AUR
+as checked on 2026-09-05. Build ONNX Runtime with the OpenVINO execution
+provider yourself to use `execution_provider = "openvino"`. Debian 13 publishes
+`libonnxruntime1.21`, and Ubuntu 26.04 publishes `libonnxruntime1.23` plus
+`libonnxruntime-providers`, as checked on 2026-09-05. Their packaged provider
+modules are CPU/oneDNN rather than CUDA, ROCm, or OpenVINO. They also install in
+the multiarch library directory with versioned SONAMEs that Facelock's current
+trusted runtime loader does not accept, so they cannot serve as its runtime.
+Facelock's published `.deb` packages bundle a compatible CPU-only runtime and
+therefore do not enable a GPU provider. Fedora's COPR package depends on
+Fedora's CPU-only `onnxruntime` package.
 
 ### 2. Set the execution provider
 
@@ -47,25 +65,35 @@ sudo facelock daemon restart
 ### 4. Verify
 
 ```bash
-facelock bench warm-auth
+sudo facelock status
+sudo facelock bench warm-auth
 ```
 
-Compare latency with `execution_provider = "cpu"` to confirm GPU acceleration is active.
+`facelock status` must report that the configured provider is built into the
+installed ONNX Runtime. Then compare the benchmark with
+`execution_provider = "cpu"`; timing alone is not proof that the GPU provider
+loaded.
 
 ## How it works
 
-Facelock uses the `ort` crate with the `load-dynamic` feature. At startup, it loads `libonnxruntime.so` from the system library path. If a GPU-enabled ONNX Runtime is installed, it provides CUDA/ROCm/OpenVINO execution providers automatically. The `execution_provider` config selects which provider to register.
+Facelock uses the `ort` crate with the `load-dynamic` feature. It accepts ONNX
+Runtime 1.20+ from fixed, root-owned system and Facelock package directories;
+privileged commands ignore `ORT_DYLIB_PATH`. For a configured GPU provider it
+prefers the trusted system runtime over Facelock's bundled CPU runtime. The
+`execution_provider` config selects which provider to register.
 
-If the requested provider is not available (e.g., CUDA requested but only CPU ORT installed), Facelock falls back to CPU with a warning.
+If the configured provider is not built into the installed runtime, status and
+daemon startup warn about the mismatch. ONNX Runtime may fall back to CPU, so
+do not infer GPU use merely from a successful authentication.
 
 ## Supported providers
 
 | Provider | Config value | Status |
 |----------|-------------|--------|
-| CPU | `"cpu"` | Default, tested |
-| CUDA (NVIDIA) | `"cuda"` | Config ready, requires GPU-enabled ORT |
-| ROCm (AMD) | `"rocm"` | Config ready, requires GPU-enabled ORT |
-| OpenVINO (Intel) | `"openvino"` | Config ready, requires GPU-enabled ORT |
+| CPU | `"cpu"` | Default; covered by package validation |
+| CUDA (NVIDIA) | `"cuda"` | Config supported, requires CUDA-enabled ORT; not release-matrix tested |
+| ROCm (AMD) | `"rocm"` | Config supported, requires ROCm-enabled ORT; not release-matrix tested |
+| OpenVINO (Intel) | `"openvino"` | Config supported, requires a custom OpenVINO-enabled ORT; not release-matrix tested |
 
 ## systemd note
 
@@ -75,4 +103,4 @@ The systemd service has `MemoryDenyWriteExecute=yes` commented out because GPU i
 
 - **"Failed to load execution provider"**: The GPU-enabled ONNX Runtime package is not installed or `libonnxruntime.so` does not include the requested provider.
 - **Slower than CPU**: Ensure the GPU driver is loaded (`nvidia-smi` for NVIDIA, `rocm-smi` for AMD). Small models like SCRFD 2.5G may not benefit from GPU due to transfer overhead.
-- **Daemon crashes on startup**: Check `journalctl -u facelock-daemon` for ORT initialization errors. GPU memory allocation failures are the most common cause.
+- **Daemon exits during startup**: Check `journalctl -u facelock-daemon` and diagnose the reported error; runtime loading, provider initialization and device-memory failures require different remedies.

@@ -27,6 +27,6 @@ most recent to change them.
 - D-Bus message size limits enforced by the bus daemon.
 - PAM module logs all auth attempts to syslog.
 - Database is 0600 root:root, model files 0644 under a 0755 root:root directory; the state directory is 0711 root:root (ADR 010).
-- Rate limiting enforced in daemon (5 attempts/user/60s default).
+- Daemon and oneshot authentication limit face-detected failures (5/user/60s default); successful and no-face attempts do not consume this budget.
 - Constant-time embedding comparison via `subtle` crate (prevents timing side-channels).
 - systemd service hardened with ProtectSystem=strict, NoNewPrivileges, InaccessiblePaths, etc.

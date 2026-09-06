@@ -1,14 +1,11 @@
 # Compatibility
 
-## System Requirements
-
-| Component | Requirement |
-|-----------|-----------|
-| OS | Linux (kernel 4.14+ for V4L2) |
-| Architecture | x86_64 (ONNX Runtime binaries) |
-| Rust | 1.88+ (edition 2024) |
-| Camera | V4L2-compatible (USB webcam, built-in IR) |
-| PAM | Linux-PAM (pam 1.5+) |
+The current delivery targets are x86_64 Linux systems with V4L2 and
+Linux-PAM; source builds require Rust 1.88+. Package validation covers Arch,
+Debian 13 (`trixie`), Ubuntu 26.04
+LTS (`resolute`), and Fedora 43/44/45. RHEL is not in the supported matrix.
+Source templates exist for OpenRC, runit, and s6, but that does not establish
+package or hardware support for every distribution using those supervisors.
 
 ## Tested Distributions
 
@@ -18,132 +15,59 @@ LTS (Resolute). Other Debian and Ubuntu releases are unsupported.
 | Distribution | Init System | Mode | Status |
 |-------------|-------------|------|--------|
 | Arch Linux | systemd | daemon + D-Bus activation | Primary target |
-| Arch Linux | systemd | oneshot | Tested |
 | Debian 13 (Trixie) | systemd | daemon + D-Bus activation | Booted package gate |
 | Ubuntu 26.04 LTS (Resolute) | systemd | daemon + D-Bus activation | Booted package gate |
-| Container (Arch) | none | daemon (manual) | CI-tested |
-| Container (Arch) | none | oneshot | CI-tested |
+| Fedora 43/44/45 | systemd | daemon + D-Bus activation | Release matrix target |
 
 ### Expected to Work (untested)
 
-| Distribution | Init System | Mode |
-|-------------|-------------|------|
-| Fedora 38+ | systemd | daemon + D-Bus activation |
-| Any Linux | any / none | oneshot |
-| Void Linux | runit | oneshot or manual daemon |
-| Alpine Linux | OpenRC | oneshot or manual daemon |
-| Gentoo | OpenRC / systemd | oneshot or daemon |
+No additional distribution is claimed as expected to work. Source templates
+do not convert a distribution into an untested support claim.
 
-## Camera Compatibility
+## Cameras and formats
 
-### IR Cameras (recommended)
+Facelock classifies an IR node from its advertised format set or an exact
+hardware quirk. It does not use a device name containing “IR” as evidence.
+The current hardware validation record covers the Logitech BRIO 046d:085e IR
+node using native GREY. Do not infer support for Intel RealSense or “Windows
+Hello” cameras from their product category alone.
 
-IR cameras provide anti-spoofing protection. Facelock auto-detects IR cameras by:
-- Device name containing "ir" or "infrared"
-- Supporting GREY or Y16 pixel formats
+| Format | Authentication support |
+|--------|------------------------|
+| `GREY` | supported 8-bit grayscale path |
+| `Y16` | conditional on a hardware-verified `y16_bit_depth` quirk from 8 through 16 |
+| `YUYV`, `NV12`, `MJPG` | supported decode paths; normally RGB unless an exact quirk says otherwise |
+| `Y8`, `Y10`, `Y12` | IR-classification evidence only; not decoded |
+| raw Bayer and other formats | not supported |
 
-Known working:
-- Logitech BRIO (IR mode)
-- Intel RealSense (IR stream)
-- Most laptops with Windows Hello IR cameras
+The shipped RealSense Y16 quirks deliberately have no bit-depth evidence, so
+authentication rejects those Y16 paths. A 16-bit V4L2 container does not prove
+the sensor's meaningful bit depth. Auto-detection excludes devices with no
+decodable format and reports the advertised formats.
 
-### RGB Cameras (development only)
+RGB operation requires `security.require_ir = false` and is for development.
+Frame variance and any enabled landmark-liveness check still apply, but they
+do not restore the default IR boundary or guarantee resistance to presentation
+attacks. See the canonical
+[Compatibility page on GitHub](https://github.com/tyvsmith/facelock/blob/main/docs/compatibility.md)
+for the IPU6/IPU7 relay notes, exact negotiation order, and current validation
+evidence.
 
-RGB cameras work with `security.require_ir = false` but provide no anti-spoofing. Any photo of the enrolled user will authenticate.
+## Init and PAM
 
-### Format Support
+systemd with D-Bus activation is the packaged daemon path. On non-systemd
+systems, use `daemon.mode = "oneshot"` or install one of the source-tree
+OpenRC/runit/s6 templates after a source install. The daemon command must run
+as root.
 
-| Format | Support | Notes |
-|--------|---------|-------|
-| MJPG | Full | Most common USB camera format |
-| YUYV | Full | Raw format, converted to RGB |
-| GREY | Full | IR cameras, replicated to RGB |
-| Other | Not supported | Camera negotiates to supported format |
+Test PAM on `sudo` first while retaining a root recovery shell. Shared stacks,
+console login, and SSH are sensitive targets and require the CLI's explicit
+`--allow-sensitive` gate. PAM service availability is distribution-specific;
+use `facelock pam status` rather than assuming a path exists.
 
-## Init System Support
+## Inference providers
 
-### systemd (recommended)
-
-Full support via D-Bus activation:
-```bash
-sudo facelock setup --systemd
-```
-
-Features:
-- D-Bus activation (daemon starts on first connection)
-- Idle timeout (daemon stops when idle)
-- Service hardening (ProtectSystem, NoNewPrivileges, etc.)
-- Automatic restart on failure
-
-### Non-systemd
-
-Use oneshot mode (no daemon needed):
-```toml
-[daemon]
-mode = "oneshot"
-```
-
-Or manage the daemon manually:
-```bash
-facelock daemon &                    # start
-kill $(pidof facelock)               # stop
-```
-
-For process supervisors (runit, s6, dinit, OpenRC), create a service that runs `facelock daemon`. The daemon handles SIGTERM for graceful shutdown.
-
-## PAM Stack Compatibility
-
-Facelock works with standard Linux-PAM. The module is installed as:
-```
-auth  sufficient  pam_facelock.so
-```
-
-### Tested PAM Services
-
-| Service | File | Notes |
-|---------|------|-------|
-| sudo | `/etc/pam.d/sudo` | Primary target, safest to test first |
-| polkit | `/etc/pam.d/polkit-1` | GUI privilege escalation |
-
-### Not Recommended
-
-| Service | Reason |
-|---------|--------|
-| system-auth | Affects ALL auth -- test sudo first |
-| login | Console login -- hard to recover if broken |
-| sshd | SSH has no camera -- always fails |
-
-## Build Dependencies
-
-### Runtime
-- `pam` (Linux-PAM library)
-- `gcc-libs` (C runtime)
-
-### Build
-- `rust` + `cargo` (1.88+)
-- `clang` (for ONNX Runtime bindings)
-- System headers: `libv4l-dev`, `libxkbcommon-dev`, `libpam0g-dev` (names vary by distro)
-
-### Optional
-- `tpm2-tss` -- TPM2 support for embedding encryption
-- `podman` or `docker` -- container testing
-
-## ONNX Runtime
-
-Facelock uses the `ort` crate (Rust bindings for ONNX Runtime) and loads the
-compatible shared library dynamically. Native packages either include the
-reviewed CPU runtime or depend on the distribution runtime; source builds use
-a compatible ONNX Runtime installed on the build host.
-
-### Execution Providers
-
-GPU support is runtime-only -- no special build flags needed. Install a GPU-enabled ONNX Runtime package and set `execution_provider` in config.
-
-| Provider | Config | Runtime Requirement | Status |
-|----------|--------|---------------------|--------|
-| CPU | `execution_provider = "cpu"` | none (default) | Working |
-| CUDA (NVIDIA) | `execution_provider = "cuda"` | CUDA toolkit + GPU-enabled ORT | Config ready, untested |
-| ROCm (AMD) | `execution_provider = "rocm"` | ROCm runtime + GPU-enabled ORT | Config ready, untested |
-| OpenVINO (Intel) | `execution_provider = "openvino"` | OpenVINO runtime + GPU-enabled ORT | Config ready, untested |
-
-CPU is the default and only tested provider.
+CPU is the default and tested provider. CUDA, ROCm, and OpenVINO require a
+matching ONNX Runtime build; configuration support is not evidence that a GPU
+or a particular runtime package has been validated. The setup `auto` choice
+inspects providers compiled into ONNX Runtime, not the hardware.

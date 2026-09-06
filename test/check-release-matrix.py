@@ -1400,6 +1400,11 @@ install_docs = {
     "book/src/quickstart.md": (ROOT / "book/src/quickstart.md").read_text(),
     "website/index.html": (ROOT / "website/index.html").read_text(),
 }
+# The published Quickstart is a canonical include, not an independently
+# maintained copy. Expand only this exact repository-owned include; retain
+# raw-text checking for an independently edited book page.
+if install_docs["book/src/quickstart.md"].strip() == "{{#include ../../docs/quickstart.md}}":
+    install_docs["book/src/quickstart.md"] = (ROOT / "docs/quickstart.md").read_text()
 apt_platform_mappings = (
     ("Debian 13", "trixie", "TPM"),
     ("Ubuntu 26.04", "resolute", "TPM"),
@@ -1555,7 +1560,7 @@ stale_support_claims = (
     "Ubuntu 24.04",
 )
 for relative_path in active_support_docs:
-    content = (ROOT / relative_path).read_text()
+    content = install_docs[relative_path] if relative_path in install_docs else (ROOT / relative_path).read_text()
     for stale_claim in stale_support_claims:
         require(stale_claim not in content, f"{relative_path} retains stale support claim: {stale_claim}")
 for relative_path in (
@@ -1566,7 +1571,8 @@ for relative_path in (
     "book/src/compatibility.md",
     "website/index.html",
 ):
-    require("1.88+" in (ROOT / relative_path).read_text(), f"{relative_path} omits the Rust 1.88+ floor")
+    content = install_docs[relative_path] if relative_path in install_docs else (ROOT / relative_path).read_text()
+    require("1.88+" in content, f"{relative_path} omits the Rust 1.88+ floor")
 for relative_path in compatibility_paths:
     require(
         "download-binaries" not in (ROOT / relative_path).read_text(),

@@ -3,8 +3,8 @@
 ## Prerequisites
 
 - Rust 1.88+ (`rustup update`)
-- Linux with V4L2 support
-- A webcam (IR recommended; RGB works for development)
+- Linux and the native build dependencies listed in [Quickstart](docs/quickstart.md#build-from-source)
+- A camera only for live capture/authentication work; IR is required by the default configuration
 - Podman (for container tests)
 
 ## Building
@@ -12,6 +12,10 @@
 ```bash
 cargo build --workspace
 ```
+
+This leaves the unified development binary at `target/debug/facelock`; it does
+not install it on `PATH`. The complete recipe inventory and prerequisites are
+in [Developer Commands](docs/developer-commands.md).
 
 ## Workspace structure
 
@@ -25,7 +29,7 @@ Facelock is a Cargo workspace with 11 crates:
 | `facelock-store` | lib | SQLite face embedding storage |
 | `facelock-daemon` | lib | Auth/enroll logic, rate limiting, liveness, audit |
 | `facelock-cli` | bin | Unified CLI (`facelock` binary, includes `bench` subcommand) |
-| `facelock-bench` | bin | Standalone benchmark and calibration utility |
+| `facelock-bench` | bin | Source-only standalone benchmark utility; see [Auxiliary Commands](docs/auxiliary-commands.md) |
 | `pam-facelock` | cdylib | PAM module (libc, toml, serde, zbus only) |
 | `facelock-tpm` | lib | Optional TPM encryption |
 | `facelock-polkit` | bin | Polkit face authentication agent |
@@ -111,7 +115,9 @@ Container tests validate PAM integration without risking host lockout.
 
 ### Tier 4: VM testing
 
-Use a disposable VM with snapshots for testing PAM changes against real login flows.
+Use an explicitly marked disposable guest with snapshots for PAM, package and
+login-flow testing. The evidence-producing runner does not provision a VM; see
+[Testing Walkthrough](docs/testing-walkthrough.md).
 
 ### Tier 5: Host PAM testing
 
@@ -120,7 +126,7 @@ Only after tiers 3--4 pass. Always keep a root shell open. Start with `sudo` onl
 ### All checks at once
 
 ```bash
-just check  # runs test + clippy + fmt + audit + agent-doc consistency
+just check  # local validation aggregate, including docs and install/release contracts
 ```
 
 `check-agent-docs` verifies that `.claude/rules/` and `.claude/skills/` still
@@ -128,6 +134,11 @@ describe the tree: that every `paths:` glob matches something, that referenced
 `just` recipes and file paths exist, and that lists copied out of the justfile or
 a workflow still match their source. A rule scoped to a path that no longer
 exists fails silently otherwise -- it simply never loads.
+
+`just check` does not run the full packaging matrix or camera-required lanes.
+For documentation-only changes, start with `just check-docs` and
+`just docs-site-check`; use source review and the established behavior tests
+to check meaning, and a targeted container probe for uncertain distro commands.
 
 `cargo test` also holds the user-facing documentation to the tree, in
 `crates/facelock-cli/src/conformance/`. `docs.rs` and `man_pam.rs` check that

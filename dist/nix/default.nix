@@ -14,7 +14,7 @@
 
 rustPlatform.buildRustPackage {
   pname = "facelock";
-  version = "0.1.0";
+  version = (builtins.fromTOML (builtins.readFile ../../Cargo.toml)).workspace.package.version;
 
   src = ../../.;
 

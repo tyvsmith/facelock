@@ -1,5 +1,17 @@
 # Releasing
 
+## Current channel observation
+
+The following is a dated 2026-09-05 observation: v0.1.4 was then the latest
+published GitHub release and the v0.2.0-alpha.1 tag pointed to commit `53385c5`
+but had no GitHub Release. The
+`trixie` and `resolute` APT Release URLs return 404; the compatibility `main`
+and `legacy` suites return signed Release metadata. Production COPR serves
+0.1.3-1 on Fedora 43, 44, and 45, not the stable 0.1.4-1 predecessor. These are
+availability observations, not changes to the release policy below. Since that
+audit, v0.2.0-alpha.4 has been published as a prerelease with direct artifacts;
+stable AUR, APT, and production COPR publication remains skipped by policy.
+
 ## Versioning
 
 Facelock uses [Semantic Versioning](https://semver.org/):
@@ -90,11 +102,15 @@ The `.github/workflows/release.yml` workflow:
    components with their reviewed manifests and checksums
 4. Builds two suite-specific TPM-enabled `.deb` packages for trixie and resolute
 5. Builds the direct `.rpm` package in the pinned Fedora 44 container and validates contents
-6. Validates Nix flake evaluation
-7. Publishes stable releases to the signed, codenamed APT suites, and to the `main` and `legacy` compatibility suites until 0.3.0, if the APT signing secrets are configured
+6. Validates the unlocked Nix flake evaluation (network inputs are resolved
+   because `dist/nix` has no checked-in `flake.lock`)
+7. For a stable tag, builds the signed codenamed APT repository plus the `main` and `legacy` compatibility suites until 0.3.0; missing APT signing secrets fail here, before the GitHub Release is public
 8. Verifies the tag, assembles and validates every asset, writes `MANIFEST.json`, and publishes the release exactly once
-9. Publishes stable releases to AUR — `facelock`, `facelock-bin`, and `facelock-git` — if `AUR_SSH_KEY` is configured
-10. Triggers GitHub Pages rebuild to include updated APT repo
+9. After a stable GitHub Release is public, attempts to publish `facelock`,
+   `facelock-bin`, and `facelock-git` to AUR; a missing `AUR_SSH_KEY` prints a
+   skip notice and exits successfully, while an invalid configured key fails
+   after publication
+10. For a stable tag, triggers the GitHub Pages rebuild that deploys the updated APT repo
 
 Validated prerelease tags set the GitHub Release `prerelease` output and upload
 direct artifacts, but skip stable APT and all AUR publication. The workflow
@@ -191,11 +207,11 @@ Two consequences for the maintainer:
   unsigned tag is accepted and a signed one that the runner cannot verify stops
   the release.
 
-Every job in the graph gates publication, `build-nix` included: its flake
-evaluation is deterministic against `flake.lock` and must pass, while its
-`nix build` step is advisory because the build depends on nixpkgs state. An
-evaluation failure means the release stays a draft; fix the flake and re-run
-the failed jobs, never tag again.
+The publication prerequisites include `build-nix`: its flake evaluation must
+pass, while its `nix build` step is advisory. No Nix lockfile is checked in, so
+evaluation and builds depend on the currently resolved flake inputs. An
+evaluation failure blocks the publish job before it creates a draft in that
+run; fix the flake and re-run the failed jobs, never tag again.
 
 `test/release-artifacts-contract.sh` (`just test-release-artifacts`) proves this
 shape by fixture and by mutation. The workflow itself runs only on a tag, so
@@ -513,7 +529,11 @@ the published shape when run, as a clean APT client; no workflow runs it.
 
 #### AUR (Arch Linux)
 
-Automated after setup. The release workflow publishes to AUR when `AUR_SSH_KEY` is configured.
+Automated after setup. Every stable release run attempts AUR publication after
+the GitHub Release becomes public. If `AUR_SSH_KEY` is absent, the publisher
+prints a skip notice and exits successfully; an invalid configured key fails
+after publication and needs manual recovery. Release operators must therefore
+verify the live AUR packages rather than infer publication from a green job.
 
 **One-time setup (~10 minutes):**
 
@@ -579,7 +599,7 @@ Automated after setup. The release workflow publishes to AUR when `AUR_SSH_KEY` 
 
 After this, every non-prerelease tag push automatically updates the AUR package.
 
-#### COPR (Fedora/RHEL)
+#### COPR (Fedora)
 
 Packit reads `.packit.yaml` from the released tag. Packit's documented
 `upstream_tag_exclude` filtering applies to downstream synchronization jobs,
@@ -830,7 +850,10 @@ The old `COPR_WEBHOOK_URL` GitHub secret is no longer used and can be deleted
 
 #### APT (Debian/Ubuntu)
 
-Automated after setup. The release workflow publishes a signed APT repository to GitHub Pages when `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE` are configured.
+Automated after setup. Every stable release run attempts to build a signed APT
+repository before it publishes the GitHub Release. `APT_GPG_PRIVATE_KEY` and
+`APT_GPG_PASSPHRASE` are required; if either is absent or invalid, the stable
+release remains unpublished.
 
 **One-time setup (~15 minutes):**
 
@@ -979,8 +1002,10 @@ ONNX Runtime is sourced differently per channel:
 - **COPR RPM** (built from source by Packit): leaves the spec's
   `%bcond_with bundled_ort` disabled, contains no bundled runtime, and requires
   Fedora's system `onnxruntime` package.
-- **Arch Linux** (PKGBUILD): depends on the system `onnxruntime` package
-  (available in official repos).
+- **Arch Linux** (PKGBUILD): depends on the virtual `onnxruntime` capability.
+  The exact official-repository providers are `onnxruntime-cpu`,
+  `onnxruntime-opt-cuda`, and `onnxruntime-opt-rocm`; there is no package
+  literally named `onnxruntime`.
 
 The bundled ORT is a CPU-only fallback — users who install a system-wide
 GPU-enabled ONNX Runtime (CUDA, ROCm, OpenVINO) will have it take precedence
@@ -1099,4 +1124,3 @@ every pull request.
 downgrade, so the predecessor is handed the file production would hand it. V6
 has no down-migration and the schema stays at 6 after the package rolls back.
 See `docs/contracts.md` for what that does and does not guarantee.
-

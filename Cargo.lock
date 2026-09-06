@@ -1014,6 +1014,7 @@ dependencies = [
  "facelock-core",
  "facelock-face",
  "facelock-store",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
 ]

@@ -3,12 +3,13 @@ pkgname=facelock
 _tag=0.2.0-alpha.4
 pkgver=0.2.0alpha4
 pkgrel=1
-pkgdesc="Face authentication PAM module for Linux"
+pkgdesc="Face authentication for Linux PAM"
 arch=('x86_64')
 url="https://github.com/tyvsmith/facelock"
 license=('MIT OR Apache-2.0')
 depends=('glibc' 'dbus' 'pam' 'gcc-libs' 'tpm2-tss' 'libxkbcommon' 'onnxruntime')
 makedepends=('rust' 'cargo' 'clang' 'gettext' 'wayland' 'libxkbcommon')
+checkdepends=('python')
 optdepends=(
     'onnxruntime-opt-cuda: NVIDIA GPU acceleration (replaces onnxruntime)'
     'onnxruntime-opt-rocm: AMD GPU acceleration (replaces onnxruntime)'
