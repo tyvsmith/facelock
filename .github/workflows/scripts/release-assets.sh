@@ -187,7 +187,7 @@ read_debian_suites() {
 verify_assets() {
     local expected_file="${1:?}" actual_file="${2:?}"
     local -a labels=() patterns=() actual=()
-    local label pattern name matches duplicate index
+    local label pattern name matches duplicate index delete_operand
 
     while IFS='	' read -r label pattern; do
         [ -n "$label" ] || continue
@@ -208,8 +208,12 @@ verify_assets() {
         for pattern in "${patterns[@]}"; do
             [[ "$name" =~ ^${pattern}$ ]] && matches=$((matches + 1))
         done
-        [ "$matches" -ne 0 ] ||
-            fail "unexpected release asset: $name; if an earlier run at another version left it behind, remove it with: gh release delete-asset \"\$TAG\" \"$name\". If it differs from a canonical name only where a \`~\` became a \`.\`, GitHub stored the upload under a rewritten name and release_github_asset_name has to account for it -- do not delete it."
+        if [ "$matches" -eq 0 ]; then
+            # The name reaches a command a human is invited to paste, and it
+            # arrives from an API listing rather than from this script.
+            printf -v delete_operand '%q' "$name"
+            fail "unexpected release asset: $name; if an earlier run at another version left it behind, remove it with: gh release delete-asset \"\$TAG\" $delete_operand. If it differs from a canonical name only where a \`~\` became a \`.\`, GitHub stored the upload under a rewritten name and release_github_asset_name has to account for it -- do not delete it."
+        fi
         [ "$matches" -eq 1 ] ||
             fail "allowlist overlap: $name matches $matches canonical names"
     done
