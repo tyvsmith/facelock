@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0-alpha.4] - 2026-09-06
+## [0.2.0] - 2026-09-06
 
 ### Added
 
@@ -886,12 +886,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Release assets are held to the names GitHub stores, not the ones uploaded**:
   GitHub rewrites `~` to `.` when it accepts a release asset, so a Debian
-  package uploaded as `facelock_0.2.0~alpha.4-1~deb13u1_amd64.deb` is listed as
-  `facelock_0.2.0.alpha.4-1.deb13u1_amd64.deb`. The publish job compared the
-  release listing against the uploaded names and refused its own release after
-  every artifact had been built. This was never prerelease-only: a stable
-  Debian version carries the character in its suite suffix too, and v0.1.4
-  shipped without one, so nothing exercised the round trip. The conversion
+  package uploaded as `facelock_0.2.0-1~deb13u1_amd64.deb` is listed as
+  `facelock_0.2.0-1.deb13u1_amd64.deb`. The publish job compared the release
+  listing against the uploaded names and refused its own release after every
+  artifact had been built. The suite suffix carries the character on a stable
+  release as much as a prerelease does, and v0.1.4 shipped without a suite
+  suffix at all, so nothing exercised the round trip. The conversion
   refuses any name carrying a character the rule cannot account for, rather
   than guessing at a mapping that only a tag could disprove.
 
@@ -1032,6 +1032,6 @@ Initial open-source release.
 - **PAM install output**: Conditional install messages — suppressed when PAM entry already present (`c12a970`)
 - **PAM uninstall**: Uninstall now removes entries from all relevant PAM services, not just the primary one (`c12a970`)
 
-[0.2.0-alpha.4]: https://github.com/tyvsmith/facelock/releases/tag/v0.2.0-alpha.4
+[0.2.0]: https://github.com/tyvsmith/facelock/releases/tag/v0.2.0
 [0.1.3]: https://github.com/tyvsmith/facelock/releases/tag/v0.1.3
 [0.1.0]: https://github.com/tyvsmith/facelock/releases/tag/v0.1.0
