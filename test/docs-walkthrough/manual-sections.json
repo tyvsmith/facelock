@@ -1278,7 +1278,7 @@
           "path": "README.md",
           "anchor": "arch-linux-aur",
           "ordinal": 1,
-          "line": 27,
+          "line": 26,
           "sha256": "d362fd362389741be7a261a22cf3cb04edfabb48d43d545e4685ca00b4a1c743"
         }
       ],
@@ -1332,28 +1332,28 @@
           "path": "README.md",
           "anchor": "debian--ubuntu-apt",
           "ordinal": 1,
-          "line": 45,
+          "line": 44,
           "sha256": "b077c77e49cfc12a5cf375bc2dac3169eef7f59c1516d4a7bb320a69cfda3edd"
         },
         {
           "path": "README.md",
           "anchor": "debian--ubuntu-apt",
           "ordinal": 2,
-          "line": 47,
+          "line": 46,
           "sha256": "39cc6a6f465cccaad652684e38819b46c2b36d1b867c5dd50f06bfeed63e29a5"
         },
         {
           "path": "README.md",
           "anchor": "debian--ubuntu-apt",
           "ordinal": 3,
-          "line": 48,
+          "line": 47,
           "sha256": "bec61f0cc5aa5062a5d2ff6b8fabf8bbaf4973e379679cf1408a26d13d3ee0ca"
         },
         {
           "path": "README.md",
           "anchor": "debian--ubuntu-apt",
           "ordinal": 4,
-          "line": 49,
+          "line": 48,
           "sha256": "5647298b8460512fdc69d40fc4e49e6d2f2d1fe51260df207cb9943907e59167"
         }
       ],
@@ -1445,22 +1445,22 @@
         {
           "path": "README.md",
           "anchor": "fedora-copr",
-          "ordinal": 1,
-          "line": 72,
+          "ordinal": 2,
+          "line": 70,
           "sha256": "2e795222d6d436e587ec1690c6a50343257ba9c66f6e2510ee0bd6fd65cfa5be"
         },
         {
           "path": "README.md",
           "anchor": "fedora-copr",
-          "ordinal": 2,
-          "line": 73,
+          "ordinal": 3,
+          "line": 71,
           "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
         },
         {
           "path": "README.md",
           "anchor": "fedora-copr",
-          "ordinal": 3,
-          "line": 74,
+          "ordinal": 4,
+          "line": 72,
           "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
         }
       ],
@@ -1540,14 +1540,14 @@
           "path": "README.md",
           "anchor": "from-source",
           "ordinal": 1,
-          "line": 84,
+          "line": 82,
           "sha256": "d091076a0b6859d8a04b9e50b052b819a80d6a4fe3b6336bdbbda387de310be0"
         },
         {
           "path": "README.md",
           "anchor": "from-source",
           "ordinal": 2,
-          "line": 85,
+          "line": 83,
           "sha256": "6082e4887a6f179f954cd8675b9e9f70206b23a40a9585b84f3fe9cb5f19bdef"
         }
       ],
@@ -1614,7 +1614,7 @@
           "path": "README.md",
           "anchor": "post-install",
           "ordinal": 1,
-          "line": 105,
+          "line": 103,
           "sha256": "13ece4f24ba1175dd24829a6e605712bee3c028c5505562d6f7dc6616ef1bb63"
         }
       ],
@@ -1669,7 +1669,7 @@
           "path": "README.md",
           "anchor": "uninstall",
           "ordinal": 1,
-          "line": 140,
+          "line": 138,
           "sha256": "d51310f315784b2a9c33e5d9294b3c51087ed1e1372dcfa10a29f3d34b1efbde"
         }
       ],
@@ -1723,28 +1723,28 @@
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 2,
-          "line": 253,
+          "line": 251,
           "sha256": "270315a785e93c84e21e959de6561428bf475b40b6096a19a5bdfc20555fa93d"
         },
         {
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 3,
-          "line": 254,
+          "line": 252,
           "sha256": "599de770b8b0e87ca01f6837e309d01e9847d347fd850d18ded4eb14e86cc015"
         },
         {
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 4,
-          "line": 255,
+          "line": 253,
           "sha256": "d3a74681ef70d90250e1ac050d1d8510753888e9da5dfee69b81ba6b1e5b3a3b"
         },
         {
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 5,
-          "line": 256,
+          "line": 254,
           "sha256": "88017a21a68eb150eaaf2a5217d35e9b4d930661a74cdda87f8b3938f6073d15"
         }
       ],
@@ -1840,35 +1840,35 @@
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 1,
-          "line": 270,
+          "line": 268,
           "sha256": "f1c7b61a74c050d3b5044973e899c70b74cad56ae0d775a1c370227b2554e558"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 2,
-          "line": 271,
+          "line": 269,
           "sha256": "b4e7755cb3b54ed9400756f86c10c858a95d4439686e2d0a9bdb1752fd673066"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 3,
-          "line": 272,
+          "line": 270,
           "sha256": "501e0bb7eed827cbc90d37b2aa9536777f4893de0b075ef6269dacfba8f94671"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 4,
-          "line": 273,
+          "line": 271,
           "sha256": "0491e9aacca737903a046d7da3901ae168145ed83b3b07ce7ca67d1803b58d41"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 5,
-          "line": 274,
+          "line": 272,
           "sha256": "0d288d69cd7407b7c4f02c4f4d616356203ec2ae445f211d922317dbae06d6fb"
         }
       ],
@@ -1976,21 +1976,21 @@
           "path": "README.md",
           "anchor": "releasing",
           "ordinal": 1,
-          "line": 303,
+          "line": 301,
           "sha256": "29e78a6c2780f8195dd6def758c19769a7af32bb935dcff29d1cc51025473ffa"
         },
         {
           "path": "README.md",
           "anchor": "releasing",
           "ordinal": 2,
-          "line": 304,
+          "line": 302,
           "sha256": "c932b35fc3a91076a733f7102c49400e6bf24507e8de7243f9789c898295d73c"
         },
         {
           "path": "README.md",
           "anchor": "releasing",
           "ordinal": 3,
-          "line": 305,
+          "line": 303,
           "sha256": "2a4f6d2e6732e2f4816ee15011101bdda9a56aea8068ac90a4c8a332cc11c8a4"
         }
       ],
@@ -7731,35 +7731,35 @@
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
-          "ordinal": 19,
+          "ordinal": 20,
           "line": 101,
           "sha256": "2e795222d6d436e587ec1690c6a50343257ba9c66f6e2510ee0bd6fd65cfa5be"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
-          "ordinal": 20,
+          "ordinal": 21,
           "line": 102,
           "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
-          "ordinal": 21,
+          "ordinal": 22,
           "line": 103,
           "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
-          "ordinal": 22,
+          "ordinal": 23,
           "line": 109,
           "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
-          "ordinal": 23,
+          "ordinal": 24,
           "line": 110,
           "sha256": "f64e829871b2f7998fdbf8a8f7c4a36f917acc719880c9d14bc6565a6f1607ca"
         }
@@ -13254,69 +13254,48 @@
           "path": "website/index.html",
           "anchor": "install-debian",
           "ordinal": 5,
-          "line": 366,
-          "sha256": "8d5c472cde3f3e4834455ea132df1cd26fa7eb26b5a2ef18148e9e316d5571eb"
+          "line": 367,
+          "sha256": "0d6e4079e36703ebd37c00722f5891d28b0e2811dc114b129215123adcce3605"
         },
         {
           "path": "website/index.html",
           "anchor": "install-debian",
           "ordinal": 6,
-          "line": 366,
-          "sha256": "50573ac999b4f7516852df798aafddb1ef893a0352b7c1c7559b984eb5a40bbc"
+          "line": 367,
+          "sha256": "c49fea7425fa7f8699897a97c159c6690267d9003bb78c53fafa8fc15c325d84"
         },
         {
           "path": "website/index.html",
           "anchor": "install-debian",
           "ordinal": 7,
-          "line": 366,
-          "sha256": "5091ecd9f04a903af2f78e817245c573946f975af06bcd5ea4dcbda39ef4fb29"
+          "line": 367,
+          "sha256": "0d6e4079e36703ebd37c00722f5891d28b0e2811dc114b129215123adcce3605"
         },
         {
           "path": "website/index.html",
           "anchor": "install-debian",
           "ordinal": 8,
           "line": 367,
-          "sha256": "0d6e4079e36703ebd37c00722f5891d28b0e2811dc114b129215123adcce3605"
+          "sha256": "c49fea7425fa7f8699897a97c159c6690267d9003bb78c53fafa8fc15c325d84"
         },
         {
           "path": "website/index.html",
           "anchor": "install-debian",
           "ordinal": 9,
           "line": 367,
-          "sha256": "c49fea7425fa7f8699897a97c159c6690267d9003bb78c53fafa8fc15c325d84"
+          "sha256": "b3f70d1b1c9cab5524d00a5c658ebd69e63cf592ffbbf1e7ea456604846747fc"
         },
         {
           "path": "website/index.html",
           "anchor": "install-debian",
           "ordinal": 10,
           "line": 367,
-          "sha256": "0d6e4079e36703ebd37c00722f5891d28b0e2811dc114b129215123adcce3605"
-        },
-        {
-          "path": "website/index.html",
-          "anchor": "install-debian",
-          "ordinal": 11,
-          "line": 367,
-          "sha256": "c49fea7425fa7f8699897a97c159c6690267d9003bb78c53fafa8fc15c325d84"
-        },
-        {
-          "path": "website/index.html",
-          "anchor": "install-debian",
-          "ordinal": 12,
-          "line": 367,
-          "sha256": "b3f70d1b1c9cab5524d00a5c658ebd69e63cf592ffbbf1e7ea456604846747fc"
-        },
-        {
-          "path": "website/index.html",
-          "anchor": "install-debian",
-          "ordinal": 13,
-          "line": 367,
           "sha256": "50573ac999b4f7516852df798aafddb1ef893a0352b7c1c7559b984eb5a40bbc"
         },
         {
           "path": "website/index.html",
           "anchor": "install-debian",
-          "ordinal": 14,
+          "ordinal": 11,
           "line": 367,
           "sha256": "8d5c472cde3f3e4834455ea132df1cd26fa7eb26b5a2ef18148e9e316d5571eb"
         }
@@ -13377,7 +13356,7 @@
         {
           "id": "example-5",
           "adapter": "manual",
-          "raw": "resolute",
+          "raw": "main",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -13390,7 +13369,7 @@
         {
           "id": "example-6",
           "adapter": "manual",
-          "raw": "trixie",
+          "raw": "legacy",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -13403,7 +13382,7 @@
         {
           "id": "example-7",
           "adapter": "manual",
-          "raw": ".deb",
+          "raw": "main",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -13416,7 +13395,7 @@
         {
           "id": "example-8",
           "adapter": "manual",
-          "raw": "main",
+          "raw": "legacy",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -13429,7 +13408,7 @@
         {
           "id": "example-9",
           "adapter": "manual",
-          "raw": "legacy",
+          "raw": "apt update",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -13442,45 +13421,6 @@
         {
           "id": "example-10",
           "adapter": "manual",
-          "raw": "main",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        },
-        {
-          "id": "example-11",
-          "adapter": "manual",
-          "raw": "legacy",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        },
-        {
-          "id": "example-12",
-          "adapter": "manual",
-          "raw": "apt update",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        },
-        {
-          "id": "example-13",
-          "adapter": "manual",
           "raw": "trixie",
           "classification": "executable",
           "expect_exit": 0,
@@ -13492,7 +13432,7 @@
           "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
         },
         {
-          "id": "example-14",
+          "id": "example-11",
           "adapter": "manual",
           "raw": "resolute",
           "classification": "executable",
@@ -13540,21 +13480,21 @@
           "path": "website/index.html",
           "anchor": "install-fedora",
           "ordinal": 1,
-          "line": 382,
+          "line": 381,
           "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
         },
         {
           "path": "website/index.html",
           "anchor": "install-fedora",
           "ordinal": 2,
-          "line": 383,
+          "line": 382,
           "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
         },
         {
           "path": "website/index.html",
           "anchor": "install-fedora",
           "ordinal": 3,
-          "line": 386,
+          "line": 385,
           "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
         }
       ],
@@ -13634,28 +13574,28 @@
           "path": "website/index.html",
           "anchor": "install-source",
           "ordinal": 1,
-          "line": 421,
+          "line": 420,
           "sha256": "a3fc2994d459b28929eddd20bb7e85f077845642fb89e330c3e03cbe66264bb3"
         },
         {
           "path": "website/index.html",
           "anchor": "install-source",
           "ordinal": 2,
-          "line": 422,
+          "line": 421,
           "sha256": "ec83c5e11815f6e2c810bbf770be6d0cb5e4403614eb8810a2f59278e0a1170b"
         },
         {
           "path": "website/index.html",
           "anchor": "install-source",
           "ordinal": 3,
-          "line": 423,
+          "line": 422,
           "sha256": "48d6b8aecaf932ce9c5e7f8943e9e680f516bd62a91a97583bbdf775c9f4c911"
         },
         {
           "path": "website/index.html",
           "anchor": "install-source",
           "ordinal": 4,
-          "line": 424,
+          "line": 423,
           "sha256": "6082e4887a6f179f954cd8675b9e9f70206b23a40a9585b84f3fe9cb5f19bdef"
         }
       ],

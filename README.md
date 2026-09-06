@@ -3,10 +3,9 @@
 # Facelock: Face Authentication for Linux
 
 > **Release status (checked 2026-09-06):** v0.2.0 is the latest stable release,
-> published with direct Debian 13, Ubuntu 26.04, and Fedora 44 packages. The AUR
-> entries and both APT suites serve it. Production COPR is the exception: it
-> still serves v0.1.3, so Fedora users should take the direct RPM or the source
-> path until it catches up.
+> published with direct Debian 13, Ubuntu 26.04, and Fedora 44 packages. Every
+> stable channel serves it: the three AUR entries, both APT suites, and the
+> production COPR.
 
 A modern face authentication system for Linux PAM. Provides Windows Hello-style
 facial auth with IR-required capture and layered static-presentation checks,
@@ -61,12 +60,11 @@ Bookworm, Noble, and Ubuntu 25.x have no suite.
 
 ### Fedora (COPR)
 
-The supported COPR targets are Fedora 43, 44, and 45. On 2026-09-06 the
-production COPR served v0.1.3 on all three, behind the v0.2.0 stable release,
-so the commands below install 0.1.3 rather than the current release. Install
-the [direct 0.2.0 RPM](docs/quickstart.md#published-packages) or build from
-source until COPR catches up. The staging COPR is a candidate channel, not a
-stable installation source. RHEL is not in the supported matrix.
+The supported COPR targets are Fedora 43, 44, and 45. The production COPR
+served 0.2.0-1 on all three when checked on 2026-09-06; the older 0.1.3 build
+stays in the repository, and `dnf` resolves to 0.2.0. The staging COPR is a
+candidate channel, not a stable installation source. RHEL is not in the
+supported matrix.
 
 ```bash
 sudo dnf install dnf5-plugins

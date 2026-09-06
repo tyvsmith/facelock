@@ -4,8 +4,8 @@
 
 As checked on 2026-09-06,
 [v0.2.0](https://github.com/tyvsmith/facelock/releases/tag/v0.2.0) is the
-latest stable release. The AUR entries and both APT suites serve it; the
-production COPR does not yet.
+latest stable release. Every stable channel serves it: the three AUR entries,
+both APT suites, and the production COPR.
 
 The following SHA256 values are pinned from the release's
 [MANIFEST.json](https://github.com/tyvsmith/facelock/releases/download/v0.2.0/MANIFEST.json).
@@ -89,10 +89,10 @@ Existing v0.1.4 entries naming `main` or `legacy` keep working until 0.3.0:
 At 0.3.0, `apt update` fails until the entry is removed. Rewrite those entries
 to your operating system's codename now.
 
-The production COPR targets Fedora 43, 44, and 45 only. On 2026-09-06 it served
-v0.1.3 on all three, behind stable v0.2.0, so the commands below install 0.1.3
-rather than the current release. Use the direct RPM above until COPR catches
-up. `tyvsmith/facelock-testing` is a staging/candidate project, not a stable
+The production COPR targets Fedora 43, 44, and 45 only. It served 0.2.0-1 on
+all three when checked on 2026-09-06. The older 0.1.3 build stays in the
+repository; `dnf` resolves to the newest, so no pinning is needed.
+`tyvsmith/facelock-testing` is a staging/candidate project, not a stable
 channel. RHEL is not in the supported matrix. Fedora's `dnf copr` command comes
 from `dnf5-plugins`; installing it is idempotent, and minimal installations may
 not include it.

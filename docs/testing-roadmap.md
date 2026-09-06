@@ -58,10 +58,10 @@ case it actually exercised.
 ## Release and packaging status
 
 v0.2.0 is the latest published stable release, with direct package artifacts.
-Prereleases do not enter stable APT, AUR, or production COPR. The AUR entries
-and both APT suites serve 0.2.0; the production COPR still serves v0.1.3, and
-Fedora staging is a candidate channel. The exact supported release matrix is
-Fedora 43/44/45, Debian 13, and Ubuntu 26.04, not RHEL.
+Prereleases do not enter stable APT, AUR, or production COPR. The AUR entries,
+both APT suites, and the production COPR all serve 0.2.0; Fedora staging is a
+candidate channel. The exact supported release matrix is Fedora 43/44/45,
+Debian 13, and Ubuntu 26.04, not RHEL.
 
 A stable release is expected to carry two suite-specific `.deb` artifacts for
 trixie and resolute. v0.2.0 carries both, and both codenamed APT suites are

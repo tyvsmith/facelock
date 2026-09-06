@@ -311,7 +311,7 @@
       <div class="section-header center">
         <div class="section-label">Quick Install</div>
         <h2 class="section-title">Choose an installation channel</h2>
-        <p class="section-desc">Channel status checked 2026-09-06: <a href="https://github.com/tyvsmith/facelock/releases/tag/v0.2.0">v0.2.0</a> is the latest stable release, published with direct Debian 13, Ubuntu 26.04, and Fedora 44 packages. The AUR entries and both APT suites serve it. Production COPR still serves v0.1.3.</p>
+        <p class="section-desc">Channel status checked 2026-09-06: <a href="https://github.com/tyvsmith/facelock/releases/tag/v0.2.0">v0.2.0</a> is the latest stable release, published with direct Debian 13, Ubuntu 26.04, and Fedora 44 packages. Every stable channel serves it: the three AUR entries, both APT suites, and the production COPR.</p>
       </div>
 
       <div class="install-block">
@@ -363,7 +363,7 @@
               <div><span class="prompt">$</span> <span class="command">sudo facelock setup</span></div>
             </div>
           </div>
-          <p class="install-note">On Ubuntu 26.04, use <code>resolute</code> instead of <code>trixie</code> in the source line. <a href="docs/quickstart.html#published-packages">Check the keyring fingerprint</a> before trusting the source, or install the suite-specific <code>.deb</code> directly from the release.</p>
+          <p class="install-note">On Ubuntu 26.04, use the resolute suite instead of trixie in the source line. <a href="docs/quickstart.html#published-packages">Check the keyring fingerprint</a> before trusting the source, or install the suite-specific Debian package directly from the release.</p>
           <p class="install-note migration">Under the compatibility policy, existing v0.1.4 entries naming <code>main</code> or <code>legacy</code> keep working until 0.3.0. <code>main</code> maps to Trixie and <code>legacy</code> exports empty indexes. At 0.3.0, <code>apt update</code> fails until the entry is removed. Rewrite those entries to <code>trixie</code> or <code>resolute</code> now.</p>
         </div>
 
@@ -376,8 +376,7 @@
               <span class="terminal-title">terminal</span>
             </div>
             <div class="terminal-body">
-              <div><span class="comment"># Supported Fedora targets: 43/44/45. Production COPR served v0.1.3 on 2026-09-06,</span></div>
-              <div><span class="comment"># behind stable 0.2.0, so these commands install 0.1.3, not the current release.</span></div>
+              <div><span class="comment"># Supported Fedora targets: 43/44/45. Production COPR served 0.2.0-1 on 2026-09-06.</span></div>
               <div><span class="comment"># The copr subcommand requires dnf5-plugins; see the prerequisite notes.</span></div>
               <div><span class="prompt">$</span> <span class="command">sudo dnf copr enable tyvsmith/facelock</span></div>
               <div><span class="prompt">$</span> <span class="command">sudo dnf install facelock</span></div>
@@ -386,7 +385,7 @@
               <div><span class="prompt">$</span> <span class="command">sudo facelock setup</span></div>
             </div>
           </div>
-          <p class="install-note"><a href="docs/quickstart.html#published-packages">Install the checksum-verified 0.2.0 RPM directly</a> until the production COPR catches up.</p>
+          <p class="install-note">The older 0.1.3 build stays in the repository, and dnf resolves to 0.2.0. <a href="docs/quickstart.html#published-packages">A checksum-verified RPM</a> is also published on the release.</p>
         </div>
 
         <div id="install-nixos" class="install-panel" role="tabpanel" hidden>

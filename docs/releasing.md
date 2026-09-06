@@ -5,9 +5,9 @@
 The following is a dated 2026-09-06 observation: v0.2.0 is the latest published
 GitHub release. The `trixie` and `resolute` APT Release URLs return signed
 metadata for 0.2.0-1, `main` serves the same Trixie package, and `legacy`
-serves signed empty indexes. All three AUR entries serve 0.2.0-1. Production
-COPR still serves 0.1.3-1 on Fedora 43, 44, and 45, behind the stable release,
-so `dnf copr enable` installs 0.1.3 until a 0.2.0 build lands there. These are
+serves signed empty indexes. All three AUR entries serve 0.2.0-1. The
+production COPR serves 0.2.0-1 on Fedora 43, 44, and 45, from a build submitted
+by hand after the tagged release run failed to produce one. These are
 availability observations, not changes to the release policy below.
 
 ## Versioning
