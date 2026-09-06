@@ -31,5 +31,5 @@ Description: Face authentication for Linux PAM
  IR camera requirement to prevent photo spoofing, frame variance
  checks, and rate limiting.
  .
- After installation, run 'sudo facelock setup' to download face
- recognition models, then 'sudo facelock enroll' to register your face.
+ After installation, run 'sudo facelock setup'. The wizard downloads face
+ recognition models and offers face enrollment and PAM configuration.

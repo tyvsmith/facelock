@@ -28,7 +28,7 @@ sudo pacman -S onnxruntime-opt-rocm      # AMD
 Arch packages no OpenVINO build of ONNX Runtime, in the repositories or the AUR
 as checked on 2026-09-05. Build ONNX Runtime with the OpenVINO execution
 provider yourself to use `execution_provider = "openvino"`. Debian and Ubuntu
-also provide no ONNX Runtime package; Facelock's future `.deb` packages bundle
+also provide no ONNX Runtime package; Facelock's published `.deb` packages bundle
 a CPU-only runtime and therefore do not enable a GPU provider. Fedora's COPR
 package depends on Fedora's CPU-only `onnxruntime` package.
 

@@ -57,14 +57,14 @@ case it actually exercised.
 
 ## Release and packaging status
 
-v0.1.4 is the latest published stable release. The v0.2.0-alpha.1 tag exists,
-but no matching GitHub Release is currently published. Prereleases do not enter
-stable APT, AUR, or production COPR. The production COPR currently serves
+v0.1.4 is the latest published stable release. v0.2.0-alpha.4 is published as
+a prerelease with direct package artifacts. Prereleases do not enter stable
+APT, AUR, or production COPR. The production COPR currently serves
 v0.1.3; Fedora staging is a candidate channel. The exact supported release
 matrix is Fedora 43/44/45, Debian 13, and Ubuntu 26.04, not RHEL.
 
 A stable release is expected to carry two suite-specific `.deb` artifacts for
-trixie and resolute. That inventory states the release contract; it does not
+trixie and resolute. Alpha.4 carries direct suite packages, but that does not
 mean either future APT suite is currently published or installable.
 
 The Nix flake/module and OpenRC, runit, and s6 templates live in the source

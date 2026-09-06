@@ -1278,7 +1278,7 @@
           "path": "README.md",
           "anchor": "arch-linux-aur",
           "ordinal": 1,
-          "line": 25,
+          "line": 29,
           "sha256": "d362fd362389741be7a261a22cf3cb04edfabb48d43d545e4685ca00b4a1c743"
         }
       ],
@@ -1332,21 +1332,21 @@
           "path": "README.md",
           "anchor": "fedora-copr",
           "ordinal": 1,
-          "line": 60,
+          "line": 64,
           "sha256": "2e795222d6d436e587ec1690c6a50343257ba9c66f6e2510ee0bd6fd65cfa5be"
         },
         {
           "path": "README.md",
           "anchor": "fedora-copr",
           "ordinal": 2,
-          "line": 61,
+          "line": 65,
           "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
         },
         {
           "path": "README.md",
           "anchor": "fedora-copr",
           "ordinal": 3,
-          "line": 62,
+          "line": 66,
           "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
         }
       ],
@@ -1426,14 +1426,14 @@
           "path": "README.md",
           "anchor": "from-source",
           "ordinal": 1,
-          "line": 72,
+          "line": 76,
           "sha256": "d091076a0b6859d8a04b9e50b052b819a80d6a4fe3b6336bdbbda387de310be0"
         },
         {
           "path": "README.md",
           "anchor": "from-source",
           "ordinal": 2,
-          "line": 73,
+          "line": 77,
           "sha256": "6082e4887a6f179f954cd8675b9e9f70206b23a40a9585b84f3fe9cb5f19bdef"
         }
       ],
@@ -1500,7 +1500,7 @@
           "path": "README.md",
           "anchor": "post-install",
           "ordinal": 1,
-          "line": 91,
+          "line": 95,
           "sha256": "13ece4f24ba1175dd24829a6e605712bee3c028c5505562d6f7dc6616ef1bb63"
         }
       ],
@@ -1555,7 +1555,7 @@
           "path": "README.md",
           "anchor": "uninstall",
           "ordinal": 1,
-          "line": 125,
+          "line": 129,
           "sha256": "d51310f315784b2a9c33e5d9294b3c51087ed1e1372dcfa10a29f3d34b1efbde"
         }
       ],
@@ -1609,28 +1609,28 @@
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 2,
-          "line": 238,
+          "line": 242,
           "sha256": "270315a785e93c84e21e959de6561428bf475b40b6096a19a5bdfc20555fa93d"
         },
         {
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 3,
-          "line": 239,
+          "line": 243,
           "sha256": "599de770b8b0e87ca01f6837e309d01e9847d347fd850d18ded4eb14e86cc015"
         },
         {
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 4,
-          "line": 240,
+          "line": 244,
           "sha256": "d3a74681ef70d90250e1ac050d1d8510753888e9da5dfee69b81ba6b1e5b3a3b"
         },
         {
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 5,
-          "line": 241,
+          "line": 245,
           "sha256": "88017a21a68eb150eaaf2a5217d35e9b4d930661a74cdda87f8b3938f6073d15"
         }
       ],
@@ -1726,35 +1726,35 @@
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 1,
-          "line": 255,
+          "line": 259,
           "sha256": "f1c7b61a74c050d3b5044973e899c70b74cad56ae0d775a1c370227b2554e558"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 2,
-          "line": 256,
+          "line": 260,
           "sha256": "b4e7755cb3b54ed9400756f86c10c858a95d4439686e2d0a9bdb1752fd673066"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 3,
-          "line": 257,
+          "line": 261,
           "sha256": "501e0bb7eed827cbc90d37b2aa9536777f4893de0b075ef6269dacfba8f94671"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 4,
-          "line": 258,
+          "line": 262,
           "sha256": "0491e9aacca737903a046d7da3901ae168145ed83b3b07ce7ca67d1803b58d41"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 5,
-          "line": 259,
+          "line": 263,
           "sha256": "0d288d69cd7407b7c4f02c4f4d616356203ec2ae445f211d922317dbae06d6fb"
         }
       ],
@@ -1862,21 +1862,21 @@
           "path": "README.md",
           "anchor": "releasing",
           "ordinal": 1,
-          "line": 288,
+          "line": 292,
           "sha256": "29e78a6c2780f8195dd6def758c19769a7af32bb935dcff29d1cc51025473ffa"
         },
         {
           "path": "README.md",
           "anchor": "releasing",
           "ordinal": 2,
-          "line": 289,
+          "line": 293,
           "sha256": "c932b35fc3a91076a733f7102c49400e6bf24507e8de7243f9789c898295d73c"
         },
         {
           "path": "README.md",
           "anchor": "releasing",
           "ordinal": 3,
-          "line": 290,
+          "line": 294,
           "sha256": "2a4f6d2e6732e2f4816ee15011101bdda9a56aea8068ac90a4c8a332cc11c8a4"
         }
       ],
@@ -2623,14 +2623,14 @@
           "path": "book/src/introduction.md",
           "anchor": "quick-start",
           "ordinal": 1,
-          "line": 12,
+          "line": 18,
           "sha256": "48d6b8aecaf932ce9c5e7f8943e9e680f516bd62a91a97583bbdf775c9f4c911"
         },
         {
           "path": "book/src/introduction.md",
           "anchor": "quick-start",
           "ordinal": 2,
-          "line": 13,
+          "line": 19,
           "sha256": "6082e4887a6f179f954cd8675b9e9f70206b23a40a9585b84f3fe9cb5f19bdef"
         }
       ],
@@ -7520,42 +7520,77 @@
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
           "ordinal": 1,
-          "line": 15,
-          "sha256": "9593a0eb481eee53b056644aa9c6086216e05d959961113efacd5a304b99699d"
+          "line": 13,
+          "sha256": "2a19475836d134e2ca24870bf80a3c73a5e618ee59d6a75c6599c2b475b00e93"
+        },
+        {
+          "path": "docs/quickstart.md",
+          "anchor": "published-packages",
+          "ordinal": 2,
+          "line": 14,
+          "sha256": "aa870f21166f41c57777a308416bee32579b5a576defb53386e782e08b9ff2f0"
+        },
+        {
+          "path": "docs/quickstart.md",
+          "anchor": "published-packages",
+          "ordinal": 3,
+          "line": 20,
+          "sha256": "555da9f2477cbfaeaf9964a58eff483e9d9e35e3e6333a2df613009006fd3c9e"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
           "ordinal": 4,
-          "line": 45,
-          "sha256": "2e795222d6d436e587ec1690c6a50343257ba9c66f6e2510ee0bd6fd65cfa5be"
+          "line": 21,
+          "sha256": "a38ce36833889aff4b8d395a88ea0afbed96a04d44bb13db5bb84855932ebe9e"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
           "ordinal": 5,
-          "line": 46,
-          "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
-        },
-        {
-          "path": "docs/quickstart.md",
-          "anchor": "published-packages",
-          "ordinal": 6,
-          "line": 47,
-          "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
+          "line": 30,
+          "sha256": "9ac8d78510edfa211e8313898d774a30e382a4e23573473ae9a92338dd05365b"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
           "ordinal": 7,
-          "line": 53,
+          "line": 50,
+          "sha256": "9593a0eb481eee53b056644aa9c6086216e05d959961113efacd5a304b99699d"
+        },
+        {
+          "path": "docs/quickstart.md",
+          "anchor": "published-packages",
+          "ordinal": 10,
+          "line": 80,
+          "sha256": "2e795222d6d436e587ec1690c6a50343257ba9c66f6e2510ee0bd6fd65cfa5be"
+        },
+        {
+          "path": "docs/quickstart.md",
+          "anchor": "published-packages",
+          "ordinal": 11,
+          "line": 81,
+          "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
+        },
+        {
+          "path": "docs/quickstart.md",
+          "anchor": "published-packages",
+          "ordinal": 12,
+          "line": 82,
+          "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
+        },
+        {
+          "path": "docs/quickstart.md",
+          "anchor": "published-packages",
+          "ordinal": 13,
+          "line": 88,
           "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
-          "ordinal": 8,
-          "line": 54,
+          "ordinal": 14,
+          "line": 89,
           "sha256": "f64e829871b2f7998fdbf8a8f7c4a36f917acc719880c9d14bc6565a6f1607ca"
         }
       ],
@@ -7563,7 +7598,7 @@
         {
           "id": "example-1",
           "adapter": "manual",
-          "raw": "yay -S facelock",
+          "raw": "curl -fLO https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/facelock_0.2.0.alpha.4-1.deb13u1_amd64.deb",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -7576,7 +7611,7 @@
         {
           "id": "example-2",
           "adapter": "manual",
-          "raw": "sudo dnf install dnf5-plugins",
+          "raw": "sudo apt install ./facelock_0.2.0.alpha.4-1.deb13u1_amd64.deb",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -7589,7 +7624,7 @@
         {
           "id": "example-3",
           "adapter": "manual",
-          "raw": "sudo dnf copr enable tyvsmith/facelock",
+          "raw": "curl -fLO https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/facelock_0.2.0.alpha.4-1.ubuntu26.04.1_amd64.deb",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -7602,7 +7637,7 @@
         {
           "id": "example-4",
           "adapter": "manual",
-          "raw": "sudo dnf install facelock",
+          "raw": "sudo apt install ./facelock_0.2.0.alpha.4-1.ubuntu26.04.1_amd64.deb",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -7615,7 +7650,7 @@
         {
           "id": "example-5",
           "adapter": "manual",
-          "raw": "sudo facelock setup",
+          "raw": "sudo dnf install https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/facelock-0.2.0-0.4.alpha.4.fc44.x86_64.rpm",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -7627,6 +7662,71 @@
         },
         {
           "id": "example-6",
+          "adapter": "manual",
+          "raw": "yay -S facelock",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-7",
+          "adapter": "manual",
+          "raw": "sudo dnf install dnf5-plugins",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-8",
+          "adapter": "manual",
+          "raw": "sudo dnf copr enable tyvsmith/facelock",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-9",
+          "adapter": "manual",
+          "raw": "sudo dnf install facelock",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-10",
+          "adapter": "manual",
+          "raw": "sudo facelock setup",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-11",
           "adapter": "manual",
           "raw": "sudo facelock test",
           "classification": "executable",
@@ -7677,112 +7777,112 @@
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 1,
-          "line": 78,
+          "line": 113,
           "sha256": "ff8195c4ae6218ff221c52bc8fddd04740ffe18424173f6bae17f94a689e13a2"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 2,
-          "line": 86,
+          "line": 121,
           "sha256": "bec61f0cc5aa5062a5d2ff6b8fabf8bbaf4973e379679cf1408a26d13d3ee0ca"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 3,
-          "line": 87,
+          "line": 122,
           "sha256": "d083d8c1835c7a878a0028ffe95a9d8657a34bf54d9c77df60cf96f48fe8c42d"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 4,
-          "line": 88,
+          "line": 123,
           "sha256": "688d76820168760e13f5199233f25c2fa8f6e0b0f4da4b0d4b6eee06564398b6"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 5,
-          "line": 94,
+          "line": 129,
           "sha256": "bec61f0cc5aa5062a5d2ff6b8fabf8bbaf4973e379679cf1408a26d13d3ee0ca"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 6,
-          "line": 95,
+          "line": 130,
           "sha256": "01d7cf22bcecf66729c8d81a6ed4b9e9b796968f7d83ab5fe387b53eb8ea1ae0"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 8,
-          "line": 103,
+          "line": 138,
           "sha256": "d75ce10dd306f1d3969df3610179fe1364f05b90fa2be6b3d087c4badc3db984"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 9,
-          "line": 113,
+          "line": 148,
           "sha256": "48d6b8aecaf932ce9c5e7f8943e9e680f516bd62a91a97583bbdf775c9f4c911"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 10,
-          "line": 114,
+          "line": 149,
           "sha256": "6082e4887a6f179f954cd8675b9e9f70206b23a40a9585b84f3fe9cb5f19bdef"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 15,
-          "line": 125,
+          "line": 160,
           "sha256": "fad0225732307d9b8666dc48f93369322752b5acd641d744cde3a6d1c99155de"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 16,
-          "line": 126,
+          "line": 161,
           "sha256": "21df8681af24fdd4a24c8e7533d7c69725728fedd70374ac46b437b03686b526"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 17,
-          "line": 127,
+          "line": 162,
           "sha256": "e1a93dce67650786cc6126129be6427d1a8a96c0560e61b310b30e44e61bde57"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 18,
-          "line": 128,
+          "line": 163,
           "sha256": "db33444f34d115dce2f155297f23c717c86dd22e1e95cd0e44bf71ad6bec9fcf"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 19,
-          "line": 140,
+          "line": 175,
           "sha256": "ee643003c3bebb06741967affae1785b90ae552fcbf30142419a9d7fa0415d59"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 20,
-          "line": 141,
+          "line": 176,
           "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 21,
-          "line": 142,
+          "line": 177,
           "sha256": "f64e829871b2f7998fdbf8a8f7c4a36f917acc719880c9d14bc6565a6f1607ca"
         }
       ],
@@ -8034,35 +8134,35 @@
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 1,
-          "line": 179,
+          "line": 216,
           "sha256": "7047dae1de5957a90be1c7a3cfcc6abe298930cbfcdd6838f4a06295a7d565ce"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 2,
-          "line": 180,
+          "line": 217,
           "sha256": "97fe7e4851d163ea954392ba9c6fbfa704c8f3e1ef28996b794b45a7b4551907"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 3,
-          "line": 181,
+          "line": 218,
           "sha256": "d8e28448d4f6a66c71332ec6cc573065c0863083d2dde4dbd395d6fe1c8882a1"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 4,
-          "line": 182,
+          "line": 219,
           "sha256": "b01a1ffc2b4ef9721bb5ce35a004dd6ce17743083fa0670424a5caeb985dd7a6"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 5,
-          "line": 183,
+          "line": 220,
           "sha256": "c5daf997e938d2c8a1aeed87aaf0e3f000d211290ff0fdd9861be7ce2fa738ed"
         }
       ],
@@ -8169,21 +8269,21 @@
           "path": "docs/quickstart.md",
           "anchor": "package-lifecycle-and-retained-data",
           "ordinal": 1,
-          "line": 195,
+          "line": 232,
           "sha256": "4547cf4ed51d13a8755d4c904f2a1773778fb1af9481d51ac64373378ec09873"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "package-lifecycle-and-retained-data",
           "ordinal": 3,
-          "line": 210,
+          "line": 247,
           "sha256": "b2eaa0d6e49d61a0a83ddb30434dfff25bda1608545252375dd2eeca201b320a"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "package-lifecycle-and-retained-data",
           "ordinal": 4,
-          "line": 211,
+          "line": 248,
           "sha256": "cd370c0da2fc6b4b0a0c94762df10329fb29a2eec64e260f87f372c4856d9178"
         }
       ],
@@ -8265,21 +8365,21 @@
           "path": "docs/releasing.md",
           "anchor": "automated-recommended",
           "ordinal": 1,
-          "line": 74,
+          "line": 77,
           "sha256": "a9f574ec661d3125f29382308db0eb3bbf7652389b49d1bf41c4728f7b5f3885"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "automated-recommended",
           "ordinal": 2,
-          "line": 76,
+          "line": 79,
           "sha256": "1a220c2385020dbc6d853be67d1d89243424d6bc01da6391b73745a94eb51cdb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "automated-recommended",
           "ordinal": 7,
-          "line": 89,
+          "line": 92,
           "sha256": "090133abf7496a183de2ede915b3c07456de52d4d69186c20414253349729ab0"
         }
       ],
@@ -8362,112 +8462,112 @@
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 1,
-          "line": 304,
+          "line": 311,
           "sha256": "21fbb4c9a7b22a0439e070e8122853880927532ba554ea0204fd0ede5fa3ebbb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 2,
-          "line": 305,
+          "line": 312,
           "sha256": "d5ce836f401484bd835100b165e1c2234b437780616e27bb92f5403d0f22bc40"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 3,
-          "line": 306,
+          "line": 313,
           "sha256": "b2b12dbf5cd38fc21d68548042e8eae1e66f65faa6491f3564e75c7cb60abc22"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 4,
-          "line": 307,
+          "line": 314,
           "sha256": "5595bcc3f9aa3517450a5185fe037e24b0a8ec079eff27020bf5c5aef68ffdb0"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 5,
-          "line": 308,
+          "line": 315,
           "sha256": "d0d568788326024851d047fe1e316af83028cbf98b17a777fd64c4e784151809"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 6,
-          "line": 309,
+          "line": 316,
           "sha256": "05d5991182864fc115e36763667a0d555cf256358ed52830129f8fd32ab925de"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 7,
-          "line": 310,
+          "line": 317,
           "sha256": "4830a79699c4a1fa28bbcdc2eb8e5712c7ac46f3fd2533bad0b097ab936e8413"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 8,
-          "line": 311,
+          "line": 318,
           "sha256": "b1b141623a6849ba1a180dfa8e3d7eb504da148110c930be20e240eabd2323f1"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 9,
-          "line": 312,
+          "line": 319,
           "sha256": "9fcc5f55faef0fe3ceebfa0d6e7beb5e0281ab1b037fd3153ace2b72b3a64202"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 10,
-          "line": 313,
+          "line": 320,
           "sha256": "2877908694a9c4d1e9a8e8ca4605edd81026d7666c65b3c69bd180646b513b53"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 11,
-          "line": 314,
+          "line": 321,
           "sha256": "872db5f82702e535cc961ca606e0d46e18f134bfdcd12c06171b9adffc9ef8e8"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 12,
-          "line": 315,
+          "line": 322,
           "sha256": "3bdfbcbee168b92e2cf8f520a54a827c805903faed4712a781af561ea3246037"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 13,
-          "line": 318,
+          "line": 325,
           "sha256": "cbe27321cd6d31c9676b5aa4998fd1b4f9195f719b00cda8f889c3b3b7dae276"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 14,
-          "line": 319,
+          "line": 326,
           "sha256": "0aece5ddd58b51f2dccb3e634e59f06c2a38c4f9bd0439197688c4e548e8895b"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 15,
-          "line": 320,
+          "line": 327,
           "sha256": "a10a4c45881ab16f35605739e0375de3e5558bc495111b49c7929d9b2d1603a0"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "local-distro-validation",
           "ordinal": 16,
-          "line": 321,
+          "line": 328,
           "sha256": "640b0dca78c96225ae70191f4312212e60c6367fca24cab33a803b0ee94c7847"
         }
       ],
@@ -8721,49 +8821,49 @@
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 1,
-          "line": 455,
+          "line": 462,
           "sha256": "dedfaf04fd23448baa602a476c6e384ab674dfd1ad445e0c3e935b5a96a9a2f1"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 2,
-          "line": 456,
+          "line": 463,
           "sha256": "a07a3db4c0fd5697107f1591eb62f6a2c9a2ac0d3801e25844e5c244f6688915"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 3,
-          "line": 457,
+          "line": 464,
           "sha256": "d9a223daf1f784e1bd0313866cfbfcff4b2b4958708dfab4674bc3ddc63de570"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 4,
-          "line": 458,
+          "line": 465,
           "sha256": "108c5e8edc6582d4ee70c2b8573afe99a7be3f4ad8ddd11fc2b12c44e7079568"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 5,
-          "line": 459,
+          "line": 466,
           "sha256": "017092419ea31d5de3fd4b6e7a52b2dd239d134f423f81bd0f5c38992c212208"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 6,
-          "line": 460,
+          "line": 467,
           "sha256": "a77a5aea7a4e8dcf9901e8ac5ee041109d525ce2f2bd7f018a21918d70da1326"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 7,
-          "line": 461,
+          "line": 468,
           "sha256": "2b5e31a5fe163cb0998c87a9f505faf73a26e025df540bc210550dcb6cc27142"
         }
       ],
@@ -8896,231 +8996,231 @@
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 1,
-          "line": 537,
+          "line": 546,
           "sha256": "ce117958431b95a2b1b7736900f985d21b06e2b5672c9332ca300f7e2f728cec"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 2,
-          "line": 540,
+          "line": 549,
           "sha256": "496912e98f06a6851cefff636f7f9a738aea9093d8ca87d32427a71fc0d4e710"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 3,
-          "line": 541,
+          "line": 550,
           "sha256": "db66421d7339cfe66576a3d1816ccd849e3cce082609ed202f033e8766850f5e"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 4,
-          "line": 542,
+          "line": 551,
           "sha256": "eade2495c1c8af468788a81f22b4748844fb7e378dcb7b838f5b6a94478eca4a"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 5,
-          "line": 543,
+          "line": 552,
           "sha256": "436f245d1d2ff52f45e4708def3db88264f00a69f14ac45f3974e91213865413"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 6,
-          "line": 548,
+          "line": 557,
           "sha256": "5b6566b30a1c74929651fbf4d529d0b2bc03d901c23fb56fccf98720af6a3f52"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 7,
-          "line": 549,
+          "line": 558,
           "sha256": "d91ae6717b7b7778b93b9020d48bc3759649decdaa9abad31f36fa82cf0964e2"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 8,
-          "line": 551,
+          "line": 560,
           "sha256": "c9a3615c4b78b410f6374730cc6ae2a6f84f3cfc991e1d62afefeafdea301e7a"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 9,
-          "line": 552,
+          "line": 561,
           "sha256": "80b4949070e5c55d722d81d45af49fe18736316ae34f61992bb2500c59fbf83e"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 10,
-          "line": 553,
+          "line": 562,
           "sha256": "fe9e350dccdf906c3c342fa6d20e264cf09012c885bbc76709d25df82a557eec"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 11,
-          "line": 554,
+          "line": 563,
           "sha256": "9b13396a2d62293086b0bfda57435689ba59dde26f4398d2eba7624ef80916eb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 12,
-          "line": 555,
+          "line": 564,
           "sha256": "c1fe02ee74644b70083160af86534e360016dcbd5aa98097d7a570640e508a14"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 13,
-          "line": 556,
+          "line": 565,
           "sha256": "c32f2b1a66f8a79deadb74f533f3075c60a629df343b89e8c4477d40fa960ba8"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 14,
-          "line": 557,
+          "line": 566,
           "sha256": "ecc78bda27b832c6956a35bdf1ee8fb759f85425a9e8c85d28edb523bb6779f5"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 15,
-          "line": 560,
+          "line": 569,
           "sha256": "a1d2a470e9757ca1a468b4129de0e79687de54106b68c041ce621be96ad5f4f9"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 16,
-          "line": 561,
+          "line": 570,
           "sha256": "aa17fd000eb5853bf3764379438d5d60e6b847ef03e6028108af9563da1226d4"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 17,
-          "line": 562,
+          "line": 571,
           "sha256": "69a5e09dc6213aebcc57177e7aae3f399a2d5d3aae7842563b239795c0f3b0da"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 18,
-          "line": 563,
+          "line": 572,
           "sha256": "436f245d1d2ff52f45e4708def3db88264f00a69f14ac45f3974e91213865413"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 19,
-          "line": 564,
+          "line": 573,
           "sha256": "fe9e350dccdf906c3c342fa6d20e264cf09012c885bbc76709d25df82a557eec"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 20,
-          "line": 565,
+          "line": 574,
           "sha256": "9b13396a2d62293086b0bfda57435689ba59dde26f4398d2eba7624ef80916eb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 21,
-          "line": 566,
+          "line": 575,
           "sha256": "c1fe02ee74644b70083160af86534e360016dcbd5aa98097d7a570640e508a14"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 22,
-          "line": 567,
+          "line": 576,
           "sha256": "c32f2b1a66f8a79deadb74f533f3075c60a629df343b89e8c4477d40fa960ba8"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 23,
-          "line": 568,
+          "line": 577,
           "sha256": "ecc78bda27b832c6956a35bdf1ee8fb759f85425a9e8c85d28edb523bb6779f5"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 24,
-          "line": 571,
+          "line": 580,
           "sha256": "760d01df3d4b65d21ee36ae04052a37b260f722c68cf58ce52947c41720e08aa"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 25,
-          "line": 572,
+          "line": 581,
           "sha256": "88d89d47a06c2521dd75cba1300449b6861770cc6db54e68046a24baac5a5770"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 26,
-          "line": 573,
+          "line": 582,
           "sha256": "7e3163129541b685b8df8bb22a871dfcff84227081f53a25599b5cffd3900af2"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 27,
-          "line": 574,
+          "line": 583,
           "sha256": "436f245d1d2ff52f45e4708def3db88264f00a69f14ac45f3974e91213865413"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 28,
-          "line": 575,
+          "line": 584,
           "sha256": "fe9e350dccdf906c3c342fa6d20e264cf09012c885bbc76709d25df82a557eec"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 29,
-          "line": 576,
+          "line": 585,
           "sha256": "9b13396a2d62293086b0bfda57435689ba59dde26f4398d2eba7624ef80916eb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 30,
-          "line": 577,
+          "line": 586,
           "sha256": "c1fe02ee74644b70083160af86534e360016dcbd5aa98097d7a570640e508a14"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 31,
-          "line": 578,
+          "line": 587,
           "sha256": "c32f2b1a66f8a79deadb74f533f3075c60a629df343b89e8c4477d40fa960ba8"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 32,
-          "line": 582,
+          "line": 591,
           "sha256": "1548e502c894199d945d62477c663ac76551ae0a415c54d023829c8374fc5e20"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 33,
-          "line": 586,
+          "line": 595,
           "sha256": "2bb449e3f1e527e7ecac90a956b1a6b5722b264c3cfae4611d0cc62aa0265ba3"
         }
       ],
@@ -9591,21 +9691,21 @@
           "path": "docs/releasing.md",
           "anchor": "why-v014-never-reached-copr",
           "ordinal": 8,
-          "line": 755,
+          "line": 764,
           "sha256": "4f8c8f6471b5acc7be9447a1cc5a4ef869157bce60d91c20e453570df45d3af5"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "why-v014-never-reached-copr",
           "ordinal": 9,
-          "line": 756,
+          "line": 765,
           "sha256": "330b0e0d48e5cadecc7312bd0e67d8fe2c885d0d4ff881e165c92d12cd5de072"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "why-v014-never-reached-copr",
           "ordinal": 10,
-          "line": 757,
+          "line": 766,
           "sha256": "eafacd9bcae280d0368ab135f72ec91b7e2d8399382e1050b67ef96cd5e94ff8"
         }
       ],
@@ -9687,14 +9787,14 @@
           "path": "docs/releasing.md",
           "anchor": "pre-tag-attestation",
           "ordinal": 2,
-          "line": 825,
+          "line": 834,
           "sha256": "4fc7ae86753f046827e1eaf821e79f8502c861494f431ee06e627c16a0f582c5"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "pre-tag-attestation",
           "ordinal": 3,
-          "line": 826,
+          "line": 835,
           "sha256": "9daf87a90676b422783ead7510dc9cd9df3f7d35ec73a7f6b720b249814ed638"
         }
       ],
@@ -9762,21 +9862,21 @@
           "path": "docs/releasing.md",
           "anchor": "apt-debianubuntu",
           "ordinal": 1,
-          "line": 853,
+          "line": 862,
           "sha256": "3a7b17c8cfba23ce48b71f39c7a8e55fa570bf8596dac8e00622eaa2fd8f67b6"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "apt-debianubuntu",
           "ordinal": 2,
-          "line": 860,
+          "line": 869,
           "sha256": "2120970caf76141c5840f3c94b1f591cfd64be5b8b0909ba582421dcfc2130a2"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "apt-debianubuntu",
           "ordinal": 3,
-          "line": 865,
+          "line": 874,
           "sha256": "07aef43e7726b1c28642fe5034e46b275bb0175b1a8bf8b2ab09125586f97c02"
         }
       ],
@@ -9857,56 +9957,56 @@
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 1,
-          "line": 904,
+          "line": 913,
           "sha256": "bd978c87c0aadfa54d4ba4f05b48f51ea4197e79703f972a5b6e2e7db17facd1"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 2,
-          "line": 906,
+          "line": 915,
           "sha256": "6fbda588a984496fe15cc3910c5759c7f24c1920e358e38865bdf3f599bf2eaf"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 3,
-          "line": 910,
+          "line": 919,
           "sha256": "496912e98f06a6851cefff636f7f9a738aea9093d8ca87d32427a71fc0d4e710"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 4,
-          "line": 916,
+          "line": 925,
           "sha256": "db66421d7339cfe66576a3d1816ccd849e3cce082609ed202f033e8766850f5e"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 5,
-          "line": 917,
+          "line": 926,
           "sha256": "fe9e350dccdf906c3c342fa6d20e264cf09012c885bbc76709d25df82a557eec"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 6,
-          "line": 921,
+          "line": 930,
           "sha256": "9b13396a2d62293086b0bfda57435689ba59dde26f4398d2eba7624ef80916eb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 7,
-          "line": 922,
+          "line": 931,
           "sha256": "1770d6f9d00ebdeba4277b6bd833aebdfe61df440fdc0e7cf518616c0f4fb84d"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 8,
-          "line": 923,
+          "line": 932,
           "sha256": "c32f2b1a66f8a79deadb74f533f3075c60a629df343b89e8c4477d40fa960ba8"
         }
       ],
@@ -10907,7 +11007,7 @@
           "anchor": "pin-release-identity",
           "ordinal": 1,
           "line": 82,
-          "sha256": "46b588f236861b22e16d4506c840402ef7af1a1c7fb1a067f18fac78fa8ad16e"
+          "sha256": "dd7a6a4375a621000ede94c4cf44956a4d93a7c0b525c7536f811b6659d463d7"
         },
         {
           "path": "docs/testing-walkthrough.md",
@@ -10935,7 +11035,7 @@
         {
           "id": "example-1",
           "adapter": "manual",
-          "raw": "RELEASE_TAG=v0.2.0-alpha.1",
+          "raw": "RELEASE_TAG=v0.2.0-alpha.4",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",

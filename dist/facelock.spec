@@ -57,8 +57,8 @@ authentication, oneshot mode for systems without systemd,
 IR camera requirement to prevent photo spoofing, frame variance
 checks, and rate limiting.
 
-After installation, run 'sudo facelock setup' to download face
-recognition models, then 'sudo facelock enroll' to register your face.
+After installation, run 'sudo facelock setup'. The wizard downloads face
+recognition models and offers face enrollment and PAM configuration.
 
 %prep
 %autosetup
@@ -167,9 +167,8 @@ dbus-send --system --type=method_call --dest=org.freedesktop.DBus \
 %systemd_post facelock-daemon.service
 
 echo ""
-echo "facelock installed. Two steps remaining:"
-echo "  1. sudo facelock setup       (download face recognition models)"
-echo "  2. sudo facelock enroll      (register your face)"
+echo "facelock installed. Next:"
+echo "  sudo facelock setup       (models, configuration, enrollment, and optional PAM)"
 
 %preun
 %systemd_preun facelock-daemon.service

@@ -8,6 +8,12 @@ authentication path makes no network request and sends no telemetry.
 
 ## Quick Start
 
+The latest stable release is v0.1.4. The current
+[v0.2.0-alpha.4 prerelease](https://github.com/tyvsmith/facelock/releases/tag/v0.2.0-alpha.4)
+provides direct Debian 13, Ubuntu 26.04, and Fedora 44 packages; it is
+intentionally absent from the stable AUR, APT, and production COPR channels.
+See [Quick Start](quickstart.md) for the exact package filenames.
+
 ```bash
 just build
 target/debug/facelock --help

@@ -2,14 +2,49 @@
 
 ## Published packages
 
-As checked on 2026-09-05, v0.1.4 is the latest published stable release. Prerelease tags do not enter
-the stable AUR, APT, or production COPR channels. The v0.2.0-alpha.1 tag exists
-but currently has no corresponding GitHub Release; a checkout, staged package,
-or local rebuild is not proof that a release artifact was published.
+As checked on 2026-09-05, v0.1.4 is the latest stable release. The current
+prerelease, [v0.2.0-alpha.4](https://github.com/tyvsmith/facelock/releases/tag/v0.2.0-alpha.4),
+is published with direct package assets. Prereleases intentionally do not enter
+the stable AUR, APT, or production COPR channels.
+
+For Debian 13 amd64, install the published alpha package directly:
+
+```bash
+curl -fLO https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/facelock_0.2.0.alpha.4-1.deb13u1_amd64.deb
+sudo apt install ./facelock_0.2.0.alpha.4-1.deb13u1_amd64.deb
+```
+
+For Ubuntu 26.04 amd64, use the corresponding suite build:
+
+```bash
+curl -fLO https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/facelock_0.2.0.alpha.4-1.ubuntu26.04.1_amd64.deb
+sudo apt install ./facelock_0.2.0.alpha.4-1.ubuntu26.04.1_amd64.deb
+```
+
+The dots in those download filenames are GitHub-safe stored names. Once
+installed, Debian reports the native versions `0.2.0~alpha.4-1~deb13u1` and
+`0.2.0~alpha.4-1~ubuntu26.04.1`; the tildes preserve prerelease ordering.
+Fedora 44 x86_64 users can install the direct release RPM:
+
+```bash
+sudo dnf install https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/facelock-0.2.0-0.4.alpha.4.fc44.x86_64.rpm
+```
+
+The separately downloadable `facelock`, PAM module, and polkit-agent binaries
+are release components, not a complete installation. They do not install the
+configuration, models, service and D-Bus policy, PAM layout, or required shared
+libraries; use a native package or the source installation path instead.
+
+The published alpha.4 Debian and RPM package prompts say to run `setup` and
+then `enroll`. That second command is redundant when setup's enrollment step
+succeeds; run it only if enrollment was skipped or did not complete.
 
 Arch users can install the stable source-build AUR package. `facelock-bin` is
 the prebuilt alternative and `facelock-git` follows development; all three AUR
 entries served version 0.1.4-1 on 2026-09-05.
+The live `facelock-git` recipe still omitted its required ONNX Runtime
+dependency at that check. Its source tracks development, but it is not a
+verified current-tree installation path until the published recipe is fixed.
 
 ```bash
 yay -S facelock
@@ -31,8 +66,8 @@ Existing v0.1.4 entries naming `main` or `legacy` returned signed Release
 metadata on 2026-09-05. Under the compatibility policy, these names keep working until
 0.3.0: starting with the 0.2.0 stable publication, `main` maps to the Trixie
 package set and `legacy` serves signed empty indexes. At 0.3.0, `apt update`
-fails until the entry is removed. The current alpha tree is a source build,
-not an APT publication; metadata availability alone does not verify package
+fails until the entry is removed. The alpha is available only as direct release
+packages, not through APT; metadata availability alone does not verify package
 contents.
 
 The production COPR targets Fedora 43, 44, and 45 only. On 2026-09-05 it served
@@ -154,8 +189,10 @@ as inference-capable until a trusted ONNX Runtime has been installed separately.
 
 Facelock is not in nixpkgs and Nix is not a published package channel or a row
 in the supported release matrix. The repository does ship a flake and NixOS
-module under `dist/nix`; release CI gates flake evaluation, while the actual
-Nix build remains advisory and the derivation disables its test phase.
+module under `dist/nix`. Release CI gates flake evaluation, while the actual Nix
+build remains advisory and the derivation disables its test phase. The flake
+has no checked-in `flake.lock`, so evaluation resolves network inputs and is
+not a locked, reproducible package publication.
 
 The source-tree module exports `nixosModules.default`. Its public options are
 `services.facelock.enable`, `services.facelock.package`, and

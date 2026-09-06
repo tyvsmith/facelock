@@ -311,7 +311,7 @@
       <div class="section-header center">
         <div class="section-label">Quick Install</div>
         <h2 class="section-title">Choose an installation channel</h2>
-        <p class="section-desc">Channel status checked 2026-09-05: v0.1.4 is the latest published stable release. This tree is v0.2.0-alpha.1, whose source tag exists without a corresponding GitHub Release. Prereleases do not enter stable AUR, APT, or production COPR.</p>
+        <p class="section-desc">Channel status checked 2026-09-05: v0.1.4 is the latest stable release. <a href="https://github.com/tyvsmith/facelock/releases/tag/v0.2.0-alpha.4">v0.2.0-alpha.4</a> is published with direct Debian 13, Ubuntu 26.04, and Fedora 44 packages. Prereleases do not enter stable AUR, APT, or production COPR.</p>
       </div>
 
       <div class="install-block">
@@ -355,8 +355,8 @@
               <div><span class="output">Ubuntu 26.04 — resolute — amd64 — TPM</span></div>
               <div>&nbsp;</div>
               <div><span class="comment"># Future public base: https://tysmith.me/facelock/apt</span></div>
-              <div><span class="comment"># Not currently installable: the clean trixie Release check returns 404.</span></div>
-              <div><span class="comment"># Use source until a stable 0.2.0 release publishes these suites.</span></div>
+              <div><span class="comment"># Stable APT suites are not published yet.</span></div>
+              <div><a href="https://github.com/tyvsmith/facelock/releases/tag/v0.2.0-alpha.4">Install the suite-specific alpha.4 .deb directly from the release.</a></div>
             </div>
           </div>
           <p class="install-note migration">Under the compatibility policy, existing v0.1.4 entries naming <code>main</code> or <code>legacy</code> keep working until 0.3.0. The 0.2.0 stable publisher will map <code>main</code> to Trixie and export empty <code>legacy</code> indexes. At 0.3.0, <code>apt update</code> fails until the entry is removed. Do not rewrite an existing entry to <code>trixie</code> or <code>resolute</code> before those suites are actually published.</p>
@@ -392,7 +392,7 @@
             </div>
             <div class="terminal-body">
               <div><span class="comment"># Experimental source-tree module in dist/nix; not a published package channel.</span></div>
-              <div><span class="comment"># Evaluation is gated, but the Nix build remains advisory.</span></div>
+              <div><span class="comment"># Unlocked evaluation is gated, but the Nix build remains advisory.</span></div>
               <div><span class="comment"># Runtime lookup, declarative configuration and PAM integration need NixOS work.</span></div>
               <div><a href="docs/quickstart.html#nixos-source-tree-module">Read the module interface and known limitations before enabling it.</a></div>
             </div>

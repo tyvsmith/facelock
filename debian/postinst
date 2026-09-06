@@ -67,9 +67,8 @@ case "$1" in
         fi
 
         echo ""
-        echo "facelock installed. Two steps remaining:"
-        echo "  1. sudo facelock setup       (download face recognition models)"
-        echo "  2. sudo facelock enroll      (register your face)"
+        echo "facelock installed. Next:"
+        echo "  sudo facelock setup       (models, configuration, enrollment, and optional PAM)"
         ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)

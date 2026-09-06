@@ -2,12 +2,15 @@
 
 ## Current channel observation
 
-As checked on 2026-09-05, v0.1.4 is the latest published GitHub release and the
-v0.2.0-alpha.1 tag points to commit `53385c5` but has no GitHub Release. The
+The following is a dated 2026-09-05 observation: v0.1.4 was then the latest
+published GitHub release and the v0.2.0-alpha.1 tag pointed to commit `53385c5`
+but had no GitHub Release. The
 `trixie` and `resolute` APT Release URLs return 404; the compatibility `main`
 and `legacy` suites return signed Release metadata. Production COPR serves
 0.1.3-1 on Fedora 43, 44, and 45, not the stable 0.1.4-1 predecessor. These are
-dated availability observations, not changes to the release policy below.
+availability observations, not changes to the release policy below. Since that
+audit, v0.2.0-alpha.4 has been published as a prerelease with direct artifacts;
+stable AUR, APT, and production COPR publication remains skipped by policy.
 
 ## Versioning
 
@@ -99,10 +102,14 @@ The `.github/workflows/release.yml` workflow:
    components with their reviewed manifests and checksums
 4. Builds two suite-specific TPM-enabled `.deb` packages for trixie and resolute
 5. Builds the direct `.rpm` package in the pinned Fedora 44 container and validates contents
-6. Validates Nix flake evaluation
+6. Validates the unlocked Nix flake evaluation (network inputs are resolved
+   because `dist/nix` has no checked-in `flake.lock`)
 7. For a stable tag, builds the signed codenamed APT repository plus the `main` and `legacy` compatibility suites until 0.3.0; missing APT signing secrets fail here, before the GitHub Release is public
 8. Verifies the tag, assembles and validates every asset, writes `MANIFEST.json`, and publishes the release exactly once
-9. After a stable GitHub Release is public, publishes `facelock`, `facelock-bin`, and `facelock-git` to AUR; a missing `AUR_SSH_KEY` fails this job but cannot retract the public release
+9. After a stable GitHub Release is public, attempts to publish `facelock`,
+   `facelock-bin`, and `facelock-git` to AUR; a missing `AUR_SSH_KEY` prints a
+   skip notice and exits successfully, while an invalid configured key fails
+   after publication
 10. For a stable tag, triggers the GitHub Pages rebuild that deploys the updated APT repo
 
 Validated prerelease tags set the GitHub Release `prerelease` output and upload
@@ -523,8 +530,10 @@ the published shape when run, as a clean APT client; no workflow runs it.
 #### AUR (Arch Linux)
 
 Automated after setup. Every stable release run attempts AUR publication after
-the GitHub Release becomes public. `AUR_SSH_KEY` is required; if it is absent
-or invalid, the AUR job fails after publication and needs manual recovery.
+the GitHub Release becomes public. If `AUR_SSH_KEY` is absent, the publisher
+prints a skip notice and exits successfully; an invalid configured key fails
+after publication and needs manual recovery. Release operators must therefore
+verify the live AUR packages rather than infer publication from a green job.
 
 **One-time setup (~10 minutes):**
 

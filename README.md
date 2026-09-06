@@ -2,10 +2,11 @@
 
 # Facelock: Face Authentication for Linux
 
-> **Release status (checked 2026-09-05):** v0.1.4 is the latest published stable release. This tree
-> is v0.2.0-alpha.1; its tag exists, but no corresponding GitHub Release is
-> currently published. A tag, source build, staged package, or successful
-> rebuild is not evidence that an artifact is available to users.
+> **Release status (checked 2026-09-05):** v0.1.4 is the latest stable release.
+> The current prerelease is
+> [v0.2.0-alpha.4](https://github.com/tyvsmith/facelock/releases/tag/v0.2.0-alpha.4),
+> published with direct Debian 13, Ubuntu 26.04, and Fedora 44 packages.
+> Prereleases intentionally do not enter stable AUR, APT, or production COPR.
 
 A modern face authentication system for Linux PAM. Provides Windows Hello-style
 facial auth with IR-required capture and layered static-presentation checks,
@@ -20,6 +21,9 @@ telemetry. Your biometric data never leaves your machine.
 This installs the stable source-build package. `facelock-bin` is the prebuilt
 alternative and `facelock-git` follows development; all three AUR entries
 served version 0.1.4-1 when checked on 2026-09-05.
+The live `facelock-git` recipe still omitted its required ONNX Runtime
+dependency at that check; use the source-build prerequisites below instead of
+treating that AUR entry as a verified current-tree installation.
 
 ```bash
 yay -S facelock           # or paru -S facelock
@@ -77,7 +81,7 @@ target/debug/facelock --help
 ONNX Runtime can be loaded. On Arch, where the system runtime is packaged, the
 optional `just install` command builds and installs the current tree, prompts
 for sudo for file writes, and does not edit PAM. Debian/Ubuntu source builds
-need a separately installed trusted ONNX Runtime to run inference; their future
+need a separately installed trusted ONNX Runtime to run inference; published
 Facelock `.deb` packages bundle it. Fedora users should use the RPM/COPR layout,
 and the quickstart records why the current NixOS source-tree module is not yet
 a usable authentication installation.
@@ -295,8 +299,9 @@ Fedora `.rpm`. It also attempts two suite-specific `.deb` artifacts, one for
 each supported suite. Those builds are not publication proof: the release and
 every required asset must be present and verified. Stable releases publish
 AUR/APT and enable production COPR handling;
-prereleases must not enter those stable channels. As checked on 2026-09-05,
-the existing v0.2.0-alpha.1 tag has no GitHub Release. See
+prereleases must not enter those stable channels.
+[v0.2.0-alpha.4](https://github.com/tyvsmith/facelock/releases/tag/v0.2.0-alpha.4)
+is a published prerelease with direct package assets. See
 [docs/releasing.md](docs/releasing.md) for the gates and versioning contract.
 
 ## License

@@ -79,7 +79,7 @@ from a tag or local build. For a GitHub release-asset channel, generate the
 readiness report for the intended release and channel:
 
 ```bash
-RELEASE_TAG=v0.2.0-alpha.1
+RELEASE_TAG=v0.2.0-alpha.4
 CHANNEL=github-alpha
 READINESS_FILE=/tmp/facelock-walkthrough-readiness.json
 python3 test/docs-walkthrough/run.py readiness --release "$RELEASE_TAG" --channel "$CHANNEL" --output "$READINESS_FILE"

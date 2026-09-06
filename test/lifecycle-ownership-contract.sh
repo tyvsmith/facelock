@@ -323,9 +323,23 @@ require_security_text "64 descendant directory levels"
 require_security_text "10,000 inspected entries"
 
 for guide in docs/quickstart.md book/src/quickstart.md; do
+    # mdBook renders this exact include from the canonical guide. Check its
+    # source, but keep checking the book itself if it contains independent text.
+    if [ "$guide" = book/src/quickstart.md ] &&
+        [ "$(<"$repo_root/$guide")" = '{{#include ../../docs/quickstart.md}}' ]; then
+        guide=docs/quickstart.md
+    fi
     require_text "$guide" "Package lifecycle and retained data"
     require_text "$guide" "Debian purge removes only provably safe entries"
     require_text "$guide" "Unsafe or externally configured remnants are retained"
+done
+
+# Setup already offers enrollment; package instructions must not prescribe a
+# second enrollment as a required installation step.
+for surface in debian/control debian/postinst dist/facelock.spec; do
+    reject_text "$surface" 'Two steps remaining'
+    reject_text "$surface" 'sudo facelock enroll'
+    require_text "$surface" 'sudo facelock setup'
 done
 
 lifecycle_messages=(

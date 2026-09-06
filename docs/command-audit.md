@@ -84,10 +84,10 @@ Observed on 2026-09-05:
 - Fresh pinned Fedora 43, 44 and 45 containers installed production COPR packages and ran their CLI; the observed packages were `0.1.3-1.fc43`, `0.1.3-1.fc44` and `0.1.3-1.fc45`, not the alpha or latest stable `0.1.4`
 - Stable APT/AUR/production COPR channels cannot establish prerelease coverage; the release matrix separates these channels
 
-These observations establish publication limitations, not a prerequisite to
-reviewing the alpha source. Its tag resolves to
+Those earlier observations established publication limitations, not a prerequisite to
+reviewing the alpha.1 source. Its tag resolved to
 `53385c53b9c4b2e0f83368797c14599dc2c61485`, and GitHub serves the tagged source
-archive without a GitHub Release. Keep source-review results distinct from
+archive without a GitHub Release at that checkpoint. Keep source-review results distinct from
 claims about uploaded release binaries or public repository packages.
 
 See [the walkthrough protocol](testing-walkthrough.md) when new runtime evidence
@@ -121,6 +121,46 @@ instruction extraction and lookup. It does not repeat the full behavioral
 suite below, install host authentication configuration, or claim new camera,
 VM, GPU or TPM results. Published alpha assets are not required for these
 source and documentation checks.
+
+### Published alpha.4 follow-up
+
+The follow-up rebased the documentation onto
+`8fa96c9179a7d14a7c0ca1b74b686672335a8841`, the commit identified by the
+`v0.2.0-alpha.4` tag, its release manifest and the successful
+[release run](https://github.com/tyvsmith/facelock/actions/runs/34004251451).
+The [prerelease](https://github.com/tyvsmith/facelock/releases/tag/v0.2.0-alpha.4)
+was published at 2026-09-06 02:07:12 UTC (September 5 in Pacific time).
+
+- Downloaded all nine published assets and matched their sizes and SHA256 digests with the release metadata; the eight payloads also matched `MANIFEST.json`
+- Matched the separately downloaded tag archive to the manifest's source digest, `28d35c51b4c0f3702291c526174e1bbb4d249daf86b017c0d652a4b30cda7053`
+- Inspected both Debian control archives and file inventories: native versions use tildes, but GitHub download filenames use dots; the dotted URLs work and the tilde URLs return 404
+- Inspected the direct Fedora 44 RPM's version, dependencies, file inventory and scriptlets; it bundles ONNX Runtime, unlike the system-runtime COPR build
+- Confirmed both Debian packages contain the manifest-pinned CPU ONNX Runtime 1.20.1 under `/usr/lib/facelock`; the direct RPM places it under `/usr/lib64/facelock`
+- Ran only the released main executable's help and version in a disposable Ubuntu 24.04 container with `libxkbcommon0`; it reports `facelock 0.2.0-alpha.4`
+
+The manifest itself has SHA256
+`b7f9fbc5df710ea3facb894e5ed4d67d2a4aaa8808261ecc15aada4dcfa7eb5e`.
+Matching downloaded bytes to release metadata is an integrity check, not an
+independent reproducible-build or signing attestation. The tag is unsigned,
+the release is not immutable, and the direct RPM has no package signature.
+The downloaded files are retained locally in
+`/tmp/facelock-alpha4-audit.6w9Zm1`; that temporary directory is not shipped.
+
+This check corrected the current release links and exact package commands in
+Quick Start, the README, the book and the HTML website. It also found redundant
+`setup`-then-`enroll` instructions in the released Debian/RPM descriptions and
+post-install prompts. The source package text now directs users to the setup
+wizard; Quick Start explains the redundant alpha.4 prompt. Published alpha.4
+bytes were not replaced.
+
+The documentation audit and published-alpha inspection do not require stable
+0.2.0 publication. Stable AUR, codenamed APT and production COPR still need a
+separate post-publication check of their actual packages and metadata. The
+live `facelock-git` recipe also still lacks the runtime dependency already
+declared in this source tree; the install guides explicitly warn about it.
+No host installation or camera, GPU, physical TPM or authentication retest was
+performed for this follow-up. Pending walkthrough execution records remain
+pending; refreshing their source pins does not convert them to evidence.
 
 ### Earlier checkpoint: evidence identity and scope
 
