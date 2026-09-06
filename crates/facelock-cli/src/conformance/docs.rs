@@ -42,12 +42,15 @@ fn markdown_references() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
-fn command_section<'a>(doc: &'a str, path: &str) -> Option<&'a str> {
-    let mut offset = 0;
-    let mut start = None;
-    let mut depth = 0;
-    let mut fence: Option<(char, usize)> = None;
-    for line in doc.split_inclusive('\n') {
+/// Track fenced examples so reference guards inspect prose, not example text.
+#[derive(Default)]
+pub(super) struct FencedCode {
+    opening: Option<(char, usize)>,
+}
+
+impl FencedCode {
+    /// Consume one line; true means a fence delimiter or fenced content.
+    pub(super) fn consume_line(&mut self, line: &str) -> bool {
         // CommonMark fences permit up to three leading spaces. A closer
         // must use the opener's delimiter, be at least as long, and contain
         // only whitespace afterward; examples can contain shorter/mixed
@@ -61,23 +64,32 @@ fn command_section<'a>(doc: &'a str, path: &str) -> Option<&'a str> {
         if let Some(delimiter) = marker {
             let length = unindented.chars().take_while(|c| *c == delimiter).count();
             let rest = &unindented[length..];
-            match fence {
+            match self.opening {
                 Some((opening_delimiter, opening_length))
                     if delimiter == opening_delimiter
                         && length >= opening_length
                         && rest.trim().is_empty() =>
                 {
-                    fence = None;
-                    offset += line.len();
-                    continue;
+                    self.opening = None;
+                    return true;
                 }
                 None if length >= 3 && (delimiter != '`' || !rest.contains('`')) => {
-                    fence = Some((delimiter, length));
+                    self.opening = Some((delimiter, length));
                 }
                 _ => {}
             }
         }
-        if fence.is_some() {
+        self.opening.is_some()
+    }
+}
+
+fn command_section<'a>(doc: &'a str, path: &str) -> Option<&'a str> {
+    let mut offset = 0;
+    let mut start = None;
+    let mut depth = 0;
+    let mut fence = FencedCode::default();
+    for line in doc.split_inclusive('\n') {
+        if fence.consume_line(line) {
             offset += line.len();
             continue;
         }

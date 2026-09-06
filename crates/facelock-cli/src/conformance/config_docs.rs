@@ -72,7 +72,11 @@ fn documented_defaults(doc: &str) -> BTreeMap<String, String> {
     let mut section = "";
     let mut default_column = None;
     let mut result = BTreeMap::new();
+    let mut fence = super::docs::FencedCode::default();
     for line in doc.lines() {
+        if fence.consume_line(line) {
+            continue;
+        }
         if line.starts_with('#') {
             default_column = None;
             if let Some(name) = line
@@ -140,6 +144,33 @@ fn configuration_reference_covers_actual_defaults() {
         failures.is_empty(),
         "docs/configuration.md:\n{}",
         failures.join("\n")
+    );
+}
+
+#[test]
+fn documented_defaults_ignore_fenced_headings_without_losing_the_real_table() {
+    for (open, close) in [
+        ("```sh", "```"),
+        ("~~~~", "~~~~~"),
+        ("   ````md", "   ````"),
+    ] {
+        let doc = format!(
+            "## [security]\n| Key | Default |\n{open}\n#!/bin/sh\n# a comment\n## [example]\n{close}\n| `require_ir` | `true` |\n"
+        );
+        assert_eq!(
+            documented_defaults(&doc),
+            BTreeMap::from([("security.require_ir".into(), "true".into())]),
+            "lost table context with {open:?}"
+        );
+    }
+}
+
+#[test]
+fn documented_defaults_do_not_accept_tables_from_fenced_examples() {
+    let doc = "## [security]\n| Key | Default |\n| `require_ir` | `true` |\n````markdown\n```\n~~~~\n````not-a-closer\n## [security]\n| Key | Default |\n| `require_ir` | `false` |\n| `invented` | `true` |\n`````\n";
+    assert_eq!(
+        documented_defaults(doc),
+        BTreeMap::from([("security.require_ir".into(), "true".into())])
     );
 }
 
