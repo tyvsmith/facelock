@@ -151,12 +151,15 @@ if printf '%s\n' "$build_job" | grep -Fq 'SHA256SUMS'; then
     fail "the build job must not publish a partial checksum file; MANIFEST.json covers every asset"
 fi
 
+# `grep -q` exits at the first match; under pipefail an awk still writing a
+# body longer than its stdout buffer then dies of SIGPIPE, and the check
+# fails at random. Let grep consume the whole body instead.
 for producer in build build-deb build-rpm publish-apt; do
-    job_body "$producer" | grep -Eq '^[[:space:]]+name: release-[a-z-]+' ||
+    job_body "$producer" | grep -E '^[[:space:]]+name: release-[a-z-]+' >/dev/null ||
         fail "$producer must hand its release payload to publish as a workflow artifact"
 done
 for digest_producer in build download-ort prepare-cargo-vendor build-deb build-rpm publish-apt; do
-    job_body "$digest_producer" | grep -Fq 'release-digests-' ||
+    job_body "$digest_producer" | grep -F 'release-digests-' >/dev/null ||
         fail "$digest_producer must attest the digests of what it produced"
 done
 
