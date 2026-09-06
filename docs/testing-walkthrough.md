@@ -121,8 +121,8 @@ python3 test/docs-walkthrough/evidence.py validate "$EVIDENCE_DIR/evidence.json"
 
 Use `--require-pass` only when a passing outcome is required. A real
 publication absence is evidence, not a reason to rewrite the record as a pass.
-For example, the current clean Debian 13 `apt-trixie` run records that the
-future suite's Release URL returns 404; it does not establish a clean install.
+A clean `apt-trixie` run against an unpublished suite records the 404 its
+Release URL returned; that record is the outcome, not a failed run to retry.
 
 When an environmental prerequisite is deliberately unavailable, record an
 explicit blocked result rather than skipping silently. The generic runner
