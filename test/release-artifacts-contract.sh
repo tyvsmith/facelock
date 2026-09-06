@@ -659,12 +659,15 @@ echo "release artifacts case: AUR publisher refusing a malformed binary digest r
 
 stable_expected="$work/expected-stable"
 "$helper_path" expected 0.2.0 1 1 false final >"$stable_expected"
+# `final` is the API-facing stage, so the Debian entries are the names GitHub
+# stores. This list asserted the uploaded names until v0.2.0-alpha.3, which is
+# why the contract passed while the publish job could not.
 for wanted in \
     'facelock-x86_64-linux-gnu' \
     'pam_facelock\.so' \
     'facelock-polkit-agent-x86_64-linux-gnu' \
-    'facelock_0\.2\.0-1~deb13u1_amd64\.deb' \
-    'facelock_0\.2\.0-1~ubuntu26\.04\.1_amd64\.deb' \
+    'facelock_0\.2\.0-1\.deb13u1_amd64\.deb' \
+    'facelock_0\.2\.0-1\.ubuntu26\.04\.1_amd64\.deb' \
     'facelock-0\.2\.0-1\.fc[0-9]+\.x86_64\.rpm' \
     'facelock-debuginfo-0\.2\.0-1\.fc[0-9]+\.x86_64\.rpm' \
     'facelock-debugsource-0\.2\.0-1\.fc[0-9]+\.x86_64\.rpm' \
@@ -676,7 +679,17 @@ done
 
 prerelease_expected="$work/expected-prerelease"
 "$helper_path" expected 0.2.0-alpha.1 1 1 true final >"$prerelease_expected"
-grep -Fq '	facelock_0\.2\.0~alpha\.1-1~deb13u1_amd64\.deb' "$prerelease_expected" ||
+# A prerelease carries `~` twice, as the upstream separator and again in the
+# suite suffix, so both stages are asserted: the builder writes the Debian name
+# and GitHub lists the rewritten one.
+grep -Fq '	facelock_0\.2\.0\.alpha\.1-1\.deb13u1_amd64\.deb' "$prerelease_expected" ||
+    fail "prerelease allowlist does not carry the Debian prerelease version as GitHub stores it"
+# Written to a file rather than piped: `grep -q` closes the pipe on its first
+# match, and the SIGPIPE that gives the producer fails the pipeline under
+# `set -o pipefail`.
+prerelease_staged="$work/expected-prerelease-builders"
+"$helper_path" expected 0.2.0-alpha.1 1 1 true builders >"$prerelease_staged"
+grep -Fq '	facelock_0\.2\.0~alpha\.1-1~deb13u1_amd64\.deb' "$prerelease_staged" ||
     fail "prerelease allowlist does not carry the Debian prerelease upstream version"
 grep -Fq '	facelock-0\.2\.0-0\.1\.alpha\.1\.fc[0-9]+\.x86_64\.rpm' "$prerelease_expected" ||
     fail "prerelease allowlist does not carry the monotonic RPM prerelease release"
@@ -724,23 +737,30 @@ apt-repo.tar.gz
 ASSETS
 }
 
-{ canonical_assets; echo MANIFEST.json; } >"$work/actual-ok"
+# What the builders write carries the Debian `~`; what the API lists after
+# upload does not. The allowlist enforcement below compares against the
+# `final` stage, so it needs the stored spelling.
+stored_assets() {
+    canonical_assets | sed 's/~/./g'
+}
+
+{ stored_assets; echo MANIFEST.json; } >"$work/actual-ok"
 "$helper_path" verify "$stable_expected" "$work/actual-ok" >/dev/null ||
     fail "the canonical asset set was rejected"
 
-{ canonical_assets; echo MANIFEST.json; echo "facelock-x86_64-linux-musl"; } >"$work/actual-extra"
+{ stored_assets; echo MANIFEST.json; echo "facelock-x86_64-linux-musl"; } >"$work/actual-extra"
 assert_rejects "extra release asset" "unexpected release asset" \
     verify "$stable_expected" "$work/actual-extra"
 
-{ canonical_assets; echo MANIFEST.json; } | grep -Fvx 'pam_facelock.so' >"$work/actual-missing"
+{ stored_assets; echo MANIFEST.json; } | grep -Fvx 'pam_facelock.so' >"$work/actual-missing"
 assert_rejects "missing release asset" "no release asset matches" \
     verify "$stable_expected" "$work/actual-missing"
 
-{ canonical_assets; echo MANIFEST.json; echo "pam_facelock.so"; } >"$work/actual-duplicate"
+{ stored_assets; echo MANIFEST.json; echo "pam_facelock.so"; } >"$work/actual-duplicate"
 assert_rejects "duplicate asset name" "duplicate release asset" \
     verify "$stable_expected" "$work/actual-duplicate"
 
-{ canonical_assets; echo MANIFEST.json; echo "facelock-0.2.0-1.fc45.x86_64.rpm"; } >"$work/actual-collision"
+{ stored_assets; echo MANIFEST.json; echo "facelock-0.2.0-1.fc45.x86_64.rpm"; } >"$work/actual-collision"
 assert_rejects "two assets claiming one canonical name" "more than one release asset" \
     verify "$stable_expected" "$work/actual-collision"
 
@@ -1037,8 +1057,8 @@ cat >"$work/release-rerun.json" <<'JSON'
 {"id": 42, "tag_name": "v0.2.0", "draft": true, "prerelease": false, "assets": [
   {"name": "facelock-x86_64-linux-gnu"}, {"name": "pam_facelock.so"},
   {"name": "facelock-polkit-agent-x86_64-linux-gnu"},
-  {"name": "facelock_0.2.0-1~deb13u1_amd64.deb"},
-  {"name": "facelock_0.2.0-1~ubuntu26.04.1_amd64.deb"},
+  {"name": "facelock_0.2.0-1.deb13u1_amd64.deb"},
+  {"name": "facelock_0.2.0-1.ubuntu26.04.1_amd64.deb"},
   {"name": "facelock-0.2.0-1.fc44.x86_64.rpm"},
   {"name": "facelock-debuginfo-0.2.0-1.fc44.x86_64.rpm"},
   {"name": "facelock-debugsource-0.2.0-1.fc44.x86_64.rpm"},
@@ -1328,10 +1348,17 @@ from pathlib import Path
 manifest_path, output, mode = sys.argv[1:4]
 manifest = json.loads(Path(manifest_path).read_text())
 payload = Path(manifest_path).read_bytes()
+# The API lists what GitHub stored, which is not always what was uploaded:
+# `~` is rewritten to `.`, so the Debian assets come back under a name the
+# manifest does not contain. Every mode below starts from that reality.
 assets = [
-    {"name": entry["name"], "size": entry["size"], "digest": f"sha256:{entry['sha256']}"}
+    {"name": entry["name"].replace("~", "."), "size": entry["size"],
+     "digest": f"sha256:{entry['sha256']}"}
     for entry in manifest["assets"]
 ]
+assert any("~" in entry["name"] for entry in manifest["assets"]), (
+    "the manifest fixture no longer carries a rewritten name, so this listing proves nothing"
+)
 assets.append({"name": "MANIFEST.json", "size": len(payload),
                "digest": "sha256:" + hashlib.sha256(payload).hexdigest()})
 if mode == "no-digest":
@@ -1354,6 +1381,21 @@ PY
 published_listing "$work/published-ok.json" exact
 "$helper_path" verify-published "$work/published-ok.json" v0.2.0 "$manifest" >/dev/null ||
     fail "a published asset list matching the manifest was rejected"
+
+# GitHub rewrites `~` when it accepts an upload, so a Debian asset is listed
+# under a name no builder produced: `facelock_0.2.0-1~deb13u1_amd64.deb` goes
+# up and `facelock_0.2.0-1.deb13u1_amd64.deb` comes back. v0.1.4 carried no
+# suite suffix and no prerelease separator, so nothing exercised the round trip
+# until v0.2.0-alpha.3 failed the publish job on it. Both directions are
+# pinned: the readback accepts the stored names, and the `final` allowlist
+# expects them.
+stored_deb="$("$helper_path" expected 0.2.0 1 1 false final | grep -c 'facelock_0\\.2\\.0-1\\.deb13u1_amd64\\.deb' || true)"
+[ "$stored_deb" -eq 1 ] ||
+    fail "the final allowlist must expect the Debian name GitHub stores, not the one uploaded"
+staged_deb="$("$helper_path" expected 0.2.0 1 1 false builders | grep -c 'facelock_0\\.2\\.0-1~deb13u1_amd64\\.deb' || true)"
+[ "$staged_deb" -eq 1 ] ||
+    fail "the builders allowlist must expect the Debian name the builder actually wrote"
+echo "release artifacts case: the GitHub asset-name rewrite is expected on both sides"
 published_listing "$work/published-no-digest.json" no-digest
 "$helper_path" verify-published "$work/published-no-digest.json" v0.2.0 "$manifest" >/dev/null ||
     fail "an API listing without digests must still pass on sizes"

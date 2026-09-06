@@ -43,6 +43,19 @@ literal() {
 # `<label><TAB><anchored ERE>`; the RPMs' `%{?dist}` tag is decided inside the
 # pinned Fedora container, so those entries are patterns bound to the validated
 # epoch-version-release rather than literals.
+# The name to expect at one stage. `builders` compares the files the builders
+# staged, which carry the artifact's own name. `final` compares what the API
+# lists, and GitHub rewrites `~` when it accepts an upload, so the two stages
+# do not expect the same string for a Debian package.
+stage_asset_name() {
+    local stage="${1:?}" name="${2:?}"
+    if [ "$stage" = final ]; then
+        release_github_asset_name "$name" || return 1
+    else
+        printf '%s\n' "$name"
+    fi
+}
+
 expected_assets() {
     local version="${1:?}" debian_revision="${2:?}" rpm_counter="${3:?}"
     local prerelease="${4:?}" stage="${5:?}"
@@ -68,7 +81,7 @@ expected_assets() {
         debian_version="$(release_debian_version "$version" "$debian_revision" "$suite")" ||
             fail "cannot derive the $suite Debian version"
         printf 'deb-%s\t%s\n' "$suite" \
-            "$(literal "facelock_${debian_version}_${architecture}.deb")"
+            "$(literal "$(stage_asset_name "$stage" "facelock_${debian_version}_${architecture}.deb")")"
     done
 
     rpm_evr="$(release_rpm_evr "$version" "$rpm_counter")" ||
@@ -196,7 +209,7 @@ verify_assets() {
             [[ "$name" =~ ^${pattern}$ ]] && matches=$((matches + 1))
         done
         [ "$matches" -ne 0 ] ||
-            fail "unexpected release asset: $name; an earlier run at another version leaves one behind, and it is removed with: gh release delete-asset \"\$TAG\" $name"
+            fail "unexpected release asset: $name; if an earlier run at another version left it behind, remove it with: gh release delete-asset \"\$TAG\" $name. If it differs from a canonical name only where a \`~\` became a \`.\`, GitHub stored the upload under a rewritten name and release_github_asset_name has to account for it -- do not delete it."
         [ "$matches" -eq 1 ] ||
             fail "allowlist overlap: $name matches $matches canonical names"
     done
@@ -392,7 +405,14 @@ elif mode == "verify-published":
     manifest_path = Path(extra)
     manifest_bytes = manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes)
-    expected = {entry["name"]: (entry["size"], entry["sha256"]) for entry in manifest["assets"]}
+    # The manifest records each artifact's own name; the API lists the name
+    # GitHub stored. `release_github_asset_name` in scripts/release-versions.sh
+    # is the authority for the rewrite, and test/release-artifacts-contract.sh
+    # holds this line to it.
+    def stored(name: str) -> str:
+        return name.replace("~", ".")
+
+    expected = {stored(entry["name"]): (entry["size"], entry["sha256"]) for entry in manifest["assets"]}
     # The manifest cannot cover itself; hold the uploaded copy to this file.
     expected[manifest_path.name] = (len(manifest_bytes), hashlib.sha256(manifest_bytes).hexdigest())
     listed = release.get("assets", [])

@@ -482,3 +482,25 @@ release_write_github_outputs() {
         printf 'rpm-counter=%s\n' "$rpm_counter"
     } >> "$output_file"
 }
+
+# The name GitHub stores a release asset under, given the artifact's own file
+# name. GitHub rewrites characters outside a safe set when it accepts an
+# upload, so the name a release lists is not always the name that was uploaded.
+# Only `~` is affected by anything this project publishes: a Debian version
+# carries it both as the prerelease separator (0.2.0~alpha.3) and as the suite
+# suffix separator (-1~deb13u1), and v0.1.4 shipped neither, which is why the
+# round trip went unexercised until v0.2.0-alpha.3 failed on it.
+#
+# Refuse a name carrying anything else rather than guess how GitHub will treat
+# it. A wrong guess is not visible until a tag reaches the publish job, and the
+# whole point of this conversion is that the comparison against the API can be
+# trusted.
+release_github_asset_name() {
+    local name="${1:?}" mapped
+    mapped="${name//\~/.}"
+    if [[ ! "$mapped" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        echo "release_github_asset_name: unsupported character in asset name: $name" >&2
+        return 1
+    fi
+    printf '%s\n' "$mapped"
+}
