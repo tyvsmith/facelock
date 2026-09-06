@@ -1037,6 +1037,16 @@ unowned administrator artifact as an active PAM service. Customized controls,
 options or spacing, corrupt or ambiguous provenance for a candidate, invalid
 bytes, path escapes, link swaps, identity drift and concurrent edits block the
 whole run during preflight. Nothing is changed when preflight finds a blocker.
+A drifted or source-absent local override is not automatically one of those
+blockers: when its Facelock rule is provenance-owned or the exact canonical
+line, `--all` rewrites the file in place, taking the rule out and keeping the
+file, never retiring it. This is the same drift rule named removal already
+follows. A committed record whose `installed_sha256` no longer matches the
+file proves only that the file changed after `add`; a conventional service is
+then held to the exact canonical rule above, while an artifact name, a
+candidate only because of its record, stays blocked. An administrator-managed
+or stale-record blocker names its remedy: `facelock pam remove --service
+<name>`, or a hand edit, then retry.
 An empty scan is an idempotent success.
 The initial cleanup scan also recognizes that exact unchanged header-bearing
 vendor override after its Facelock rule is already absent. This is the bounded

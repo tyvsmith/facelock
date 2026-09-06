@@ -1118,7 +1118,10 @@ higher-priority entries block cleanup. The header is parsed only against that
 resolved path and is never opened as a recorded path. If no current source
 resolves, an exact header path derived from a normalized configured later-root
 candidate is recognition-only: the local override is retained and the absent
-source is reported. An arbitrary recorded path is not accepted.
+source is reported. An arbitrary recorded path is not accepted. Machine-wide
+`pam remove --all` applies the same drift rule: a drifted or source-absent
+override whose Facelock rule is provenance-owned or the exact canonical line
+is rewritten in place and retained rather than treated as a blocker.
 
 If validation fails while the canonical name is absent, the exact quarantine
 is restored by no-replace rename. A concurrent canonical entry, quarantine

@@ -338,6 +338,20 @@ run_test "pam remove keeps a drifted vendor override after removing its line" \
     "facelock pam add --service facelock-vendor-scratch --json > /dev/null 2>/dev/null && printf '%s\n' '# local customization' >> /etc/pam.d/facelock-vendor-scratch && facelock pam remove --service facelock-vendor-scratch --json > /tmp/pam-vendor-drift-remove.json 2>/dev/null; test \$? -eq 0 && python3 /tmp/pam-action.py /tmp/pam-vendor-drift-remove.json | grep -qx removed && test -f /etc/pam.d/facelock-vendor-scratch && ! grep -q pam_facelock.so /etc/pam.d/facelock-vendor-scratch && grep -qxF '# local customization' /etc/pam.d/facelock-vendor-scratch && sha256sum -c --status /tmp/pam-vendor.sha" \
     0
 
+# --all is machine-wide: it scans the real /etc/pam.d, not a config_dirs
+# scratch pair, so it also sees /etc/pam.d/facelock-test. That fixture's
+# line has non-canonical spacing and no provenance, which is a legitimate
+# unmanaged blocker, not the shape this row proves. Park it outside
+# the scan for this one row and put it back immediately after, the same way
+# the Containerfile stages the facelock-map-* fixtures outside /etc/pam.d.
+# The override is recreated from the vendor file first: the row above left a
+# no-rule copy behind, and an in-place add on that copy would record
+# provenance that the appended customization then invalidates, which is a
+# different (and still blocking) case from the drift this row is about.
+run_test "pam remove --all keeps a drifted vendor override after removing its line" \
+    "rm -f /etc/pam.d/facelock-vendor-scratch && facelock pam add --service facelock-vendor-scratch --json > /dev/null 2>/dev/null && printf '%s\n' '# local customization' >> /etc/pam.d/facelock-vendor-scratch && mv /etc/pam.d/facelock-test /tmp/facelock-test.pam.hold && facelock pam remove --all --json > /tmp/pam-vendor-drift-remove-all.json 2>/dev/null; rc=\$?; mv /tmp/facelock-test.pam.hold /etc/pam.d/facelock-test; test \$rc -eq 0 && test -f /etc/pam.d/facelock-vendor-scratch && ! grep -q pam_facelock.so /etc/pam.d/facelock-vendor-scratch && grep -qxF '# local customization' /etc/pam.d/facelock-vendor-scratch && grep -q '\"service\": *\"facelock-vendor-scratch\"' /tmp/pam-vendor-drift-remove-all.json && sha256sum -c --status /tmp/pam-vendor.sha" \
+    0
+
 rm -f /etc/pam.d/facelock-vendor-scratch \
       /etc/pam.d/facelock-vendor-scratch.facelock-backup
 
@@ -360,8 +374,8 @@ rm -f "$VENDOR_PAM_DIR/facelock-vendor-scratch" /tmp/pam-vendor.sha \
       /tmp/pam-vendor-dir.before /tmp/pam-vendor-dir.after \
       /tmp/pam-vendor-status.json /tmp/pam-vendor-add.json \
       /tmp/pam-vendor-add2.json /tmp/pam-vendor-remove.json \
-      /tmp/pam-vendor-drift-remove.json /tmp/pam-vendor-remove2.json \
-      /tmp/pam-nowhere.out
+      /tmp/pam-vendor-drift-remove.json /tmp/pam-vendor-drift-remove-all.json \
+      /tmp/pam-vendor-remove2.json /tmp/pam-nowhere.out
 
 # The real thing, on the stock image: `sudo facelock setup --pam --service
 # polkit-1` is the invocation omarchy#7040 runs under `set -e`, and it exited 1

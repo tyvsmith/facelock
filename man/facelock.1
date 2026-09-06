@@ -602,6 +602,10 @@ deletion rechecks the exact installed inode and the journaled header payload,
 owner, mode and first existing fixed-root vendor service, plus the journal
 backup identity and line-removed installed hash. Drift preserves the override,
 and an already absent flagged target is an idempotent completed unlink.
+.IP
+A drifted or source-absent override whose Facelock rule is provenance-owned
+or the exact canonical line has that rule removed in place; the file is kept,
+never retired.
 .SS "facelock pam status"
 Report whether services carry the line. Reads only and needs
 .B no
