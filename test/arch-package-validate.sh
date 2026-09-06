@@ -20,8 +20,9 @@ run_test() {
 
 owned=/etc/pam.d/facelock-package-owned
 blocker=/etc/pam.d/facelock-package-blocker
-drifted=/etc/pam.d/polkit-1
-rm -f /etc/pam.d/facelock-test "$owned" "$blocker" "$drifted"
+drifted=/etc/pam.d/facelock-package-vendor
+drifted_vendor=/usr/lib/pam.d/facelock-package-vendor
+rm -f /etc/pam.d/facelock-test "$owned" "$blocker" "$drifted" "$drifted_vendor"
 cat > "$owned" <<'EOF'
 #%PAM-1.0
 auth      sufficient pam_facelock.so
@@ -36,11 +37,20 @@ chmod 644 "$owned" "$blocker"
 sha256sum "$owned" > /tmp/facelock-package-owned.sha
 sha256sum "$blocker" > /tmp/facelock-package-blocker.sha
 
-# The reported shape: an Omarchy-style /etc/pam.d/polkit-1 that shadows the
-# package's own /usr/lib/pam.d/polkit-1, carries Facelock's exact canonical
-# line, and has no Facelock header or provenance -- machine-wide removal must
-# not treat that drift as a blocker.
-test -f /usr/lib/pam.d/polkit-1 || { echo "FAIL: image lacks /usr/lib/pam.d/polkit-1"; exit 1; }
+# The reported shape (#350): an Omarchy-style /etc/pam.d/polkit-1 that shadows
+# a vendor /usr/lib/pam.d/polkit-1, carries Facelock's exact canonical line,
+# and has no Facelock header or provenance -- machine-wide removal must not
+# treat that drift as a blocker. The vendor file is synthesized under a test
+# name because this script also runs in the dist/PKGBUILD image, which does
+# not install polkit.
+mkdir -p /usr/lib/pam.d
+cat > "$drifted_vendor" <<'EOF'
+#%PAM-1.0
+auth       include      system-auth
+account    include      system-auth
+password   include      system-auth
+session    include      system-auth
+EOF
 cat > "$drifted" <<'EOF'
 auth      sufficient pam_facelock.so
 auth      [success=1 default=ignore] pam_exec.so quiet /usr/bin/omarchy-hw-laptop-closed
@@ -51,8 +61,9 @@ account   required pam_unix.so
 password  required pam_unix.so
 session   required pam_unix.so
 EOF
-chmod 644 "$drifted"
+chmod 644 "$drifted" "$drifted_vendor"
 sha256sum "$drifted" > /tmp/facelock-package-drifted.sha
+sha256sum "$drifted_vendor" > /tmp/facelock-package-drifted-vendor.sha
 
 printf '[invalid\n' > /etc/facelock/config.toml
 install -Dm600 /dev/null /var/lib/facelock/facelock.db
@@ -79,14 +90,16 @@ run_test "recognized arbitrary PAM edit is cleaned before module removal" \
     "test -f $owned && ! grep -q pam_facelock.so $owned"
 run_test "drifted vendor override keeps its guard lines and loses the module rule" \
     "test -f $drifted && ! grep -q pam_facelock.so $drifted && grep -q omarchy-hw-laptop-closed $drifted && grep -q pam_fprintd.so $drifted"
+run_test "vendor file behind the drifted override is untouched" \
+    "sha256sum -c --status /tmp/facelock-package-drifted-vendor.sha"
 run_test "pacman removed the cleanup binary and PAM module" \
     "! test -e /usr/bin/facelock && ! test -e /usr/lib/security/pam_facelock.so"
 run_test "pacman no longer reports the package installed" \
     "! pacman -Q facelock"
 
-rm -f "$owned" "$drifted" /tmp/facelock-package-owned.sha \
+rm -f "$owned" "$drifted" "$drifted_vendor" /tmp/facelock-package-owned.sha \
     /tmp/facelock-package-blocker.sha /tmp/facelock-package-drifted.sha \
-    /tmp/arch-package-output
+    /tmp/facelock-package-drifted-vendor.sha /tmp/arch-package-output
 
 echo ""
 echo "=== Arch package results: $PASS passed, $FAIL failed ==="
