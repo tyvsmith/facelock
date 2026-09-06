@@ -12,6 +12,15 @@ SPEC.loader.exec_module(MODULE)
 
 
 class InventoryTest(unittest.TestCase):
+    def test_site_workflows_verify_mdbook_before_extraction(self):
+        digest = '326973fddabd7ff501f140ab529f3ede5f3f83f1a66ecc7e20adfec78eb6fc2a'
+        for name in ('ci.yml', 'pages.yml'):
+            with self.subTest(workflow=name):
+                workflow = (MODULE.ROOT / '.github/workflows' / name).read_text()
+                self.assertIn(digest, workflow)
+                self.assertIn('sha256sum --check -', workflow)
+                self.assertLess(workflow.index('sha256sum --check -'), workflow.index('tar xzf /tmp/mdbook.tar.gz'))
+
     def test_container_workspace_tests_trust_only_the_checkout(self):
         workflow = (MODULE.ROOT / '.github/workflows/ci.yml').read_text()
         trust = '\n        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"'

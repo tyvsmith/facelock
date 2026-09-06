@@ -121,7 +121,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y mandoc
-          curl -fsSL --retry 3 https://github.com/rust-lang/mdBook/releases/download/v0.4.44/mdbook-v0.4.44-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          curl -fsSL --retry 3 --output /tmp/mdbook.tar.gz \
+            https://github.com/rust-lang/mdBook/releases/download/v0.4.44/mdbook-v0.4.44-x86_64-unknown-linux-gnu.tar.gz
+          printf '%s  %s\n' \
+            '326973fddabd7ff501f140ab529f3ede5f3f83f1a66ecc7e20adfec78eb6fc2a' \
+            /tmp/mdbook.tar.gz | sha256sum --check -
+          tar xzf /tmp/mdbook.tar.gz
       - name: Check roff syntax
         run: mandoc -T lint -W error man/facelock.1 man/pam_facelock.8
       - name: Build and check the rendered site
