@@ -136,7 +136,7 @@ was published at 2026-09-06 02:07:12 UTC (September 5 in Pacific time).
 - Inspected both Debian control archives and file inventories: native versions use tildes, but GitHub download filenames use dots; the dotted URLs work and the tilde URLs return 404
 - Inspected the direct Fedora 44 RPM's version, dependencies, file inventory and scriptlets; it bundles ONNX Runtime, unlike the system-runtime COPR build
 - Confirmed both Debian packages contain the manifest-pinned CPU ONNX Runtime 1.20.1 under `/usr/lib/facelock`; the direct RPM places it under `/usr/lib64/facelock`
-- Ran only the released main executable's help and version in a disposable Ubuntu 24.04 container with `libxkbcommon0`; it reports `facelock 0.2.0-alpha.4`
+- Ran only the released main executable's help and version in a disposable Ubuntu 24.04 container with `libxkbcommon0`; it reports version `0.2.0-alpha.4`
 
 The manifest itself has SHA256
 `b7f9fbc5df710ea3facb894e5ed4d67d2a4aaa8808261ecc15aada4dcfa7eb5e`.
