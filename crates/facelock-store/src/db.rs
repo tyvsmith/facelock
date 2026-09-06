@@ -19,6 +19,21 @@ use crate::migrations::run_migrations;
 /// minimum-capture count from this constant, so the two cannot drift.
 pub const MIN_EMBEDDINGS_PER_MODEL: usize = 3;
 
+/// One raw (possibly encrypted) embedding row, joined with its model's
+/// enrolling-camera and sealing-key identities.
+///
+/// Returned by [`FaceStore::get_user_embeddings_raw_with_device`]. `key_id` is
+/// `None` for a pre-V7 row or a plaintext (unencrypted) row — neither was ever
+/// tagged with which key sealed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawEmbeddingRow {
+    pub model_id: u32,
+    pub blob: Vec<u8>,
+    pub sealed: bool,
+    pub device_id: Option<String>,
+    pub key_id: Option<String>,
+}
+
 /// How long an operation waits for another connection's write lock before
 /// giving up with [`StoreError::Busy`].
 ///
@@ -282,6 +297,7 @@ impl FaceStore {
         label: &str,
         embedder_model: &str,
         device_id: Option<&str>,
+        key_id: Option<&str>,
     ) -> Result<u32> {
         // Stored as INTEGER (i64) in SQLite. Cast keeps the code portable
         // across rusqlite versions (0.39+ no longer impls ToSql/FromSql for u64
@@ -292,8 +308,8 @@ impl FaceStore {
             .unwrap_or(0);
 
         tx.execute(
-            "INSERT INTO face_models (user, label, created_at, embedder_model, device_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![user, label, created_at, embedder_model, device_id],
+            "INSERT INTO face_models (user, label, created_at, embedder_model, device_id, key_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![user, label, created_at, embedder_model, device_id, key_id],
         )
         .map_err(|e| self.err(e))?;
 
@@ -313,7 +329,7 @@ impl FaceStore {
     ) -> Result<u32> {
         let tx = self.write_tx()?;
 
-        let model_id = self.insert_model_row(&tx, user, label, embedder_model, device_id)?;
+        let model_id = self.insert_model_row(&tx, user, label, embedder_model, device_id, None)?;
 
         let bytes: &[u8] = bytemuck::cast_slice(embedding.as_slice());
         tx.execute(
@@ -523,20 +539,18 @@ impl FaceStore {
     }
 
     /// Like [`FaceStore::get_user_embeddings_raw`], but also returns each row's
-    /// enrolling-camera `device_id` (NULL for legacy/unidentified templates).
+    /// enrolling-camera `device_id` (NULL for legacy/unidentified templates)
+    /// and the `key_id` of whichever key sealed it (NULL for a pre-V7 or
+    /// plaintext row).
     ///
     /// Used by the decrypt path when opt-in hard device binding
     /// (`security.bind_device_aad`) is active: the AAD for each blob is derived
     /// from its own template's `device_id`.
-    #[allow(clippy::type_complexity)]
-    pub fn get_user_embeddings_raw_with_device(
-        &self,
-        user: &str,
-    ) -> Result<Vec<(u32, Vec<u8>, bool, Option<String>)>> {
+    pub fn get_user_embeddings_raw_with_device(&self, user: &str) -> Result<Vec<RawEmbeddingRow>> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT fm.id, fe.embedding, fe.sealed, fm.device_id
+                "SELECT fm.id, fe.embedding, fe.sealed, fm.device_id, fm.key_id
                  FROM face_models fm
                  JOIN face_embeddings fe ON fe.model_id = fm.id
                  WHERE fm.user = ?1",
@@ -545,11 +559,18 @@ impl FaceStore {
 
         let rows = stmt
             .query_map(params![user], |row| {
-                let id: u32 = row.get(0)?;
+                let model_id: u32 = row.get(0)?;
                 let blob: Vec<u8> = row.get(1)?;
                 let sealed: bool = row.get::<_, i64>(2)? != 0;
                 let device_id: Option<String> = row.get(3)?;
-                Ok((id, blob, sealed, device_id))
+                let key_id: Option<String> = row.get(4)?;
+                Ok(RawEmbeddingRow {
+                    model_id,
+                    blob,
+                    sealed,
+                    device_id,
+                    key_id,
+                })
             })
             .map_err(|e| self.err(e))?;
 
@@ -588,7 +609,7 @@ impl FaceStore {
     ) -> Result<u32> {
         let tx = self.write_tx()?;
 
-        let model_id = self.insert_model_row(&tx, user, label, embedder_model, device_id)?;
+        let model_id = self.insert_model_row(&tx, user, label, embedder_model, device_id, None)?;
         let sealed_int: i64 = if sealed { 1 } else { 0 };
 
         tx.execute(
@@ -616,6 +637,7 @@ impl FaceStore {
     /// never mixed. Fewer than [`MIN_EMBEDDINGS_PER_MODEL`] blobs is refused
     /// with [`StoreError::Query`] before the transaction opens, whatever the
     /// caller's own gates said: a model that exists is a complete template.
+    #[allow(clippy::too_many_arguments)]
     pub fn replace_model_with_embeddings(
         &self,
         user: &str,
@@ -624,6 +646,7 @@ impl FaceStore {
         sealed: bool,
         embedder_model: &str,
         device_id: Option<&str>,
+        key_id: Option<&str>,
     ) -> Result<u32> {
         if embeddings.len() < MIN_EMBEDDINGS_PER_MODEL {
             return Err(StoreError::Query {
@@ -645,7 +668,8 @@ impl FaceStore {
         )
         .map_err(|e| self.err(e))?;
 
-        let model_id = self.insert_model_row(&tx, user, label, embedder_model, device_id)?;
+        let model_id =
+            self.insert_model_row(&tx, user, label, embedder_model, device_id, key_id)?;
         let sealed_int: i64 = if sealed { 1 } else { 0 };
 
         for data in embeddings {
@@ -680,6 +704,30 @@ impl FaceStore {
             return Err(StoreError::Query {
                 path: self.path.clone(),
                 detail: format!("embedding ID {embedding_id} not found"),
+            });
+        }
+        Ok(())
+    }
+
+    /// Set (or clear, with `None`) which key sealed `model_id`'s embeddings.
+    ///
+    /// A row's `key_id` and the sealed bytes underneath it are set separately
+    /// — this exists for the re-encrypt path, which knows a model's new key
+    /// identity before or after it rewrites the blobs, not necessarily in the
+    /// same statement as [`FaceStore::update_embedding_sealed`].
+    pub fn set_model_key_id(&self, model_id: u32, key_id: Option<&str>) -> Result<()> {
+        let affected = self
+            .conn
+            .execute(
+                "UPDATE face_models SET key_id = ?1 WHERE id = ?2",
+                params![key_id, model_id],
+            )
+            .map_err(|e| self.err(e))?;
+
+        if affected == 0 {
+            return Err(StoreError::Query {
+                path: self.path.clone(),
+                detail: format!("model ID {model_id} not found"),
             });
         }
         Ok(())
@@ -745,13 +793,16 @@ impl FaceStore {
     }
 
     /// Get all embeddings (all users) as raw bytes with sealed flag.
-    /// Returns (embedding_id, model_user, raw_bytes, sealed) tuples.
+    /// Returns (embedding_id, model_user, raw_bytes, sealed, model_id) tuples.
+    /// `model_id` is appended last, not inserted alongside `embedding_id`, so
+    /// existing positional destructuring of the first four fields is
+    /// unaffected by its addition.
     #[allow(clippy::type_complexity)]
-    pub fn get_all_embeddings_raw(&self) -> Result<Vec<(u32, String, Vec<u8>, bool)>> {
+    pub fn get_all_embeddings_raw(&self) -> Result<Vec<(u32, String, Vec<u8>, bool, u32)>> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT fe.id, fm.user, fe.embedding, fe.sealed
+                "SELECT fe.id, fm.user, fe.embedding, fe.sealed, fm.id
                  FROM face_embeddings fe
                  JOIN face_models fm ON fm.id = fe.model_id",
             )
@@ -763,7 +814,8 @@ impl FaceStore {
                 let user: String = row.get(1)?;
                 let blob: Vec<u8> = row.get(2)?;
                 let sealed: bool = row.get::<_, i64>(3)? != 0;
-                Ok((id, user, blob, sealed))
+                let model_id: u32 = row.get(4)?;
+                Ok((id, user, blob, sealed, model_id))
             })
             .map_err(|e| self.err(e))?;
 
@@ -1307,15 +1359,66 @@ mod tests {
             .unwrap();
 
         let mut rows = store.get_user_embeddings_raw_with_device("alice").unwrap();
-        rows.sort_by(|a, b| a.1.cmp(&b.1)); // by blob bytes for determinism
+        rows.sort_by(|a, b| a.blob.cmp(&b.blob)); // by blob bytes for determinism
 
         assert_eq!(rows.len(), 2);
         // blob-cam sorts before blob-legacy
-        assert_eq!(rows[0].1, b"blob-cam");
-        assert!(rows[0].2, "sealed flag should round-trip");
-        assert_eq!(rows[0].3.as_deref(), Some("046d:085e:S"));
-        assert_eq!(rows[1].1, b"blob-legacy");
-        assert_eq!(rows[1].3, None);
+        assert_eq!(rows[0].blob, b"blob-cam");
+        assert!(rows[0].sealed, "sealed flag should round-trip");
+        assert_eq!(rows[0].device_id.as_deref(), Some("046d:085e:S"));
+        assert_eq!(rows[0].key_id, None);
+        assert_eq!(rows[1].blob, b"blob-legacy");
+        assert_eq!(rows[1].device_id, None);
+    }
+
+    #[test]
+    fn replace_model_with_embeddings_key_id_round_trips() {
+        let store = FaceStore::open_memory().unwrap();
+        let blobs = blobs(3);
+        let refs: Vec<&[u8]> = blobs.iter().map(Vec::as_slice).collect();
+
+        store
+            .replace_model_with_embeddings(
+                "alice",
+                "front",
+                &refs,
+                true,
+                "w600k",
+                None,
+                Some("abc"),
+            )
+            .unwrap();
+
+        let rows = store.get_user_embeddings_raw_with_device("alice").unwrap();
+        assert_eq!(rows.len(), 3);
+        for row in &rows {
+            assert_eq!(row.key_id.as_deref(), Some("abc"), "key_id must round-trip");
+        }
+    }
+
+    #[test]
+    fn set_model_key_id_updates_and_clears() {
+        let store = FaceStore::open_memory().unwrap();
+        let emb = test_embedding();
+        let model_id = store.add_model("alice", "front", &emb, "").unwrap();
+
+        let rows = store.get_user_embeddings_raw_with_device("alice").unwrap();
+        assert_eq!(rows[0].key_id, None, "a freshly added model has no key_id");
+
+        store.set_model_key_id(model_id, Some("abc")).unwrap();
+        let rows = store.get_user_embeddings_raw_with_device("alice").unwrap();
+        assert_eq!(rows[0].key_id.as_deref(), Some("abc"));
+
+        store.set_model_key_id(model_id, None).unwrap();
+        let rows = store.get_user_embeddings_raw_with_device("alice").unwrap();
+        assert_eq!(rows[0].key_id, None, "None clears the key_id");
+    }
+
+    #[test]
+    fn set_model_key_id_on_a_missing_model_errors() {
+        let store = FaceStore::open_memory().unwrap();
+        let err = store.set_model_key_id(9999, Some("abc")).unwrap_err();
+        assert!(matches!(err, StoreError::Query { .. }), "got {err:?}");
     }
 
     #[test]
@@ -1434,6 +1537,7 @@ mod tests {
                 true,
                 "w600k",
                 Some("046d:085e:S"),
+                None,
             )
             .unwrap();
 
@@ -1465,7 +1569,7 @@ mod tests {
         let blobs = blobs(3);
         let refs: Vec<&[u8]> = blobs.iter().map(Vec::as_slice).collect();
         let new_front = store
-            .replace_model_with_embeddings("alice", "front", &refs, false, "", None)
+            .replace_model_with_embeddings("alice", "front", &refs, false, "", None, None)
             .unwrap();
 
         assert_ne!(new_front, old_front, "the replacement is a new row");
@@ -1527,7 +1631,7 @@ mod tests {
         let blobs = blobs(3);
         let refs: Vec<&[u8]> = blobs.iter().map(Vec::as_slice).collect();
         let err = store
-            .replace_model_with_embeddings("alice", "front", &refs, false, "", None)
+            .replace_model_with_embeddings("alice", "front", &refs, false, "", None, None)
             .unwrap_err();
         assert!(
             err.to_string().contains("injected insert failure"),
@@ -1554,7 +1658,7 @@ mod tests {
         let blobs = blobs(2);
         let refs: Vec<&[u8]> = blobs.iter().map(Vec::as_slice).collect();
         let err = store
-            .replace_model_with_embeddings("alice", "front", &refs, false, "", None)
+            .replace_model_with_embeddings("alice", "front", &refs, false, "", None, None)
             .unwrap_err();
         assert!(
             matches!(err, StoreError::Query { .. }) && err.to_string().contains("2 embeddings"),
@@ -1576,7 +1680,7 @@ mod tests {
         let old_id = store.add_model("alice", "front", &emb, "").unwrap();
 
         let err = store
-            .replace_model_with_embeddings("alice", "front", &[], false, "", None)
+            .replace_model_with_embeddings("alice", "front", &[], false, "", None, None)
             .unwrap_err();
         assert!(
             matches!(err, StoreError::Query { .. }),
@@ -1669,6 +1773,103 @@ mod tests {
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .unwrap();
         assert!(version >= 6);
+
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(sqlite_sidecar_path(&db_path, "-wal"));
+        let _ = std::fs::remove_file(sqlite_sidecar_path(&db_path, "-shm"));
+    }
+
+    #[test]
+    fn test_migration_v7_key_id_column() {
+        // Fresh DB is at the latest schema; key_id defaults to NULL.
+        let store = FaceStore::open_memory().unwrap();
+        let version: i64 = store
+            .conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+            .unwrap();
+        assert!(version >= 7, "schema should be at least V7, got {version}");
+
+        let model_id = store
+            .add_model("alice", "front", &test_embedding(), "")
+            .unwrap();
+        let rows = store.get_user_embeddings_raw_with_device("alice").unwrap();
+        assert_eq!(rows[0].model_id, model_id);
+        assert_eq!(rows[0].key_id, None, "a fresh row has no key_id");
+    }
+
+    #[test]
+    fn test_pre_v7_db_migrates_cleanly_without_data_loss() {
+        // Build a V6 database by hand (schema at V6: face_models has
+        // device_id but NOT key_id), seed a model + embedding, then reopen
+        // via FaceStore::open_existing to run migrations and confirm the row
+        // survives with a NULL key_id.
+        let db_path = std::env::temp_dir().join(format!(
+            "facelock-prev7-{}-{}.db",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "
+                CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+                CREATE TABLE face_models (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    embedder_model TEXT NOT NULL DEFAULT '',
+                    device_id TEXT,
+                    UNIQUE(user, label)
+                );
+                CREATE TABLE face_embeddings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    model_id INTEGER NOT NULL REFERENCES face_models(id) ON DELETE CASCADE,
+                    embedding BLOB NOT NULL,
+                    sealed INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE rate_limit (user TEXT NOT NULL, attempt_time INTEGER NOT NULL);
+                INSERT INTO schema_version (version) VALUES (6);
+                INSERT INTO face_models (user, label, created_at, embedder_model, device_id)
+                    VALUES ('legacy', 'old-face', 1700000000, 'w600k_r50.onnx', '046d:085e:S');
+                ",
+            )
+            .unwrap();
+            let emb = test_embedding();
+            let bytes: &[u8] = bytemuck::cast_slice(emb.as_slice());
+            conn.execute(
+                "INSERT INTO face_embeddings (model_id, embedding) VALUES (1, ?1)",
+                params![bytes],
+            )
+            .unwrap();
+        }
+
+        // Reopen: migrations run, adding key_id. Via `open_existing`
+        // specifically — a present-but-old database is exactly the case that
+        // constructor must still migrate.
+        let store = FaceStore::open_existing(&db_path).unwrap();
+        let models = store.list_models("legacy").unwrap();
+        assert_eq!(models.len(), 1, "legacy model must survive migration");
+        assert_eq!(models[0].label, "old-face");
+        assert_eq!(
+            models[0].device_id.as_deref(),
+            Some("046d:085e:S"),
+            "the pre-existing device_id survives the V7 migration"
+        );
+
+        let rows = store.get_user_embeddings_raw_with_device("legacy").unwrap();
+        assert_eq!(rows.len(), 1, "embedding data must be intact");
+        assert_eq!(rows[0].key_id, None, "legacy row keeps NULL key_id");
+
+        let version: i64 = store
+            .conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+            .unwrap();
+        assert!(version >= 7);
 
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(sqlite_sidecar_path(&db_path, "-wal"));
@@ -1887,10 +2088,10 @@ mod tests {
         let all = store.get_all_embeddings_raw().unwrap();
         assert_eq!(all.len(), 2);
 
-        let alice_row = all.iter().find(|(_, u, _, _)| u == "alice").unwrap();
+        let alice_row = all.iter().find(|(_, u, _, _, _)| u == "alice").unwrap();
         assert!(!alice_row.3);
 
-        let bob_row = all.iter().find(|(_, u, _, _)| u == "bob").unwrap();
+        let bob_row = all.iter().find(|(_, u, _, _, _)| u == "bob").unwrap();
         assert!(bob_row.3);
         assert_eq!(bob_row.2, vec![0x01; 50]);
     }
@@ -1922,8 +2123,8 @@ mod tests {
             let started = std::time::Instant::now();
             let blobs = vec![vec![0u8; 8]; MIN_EMBEDDINGS_PER_MODEL];
             let refs: Vec<&[u8]> = blobs.iter().map(Vec::as_slice).collect();
-            let result =
-                enroller.replace_model_with_embeddings("alice", "front", &refs, false, "e", None);
+            let result = enroller
+                .replace_model_with_embeddings("alice", "front", &refs, false, "e", None, None);
             (result, observed.load(Ordering::SeqCst), started.elapsed())
         });
 
@@ -1976,7 +2177,7 @@ mod tests {
         let refs: Vec<&[u8]> = blobs.iter().map(Vec::as_slice).collect();
         FaceStore::open_existing(&db)
             .unwrap()
-            .replace_model_with_embeddings("alice", "front", &refs, false, "e", None)
+            .replace_model_with_embeddings("alice", "front", &refs, false, "e", None, None)
             .expect("the lock must be released when the section fails");
     }
 }

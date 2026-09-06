@@ -88,7 +88,7 @@ done
 run_shape_body="$(sed -n '/^run_shape() {/,/^}/p' "$lane")"
 [ -n "$run_shape_body" ] || fail "run_shape not found in the lane harness"
 for proof in \
-    assert_schema_v6_with_null_device_id \
+    assert_schema_v7_with_null_columns \
     assert_known_embedding_decrypts \
     assert_enrollment_marker_reconciled \
     assert_key_artifacts_preserved \

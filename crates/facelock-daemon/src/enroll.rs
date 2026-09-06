@@ -414,6 +414,7 @@ fn persist_enrollment<S: EmbeddingSealer>(
         sealer.is_some(),
         embedder_model,
         device_id,
+        None,
     ) {
         Ok(model_id) => {
             info!(

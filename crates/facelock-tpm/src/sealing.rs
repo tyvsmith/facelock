@@ -882,6 +882,37 @@ impl SoftwareSealer {
         Self { key }
     }
 
+    /// A lookup tag for which key sealed a row — not key material.
+    ///
+    /// Lowercase hex of the first 8 bytes of SHA-256 over the domain string
+    /// `b"facelock-key-id-v1"` followed by the 32 raw key bytes. A truncated
+    /// hash of a 256-bit random key reveals nothing usable about the key
+    /// itself; it exists only so a stored row can record which key sealed it,
+    /// so `facelock setup` flipping `encryption.method` (and thus the active
+    /// key) is detectable instead of silently producing undecryptable rows.
+    pub fn key_id(&self) -> String {
+        Self::key_id_for(&self.key)
+    }
+
+    /// [`Self::key_id`] for a caller holding raw key bytes but not a
+    /// [`SoftwareSealer`].
+    pub fn key_id_for(key: &[u8; AES_KEY_SIZE]) -> String {
+        use sha2::{Digest, Sha256};
+
+        const DOMAIN: &[u8] = b"facelock-key-id-v1";
+
+        let mut hasher = Sha256::new();
+        hasher.update(DOMAIN);
+        hasher.update(key);
+        let digest = hasher.finalize();
+
+        let mut id = String::with_capacity(16);
+        for byte in &digest[..8] {
+            id.push_str(&format!("{byte:02x}"));
+        }
+        id
+    }
+
     /// Generate a new random 256-bit key and write it to a file at 0600.
     ///
     /// The file is created at mode 0600 in the same `open(2)` that creates it
@@ -1424,6 +1455,41 @@ mod tests {
 
         let result = sealer2.unseal_embedding(&sealed);
         assert!(result.is_err(), "decryption with wrong key should fail");
+    }
+
+    #[test]
+    fn key_id_is_deterministic_for_the_same_key() {
+        let key = [0x42u8; 32];
+        let a = SoftwareSealer::from_key(key).key_id();
+        let b = SoftwareSealer::from_key(key).key_id();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn key_id_differs_for_different_keys() {
+        let a = SoftwareSealer::from_key([0x42u8; 32]).key_id();
+        let b = SoftwareSealer::from_key([0x43u8; 32]).key_id();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn key_id_is_16_lowercase_hex_chars() {
+        let id = SoftwareSealer::from_key([0x99u8; 32]).key_id();
+        assert_eq!(id.len(), 16);
+        assert!(
+            id.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()),
+            "key_id must be lowercase hex: {id}"
+        );
+    }
+
+    #[test]
+    fn key_id_golden_value_for_the_all_zero_key() {
+        // Pinned: sha256(b"facelock-key-id-v1" || [0u8; 32])[..8] as lowercase
+        // hex. A change here means the key_id scheme changed, which silently
+        // orphans every row that already recorded the old id.
+        let id = SoftwareSealer::key_id_for(&[0u8; 32]);
+        assert_eq!(id, "923b1993e51ace05");
     }
 
     #[test]

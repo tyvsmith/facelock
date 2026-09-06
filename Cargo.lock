@@ -1170,6 +1170,7 @@ dependencies = [
  "rand 0.10.2",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tracing",
  "tss-esapi",

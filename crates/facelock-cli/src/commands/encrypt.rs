@@ -214,7 +214,7 @@ pub fn run_encrypt(config: &Config, generate_key: bool) -> Result<()> {
     // Filter to unencrypted embeddings only
     let unencrypted: Vec<_> = all
         .iter()
-        .filter(|(_, _, blob, sealed)| !sealed && !facelock_tpm::is_software_encrypted(blob))
+        .filter(|(_, _, blob, sealed, _)| !sealed && !facelock_tpm::is_software_encrypted(blob))
         .collect();
 
     if unencrypted.is_empty() {
@@ -228,7 +228,7 @@ pub fn run_encrypt(config: &Config, generate_key: bool) -> Result<()> {
     );
 
     let mut encrypted_count = 0u32;
-    for (id, _user, blob, _sealed) in &unencrypted {
+    for (id, _user, blob, _sealed, _model_id) in &unencrypted {
         let encrypted_blob = sealer
             .seal_bytes(blob)
             .with_context(|| format!("failed to encrypt embedding {id}"))?;
@@ -263,12 +263,12 @@ pub fn run_decrypt(config: &Config) -> Result<()> {
     // Partition into software-encrypted and TPM-sealed embeddings
     let sw_encrypted: Vec<_> = all
         .iter()
-        .filter(|(_, _, blob, _)| facelock_tpm::is_software_encrypted(blob))
+        .filter(|(_, _, blob, _, _)| facelock_tpm::is_software_encrypted(blob))
         .collect();
 
     let tpm_sealed: Vec<_> = all
         .iter()
-        .filter(|(_, _, blob, _)| facelock_tpm::is_sealed(blob))
+        .filter(|(_, _, blob, _, _)| facelock_tpm::is_sealed(blob))
         .collect();
 
     if sw_encrypted.is_empty() && tpm_sealed.is_empty() {
@@ -287,7 +287,7 @@ pub fn run_decrypt(config: &Config) -> Result<()> {
             sw_encrypted.len()
         );
 
-        for (id, _user, blob, _sealed) in &sw_encrypted {
+        for (id, _user, blob, _sealed, _model_id) in &sw_encrypted {
             // Unsealed plaintext template bytes, zeroized when `raw` drops —
             // the store-update error path included (#293). `Zeroizing`, not
             // `Wiped`: that guard is typed for embedding sets, and raw byte
@@ -314,7 +314,7 @@ pub fn run_decrypt(config: &Config) -> Result<()> {
             let mut tpm = facelock_tpm::TpmSealer::new(&config.tpm.tcti)
                 .context("failed to initialize TPM for unsealing")?;
 
-            for (id, _user, blob, _sealed) in &tpm_sealed {
+            for (id, _user, blob, _sealed, _model_id) in &tpm_sealed {
                 // Same wipe-on-drop as the software branch above (#293).
                 let raw = zeroize::Zeroizing::new(
                     tpm.unseal_bytes(blob)
@@ -616,7 +616,7 @@ mod tests {
         // Verify all start unencrypted
         let all = store.get_all_embeddings_raw().unwrap();
         assert_eq!(all.len(), 2);
-        for (_, _, blob, sealed) in &all {
+        for (_, _, blob, sealed, _) in &all {
             assert!(!sealed);
             assert!(!facelock_tpm::is_software_encrypted(blob));
         }
@@ -624,11 +624,11 @@ mod tests {
         // Encrypt all unencrypted
         let unencrypted: Vec<_> = all
             .iter()
-            .filter(|(_, _, blob, sealed)| !sealed && !facelock_tpm::is_software_encrypted(blob))
+            .filter(|(_, _, blob, sealed, _)| !sealed && !facelock_tpm::is_software_encrypted(blob))
             .collect();
         assert_eq!(unencrypted.len(), 2);
 
-        for (id, _, blob, _) in &unencrypted {
+        for (id, _, blob, _, _) in &unencrypted {
             let encrypted_blob = sealer.seal_bytes(blob).unwrap();
             store
                 .update_embedding_sealed(*id, &encrypted_blob, true)
@@ -637,7 +637,7 @@ mod tests {
 
         // Verify all are now encrypted
         let all = store.get_all_embeddings_raw().unwrap();
-        for (_, _, blob, sealed) in &all {
+        for (_, _, blob, sealed, _) in &all {
             assert!(sealed);
             assert!(facelock_tpm::is_software_encrypted(blob));
         }
@@ -645,11 +645,11 @@ mod tests {
         // Decrypt all
         let encrypted: Vec<_> = all
             .iter()
-            .filter(|(_, _, blob, _)| facelock_tpm::is_software_encrypted(blob))
+            .filter(|(_, _, blob, _, _)| facelock_tpm::is_software_encrypted(blob))
             .collect();
         assert_eq!(encrypted.len(), 2);
 
-        for (id, _, blob, _) in &encrypted {
+        for (id, _, blob, _, _) in &encrypted {
             let raw = sealer.unseal_bytes(blob).unwrap();
             store.update_embedding_sealed(*id, &raw, false).unwrap();
         }
@@ -688,7 +688,12 @@ mod tests {
 
         // Load with each row's own device id → decrypts.
         let rows = store.get_user_embeddings_raw_with_device("alice").unwrap();
-        let (_id, blob, sealed_flag, dev) = &rows[0];
+        let facelock_store::RawEmbeddingRow {
+            blob,
+            sealed: sealed_flag,
+            device_id: dev,
+            ..
+        } = &rows[0];
         assert!(*sealed_flag);
         let good_aad = config.security.device_aad(dev.as_deref());
         let dec = sealer
@@ -726,7 +731,7 @@ mod tests {
         let all = store.get_all_embeddings_raw().unwrap();
         let unencrypted: Vec<_> = all
             .iter()
-            .filter(|(_, _, blob, sealed)| !sealed && !facelock_tpm::is_software_encrypted(blob))
+            .filter(|(_, _, blob, sealed, _)| !sealed && !facelock_tpm::is_software_encrypted(blob))
             .collect();
 
         // Only alice's embedding should be in the unencrypted list

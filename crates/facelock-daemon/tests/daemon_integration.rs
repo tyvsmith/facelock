@@ -1146,7 +1146,8 @@ fn hard_binding_seals_under_the_enrolling_camera_aad_and_authenticates() {
     assert!(!rows.is_empty());
     let sealer = sealer_for(key_dir.path());
     let bound = device_binding_aad(Some("046d:085e:")).unwrap();
-    for (id, blob, sealed, device_id) in &rows {
+    for row in &rows {
+        let (id, blob, sealed, device_id) = (row.model_id, &row.blob, row.sealed, &row.device_id);
         assert!(sealed, "row {id} must be sealed");
         assert_eq!(device_id.as_deref(), Some("046d:085e:"));
         sealer
@@ -1196,7 +1197,8 @@ fn ordinary_encryption_seals_without_aad() {
         .unwrap();
     assert!(!rows.is_empty());
     let sealer = sealer_for(key_dir.path());
-    for (id, blob, sealed, _) in &rows {
+    for row in &rows {
+        let (id, blob, sealed) = (row.model_id, &row.blob, row.sealed);
         assert!(sealed, "row {id} must be sealed");
         sealer
             .unseal_embedding_with_aad(blob, None)
