@@ -183,6 +183,43 @@ fn status(config: &Config) -> Result<()> {
     Ok(())
 }
 
+/// Seal the plaintext keyfile at `config.encryption.key_path` to
+/// `config.encryption.sealed_key_path`, carrying the SAME key bytes across —
+/// no new key is minted. Does not touch the config file and does not print;
+/// callers own both. Shared by `seal_key` below and by
+/// `setup_encryption_tpm_key`'s `SealExistingKeyfile` path, so the two never
+/// mint two different keys for the same host (issue #354).
+#[cfg(feature = "tpm")]
+pub(crate) fn seal_existing_keyfile(config: &Config) -> Result<()> {
+    let key_path = Path::new(&config.encryption.key_path);
+    let sealed_path = Path::new(&config.encryption.sealed_key_path);
+
+    // Read the plaintext key
+    let key_data = std::fs::read(key_path)
+        .with_context(|| format!("failed to read key file {}", key_path.display()))?;
+    if key_data.len() != 32 {
+        anyhow::bail!("key file must be exactly 32 bytes, got {}", key_data.len());
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&key_data);
+
+    let pcr = if config.tpm.pcr_binding {
+        Some(config.tpm.pcr_indices.as_slice())
+    } else {
+        None
+    };
+
+    let mut tpm =
+        facelock_tpm::TpmSealer::new(&config.tpm.tcti).context("failed to initialize TPM")?;
+    let seal_result = tpm.seal_key_to_file(&key, sealed_path, pcr);
+
+    // Zeroize the in-memory copy
+    use zeroize::Zeroize;
+    key.zeroize();
+
+    seal_result.context("failed to seal key with TPM")
+}
+
 #[cfg_attr(not(feature = "tpm"), allow(unused_variables))]
 fn seal_key(config: &Config) -> Result<()> {
     #[cfg(feature = "tpm")]
@@ -206,30 +243,8 @@ fn seal_key(config: &Config) -> Result<()> {
             );
         }
 
-        // Read the plaintext key
-        let key_data = std::fs::read(key_path)
-            .with_context(|| format!("failed to read key file {}", key_path.display()))?;
-        if key_data.len() != 32 {
-            anyhow::bail!("key file must be exactly 32 bytes, got {}", key_data.len());
-        }
-        let mut key = [0u8; 32];
-        key.copy_from_slice(&key_data);
-
-        let pcr = if config.tpm.pcr_binding {
-            Some(config.tpm.pcr_indices.as_slice())
-        } else {
-            None
-        };
-
         println!("Sealing AES key with TPM...");
-        let mut tpm =
-            facelock_tpm::TpmSealer::new(&config.tpm.tcti).context("failed to initialize TPM")?;
-        tpm.seal_key_to_file(&key, sealed_path, pcr)
-            .context("failed to seal key with TPM")?;
-
-        // Zeroize the in-memory copy
-        use zeroize::Zeroize;
-        key.zeroize();
+        seal_existing_keyfile(config)?;
 
         // Update config to use tpm method
         super::setup::update_config_encryption_method(config, "tpm")?;
@@ -265,6 +280,41 @@ fn seal_key(config: &Config) -> Result<()> {
     }
 }
 
+/// Unseal `config.encryption.sealed_key_path` and write the SAME key bytes to
+/// `config.encryption.key_path` at 0600 — no new key is minted. Does not touch
+/// the config file and does not print; callers own both. Shared by
+/// `unseal_key` below and by `setup_encryption_keyfile`'s
+/// `UnsealExistingSealed` path (issue #354).
+///
+/// Calls `generate_key_file` then overwrites it with the real unsealed key:
+/// kept as-is (rather than writing the key directly) so the file is created
+/// with the same one-`open(2)`-at-0600 path `generate_key_file` already uses,
+/// with no separate `chmod` window.
+#[cfg(feature = "tpm")]
+pub(crate) fn unseal_into_keyfile(config: &Config) -> Result<()> {
+    let key_path = Path::new(&config.encryption.key_path);
+    let sealed_path = Path::new(&config.encryption.sealed_key_path);
+
+    let mut tpm =
+        facelock_tpm::TpmSealer::new(&config.tpm.tcti).context("failed to initialize TPM")?;
+    let key = tpm
+        .unseal_key_from_file(sealed_path)
+        .context("failed to unseal key from TPM")?;
+
+    // Write plaintext key file
+    facelock_tpm::SoftwareSealer::generate_key_file(key_path)
+        .context("failed to create key file")?;
+    // Overwrite with the actual unsealed key (generate_key_file creates a random one)
+    std::fs::write(key_path, key).context("failed to write unsealed key")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(key_path, std::fs::Permissions::from_mode(0o600))
+            .context("failed to set key file permissions")?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(not(feature = "tpm"), allow(unused_variables))]
 fn unseal_key(config: &Config) -> Result<()> {
     #[cfg(feature = "tpm")]
@@ -285,23 +335,7 @@ fn unseal_key(config: &Config) -> Result<()> {
         }
 
         println!("Unsealing AES key from TPM...");
-        let mut tpm =
-            facelock_tpm::TpmSealer::new(&config.tpm.tcti).context("failed to initialize TPM")?;
-        let key = tpm
-            .unseal_key_from_file(sealed_path)
-            .context("failed to unseal key from TPM")?;
-
-        // Write plaintext key file
-        facelock_tpm::SoftwareSealer::generate_key_file(key_path)
-            .context("failed to create key file")?;
-        // Overwrite with the actual unsealed key (generate_key_file creates a random one)
-        std::fs::write(key_path, key).context("failed to write unsealed key")?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(key_path, std::fs::Permissions::from_mode(0o600))
-                .context("failed to set key file permissions")?;
-        }
+        unseal_into_keyfile(config)?;
 
         // Update config to use keyfile method
         super::setup::update_config_encryption_method(config, "keyfile")?;
