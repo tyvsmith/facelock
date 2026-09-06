@@ -1389,13 +1389,35 @@ published_listing "$work/published-ok.json" exact
 # until v0.2.0-alpha.3 failed the publish job on it. Both directions are
 # pinned: the readback accepts the stored names, and the `final` allowlist
 # expects them.
-stored_deb="$("$helper_path" expected 0.2.0 1 1 false final | grep -c 'facelock_0\\.2\\.0-1\\.deb13u1_amd64\\.deb' || true)"
+stored_deb="$("$helper_path" expected 0.2.0 1 1 false final | grep -Fc 'facelock_0\.2\.0-1\.deb13u1_amd64\.deb' || true)"
 [ "$stored_deb" -eq 1 ] ||
     fail "the final allowlist must expect the Debian name GitHub stores, not the one uploaded"
-staged_deb="$("$helper_path" expected 0.2.0 1 1 false builders | grep -c 'facelock_0\\.2\\.0-1~deb13u1_amd64\\.deb' || true)"
+staged_deb="$("$helper_path" expected 0.2.0 1 1 false builders | grep -Fc 'facelock_0\.2\.0-1~deb13u1_amd64\.deb' || true)"
 [ "$staged_deb" -eq 1 ] ||
     fail "the builders allowlist must expect the Debian name the builder actually wrote"
 echo "release artifacts case: the GitHub asset-name rewrite is expected on both sides"
+
+# The rewrite is written twice: once in shell for the allowlist, once in the
+# `verify-published` Python for the readback. Neither is reachable from the
+# other, so they are held to the same answers here, refusal included. A rule
+# that mapped names in one place and not the other would go green and then
+# mismatch at publish time, which is the failure this conversion exists to
+# prevent.
+rewrite_probe="$work/rewrite-probe"
+cat >"$work/rewrite-manifest.json" <<'JSON'
+{"assets": [{"name": "facelock_1.0.0-1~deb13u1_amd64.deb", "size": 1, "sha256": "00"},
+            {"name": "facelock_1.0.0-1+deb13u1_amd64.deb", "size": 1, "sha256": "01"}]}
+JSON
+printf '{"id":1,"tag_name":"v0.2.0","draft":true,"prerelease":false,"assets":[]}\n' >"$rewrite_probe"
+if "$helper_path" verify-published "$rewrite_probe" v0.2.0 "$work/rewrite-manifest.json" >"$work/rewrite-out" 2>&1; then
+    fail "the published readback accepted a manifest name whose stored name cannot be derived"
+fi
+grep -Fq 'stored name cannot be derived' "$work/rewrite-out" ||
+    fail "the readback refused an underivable name for another reason: $(cat "$work/rewrite-out")"
+if (source "$repo_root/scripts/release-versions.sh" && release_github_asset_name 'facelock_1.0.0-1+deb13u1_amd64.deb') >/dev/null 2>&1; then
+    fail "release_github_asset_name accepted a character the readback refuses"
+fi
+echo "release artifacts case: both sides of the asset-name rewrite refuse the same name"
 published_listing "$work/published-no-digest.json" no-digest
 "$helper_path" verify-published "$work/published-no-digest.json" v0.2.0 "$manifest" >/dev/null ||
     fail "an API listing without digests must still pass on sizes"

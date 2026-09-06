@@ -209,7 +209,7 @@ verify_assets() {
             [[ "$name" =~ ^${pattern}$ ]] && matches=$((matches + 1))
         done
         [ "$matches" -ne 0 ] ||
-            fail "unexpected release asset: $name; if an earlier run at another version left it behind, remove it with: gh release delete-asset \"\$TAG\" $name. If it differs from a canonical name only where a \`~\` became a \`.\`, GitHub stored the upload under a rewritten name and release_github_asset_name has to account for it -- do not delete it."
+            fail "unexpected release asset: $name; if an earlier run at another version left it behind, remove it with: gh release delete-asset \"\$TAG\" \"$name\". If it differs from a canonical name only where a \`~\` became a \`.\`, GitHub stored the upload under a rewritten name and release_github_asset_name has to account for it -- do not delete it."
         [ "$matches" -eq 1 ] ||
             fail "allowlist overlap: $name matches $matches canonical names"
     done
@@ -329,6 +329,7 @@ release_query() {
     python3 - "$mode" "$releases_json" "$tag" "$extra" <<'PY'
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -406,13 +407,32 @@ elif mode == "verify-published":
     manifest_bytes = manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes)
     # The manifest records each artifact's own name; the API lists the name
-    # GitHub stored. `release_github_asset_name` in scripts/release-versions.sh
-    # is the authority for the rewrite, and test/release-artifacts-contract.sh
-    # holds this line to it.
+    # GitHub stored. This is the same rule as `release_github_asset_name` in
+    # scripts/release-versions.sh, including its refusal, and
+    # test/release-artifacts-contract.sh holds the two to the same answers.
+    # Refusing here matters as much as it does there: a name this rule cannot
+    # account for would otherwise mismatch at publish time, which is the late
+    # failure this whole conversion exists to prevent.
     def stored(name: str) -> str:
-        return name.replace("~", ".")
+        mapped = name.replace("~", ".")
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", mapped):
+            raise SystemExit(
+                f"release assets: {manifest_path.name} names an asset whose stored name "
+                f"cannot be derived: {name}"
+            )
+        return mapped
 
-    expected = {stored(entry["name"]): (entry["size"], entry["sha256"]) for entry in manifest["assets"]}
+    # Built by hand rather than as a comprehension: two entries that differ
+    # only by `~` collapse to one stored name, and a comprehension would drop
+    # one silently and compare the survivor against both.
+    expected: dict[str, tuple] = {}
+    for entry in manifest["assets"]:
+        key = stored(entry["name"])
+        if key in expected:
+            raise SystemExit(
+                f"release assets: two {manifest_path.name} entries share the stored name {key}"
+            )
+        expected[key] = (entry["size"], entry["sha256"])
     # The manifest cannot cover itself; hold the uploaded copy to this file.
     expected[manifest_path.name] = (len(manifest_bytes), hashlib.sha256(manifest_bytes).hexdigest())
     listed = release.get("assets", [])
