@@ -10,6 +10,7 @@ sudo apt-get install -y \
   pkg-config \
   libssl-dev \
   clang \
+  just \
   libxkbcommon-dev \
   libwayland-dev \
   libtss2-dev \
