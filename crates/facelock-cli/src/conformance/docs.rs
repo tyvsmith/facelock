@@ -46,7 +46,41 @@ fn command_section<'a>(doc: &'a str, path: &str) -> Option<&'a str> {
     let mut offset = 0;
     let mut start = None;
     let mut depth = 0;
+    let mut fence: Option<(char, usize)> = None;
     for line in doc.split_inclusive('\n') {
+        // CommonMark fences permit up to three leading spaces. A closer
+        // must use the opener's delimiter, be at least as long, and contain
+        // only whitespace afterward; examples can contain shorter/mixed
+        // fences without ending the surrounding code block.
+        let unindented = line.trim_start_matches(' ');
+        let marker = if line.len() - unindented.len() <= 3 {
+            unindented.chars().next().filter(|c| matches!(c, '`' | '~'))
+        } else {
+            None
+        };
+        if let Some(delimiter) = marker {
+            let length = unindented.chars().take_while(|c| *c == delimiter).count();
+            let rest = &unindented[length..];
+            match fence {
+                Some((opening_delimiter, opening_length))
+                    if delimiter == opening_delimiter
+                        && length >= opening_length
+                        && rest.trim().is_empty() =>
+                {
+                    fence = None;
+                    offset += line.len();
+                    continue;
+                }
+                None if length >= 3 && (delimiter != '`' || !rest.contains('`')) => {
+                    fence = Some((delimiter, length));
+                }
+                _ => {}
+            }
+        }
+        if fence.is_some() {
+            offset += line.len();
+            continue;
+        }
         if line.starts_with('#') {
             let title = line.trim_start_matches('#').trim();
             let current_depth = line.len() - line.trim_start_matches('#').len();
@@ -144,6 +178,40 @@ fn command_sections_do_not_borrow_neighboring_flags() {
             .expect("child")
             .contains("--user")
     );
+}
+
+#[test]
+fn command_sections_ignore_headings_comments_and_shebangs_inside_fences() {
+    for fence in ["```", "~~~~", "   ```"] {
+        let doc = format!(
+            "## facelock first\n{fence}bash\n#!/usr/bin/env bash\n# shell comment\n## facelock fake\n{fence}\n| `--json` | real option |\n## facelock second\n--user\n"
+        );
+        let body = command_section(&doc, "facelock first").expect("first");
+        assert!(body.contains("--json"), "premature end with {fence:?}");
+        assert!(!body.contains("--user"), "borrowed neighbor with {fence:?}");
+        assert!(command_section(&doc, "facelock fake").is_none());
+    }
+}
+
+#[test]
+fn command_sections_close_only_matching_fences_of_sufficient_length() {
+    let doc = "## facelock first\n````bash\n```\n# short fence did not close\n~~~~\n# different delimiter did not close\n````not-a-closing-fence\n# trailing text did not close\n`````  \n| `--json` | real option |\n## facelock second\n--user\n";
+    let body = command_section(doc, "facelock first").expect("first");
+    assert!(body.contains("--json"));
+    assert!(!body.contains("--user"));
+}
+
+#[test]
+fn command_sections_do_not_open_invalid_or_overindented_fences() {
+    for invalid in ["``bash", "```bad`info", "    ```bash"] {
+        let doc = format!("## facelock first\n{invalid}\n## facelock second\n--user\n");
+        assert!(
+            !command_section(&doc, "facelock first")
+                .expect("first")
+                .contains("--user"),
+            "opened invalid fence {invalid:?}"
+        );
+    }
 }
 
 /// The man page with its roff hyphen escapes undone. Shared with

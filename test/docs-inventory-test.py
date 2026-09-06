@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Inventory checks must detect newly undocumented public surfaces."""
 import importlib.util
+import re
 from pathlib import Path
 import unittest
 import tempfile
@@ -11,6 +12,16 @@ SPEC.loader.exec_module(MODULE)
 
 
 class InventoryTest(unittest.TestCase):
+    def test_container_workspace_tests_trust_only_the_checkout(self):
+        workflow = (MODULE.ROOT / '.github/workflows/ci.yml').read_text()
+        trust = '\n        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"'
+        for job in ('build-and-test', 'tpm-tests'):
+            with self.subTest(job=job):
+                body = re.search(r'(?ms)^  ' + job + r':\n(.*?)(?=^  \S|\Z)', workflow)[1]
+                self.assertIn(trust, body)
+                self.assertLess(body.index('uses: actions/checkout@'), body.index(trust))
+                self.assertLess(body.index(trust), body.index('run: cargo test --workspace'))
+
     def test_source_archive_discovery_finds_new_docs_and_excludes_build_outputs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
