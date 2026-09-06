@@ -365,7 +365,7 @@
         "path": "docs/releasing.md",
         "anchor": "upgrade-safety",
         "ordinal": 7,
-        "line": 1047,
+        "line": 1090,
         "sha256": "45f087a5c09ff21da36fd7763813fdc1ddbc4627af61d1b795636ab1a3fb3448"
       }
     ],
@@ -437,7 +437,7 @@
         "path": "docs/releasing.md",
         "anchor": "upgrade-safety",
         "ordinal": 6,
-        "line": 1047,
+        "line": 1090,
         "sha256": "4981bfb4bf82b5fffa2693be6c87209a35f34a2496e6f5ecddbc52cde3a0ca0f"
       }
     ],

@@ -795,46 +795,46 @@ valid_packit_staging_root="$tmp_root/packit-valid-staging"
 cp -R "$matrix_root" "$valid_packit_staging_root"
 replace_packit_staging_job \
     "$valid_packit_staging_root/.packit.yaml" \
-    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-45-x86_64","fedora-43-x86_64","fedora-44-x86_64"]}'
+    '{"job":"copr_build","enable_net":true,"trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-45-x86_64","fedora-43-x86_64","fedora-44-x86_64"]}'
 RELEASE_MATRIX_VERSION=0.2.0 python3 "$valid_packit_staging_root/test/check-release-matrix.py" >/dev/null
 echo "release matrix Packit case: exact facelock-testing staging targets accepted"
 
 assert_extra_packit_job_rejected \
     "second facelock-testing staging job" \
-    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
+    '{"job":"copr_build","enable_net":true,"trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
 
 assert_extra_packit_job_rejected \
     "third copr_build job with allowlisted targets" \
-    '{"job":"copr_build","trigger":"ignore","owner":"tyvsmith","project":"facelock-scratch","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
+    '{"job":"copr_build","enable_net":true,"trigger":"ignore","owner":"tyvsmith","project":"facelock-scratch","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}'
 assert_extra_packit_job_rejected \
     "canonical Rawhide target outside production and staging" \
-    '{"job":"copr_build","trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-rawhide"]}'
+    '{"job":"copr_build","enable_net":true,"trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-rawhide"]}'
 assert_extra_packit_job_rejected \
     "fedora-all mutable alias" \
-    '{"job":"copr_build","trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-all"]}'
+    '{"job":"copr_build","enable_net":true,"trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-all"]}'
 assert_extra_packit_job_rejected \
     "fedora-development mutable alias" \
-    '{"job":"copr_build","trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-development"]}'
+    '{"job":"copr_build","enable_net":true,"trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-development"]}'
 assert_extra_packit_job_rejected \
     "architecture-suffixed mutable alias" \
-    '{"job":"copr_build","trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-development-aarch64"]}'
+    '{"job":"copr_build","enable_net":true,"trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-development-aarch64"]}'
 assert_staging_packit_job_rejected \
     "facelock-testing Rawhide target" \
-    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-rawhide-x86_64"]}' \
+    '{"job":"copr_build","enable_net":true,"trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-rawhide-x86_64"]}' \
     "targets Rawhide"
 assert_extra_packit_job_rejected \
     "Rawhide target outside production and staging" \
-    '{"job":"copr_build","trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-rawhide-x86_64"]}'
+    '{"job":"copr_build","enable_net":true,"trigger":"release","owner":"other-owner","project":"facelock-scratch","targets":["fedora-rawhide-x86_64"]}'
 assert_staging_packit_job_rejected \
     "facelock-testing incomplete staging targets" \
-    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64"]}' \
+    '{"job":"copr_build","enable_net":true,"trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64"]}' \
     "Packit staging COPR targets drifted"
 assert_extra_packit_job_rejected \
     "duplicate targets outside production and staging" \
-    '{"job":"copr_build","trigger":"pull_request","owner":"tyvsmith","project":"facelock-scratch","targets":["fedora-43-x86_64","fedora-43-x86_64"]}'
+    '{"job":"copr_build","enable_net":true,"trigger":"pull_request","owner":"tyvsmith","project":"facelock-scratch","targets":["fedora-43-x86_64","fedora-43-x86_64"]}'
 assert_extra_packit_job_rejected \
     "invalid targets outside production and staging" \
-    '{"job":"copr_build","trigger":"pull_request","owner":"tyvsmith","project":"facelock-scratch","targets":"fedora-43-x86_64"}'
+    '{"job":"copr_build","enable_net":true,"trigger":"pull_request","owner":"tyvsmith","project":"facelock-scratch","targets":"fedora-43-x86_64"}'
 
 assert_matrix_mutation_rejected \
     "RPM authselect scriptlet dependency" \
@@ -1078,20 +1078,39 @@ assert_matrix_mutation_rejected \
     "staging COPR must not declare optional experimental chroots"
 assert_staging_packit_job_rejected \
     "Packit staging job deleted" \
-    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-retired","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    '{"job":"copr_build","enable_net":true,"trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-retired","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
     "Packit must define exactly one staging COPR job"
 assert_staging_packit_job_rejected \
     "Packit staging job made release-triggered" \
-    '{"job":"copr_build","trigger":"release","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    '{"job":"copr_build","enable_net":true,"trigger":"release","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
     "Packit staging COPR trigger"
 assert_staging_packit_job_rejected \
     "Packit staging job made automatic" \
-    '{"job":"copr_build","trigger":"pull_request","manual_trigger":false,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    '{"job":"copr_build","enable_net":true,"trigger":"pull_request","manual_trigger":false,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
     "Packit staging COPR job must stay manually triggered"
 assert_staging_packit_job_rejected \
     "Packit staging job owner drifted" \
-    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"packit","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    '{"job":"copr_build","enable_net":true,"trigger":"pull_request","manual_trigger":true,"owner":"packit","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
     "Packit staging COPR owner"
+# COPR takes network access per build and Packit sends the value, so the job key
+# is the one that decides -- the project toggle every other gate reads is only
+# the fallback for a build that carries none. v0.2.0 was submitted with the
+# toggle on, the key absent, and no resolver in any of the three chroots. Both
+# the omission and an explicit false are rejected, because Packit's default is
+# false and an absent key is not a milder version of it.
+assert_staging_packit_job_rejected \
+    "Packit staging job without enable_net" \
+    '{"job":"copr_build","trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    "must declare enable_net: true"
+assert_staging_packit_job_rejected \
+    "Packit staging job with enable_net disabled" \
+    '{"job":"copr_build","enable_net":false,"trigger":"pull_request","manual_trigger":true,"owner":"tyvsmith","project":"facelock-testing","targets":["fedora-43-x86_64","fedora-44-x86_64","fedora-45-x86_64"]}' \
+    "must declare enable_net: true"
+assert_matrix_mutation_rejected \
+    "Packit jobs stripped of enable_net" \
+    ".packit.yaml" \
+    '/"enable_net": true,/d' \
+    "must declare enable_net: true"
 
 # The staging trigger and copr_channels.staging.provisioned move together. An
 # unprovisioned project must not be the target of every pull request's Packit

@@ -5,8 +5,12 @@
 # from dist/facelock.spec, then mock builds the RPM from source in a clean
 # Fedora chroot, and the result is installed with dnf.
 #
-# `--enable-network` mirrors the COPR project's required "internet access during
-# builds" setting — the Rust build fetches crates from crates.io.
+# The chroot's network is read out of .packit.yaml rather than hardcoded. COPR
+# resolves network access per build and Packit sends the value, so a job without
+# `enable_net: true` builds with no resolver no matter what the project's
+# "internet access during builds" toggle says. Taking the flag from the config
+# is what makes this lane fail the way real COPR would; hardcoding
+# `--enable-network` is what let v0.2.0 pass here and fail there.
 #
 # /repo is mounted READ-ONLY; we copy it to a writable workdir because
 # `packit srpm` rewrites the spec file in place.
@@ -32,6 +36,26 @@ if sys.argv[1] not in targets:
 PY
 then
   echo "FAIL: undeclared COPR chroot"
+  exit 1
+fi
+
+# Every copr_build job has to agree, because one SRPM is rebuilt here for all of
+# them and a lane cannot model two different chroot networks at once.
+if ! NETWORK_FLAG=$(python3 - <<'NET'
+import json
+
+with open("/repo/.packit.yaml", encoding="utf-8") as handle:
+    jobs = json.load(handle)["jobs"]
+values = {job.get("enable_net") for job in jobs if job.get("job") == "copr_build"}
+if len(values) != 1:
+    raise SystemExit(f"copr_build jobs disagree on enable_net: {sorted(map(repr, values))}")
+enable_net = values.pop()
+if enable_net is not True and enable_net is not False:
+    raise SystemExit(f"copr_build enable_net must be a bool, got {enable_net!r}")
+print("--enable-network" if enable_net else "")
+NET
+); then
+  echo "FAIL: cannot read enable_net from .packit.yaml"
   exit 1
 fi
 
@@ -71,10 +95,10 @@ if [ -z "$SRPM" ] || [ ! -f "$SRPM" ]; then echo "FAIL: packit srpm produced no 
 cp "$SRPM" /tmp/ ; SRPM="/tmp/$(basename "$SRPM")"
 echo "SRPM: $SRPM"
 
-section "mock rebuild ($CHROOT, from source, --enable-network)"
+section "mock rebuild ($CHROOT, from source, network=${NETWORK_FLAG:-off})"
 useradd -G mock mockbuilder 2>/dev/null || true
 chmod 644 "$SRPM"
-if su mockbuilder -c "mock -r '$CHROOT' --isolation=simple --enable-network --rebuild '$SRPM' --resultdir /tmp/mock"; then
+if su mockbuilder -c "mock -r '$CHROOT' --isolation=simple ${NETWORK_FLAG} --rebuild '$SRPM' --resultdir /tmp/mock"; then
   echo "mock build: OK"
 else
   echo "FAIL: mock build failed"

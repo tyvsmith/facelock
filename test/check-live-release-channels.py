@@ -196,7 +196,10 @@ if response.get("enable_net") is not True:
         f"{args.channel} COPR {owner}/{project} builds have no internet access "
         f"(enable_net={response.get('enable_net')!r}); the RPM builds from source and cargo "
         "fetches crates during %build, so a build without it fails resolving crates. "
-        'Enable Settings -> "Enable internet access during builds" in the COPR web UI'
+        'Enable Settings -> "Enable internet access during builds" in the COPR web UI. '
+        "That toggle is only the default for a build that carries no value of its own; "
+        "a Packit-submitted build carries one, so .packit.yaml must declare "
+        "enable_net: true too"
     )
 forge_projects = response.get("packit_forge_projects_allowed")
 if not isinstance(forge_projects, list) or not all(isinstance(entry, str) for entry in forge_projects):

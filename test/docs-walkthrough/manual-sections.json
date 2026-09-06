@@ -9771,21 +9771,21 @@
           "path": "docs/releasing.md",
           "anchor": "why-v014-never-reached-copr",
           "ordinal": 8,
-          "line": 764,
+          "line": 771,
           "sha256": "4f8c8f6471b5acc7be9447a1cc5a4ef869157bce60d91c20e453570df45d3af5"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "why-v014-never-reached-copr",
           "ordinal": 9,
-          "line": 765,
+          "line": 772,
           "sha256": "330b0e0d48e5cadecc7312bd0e67d8fe2c885d0d4ff881e165c92d12cd5de072"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "why-v014-never-reached-copr",
           "ordinal": 10,
-          "line": 766,
+          "line": 773,
           "sha256": "eafacd9bcae280d0368ab135f72ec91b7e2d8399382e1050b67ef96cd5e94ff8"
         }
       ],
@@ -9867,14 +9867,14 @@
           "path": "docs/releasing.md",
           "anchor": "pre-tag-attestation",
           "ordinal": 2,
-          "line": 834,
+          "line": 877,
           "sha256": "4fc7ae86753f046827e1eaf821e79f8502c861494f431ee06e627c16a0f582c5"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "pre-tag-attestation",
           "ordinal": 3,
-          "line": 835,
+          "line": 878,
           "sha256": "9daf87a90676b422783ead7510dc9cd9df3f7d35ec73a7f6b720b249814ed638"
         }
       ],
@@ -9942,21 +9942,21 @@
           "path": "docs/releasing.md",
           "anchor": "apt-debianubuntu",
           "ordinal": 1,
-          "line": 862,
+          "line": 905,
           "sha256": "3a7b17c8cfba23ce48b71f39c7a8e55fa570bf8596dac8e00622eaa2fd8f67b6"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "apt-debianubuntu",
           "ordinal": 2,
-          "line": 869,
+          "line": 912,
           "sha256": "2120970caf76141c5840f3c94b1f591cfd64be5b8b0909ba582421dcfc2130a2"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "apt-debianubuntu",
           "ordinal": 3,
-          "line": 874,
+          "line": 917,
           "sha256": "07aef43e7726b1c28642fe5034e46b275bb0175b1a8bf8b2ab09125586f97c02"
         }
       ],
@@ -10037,56 +10037,56 @@
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 1,
-          "line": 913,
+          "line": 956,
           "sha256": "bd978c87c0aadfa54d4ba4f05b48f51ea4197e79703f972a5b6e2e7db17facd1"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 2,
-          "line": 915,
+          "line": 958,
           "sha256": "6fbda588a984496fe15cc3910c5759c7f24c1920e358e38865bdf3f599bf2eaf"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 3,
-          "line": 919,
+          "line": 962,
           "sha256": "496912e98f06a6851cefff636f7f9a738aea9093d8ca87d32427a71fc0d4e710"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 4,
-          "line": 925,
+          "line": 968,
           "sha256": "db66421d7339cfe66576a3d1816ccd849e3cce082609ed202f033e8766850f5e"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 5,
-          "line": 926,
+          "line": 969,
           "sha256": "fe9e350dccdf906c3c342fa6d20e264cf09012c885bbc76709d25df82a557eec"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 6,
-          "line": 930,
+          "line": 973,
           "sha256": "9b13396a2d62293086b0bfda57435689ba59dde26f4398d2eba7624ef80916eb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 7,
-          "line": 931,
+          "line": 974,
           "sha256": "1770d6f9d00ebdeba4277b6bd833aebdfe61df440fdc0e7cf518616c0f4fb84d"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 8,
-          "line": 932,
+          "line": 975,
           "sha256": "c32f2b1a66f8a79deadb74f533f3075c60a629df343b89e8c4477d40fa960ba8"
         }
       ],

@@ -653,11 +653,18 @@ crate feature `api-20` keeps the binary compatible with Fedora's runtime.)
    builds"**. The RPM is built from source and `cargo` fetches crates from
    crates.io during `%build`; COPR's build chroot is network-isolated by
    default, so this toggle is required or the build fails resolving crates.
+   The toggle is half of it: COPR takes network access per build, and a Packit
+   submission carries its own value. `.packit.yaml` must also declare
+   `enable_net: true` on every `copr_build` job, because Packit's default is
+   false and it wins over the project. See "Why v0.2.0 built nothing in COPR"
+   below.
 
-Step 4's allowlist and step 5 apply to both channels and are checked on every
-pull request by `python3 test/check-live-release-channels.py`, which reads them
-off the public project response. The permission grant is not public, so it stays
-a hand-confirmed step -- and it is the one that failed silently for v0.1.4.
+Step 4's allowlist and step 5's toggle apply to both channels and are checked on
+every pull request by `python3 test/check-live-release-channels.py`, which reads
+them off the public project response. Step 5's `.packit.yaml` half is not in that
+response and is checked by `test/check-release-matrix.py` instead. The permission
+grant is not public, so it stays a hand-confirmed step -- and it is the one
+that failed silently for v0.1.4.
 
 Verify the COPR build locally before relying on it with `just test-copr`, which
 reproduces the Packit SRPM + `mock` from-source rebuild on a Fedora chroot and
@@ -775,6 +782,42 @@ through `copr-cli` with an SRPM built locally. Name the three supported chroots:
 `copr-cli build` with no `-r` builds every chroot the project has enabled, which
 picks up the optional Rawhide one. This path needs a COPR API token in
 `~/.config/copr`, which the Packit CLI did not.
+
+##### Why v0.2.0 built nothing in COPR
+
+v0.2.0 fixed everything v0.1.4 got wrong. Packit triggered on the release event,
+reconciled the project, and submitted all three chroots under the canonical
+`0.2.0-1`. Every one of them then failed in `%build`, four minutes in, on
+`Could not resolve host: index.crates.io`.
+
+`enable_net` is a per-build value, not a project one. The project toggle is the
+default COPR applies to a build that does not carry its own, and a Packit
+submission always carries its own: Packit's `enable_net` defaults to false and
+is sent on every build it creates. So the toggle was on, the build task read
+`'enable_net': False`, and the chroot had no resolver while `cargo` needed
+crates.io. v0.1.3 is the control -- same spec, same project, and it built,
+because a human submitted it with `copr-cli`, which omits the field and lets the
+project default stand.
+
+Three things had to be true at once for this to reach production, and each is
+now closed:
+
+- **The gate read the wrong layer.** `test/check-live-release-channels.py`
+  compares the public project response, which is the only place `enable_net`
+  appears before a build exists, and the value there was correct.
+  `test/check-release-matrix.py` now requires `enable_net: true` on every
+  `copr_build` job in `.packit.yaml`, which is the layer that decides.
+- **The local lane hardcoded the answer.** `just test-copr` builds the Packit
+  SRPM and rebuilds it under `mock`, and it passed `--enable-network`
+  unconditionally, so it modelled a chroot COPR was never going to give it. The
+  lane now reads the flag out of `.packit.yaml` and gets the same network the
+  real submission would.
+- **The docs asked for the toggle and stopped.** Setup step 5 now names both
+  halves.
+
+Recovery is the hand-submitted build above. `copr-cli` sends no `enable_net`
+unless `--enable-net` is passed, so it inherits the project toggle and needs
+nothing else.
 
 ##### Staging COPR (`tyvsmith/facelock-testing`)
 
