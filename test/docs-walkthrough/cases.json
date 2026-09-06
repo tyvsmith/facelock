@@ -509,28 +509,28 @@
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 1,
-        "line": 95,
+        "line": 97,
         "sha256": "13ece4f24ba1175dd24829a6e605712bee3c028c5505562d6f7dc6616ef1bb63"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 4,
-        "line": 103,
+        "line": 105,
         "sha256": "e75d40fad8fc39564478eb4a79fc737f644f9b056e395a761231e9d5ba87526a"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 5,
-        "line": 104,
+        "line": 106,
         "sha256": "ffd01420441dd9f03d93c8cc6ee904634a47010b453fdb05d06b7bfee0c455b2"
       },
       {
         "path": "README.md",
         "anchor": "hyprlock-integration",
         "ordinal": 1,
-        "line": 239,
+        "line": 242,
         "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
       }
     ],
@@ -578,28 +578,28 @@
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 1,
-        "line": 95,
+        "line": 97,
         "sha256": "13ece4f24ba1175dd24829a6e605712bee3c028c5505562d6f7dc6616ef1bb63"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 4,
-        "line": 103,
+        "line": 105,
         "sha256": "e75d40fad8fc39564478eb4a79fc737f644f9b056e395a761231e9d5ba87526a"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 5,
-        "line": 104,
+        "line": 106,
         "sha256": "ffd01420441dd9f03d93c8cc6ee904634a47010b453fdb05d06b7bfee0c455b2"
       },
       {
         "path": "README.md",
         "anchor": "hyprlock-integration",
         "ordinal": 1,
-        "line": 239,
+        "line": 242,
         "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
       }
     ],
@@ -659,7 +659,7 @@
         "path": "book/src/gpu.md",
         "anchor": "1-install-a-gpu-enabled-onnx-runtime",
         "ordinal": 1,
-        "line": 24,
+        "line": 26,
         "sha256": "8549d3bdd567da8fa44759ce1df15340c20cea95965a5b4552d3f28eb7db260b"
       }
     ],

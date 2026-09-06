@@ -7,17 +7,25 @@ prerelease, [v0.2.0-alpha.4](https://github.com/tyvsmith/facelock/releases/tag/v
 is published with direct package assets. Prereleases intentionally do not enter
 the stable AUR, APT, or production COPR channels.
 
+The following SHA256 values are pinned from the release's
+[MANIFEST.json](https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/MANIFEST.json).
+Each command chain verifies the downloaded bytes before invoking the package
+manager; stop if verification fails. These checks establish integrity against
+the reviewed release, not an independent signing or build attestation.
+
 For Debian 13 amd64, install the published alpha package directly:
 
 ```bash
-curl -fLO https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/facelock_0.2.0.alpha.4-1.deb13u1_amd64.deb
+curl -fLO https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/facelock_0.2.0.alpha.4-1.deb13u1_amd64.deb &&
+printf '%s  %s\n' '36fede353b2eed7ab98e7ecf1ca4cca5ae7e6ab6820df8de27734c4a992467aa' 'facelock_0.2.0.alpha.4-1.deb13u1_amd64.deb' | sha256sum --check - &&
 sudo apt install ./facelock_0.2.0.alpha.4-1.deb13u1_amd64.deb
 ```
 
 For Ubuntu 26.04 amd64, use the corresponding suite build:
 
 ```bash
-curl -fLO https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/facelock_0.2.0.alpha.4-1.ubuntu26.04.1_amd64.deb
+curl -fLO https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/facelock_0.2.0.alpha.4-1.ubuntu26.04.1_amd64.deb &&
+printf '%s  %s\n' 'cdddbdb6a3e7a1fa9ac56de0f8521ca9538ba01495ef9744aa18bc158646f8a2' 'facelock_0.2.0.alpha.4-1.ubuntu26.04.1_amd64.deb' | sha256sum --check - &&
 sudo apt install ./facelock_0.2.0.alpha.4-1.ubuntu26.04.1_amd64.deb
 ```
 
@@ -27,7 +35,9 @@ installed, Debian reports the native versions `0.2.0~alpha.4-1~deb13u1` and
 Fedora 44 x86_64 users can install the direct release RPM:
 
 ```bash
-sudo dnf install https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/facelock-0.2.0-0.4.alpha.4.fc44.x86_64.rpm
+curl -fLO https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/facelock-0.2.0-0.4.alpha.4.fc44.x86_64.rpm &&
+printf '%s  %s\n' '788fb323f8dcb27f99591a175d40fcc05bd81afbe5e1efbcc01b48a19ffe26f1' 'facelock-0.2.0-0.4.alpha.4.fc44.x86_64.rpm' | sha256sum --check - &&
+sudo dnf install ./facelock-0.2.0-0.4.alpha.4.fc44.x86_64.rpm
 ```
 
 The separately downloadable `facelock`, PAM module, and polkit-agent binaries
@@ -138,11 +148,17 @@ repository's commands:
 sudo dnf install git rust cargo just gcc gcc-c++ clang-devel gettext pkgconf-pkg-config pam-devel libv4l-devel wayland-devel libxkbcommon-devel tpm2-tss-devel onnxruntime
 ```
 
-Debian and Ubuntu do not package ONNX Runtime. A source build there can compile
-and run non-inference commands such as `--help`, but enrollment,
-authentication, preview, and inference benchmarks require ONNX Runtime 1.20+
-installed in one of Facelock's trusted runtime locations. The future project
-`.deb` packages bundle the reviewed CPU runtime; this is not supplied by Cargo.
+Debian 13 publishes `libonnxruntime1.21`, and Ubuntu 26.04 publishes
+`libonnxruntime1.23`. Their multiarch library paths and versioned SONAMEs
+(`libonnxruntime.so.1.21` and `libonnxruntime.so.1.23`) are incompatible with
+Facelock's current trusted loader, which requires `libonnxruntime.so.1` as the
+SONAME and searches fixed runtime directories rather than multiarch paths.
+A source build can compile and run non-inference commands such as `--help`,
+but enrollment, authentication, preview, and inference benchmarks require a
+separately installed compatible ONNX Runtime 1.20+ in a trusted runtime
+location. Merely adding a symlink does not repair a mismatched SONAME.
+The published alpha.4 `.deb` packages bundle the compatible CPU runtime 1.20.1;
+this is not supplied by Cargo.
 
 ```bash
 just build

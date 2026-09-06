@@ -158,6 +158,23 @@ and Arch/RPM removal prompts no longer promise that an unmodified package-owned
 configuration file survives removal. The lifecycle contract remains the
 authority for `.pacsave` and `.rpmsave` handling.
 
+The review follow-up added pinned checksum gates before direct package
+installation and mdBook extraction, clarified PAM timeout and historical
+permission wording, and made configuration-default extraction ignore fenced
+examples. Official Debian/Ubuntu binary metadata and ELF inspection corrected
+the earlier claim that those distributions lacked ONNX Runtime packages:
+their published native libraries exist, but their multiarch locations and
+versioned SONAMEs do not satisfy the current trusted loader. The install
+guides distinguish that limitation from the compatible runtime bundled in
+Facelock's published packages.
+
+Two requested behavioral changes remain outside this documentation audit:
+bootstrap setup does not forward an enrollment command's original user/label,
+and daemon restart does not check the D-Bus fallback's exit status. The CLI
+reference describes both limitations; correcting their behavior would require
+a separate implementation and contract change, not a documentation claim
+that the published binary already behaves differently.
+
 The documentation audit and published-alpha inspection do not require stable
 0.2.0 publication. Stable AUR, codenamed APT and production COPR still need a
 separate post-publication check of their actual packages and metadata. The

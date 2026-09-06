@@ -18,7 +18,9 @@ release package validation matrix.
 
 On Arch Linux, these are official Extra repository packages as checked on
 2026-09-05. Each provides and conflicts with the virtual `onnxruntime`
-dependency, so it replaces `onnxruntime-cpu` rather than installing beside it:
+dependency, so the variants do not install side by side. If another variant is
+installed, pacman prompts to remove it; review and accept that transaction to
+switch providers:
 
 ```bash
 sudo pacman -S onnxruntime-opt-cuda      # NVIDIA
@@ -27,10 +29,15 @@ sudo pacman -S onnxruntime-opt-rocm      # AMD
 
 Arch packages no OpenVINO build of ONNX Runtime, in the repositories or the AUR
 as checked on 2026-09-05. Build ONNX Runtime with the OpenVINO execution
-provider yourself to use `execution_provider = "openvino"`. Debian and Ubuntu
-also provide no ONNX Runtime package; Facelock's published `.deb` packages bundle
-a CPU-only runtime and therefore do not enable a GPU provider. Fedora's COPR
-package depends on Fedora's CPU-only `onnxruntime` package.
+provider yourself to use `execution_provider = "openvino"`. Debian 13 publishes
+`libonnxruntime1.21`, and Ubuntu 26.04 publishes `libonnxruntime1.23` plus
+`libonnxruntime-providers`, as checked on 2026-09-05. Their packaged provider
+modules are CPU/oneDNN rather than CUDA, ROCm, or OpenVINO. They also install in
+the multiarch library directory with versioned SONAMEs that Facelock's current
+trusted runtime loader does not accept, so they cannot serve as its runtime.
+Facelock's published `.deb` packages bundle a compatible CPU-only runtime and
+therefore do not enable a GPU provider. Fedora's COPR package depends on
+Fedora's CPU-only `onnxruntime` package.
 
 ### 2. Set the execution provider
 

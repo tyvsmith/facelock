@@ -80,11 +80,13 @@ target/debug/facelock --help
 `just build` does not install Facelock, and `--help` does not prove that an
 ONNX Runtime can be loaded. On Arch, where the system runtime is packaged, the
 optional `just install` command builds and installs the current tree, prompts
-for sudo for file writes, and does not edit PAM. Debian/Ubuntu source builds
-need a separately installed trusted ONNX Runtime to run inference; published
-Facelock `.deb` packages bundle it. Fedora users should use the RPM/COPR layout,
-and the quickstart records why the current NixOS source-tree module is not yet
-a usable authentication installation.
+for sudo for file writes, and does not edit PAM. Debian 13 and Ubuntu 26.04
+package ONNX Runtime, but their multiarch paths and versioned SONAMEs are not
+compatible with Facelock's current trusted runtime loader. Source builds there
+need a separately installed compatible runtime to run inference; published
+Facelock `.deb` packages bundle one. Fedora users should use the RPM/COPR
+layout, and the quickstart records why the current NixOS source-tree module is
+not yet a usable authentication installation.
 
 ### Post-Install
 
@@ -107,9 +109,10 @@ Every wizard step can also be answered or declined from the command line — `--
 
 ### GPU Acceleration (Optional)
 
-GPU support is runtime-only -- no Facelock rebuild is needed. On Arch, replace
-the CPU runtime with the matching official-repository ONNX Runtime variant and
-set `execution_provider` in `/etc/facelock/config.toml`:
+GPU support is runtime-only -- no Facelock rebuild is needed. On Arch, ask
+pacman to switch from the CPU runtime to the matching official-repository ONNX
+Runtime variant and set `execution_provider` in
+`/etc/facelock/config.toml`:
 
 | GPU Vendor | Package (Arch) | Config value |
 |------------|---------------|--------------|

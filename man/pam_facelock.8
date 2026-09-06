@@ -42,9 +42,10 @@ The user's face was matched against an enrolled model with sufficient
 confidence.
 .TP
 .B PAM_AUTH_ERR
-Authentication failed: a face was scanned and did not match, or the user is
+Authentication failed: a face was scanned and did not match, the user is
 rate limited (the face-auth budget is exhausted; the remaining modules in the
-stack still run). The two transports differ in one case: the daemon abstains
+stack still run), or a D-Bus or one-shot authentication deadline expired. The
+two transports differ in one case: the daemon abstains
 when no face was seen, while the oneshot binary cannot carry that distinction
 in an exit code and reports it here. See the exit-code table in
 .I docs/contracts.md .
@@ -57,7 +58,8 @@ is enabled, so the module declines to reveal whether the user is enrolled.
 .B PAM_IGNORE
 Face authentication has no opinion for this attempt: the module is disabled
 or skipped for this context, the user has no enrolled face models, the camera
-produced no usable image, the attempt was cancelled, or an error occurred.
+produced no usable image, the attempt was cancelled, or a non-timeout error
+occurred.
 The PAM stack falls through to the next module.
 .SH EXAMPLES
 To enable face authentication for

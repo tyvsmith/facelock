@@ -1949,11 +1949,12 @@ auth would — surfacing an existing lockout instead of masking it.
 | Daemon | `daemon.mode = "daemon"` (default) | D-Bus IPC to daemon | Uses daemon if available, falls back to direct |
 | Oneshot | `daemon.mode = "oneshot"` | Spawns `facelock auth` | Operates directly (no daemon) |
 
-Backend-using CLI commands select their transport once. In daemon mode they
-check whether the bus name has an owner without activating it; when no owner
-is found they warn on stderr and use direct mode. A later daemon method error
-propagates instead of triggering a second direct attempt. Oneshot mode selects
-direct access without a bus probe or fallback warning.
+Backend-using CLI commands select their transport once. With the default
+configuration in daemon mode they check whether the bus name has an owner
+without activating it; when no owner is found they warn on stderr and use
+direct mode. A later daemon method error propagates instead of triggering a
+second direct attempt. Oneshot mode selects direct access without a bus probe
+or fallback warning.
 
 Under a non-default `--config` in daemon mode, backend selection for
 `enroll`, `test` and the other backend-using commands does not ask the bus and
@@ -3246,7 +3247,7 @@ traversal permits exactly that. Closing it would mean denying the traversal
 that `is-enrolled` and model loading depend on. Accepted; before ADR 010 the
 same residual existed for `facelock` group members.
 
-#### Contract change: permissions tightened (no paths moved)
+#### Historical pre-ADR-010 contract change: permissions tightened (no paths moved)
 
 The default paths are unchanged — the database stays at
 `/var/lib/facelock/facelock.db` and the models at `/var/lib/facelock/models`;
