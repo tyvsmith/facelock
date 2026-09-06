@@ -428,6 +428,22 @@ for job_index, job in enumerate(packit_jobs):
     )
     targets = set(target_list)
     require(len(target_list) == len(targets), f"{target_description} must be unique")
+    # COPR resolves network access per build, not per project, and Packit sends
+    # the value: its `enable_net` defaults to false and overrides the project's
+    # "enable internet access during builds" toggle. v0.2.0 was submitted with
+    # the toggle on and the key absent, so all three chroots reached `%build`
+    # with no resolver and cargo failed on the crates.io index (#347). The live
+    # project comparison in test/check-live-release-channels.py cannot see this
+    # half: the effective value is only in the build task COPR never publishes
+    # until a build exists.
+    packit_enable_net = job.get("enable_net")
+    require(
+        packit_enable_net is True,
+        f"Packit copr_build job {job_index} must declare enable_net: true so the submitted "
+        "build gets network; the RPM builds from source and cargo fetches crates during "
+        "%build, and Packit's default is false regardless of the COPR project setting, "
+        f"got {packit_enable_net!r}",
+    )
     # Rawhide is experimental everywhere and a release target nowhere. The
     # allowlist below already excludes it; naming it first is what makes the
     # diagnostic say so instead of "undeclared target".
@@ -1263,6 +1279,8 @@ for phrase in (
     "separately reviewed amendment and full Fedora gates",
     "Arch Linux Archive snapshot 2026-08-18",
     "stable-tagged config",
+    "Why v0.2.0 built nothing in COPR",
+    "`enable_net` is a per-build value, not a project one",
 ):
     require(phrase in normalized_docs, f"release documentation omits matrix/version phrase: {phrase}")
 
@@ -1282,6 +1300,7 @@ for phrase in (
     "Rawhide cannot supply lifecycle, artifact, upgrade, rollback, served-version, or availability evidence",
     "separately reviewed amendment and full Fedora gates",
     "issue #236",
+    "Every `copr_build` job in `.packit.yaml` must therefore declare `enable_net: true`",
 ):
     require(phrase in normalized_contracts, f"system contracts omit release-channel phrase: {phrase}")
 
@@ -1331,6 +1350,17 @@ require(
 require(
     "staging_copr_targets" in copr_build_test,
     "COPR-equivalent gate does not check its chroot against the declared staging targets",
+)
+# The lane has to take the chroot's network from the same place COPR does. A
+# hardcoded `--enable-network` is what let it model a networked chroot that the
+# real submission never asked for, and pass while v0.2.0 failed on all three.
+require(
+    "${NETWORK_FLAG}" in copr_build_test and ".packit.yaml" in copr_build_test,
+    "COPR-equivalent gate does not derive its chroot network from .packit.yaml",
+)
+require(
+    "--isolation=simple --enable-network" not in copr_build_test,
+    "COPR-equivalent gate still hardcodes chroot network access",
 )
 # The COPR lifecycle lanes are the mock build plus the booted validation of what
 # it produced. Both halves have to stay in the source rebuild: the copr-mode

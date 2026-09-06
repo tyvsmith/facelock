@@ -15,6 +15,7 @@
       "owner": "tyvsmith",
       "project": "facelock",
       "update_release": false,
+      "enable_net": true,
       "targets": [
         "fedora-43-x86_64",
         "fedora-44-x86_64",
@@ -27,6 +28,7 @@
       "manual_trigger": true,
       "owner": "tyvsmith",
       "project": "facelock-testing",
+      "enable_net": true,
       "targets": [
         "fedora-43-x86_64",
         "fedora-44-x86_64",

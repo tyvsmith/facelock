@@ -2192,7 +2192,15 @@ to an authenticated owner, so a public comparison cannot make that claim. It is
 the grant that failed silently for v0.1.4, which is why the release guide keeps
 it as a hand-confirmed setup step.
 
-Those three are the shape of a channel, not its contents. A second comparison
+The project's `enable_net` is only the default for a build that carries no value
+of its own, and a Packit-submitted build always carries one. Every `copr_build`
+job in `.packit.yaml` must therefore declare `enable_net: true` as well; Packit
+defaults it to false, and that default is what the chroot gets no matter what
+the project says. `test/check-release-matrix.py` enforces the job half, because
+it is checked-in state that no public COPR response exposes until a build has
+already run and already failed (#347).
+
+Those project properties are the shape of a channel, not its contents. A second comparison
 asks what it serves:
 `test/check-live-release-channels.py --expect-evr <EVR>` requires the project's
 latest **succeeded** build to carry the expected EVR. The latest succeeded build
