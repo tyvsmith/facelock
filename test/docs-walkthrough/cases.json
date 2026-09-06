@@ -312,7 +312,7 @@
         "path": "README.md",
         "anchor": "arch-linux-aur",
         "ordinal": 1,
-        "line": 29,
+        "line": 26,
         "sha256": "d362fd362389741be7a261a22cf3cb04edfabb48d43d545e4685ca00b4a1c743"
       }
     ],
@@ -321,7 +321,7 @@
         "path": "docs/releasing.md",
         "anchor": "release-preflight-recommended",
         "ordinal": 16,
-        "line": 525,
+        "line": 523,
         "sha256": "655d50b2ad3658f69f4548aa1da652750d17bec282f550281f9cc518912ca460"
       }
     ],
@@ -330,42 +330,42 @@
         "path": "docs/releasing.md",
         "anchor": "local-distro-validation",
         "ordinal": 3,
-        "line": 313,
+        "line": 311,
         "sha256": "b2b12dbf5cd38fc21d68548042e8eae1e66f65faa6491f3564e75c7cb60abc22"
       },
       {
         "path": "docs/releasing.md",
         "anchor": "local-distro-validation",
         "ordinal": 4,
-        "line": 314,
+        "line": 312,
         "sha256": "5595bcc3f9aa3517450a5185fe037e24b0a8ec079eff27020bf5c5aef68ffdb0"
       },
       {
         "path": "docs/releasing.md",
         "anchor": "local-distro-validation",
         "ordinal": 5,
-        "line": 315,
+        "line": 313,
         "sha256": "d0d568788326024851d047fe1e316af83028cbf98b17a777fd64c4e784151809"
       },
       {
         "path": "docs/releasing.md",
         "anchor": "local-distro-validation",
         "ordinal": 13,
-        "line": 325,
+        "line": 323,
         "sha256": "cbe27321cd6d31c9676b5aa4998fd1b4f9195f719b00cda8f889c3b3b7dae276"
       },
       {
         "path": "docs/releasing.md",
         "anchor": "local-distro-validation",
         "ordinal": 15,
-        "line": 327,
+        "line": 325,
         "sha256": "a10a4c45881ab16f35605739e0375de3e5558bc495111b49c7929d9b2d1603a0"
       },
       {
         "path": "docs/releasing.md",
         "anchor": "upgrade-safety",
         "ordinal": 7,
-        "line": 1090,
+        "line": 1088,
         "sha256": "45f087a5c09ff21da36fd7763813fdc1ddbc4627af61d1b795636ab1a3fb3448"
       }
     ],
@@ -374,70 +374,70 @@
         "path": "docs/releasing.md",
         "anchor": "local-distro-validation",
         "ordinal": 2,
-        "line": 312,
+        "line": 310,
         "sha256": "d5ce836f401484bd835100b165e1c2234b437780616e27bb92f5403d0f22bc40"
       },
       {
         "path": "docs/releasing.md",
         "anchor": "local-distro-validation",
         "ordinal": 6,
-        "line": 316,
+        "line": 314,
         "sha256": "05d5991182864fc115e36763667a0d555cf256358ed52830129f8fd32ab925de"
       },
       {
         "path": "docs/releasing.md",
         "anchor": "local-distro-validation",
         "ordinal": 7,
-        "line": 317,
+        "line": 315,
         "sha256": "4830a79699c4a1fa28bbcdc2eb8e5712c7ac46f3fd2533bad0b097ab936e8413"
       },
       {
         "path": "docs/releasing.md",
         "anchor": "local-distro-validation",
         "ordinal": 8,
-        "line": 318,
+        "line": 316,
         "sha256": "b1b141623a6849ba1a180dfa8e3d7eb504da148110c930be20e240eabd2323f1"
       },
       {
         "path": "docs/releasing.md",
         "anchor": "local-distro-validation",
         "ordinal": 14,
-        "line": 326,
+        "line": 324,
         "sha256": "0aece5ddd58b51f2dccb3e634e59f06c2a38c4f9bd0439197688c4e548e8895b"
       },
       {
         "path": "docs/releasing.md",
         "anchor": "local-distro-validation",
         "ordinal": 16,
-        "line": 328,
+        "line": 326,
         "sha256": "640b0dca78c96225ae70191f4312212e60c6367fca24cab33a803b0ee94c7847"
       },
       {
         "path": "docs/releasing.md",
         "anchor": "fedora-lanes",
         "ordinal": 1,
-        "line": 344,
+        "line": 342,
         "sha256": "d8ca765201bc57c001e20cd7532b17eae17b608c987aef950bd49b038209a291"
       },
       {
         "path": "docs/releasing.md",
         "anchor": "fedora-lanes",
         "ordinal": 3,
-        "line": 345,
+        "line": 343,
         "sha256": "942b015c794e1cca7d2229c0315e6a430ae3e08a91102a5f9ec9a5fafa61a8ec"
       },
       {
         "path": "docs/releasing.md",
         "anchor": "fedora-lanes",
         "ordinal": 10,
-        "line": 382,
+        "line": 380,
         "sha256": "942b015c794e1cca7d2229c0315e6a430ae3e08a91102a5f9ec9a5fafa61a8ec"
       },
       {
         "path": "docs/releasing.md",
         "anchor": "upgrade-safety",
         "ordinal": 6,
-        "line": 1090,
+        "line": 1088,
         "sha256": "4981bfb4bf82b5fffa2693be6c87209a35f34a2496e6f5ecddbc52cde3a0ca0f"
       }
     ],
@@ -445,8 +445,8 @@
       {
         "path": "README.md",
         "anchor": "fedora-copr",
-        "ordinal": 2,
-        "line": 65,
+        "ordinal": 3,
+        "line": 71,
         "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
       }
     ],
@@ -454,8 +454,8 @@
       {
         "path": "README.md",
         "anchor": "fedora-copr",
-        "ordinal": 2,
-        "line": 65,
+        "ordinal": 3,
+        "line": 71,
         "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
       }
     ],
@@ -464,7 +464,7 @@
         "path": "README.md",
         "anchor": "from-source",
         "ordinal": 4,
-        "line": 82,
+        "line": 88,
         "sha256": "ee643003c3bebb06741967affae1785b90ae552fcbf30142419a9d7fa0415d59"
       }
     ],
@@ -473,7 +473,7 @@
         "path": "docs/releasing.md",
         "anchor": "builders-build-publish-publishes",
         "ordinal": 2,
-        "line": 211,
+        "line": 209,
         "sha256": "d73a11669eaedc13fd66e0c81aae2720400721af2e2c572b1ebc48cc026cc29c"
       }
     ],
@@ -509,28 +509,28 @@
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 1,
-        "line": 97,
+        "line": 103,
         "sha256": "13ece4f24ba1175dd24829a6e605712bee3c028c5505562d6f7dc6616ef1bb63"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 4,
-        "line": 105,
+        "line": 111,
         "sha256": "e75d40fad8fc39564478eb4a79fc737f644f9b056e395a761231e9d5ba87526a"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 5,
-        "line": 106,
+        "line": 112,
         "sha256": "ffd01420441dd9f03d93c8cc6ee904634a47010b453fdb05d06b7bfee0c455b2"
       },
       {
         "path": "README.md",
         "anchor": "hyprlock-integration",
         "ordinal": 1,
-        "line": 242,
+        "line": 248,
         "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
       }
     ],
@@ -578,28 +578,28 @@
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 1,
-        "line": 97,
+        "line": 103,
         "sha256": "13ece4f24ba1175dd24829a6e605712bee3c028c5505562d6f7dc6616ef1bb63"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 4,
-        "line": 105,
+        "line": 111,
         "sha256": "e75d40fad8fc39564478eb4a79fc737f644f9b056e395a761231e9d5ba87526a"
       },
       {
         "path": "README.md",
         "anchor": "post-install",
         "ordinal": 5,
-        "line": 106,
+        "line": 112,
         "sha256": "ffd01420441dd9f03d93c8cc6ee904634a47010b453fdb05d06b7bfee0c455b2"
       },
       {
         "path": "README.md",
         "anchor": "hyprlock-integration",
         "ordinal": 1,
-        "line": 242,
+        "line": 248,
         "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
       }
     ],
