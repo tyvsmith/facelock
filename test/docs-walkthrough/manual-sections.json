@@ -1340,27 +1340,20 @@
           "anchor": "debian--ubuntu-apt",
           "ordinal": 2,
           "line": 47,
-          "sha256": "2c23cb438d760a78c3dbe9315a08258df691f9a0f01a83c44c776bf52bb9704b"
+          "sha256": "39cc6a6f465cccaad652684e38819b46c2b36d1b867c5dd50f06bfeed63e29a5"
         },
         {
           "path": "README.md",
           "anchor": "debian--ubuntu-apt",
           "ordinal": 3,
           "line": 48,
-          "sha256": "fbb4f2e9a16dfac090576af21bcca2afd1aa851a733ea602d0e09fbc4e9558c1"
+          "sha256": "bec61f0cc5aa5062a5d2ff6b8fabf8bbaf4973e379679cf1408a26d13d3ee0ca"
         },
         {
           "path": "README.md",
           "anchor": "debian--ubuntu-apt",
           "ordinal": 4,
           "line": 49,
-          "sha256": "bec61f0cc5aa5062a5d2ff6b8fabf8bbaf4973e379679cf1408a26d13d3ee0ca"
-        },
-        {
-          "path": "README.md",
-          "anchor": "debian--ubuntu-apt",
-          "ordinal": 5,
-          "line": 50,
           "sha256": "5647298b8460512fdc69d40fc4e49e6d2f2d1fe51260df207cb9943907e59167"
         }
       ],
@@ -1381,7 +1374,7 @@
         {
           "id": "example-2",
           "adapter": "manual",
-          "raw": "echo \"deb [signed-by=/usr/share/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt trixie facelock\" |",
+          "raw": "echo \"deb [signed-by=/usr/share/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt trixie facelock\" | sudo tee /etc/apt/sources.list.d/facelock.list",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -1394,19 +1387,6 @@
         {
           "id": "example-3",
           "adapter": "manual",
-          "raw": "sudo tee /etc/apt/sources.list.d/facelock.list",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        },
-        {
-          "id": "example-4",
-          "adapter": "manual",
           "raw": "sudo apt update",
           "classification": "executable",
           "expect_exit": 0,
@@ -1418,7 +1398,7 @@
           "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
         },
         {
-          "id": "example-5",
+          "id": "example-4",
           "adapter": "manual",
           "raw": "sudo apt install facelock",
           "classification": "executable",
@@ -1466,21 +1446,21 @@
           "path": "README.md",
           "anchor": "fedora-copr",
           "ordinal": 1,
-          "line": 73,
+          "line": 72,
           "sha256": "2e795222d6d436e587ec1690c6a50343257ba9c66f6e2510ee0bd6fd65cfa5be"
         },
         {
           "path": "README.md",
           "anchor": "fedora-copr",
           "ordinal": 2,
-          "line": 74,
+          "line": 73,
           "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
         },
         {
           "path": "README.md",
           "anchor": "fedora-copr",
           "ordinal": 3,
-          "line": 75,
+          "line": 74,
           "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
         }
       ],
@@ -1560,14 +1540,14 @@
           "path": "README.md",
           "anchor": "from-source",
           "ordinal": 1,
-          "line": 85,
+          "line": 84,
           "sha256": "d091076a0b6859d8a04b9e50b052b819a80d6a4fe3b6336bdbbda387de310be0"
         },
         {
           "path": "README.md",
           "anchor": "from-source",
           "ordinal": 2,
-          "line": 86,
+          "line": 85,
           "sha256": "6082e4887a6f179f954cd8675b9e9f70206b23a40a9585b84f3fe9cb5f19bdef"
         }
       ],
@@ -1634,7 +1614,7 @@
           "path": "README.md",
           "anchor": "post-install",
           "ordinal": 1,
-          "line": 106,
+          "line": 105,
           "sha256": "13ece4f24ba1175dd24829a6e605712bee3c028c5505562d6f7dc6616ef1bb63"
         }
       ],
@@ -1689,7 +1669,7 @@
           "path": "README.md",
           "anchor": "uninstall",
           "ordinal": 1,
-          "line": 141,
+          "line": 140,
           "sha256": "d51310f315784b2a9c33e5d9294b3c51087ed1e1372dcfa10a29f3d34b1efbde"
         }
       ],
@@ -1743,28 +1723,28 @@
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 2,
-          "line": 254,
+          "line": 253,
           "sha256": "270315a785e93c84e21e959de6561428bf475b40b6096a19a5bdfc20555fa93d"
         },
         {
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 3,
-          "line": 255,
+          "line": 254,
           "sha256": "599de770b8b0e87ca01f6837e309d01e9847d347fd850d18ded4eb14e86cc015"
         },
         {
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 4,
-          "line": 256,
+          "line": 255,
           "sha256": "d3a74681ef70d90250e1ac050d1d8510753888e9da5dfee69b81ba6b1e5b3a3b"
         },
         {
           "path": "README.md",
           "anchor": "hyprlock-integration",
           "ordinal": 5,
-          "line": 257,
+          "line": 256,
           "sha256": "88017a21a68eb150eaaf2a5217d35e9b4d930661a74cdda87f8b3938f6073d15"
         }
       ],
@@ -1860,35 +1840,35 @@
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 1,
-          "line": 271,
+          "line": 270,
           "sha256": "f1c7b61a74c050d3b5044973e899c70b74cad56ae0d775a1c370227b2554e558"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 2,
-          "line": 272,
+          "line": 271,
           "sha256": "b4e7755cb3b54ed9400756f86c10c858a95d4439686e2d0a9bdb1752fd673066"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 3,
-          "line": 273,
+          "line": 272,
           "sha256": "501e0bb7eed827cbc90d37b2aa9536777f4893de0b075ef6269dacfba8f94671"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 4,
-          "line": 274,
+          "line": 273,
           "sha256": "0491e9aacca737903a046d7da3901ae168145ed83b3b07ce7ca67d1803b58d41"
         },
         {
           "path": "README.md",
           "anchor": "testing",
           "ordinal": 5,
-          "line": 275,
+          "line": 274,
           "sha256": "0d288d69cd7407b7c4f02c4f4d616356203ec2ae445f211d922317dbae06d6fb"
         }
       ],
@@ -1996,21 +1976,21 @@
           "path": "README.md",
           "anchor": "releasing",
           "ordinal": 1,
-          "line": 304,
+          "line": 303,
           "sha256": "29e78a6c2780f8195dd6def758c19769a7af32bb935dcff29d1cc51025473ffa"
         },
         {
           "path": "README.md",
           "anchor": "releasing",
           "ordinal": 2,
-          "line": 305,
+          "line": 304,
           "sha256": "c932b35fc3a91076a733f7102c49400e6bf24507e8de7243f9789c898295d73c"
         },
         {
           "path": "README.md",
           "anchor": "releasing",
           "ordinal": 3,
-          "line": 306,
+          "line": 305,
           "sha256": "2a4f6d2e6732e2f4816ee15011101bdda9a56aea8068ac90a4c8a332cc11c8a4"
         }
       ],
@@ -7732,62 +7712,55 @@
           "anchor": "published-packages",
           "ordinal": 13,
           "line": 74,
-          "sha256": "2c23cb438d760a78c3dbe9315a08258df691f9a0f01a83c44c776bf52bb9704b"
+          "sha256": "39cc6a6f465cccaad652684e38819b46c2b36d1b867c5dd50f06bfeed63e29a5"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
           "ordinal": 14,
           "line": 75,
-          "sha256": "fbb4f2e9a16dfac090576af21bcca2afd1aa851a733ea602d0e09fbc4e9558c1"
+          "sha256": "bec61f0cc5aa5062a5d2ff6b8fabf8bbaf4973e379679cf1408a26d13d3ee0ca"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
           "ordinal": 15,
           "line": 76,
-          "sha256": "bec61f0cc5aa5062a5d2ff6b8fabf8bbaf4973e379679cf1408a26d13d3ee0ca"
+          "sha256": "5647298b8460512fdc69d40fc4e49e6d2f2d1fe51260df207cb9943907e59167"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
-          "ordinal": 16,
-          "line": 77,
-          "sha256": "5647298b8460512fdc69d40fc4e49e6d2f2d1fe51260df207cb9943907e59167"
+          "ordinal": 19,
+          "line": 101,
+          "sha256": "2e795222d6d436e587ec1690c6a50343257ba9c66f6e2510ee0bd6fd65cfa5be"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
           "ordinal": 20,
           "line": 102,
-          "sha256": "2e795222d6d436e587ec1690c6a50343257ba9c66f6e2510ee0bd6fd65cfa5be"
+          "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
           "ordinal": 21,
           "line": 103,
-          "sha256": "8eba45884730ed55afa2db83c25b9c3705d77ef531e049660a90a340c7fa6271"
+          "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
           "ordinal": 22,
-          "line": 104,
-          "sha256": "cca1272f7cd7cdad6f442a207120a0fe883056fa32d47a38752e2b5835dc147e"
+          "line": 109,
+          "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "published-packages",
           "ordinal": 23,
           "line": 110,
-          "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
-        },
-        {
-          "path": "docs/quickstart.md",
-          "anchor": "published-packages",
-          "ordinal": 24,
-          "line": 111,
           "sha256": "f64e829871b2f7998fdbf8a8f7c4a36f917acc719880c9d14bc6565a6f1607ca"
         }
       ],
@@ -7938,7 +7911,7 @@
         {
           "id": "example-12",
           "adapter": "manual",
-          "raw": "echo \"deb [signed-by=/usr/share/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt trixie facelock\" |",
+          "raw": "echo \"deb [signed-by=/usr/share/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt trixie facelock\" | sudo tee /etc/apt/sources.list.d/facelock.list",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -7951,7 +7924,7 @@
         {
           "id": "example-13",
           "adapter": "manual",
-          "raw": "sudo tee /etc/apt/sources.list.d/facelock.list",
+          "raw": "sudo apt update",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -7964,7 +7937,7 @@
         {
           "id": "example-14",
           "adapter": "manual",
-          "raw": "sudo apt update",
+          "raw": "sudo apt install facelock",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -7977,7 +7950,7 @@
         {
           "id": "example-15",
           "adapter": "manual",
-          "raw": "sudo apt install facelock",
+          "raw": "sudo dnf install dnf5-plugins",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -7990,7 +7963,7 @@
         {
           "id": "example-16",
           "adapter": "manual",
-          "raw": "sudo dnf install dnf5-plugins",
+          "raw": "sudo dnf copr enable tyvsmith/facelock",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -8003,7 +7976,7 @@
         {
           "id": "example-17",
           "adapter": "manual",
-          "raw": "sudo dnf copr enable tyvsmith/facelock",
+          "raw": "sudo dnf install facelock",
           "classification": "executable",
           "expect_exit": 0,
           "expect_output": "",
@@ -8016,19 +7989,6 @@
         {
           "id": "example-18",
           "adapter": "manual",
-          "raw": "sudo dnf install facelock",
-          "classification": "executable",
-          "expect_exit": 0,
-          "expect_output": "",
-          "expect_state": [
-            "documented-effect-observed"
-          ],
-          "timeout_seconds": 1800,
-          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
-        },
-        {
-          "id": "example-19",
-          "adapter": "manual",
           "raw": "sudo facelock setup",
           "classification": "executable",
           "expect_exit": 0,
@@ -8040,7 +8000,7 @@
           "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
         },
         {
-          "id": "example-20",
+          "id": "example-19",
           "adapter": "manual",
           "raw": "sudo facelock test",
           "classification": "executable",
@@ -8091,112 +8051,112 @@
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 1,
-          "line": 135,
+          "line": 134,
           "sha256": "ff8195c4ae6218ff221c52bc8fddd04740ffe18424173f6bae17f94a689e13a2"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 2,
-          "line": 143,
+          "line": 142,
           "sha256": "bec61f0cc5aa5062a5d2ff6b8fabf8bbaf4973e379679cf1408a26d13d3ee0ca"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 3,
-          "line": 144,
+          "line": 143,
           "sha256": "d083d8c1835c7a878a0028ffe95a9d8657a34bf54d9c77df60cf96f48fe8c42d"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 4,
-          "line": 145,
+          "line": 144,
           "sha256": "688d76820168760e13f5199233f25c2fa8f6e0b0f4da4b0d4b6eee06564398b6"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 5,
-          "line": 151,
+          "line": 150,
           "sha256": "bec61f0cc5aa5062a5d2ff6b8fabf8bbaf4973e379679cf1408a26d13d3ee0ca"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 6,
-          "line": 152,
+          "line": 151,
           "sha256": "01d7cf22bcecf66729c8d81a6ed4b9e9b796968f7d83ab5fe387b53eb8ea1ae0"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 8,
-          "line": 160,
+          "line": 159,
           "sha256": "d75ce10dd306f1d3969df3610179fe1364f05b90fa2be6b3d087c4badc3db984"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 9,
-          "line": 176,
+          "line": 175,
           "sha256": "48d6b8aecaf932ce9c5e7f8943e9e680f516bd62a91a97583bbdf775c9f4c911"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 10,
-          "line": 177,
+          "line": 176,
           "sha256": "6082e4887a6f179f954cd8675b9e9f70206b23a40a9585b84f3fe9cb5f19bdef"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 15,
-          "line": 188,
+          "line": 187,
           "sha256": "fad0225732307d9b8666dc48f93369322752b5acd641d744cde3a6d1c99155de"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 16,
-          "line": 189,
+          "line": 188,
           "sha256": "21df8681af24fdd4a24c8e7533d7c69725728fedd70374ac46b437b03686b526"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 17,
-          "line": 190,
+          "line": 189,
           "sha256": "e1a93dce67650786cc6126129be6427d1a8a96c0560e61b310b30e44e61bde57"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 18,
-          "line": 191,
+          "line": 190,
           "sha256": "db33444f34d115dce2f155297f23c717c86dd22e1e95cd0e44bf71ad6bec9fcf"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 19,
-          "line": 203,
+          "line": 202,
           "sha256": "ee643003c3bebb06741967affae1785b90ae552fcbf30142419a9d7fa0415d59"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 20,
-          "line": 204,
+          "line": 203,
           "sha256": "ca4e91b10e08b3eea684df028fbcf56cc07df5f8abd9b5adc0dc30d78a7cc355"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "source-build-prerequisites",
           "ordinal": 21,
-          "line": 205,
+          "line": 204,
           "sha256": "f64e829871b2f7998fdbf8a8f7c4a36f917acc719880c9d14bc6565a6f1607ca"
         }
       ],
@@ -8448,35 +8408,35 @@
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 1,
-          "line": 244,
+          "line": 243,
           "sha256": "7047dae1de5957a90be1c7a3cfcc6abe298930cbfcdd6838f4a06295a7d565ce"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 2,
-          "line": 245,
+          "line": 244,
           "sha256": "97fe7e4851d163ea954392ba9c6fbfa704c8f3e1ef28996b794b45a7b4551907"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 3,
-          "line": 246,
+          "line": 245,
           "sha256": "d8e28448d4f6a66c71332ec6cc573065c0863083d2dde4dbd395d6fe1c8882a1"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 4,
-          "line": 247,
+          "line": 246,
           "sha256": "b01a1ffc2b4ef9721bb5ce35a004dd6ce17743083fa0670424a5caeb985dd7a6"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "explore-safely",
           "ordinal": 5,
-          "line": 248,
+          "line": 247,
           "sha256": "c5daf997e938d2c8a1aeed87aaf0e3f000d211290ff0fdd9861be7ce2fa738ed"
         }
       ],
@@ -8583,21 +8543,21 @@
           "path": "docs/quickstart.md",
           "anchor": "package-lifecycle-and-retained-data",
           "ordinal": 1,
-          "line": 260,
+          "line": 259,
           "sha256": "4547cf4ed51d13a8755d4c904f2a1773778fb1af9481d51ac64373378ec09873"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "package-lifecycle-and-retained-data",
           "ordinal": 3,
-          "line": 275,
+          "line": 274,
           "sha256": "b2eaa0d6e49d61a0a83ddb30434dfff25bda1608545252375dd2eeca201b320a"
         },
         {
           "path": "docs/quickstart.md",
           "anchor": "package-lifecycle-and-retained-data",
           "ordinal": 4,
-          "line": 276,
+          "line": 275,
           "sha256": "cd370c0da2fc6b4b0a0c94762df10329fb29a2eec64e260f87f372c4856d9178"
         }
       ],

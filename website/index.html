@@ -363,7 +363,7 @@
               <div><span class="prompt">$</span> <span class="command">sudo facelock setup</span></div>
             </div>
           </div>
-          <p class="install-note">Ubuntu 26.04 writes <code>resolute</code> in place of <code>trixie</code>. <a href="docs/quickstart.html#published-packages">Check the keyring fingerprint</a> before trusting the source, or install the suite-specific <code>.deb</code> directly from the release.</p>
+          <p class="install-note">On Ubuntu 26.04, use <code>resolute</code> instead of <code>trixie</code> in the source line. <a href="docs/quickstart.html#published-packages">Check the keyring fingerprint</a> before trusting the source, or install the suite-specific <code>.deb</code> directly from the release.</p>
           <p class="install-note migration">Under the compatibility policy, existing v0.1.4 entries naming <code>main</code> or <code>legacy</code> keep working until 0.3.0. <code>main</code> maps to Trixie and <code>legacy</code> exports empty indexes. At 0.3.0, <code>apt update</code> fails until the entry is removed. Rewrite those entries to <code>trixie</code> or <code>resolute</code> now.</p>
         </div>
 

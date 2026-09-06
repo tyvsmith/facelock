@@ -71,13 +71,12 @@ install the package:
 ```bash
 sudo curl -fsSL https://tysmith.me/facelock/apt/tysmith-archive-keyring.gpg \
   -o /usr/share/keyrings/tysmith-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt trixie facelock" |
-  sudo tee /etc/apt/sources.list.d/facelock.list
+echo "deb [signed-by=/usr/share/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt trixie facelock" | sudo tee /etc/apt/sources.list.d/facelock.list
 sudo apt update
 sudo apt install facelock
 ```
 
-On Ubuntu 26.04, write `resolute` where that source line says `trixie`. The
+On Ubuntu 26.04, use `resolute` instead of `trixie` in the source line. The
 keyring holds one rsa4096 key, `Ty Smith (Package Signing)
 <packages@m.tysmith.me>`, fingerprint
 `E7F8A4C424C6D59BD38536B536A81FCD934C17CE`, checked on 2026-09-06. Confirm it

@@ -44,13 +44,12 @@ install the package:
 ```bash
 sudo curl -fsSL https://tysmith.me/facelock/apt/tysmith-archive-keyring.gpg \
   -o /usr/share/keyrings/tysmith-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt trixie facelock" |
-  sudo tee /etc/apt/sources.list.d/facelock.list
+echo "deb [signed-by=/usr/share/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt trixie facelock" | sudo tee /etc/apt/sources.list.d/facelock.list
 sudo apt update
 sudo apt install facelock
 ```
 
-On Ubuntu 26.04, write `resolute` where that source line says `trixie`. Both
+On Ubuntu 26.04, use `resolute` instead of `trixie` in the source line. Both
 suites are amd64 only. The [quickstart](docs/quickstart.md#published-packages)
 carries the signing key fingerprint to check the downloaded keyring against.
 
