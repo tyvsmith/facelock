@@ -153,6 +153,11 @@ post-install prompts. The source package text now directs users to the setup
 wizard; Quick Start explains the redundant alpha.4 prompt. Published alpha.4
 bytes were not replaced.
 
+Package descriptions now use the same bounded security claims as the guides,
+and Arch/RPM removal prompts no longer promise that an unmodified package-owned
+configuration file survives removal. The lifecycle contract remains the
+authority for `.pacsave` and `.rpmsave` handling.
+
 The documentation audit and published-alpha inspection do not require stable
 0.2.0 publication. Stable AUR, codenamed APT and production COPR still need a
 separate post-publication check of their actual packages and metadata. The

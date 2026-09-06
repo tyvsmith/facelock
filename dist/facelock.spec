@@ -50,12 +50,11 @@ Requires(pre):  coreutils
 
 %description
 Facelock provides Windows Hello-style face authentication for Linux
-using IR anti-spoofing, ONNX inference, and PAM integration.
+with layered static-presentation checks, local ONNX inference, and PAM integration.
 
-Features include persistent daemon with D-Bus activation for fast
-authentication, oneshot mode for systems without systemd,
-IR camera requirement to prevent photo spoofing, frame variance
-checks, and rate limiting.
+Features include a persistent daemon with D-Bus activation, a daemonless
+one-shot mode, IR camera enforcement enabled by default, frame-variance
+checks, and rate limiting. These checks do not guarantee spoof resistance.
 
 After installation, run 'sudo facelock setup'. The wizard downloads face
 recognition models and offers face enrollment and PAM configuration.
@@ -194,7 +193,7 @@ fi
 if [ $1 -eq 0 ]; then
     echo ""
     echo "facelock uninstalled. User data preserved at:"
-    echo "  /etc/facelock/      (config.toml, encryption.key.sealed, setup markers)"
+    echo "  /etc/facelock/      (keys, setup state, and any package-manager-retained configuration)"
     echo "  /var/lib/facelock/  (face database, ONNX models)"
     echo "  /var/log/facelock/  (audit logs and snapshots)"
     echo ""

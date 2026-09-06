@@ -341,6 +341,12 @@ for surface in debian/control debian/postinst dist/facelock.spec; do
     reject_text "$surface" 'sudo facelock enroll'
     require_text "$surface" 'sudo facelock setup'
 done
+for surface in debian/control dist/facelock.spec; do
+    reject_text "$surface" 'prevent photo spoofing'
+done
+for surface in dist/facelock.spec dist/facelock.install; do
+    reject_text "$surface" '(config.toml, encryption.key.sealed, setup markers)'
+done
 
 lifecycle_messages=(
     justfile

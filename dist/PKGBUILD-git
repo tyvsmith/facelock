@@ -2,7 +2,7 @@
 pkgname=facelock-git
 pkgver=0.2.0alpha4
 pkgrel=1
-pkgdesc="Face authentication PAM module for Linux (development build)"
+pkgdesc="Face authentication for Linux PAM (development build)"
 arch=('x86_64')
 url="https://github.com/tyvsmith/facelock"
 license=('MIT OR Apache-2.0')

@@ -13,7 +13,7 @@ case "$1" in
         # Models are public, SHA256-verified downloads.
         chown root:root /var/lib/facelock/models 2>/dev/null || true
         chmod 755 /var/lib/facelock/models 2>/dev/null || true
-        # `facelock is-enrolled` marker dir: traversable by all, listable by none.
+        # `facelock is-enrolled` marker dir: traversable by all, listable by root only.
         install -d -o root -g root -m 0711 /var/lib/facelock/enrolled 2>/dev/null || true
         # PAM rollback state contains complete service files: root-only.
         install -d -o root -g root -m 0700 /var/lib/facelock/pam-backups 2>/dev/null || true
