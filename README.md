@@ -2,11 +2,11 @@
 
 # Facelock: Face Authentication for Linux
 
-> **Release status (checked 2026-09-05):** v0.1.4 is the latest stable release.
-> The current prerelease is
-> [v0.2.0-alpha.4](https://github.com/tyvsmith/facelock/releases/tag/v0.2.0-alpha.4),
-> published with direct Debian 13, Ubuntu 26.04, and Fedora 44 packages.
-> Prereleases intentionally do not enter stable AUR, APT, or production COPR.
+> **Release status (checked 2026-09-06):** v0.2.0 is the latest stable release,
+> published with direct Debian 13, Ubuntu 26.04, and Fedora 44 packages. The AUR
+> entries and both APT suites serve it. Production COPR is the exception: it
+> still serves v0.1.3, so Fedora users should take the direct RPM or the source
+> path until it catches up.
 
 A modern face authentication system for Linux PAM. Provides Windows Hello-style
 facial auth with IR-required capture and layered static-presentation checks,
@@ -20,45 +20,54 @@ telemetry. Your biometric data never leaves your machine.
 
 This installs the stable source-build package. `facelock-bin` is the prebuilt
 alternative and `facelock-git` follows development; all three AUR entries
-served version 0.1.4-1 when checked on 2026-09-05.
-The live `facelock-git` recipe still omitted its required ONNX Runtime
-dependency at that check; use the source-build prerequisites below instead of
-treating that AUR entry as a verified current-tree installation.
+served version 0.2.0-1 when checked on 2026-09-06, and each declares the
+`onnxruntime` dependency the binary loads at runtime.
 
 ```bash
 yay -S facelock           # or paru -S facelock
 ```
 
-### Debian / Ubuntu (APT status)
+### Debian / Ubuntu (APT)
 
 Debian-family release support is exactly Debian 13 (Trixie) and Ubuntu 26.04
-LTS (Resolute). Those exact suites are the 0.2.0 stable publication contract,
-but they are not currently served: clean checks of both codenamed `Release`
-URLs returned 404 on 2026-09-05. Do not add that source until a stable 0.2.0
-release publishes it.
+LTS (Resolute). Both codenamed suites are published at
+`https://tysmith.me/facelock/apt` and served 0.2.0 when checked on 2026-09-06:
 
-The future public base is `https://tysmith.me/facelock/apt`; this mapping is a
-release contract, not a currently usable repository:
-
-| Future stable target | Suite | Required package capability |
-|----------------------|-------|-----------------------------|
+| Supported target | Suite | Required package capability |
+|------------------|-------|-----------------------------|
 | Debian 13 | `trixie` | TPM |
 | Ubuntu 26.04 | `resolute` | TPM |
 
-Source entries written for v0.1.4 name the `main` or `legacy` suite. Both
-returned a signed `Release` file on 2026-09-05. The release policy says they
+Install the archive keyring, write a source entry naming your codename, then
+install the package:
+
+```bash
+sudo curl -fsSL https://tysmith.me/facelock/apt/tysmith-archive-keyring.gpg \
+  -o /usr/share/keyrings/tysmith-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt trixie facelock" |
+  sudo tee /etc/apt/sources.list.d/facelock.list
+sudo apt update
+sudo apt install facelock
+```
+
+On Ubuntu 26.04, write `resolute` where that source line says `trixie`. Both
+suites are amd64 only. The [quickstart](docs/quickstart.md#published-packages)
+carries the signing key fingerprint to check the downloaded keyring against.
+
+Source entries written for v0.1.4 name the `main` or `legacy` suite. They
 keep working until 0.3.0: `main` maps to the Trixie package set and `legacy`
 serves signed empty indexes. At 0.3.0, `apt update` fails until the entry is
-removed. Bookworm, Noble, and Ubuntu 25.x have no future suite. Use the source
-build below for the current alpha tree.
+removed. Rewrite those entries to your operating system's codename now.
+Bookworm, Noble, and Ubuntu 25.x have no suite.
 
 ### Fedora (COPR)
 
-The supported COPR targets are Fedora 43, 44, and 45. On 2026-09-05, the
-production COPR served v0.1.3 on all three, behind the v0.1.4 stable release;
-use the source path below if you need the current tree. The staging COPR is a
-candidate channel, not a stable installation source. RHEL is not in the
-supported matrix.
+The supported COPR targets are Fedora 43, 44, and 45. On 2026-09-06 the
+production COPR served v0.1.3 on all three, behind the v0.2.0 stable release,
+so the commands below install 0.1.3 rather than the current release. Install
+the [direct 0.2.0 RPM](docs/quickstart.md#published-packages) or build from
+source until COPR catches up. The staging COPR is a candidate channel, not a
+stable installation source. RHEL is not in the supported matrix.
 
 ```bash
 sudo dnf install dnf5-plugins
@@ -303,8 +312,8 @@ each supported suite. Those builds are not publication proof: the release and
 every required asset must be present and verified. Stable releases publish
 AUR/APT and enable production COPR handling;
 prereleases must not enter those stable channels.
-[v0.2.0-alpha.4](https://github.com/tyvsmith/facelock/releases/tag/v0.2.0-alpha.4)
-is a published prerelease with direct package assets. See
+[v0.2.0](https://github.com/tyvsmith/facelock/releases/tag/v0.2.0) is the
+latest stable release, published with direct package assets. See
 [docs/releasing.md](docs/releasing.md) for the gates and versioning contract.
 
 ## License

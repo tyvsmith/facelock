@@ -57,15 +57,15 @@ case it actually exercised.
 
 ## Release and packaging status
 
-v0.1.4 is the latest published stable release. v0.2.0-alpha.4 is published as
-a prerelease with direct package artifacts. Prereleases do not enter stable
-APT, AUR, or production COPR. The production COPR currently serves
-v0.1.3; Fedora staging is a candidate channel. The exact supported release
-matrix is Fedora 43/44/45, Debian 13, and Ubuntu 26.04, not RHEL.
+v0.2.0 is the latest published stable release, with direct package artifacts.
+Prereleases do not enter stable APT, AUR, or production COPR. The AUR entries
+and both APT suites serve 0.2.0; the production COPR still serves v0.1.3, and
+Fedora staging is a candidate channel. The exact supported release matrix is
+Fedora 43/44/45, Debian 13, and Ubuntu 26.04, not RHEL.
 
 A stable release is expected to carry two suite-specific `.deb` artifacts for
-trixie and resolute. Alpha.4 carries direct suite packages, but that does not
-mean either future APT suite is currently published or installable.
+trixie and resolute. v0.2.0 carries both, and both codenamed APT suites are
+published from them.
 
 The Nix flake/module and OpenRC, runit, and s6 templates live in the source
 tree. Nix is not in nixpkgs and its derivation disables `doCheck`; the init

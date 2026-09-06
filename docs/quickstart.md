@@ -2,42 +2,44 @@
 
 ## Published packages
 
-As checked on 2026-09-05, v0.1.4 is the latest stable release. The current
-prerelease, [v0.2.0-alpha.4](https://github.com/tyvsmith/facelock/releases/tag/v0.2.0-alpha.4),
-is published with direct package assets. Prereleases intentionally do not enter
-the stable AUR, APT, or production COPR channels.
+As checked on 2026-09-06,
+[v0.2.0](https://github.com/tyvsmith/facelock/releases/tag/v0.2.0) is the
+latest stable release. The AUR entries and both APT suites serve it; the
+production COPR does not yet.
 
 The following SHA256 values are pinned from the release's
-[MANIFEST.json](https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/MANIFEST.json).
+[MANIFEST.json](https://github.com/tyvsmith/facelock/releases/download/v0.2.0/MANIFEST.json).
 Each command chain verifies the downloaded bytes before invoking the package
 manager; stop if verification fails. These checks establish integrity against
 the reviewed release, not an independent signing or build attestation.
 
-For Debian 13 amd64, install the published alpha package directly:
+For Debian 13 amd64, install the published package directly:
 
 ```bash
-curl -fLO https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/facelock_0.2.0.alpha.4-1.deb13u1_amd64.deb &&
-printf '%s  %s\n' '36fede353b2eed7ab98e7ecf1ca4cca5ae7e6ab6820df8de27734c4a992467aa' 'facelock_0.2.0.alpha.4-1.deb13u1_amd64.deb' | sha256sum --check - &&
-sudo apt install ./facelock_0.2.0.alpha.4-1.deb13u1_amd64.deb
+curl -fLO https://github.com/tyvsmith/facelock/releases/download/v0.2.0/facelock_0.2.0-1.deb13u1_amd64.deb &&
+printf '%s  %s\n' '2554a1dcd4eca7bb1e3c2f2fbafbffa31d2c6a84210d32e9e221ece9e6e8dace' 'facelock_0.2.0-1.deb13u1_amd64.deb' | sha256sum --check - &&
+sudo apt install ./facelock_0.2.0-1.deb13u1_amd64.deb
 ```
 
 For Ubuntu 26.04 amd64, use the corresponding suite build:
 
 ```bash
-curl -fLO https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/facelock_0.2.0.alpha.4-1.ubuntu26.04.1_amd64.deb &&
-printf '%s  %s\n' 'cdddbdb6a3e7a1fa9ac56de0f8521ca9538ba01495ef9744aa18bc158646f8a2' 'facelock_0.2.0.alpha.4-1.ubuntu26.04.1_amd64.deb' | sha256sum --check - &&
-sudo apt install ./facelock_0.2.0.alpha.4-1.ubuntu26.04.1_amd64.deb
+curl -fLO https://github.com/tyvsmith/facelock/releases/download/v0.2.0/facelock_0.2.0-1.ubuntu26.04.1_amd64.deb &&
+printf '%s  %s\n' 'ee4bc06963752bf39e888c2d10ba5229f256978d0b14b134463e19525b323d79' 'facelock_0.2.0-1.ubuntu26.04.1_amd64.deb' | sha256sum --check - &&
+sudo apt install ./facelock_0.2.0-1.ubuntu26.04.1_amd64.deb
 ```
 
-The dots in those download filenames are GitHub-safe stored names. Once
-installed, Debian reports the native versions `0.2.0~alpha.4-1~deb13u1` and
-`0.2.0~alpha.4-1~ubuntu26.04.1`; the tildes preserve prerelease ordering.
-Fedora 44 x86_64 users can install the direct release RPM:
+The dots in those download filenames are GitHub-safe stored names.
+`MANIFEST.json` records the native names `facelock_0.2.0-1~deb13u1_amd64.deb`
+and `facelock_0.2.0-1~ubuntu26.04.1_amd64.deb`, and Debian reports the
+installed versions `0.2.0-1~deb13u1` and `0.2.0-1~ubuntu26.04.1`. The bytes and
+the checksum are the same either way. Fedora 44 x86_64 users can install the
+direct release RPM:
 
 ```bash
-curl -fLO https://github.com/tyvsmith/facelock/releases/download/v0.2.0-alpha.4/facelock-0.2.0-0.4.alpha.4.fc44.x86_64.rpm &&
-printf '%s  %s\n' '788fb323f8dcb27f99591a175d40fcc05bd81afbe5e1efbcc01b48a19ffe26f1' 'facelock-0.2.0-0.4.alpha.4.fc44.x86_64.rpm' | sha256sum --check - &&
-sudo dnf install ./facelock-0.2.0-0.4.alpha.4.fc44.x86_64.rpm
+curl -fLO https://github.com/tyvsmith/facelock/releases/download/v0.2.0/facelock-0.2.0-1.fc44.x86_64.rpm &&
+printf '%s  %s\n' '65cf7d3167979daa8d5af6f0e5c96c25d21c6b27b07a47d8dd212007fab725c5' 'facelock-0.2.0-1.fc44.x86_64.rpm' | sha256sum --check - &&
+sudo dnf install ./facelock-0.2.0-1.fc44.x86_64.rpm
 ```
 
 The separately downloadable `facelock`, PAM module, and polkit-agent binaries
@@ -45,46 +47,56 @@ are release components, not a complete installation. They do not install the
 configuration, models, service and D-Bus policy, PAM layout, or required shared
 libraries; use a native package or the source installation path instead.
 
-The published alpha.4 Debian and RPM package prompts say to run `setup` and
-then `enroll`. That second command is redundant when setup's enrollment step
-succeeds; run it only if enrollment was skipped or did not complete.
-
 Arch users can install the stable source-build AUR package. `facelock-bin` is
 the prebuilt alternative and `facelock-git` follows development; all three AUR
-entries served version 0.1.4-1 on 2026-09-05.
-The live `facelock-git` recipe still omitted its required ONNX Runtime
-dependency at that check. Its source tracks development, but it is not a
-verified current-tree installation path until the published recipe is fixed.
+entries served version 0.2.0-1 on 2026-09-06, and each declares the
+`onnxruntime` dependency the binary loads at runtime.
 
 ```bash
 yay -S facelock
 ```
 
-Debian 13 (`trixie`) and Ubuntu 26.04 LTS (`resolute`) on amd64 are the exact
-0.2.0 stable APT targets. They are not currently served: the clean-system
-checks of the documented `trixie` and `resolute` Release URLs returned 404 on
-2026-09-05. Do not add either source until a stable 0.2.0 release publishes it.
-Their future public base is `https://tysmith.me/facelock/apt`. This is release
-policy, not a claim that the suites are currently installable:
+Debian 13 (`trixie`) and Ubuntu 26.04 LTS (`resolute`) on amd64 are the 0.2.0
+stable APT targets. Both suites are published at
+`https://tysmith.me/facelock/apt` and served 0.2.0 when checked on 2026-09-06:
 
-| Future stable target | Suite | Architecture | Required capability |
-|----------------------|-------|--------------|---------------------|
+| Supported target | Suite | Architecture | Required capability |
+|------------------|-------|--------------|---------------------|
 | Debian 13 | `trixie` | amd64 | TPM |
 | Ubuntu 26.04 | `resolute` | amd64 | TPM |
 
-Existing v0.1.4 entries naming `main` or `legacy` returned signed Release
-metadata on 2026-09-05. Under the compatibility policy, these names keep working until
-0.3.0: starting with the 0.2.0 stable publication, `main` maps to the Trixie
-package set and `legacy` serves signed empty indexes. At 0.3.0, `apt update`
-fails until the entry is removed. The alpha is available only as direct release
-packages, not through APT; metadata availability alone does not verify package
-contents.
+Install the archive keyring, write a source entry naming your codename, then
+install the package:
 
-The production COPR targets Fedora 43, 44, and 45 only. On 2026-09-05 it served
-v0.1.3 on all three, behind stable v0.1.4. `tyvsmith/facelock-testing` is a
-staging/candidate project, not a stable channel. RHEL is not in the supported
-matrix. Fedora's `dnf copr` command comes from `dnf5-plugins`; installing it is
-idempotent, and minimal installations may not include it.
+```bash
+sudo curl -fsSL https://tysmith.me/facelock/apt/tysmith-archive-keyring.gpg \
+  -o /usr/share/keyrings/tysmith-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt trixie facelock" |
+  sudo tee /etc/apt/sources.list.d/facelock.list
+sudo apt update
+sudo apt install facelock
+```
+
+On Ubuntu 26.04, write `resolute` where that source line says `trixie`. The
+keyring holds one rsa4096 key, `Ty Smith (Package Signing)
+<packages@m.tysmith.me>`, fingerprint
+`E7F8A4C424C6D59BD38536B536A81FCD934C17CE`, checked on 2026-09-06. Confirm it
+with `gpg --show-keys` before trusting the source; `signed-by` scopes that key
+to this repository alone, and `apt update` rejects the suite if the archive
+signature does not match.
+
+Existing v0.1.4 entries naming `main` or `legacy` keep working until 0.3.0:
+`main` maps to the Trixie package set and `legacy` serves signed empty indexes.
+At 0.3.0, `apt update` fails until the entry is removed. Rewrite those entries
+to your operating system's codename now.
+
+The production COPR targets Fedora 43, 44, and 45 only. On 2026-09-06 it served
+v0.1.3 on all three, behind stable v0.2.0, so the commands below install 0.1.3
+rather than the current release. Use the direct RPM above until COPR catches
+up. `tyvsmith/facelock-testing` is a staging/candidate project, not a stable
+channel. RHEL is not in the supported matrix. Fedora's `dnf copr` command comes
+from `dnf5-plugins`; installing it is idempotent, and minimal installations may
+not include it.
 
 ```bash
 sudo dnf install dnf5-plugins
@@ -157,7 +169,7 @@ A source build can compile and run non-inference commands such as `--help`,
 but enrollment, authentication, preview, and inference benchmarks require a
 separately installed compatible ONNX Runtime 1.20+ in a trusted runtime
 location. Merely adding a symlink does not repair a mismatched SONAME.
-The published alpha.4 `.deb` packages bundle the compatible CPU runtime 1.20.1;
+The published `.deb` packages bundle the compatible CPU runtime 1.20.1;
 this is not supplied by Cargo.
 
 ```bash

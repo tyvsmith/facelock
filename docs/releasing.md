@@ -2,15 +2,13 @@
 
 ## Current channel observation
 
-The following is a dated 2026-09-05 observation: v0.1.4 was then the latest
-published GitHub release and the v0.2.0-alpha.1 tag pointed to commit `53385c5`
-but had no GitHub Release. The
-`trixie` and `resolute` APT Release URLs return 404; the compatibility `main`
-and `legacy` suites return signed Release metadata. Production COPR serves
-0.1.3-1 on Fedora 43, 44, and 45, not the stable 0.1.4-1 predecessor. These are
-availability observations, not changes to the release policy below. Since that
-audit, v0.2.0-alpha.4 has been published as a prerelease with direct artifacts;
-stable AUR, APT, and production COPR publication remains skipped by policy.
+The following is a dated 2026-09-06 observation: v0.2.0 is the latest published
+GitHub release. The `trixie` and `resolute` APT Release URLs return signed
+metadata for 0.2.0-1, `main` serves the same Trixie package, and `legacy`
+serves signed empty indexes. All three AUR entries serve 0.2.0-1. Production
+COPR still serves 0.1.3-1 on Fedora 43, 44, and 45, behind the stable release,
+so `dnf copr enable` installs 0.1.3 until a 0.2.0 build lands there. These are
+availability observations, not changes to the release policy below.
 
 ## Versioning
 
@@ -904,12 +902,12 @@ release remains unpublished.
    ```bash
    gpg --full-generate-key
    # Select RSA 4096, expiry 3y
-   # UID: Ty Smith Package Signing <packages@tysmith.me>
+   # UID: Ty Smith (Package Signing) <packages@m.tysmith.me>
    ```
 
 2. Export and add the private key as a GitHub secret:
    ```bash
-   gpg --armor --export-secret-keys "packages@tysmith.me" | gh secret set APT_GPG_PRIVATE_KEY
+   gpg --armor --export-secret-keys "packages@m.tysmith.me" | gh secret set APT_GPG_PRIVATE_KEY
    ```
 
 3. Add the passphrase as a GitHub secret:
@@ -941,7 +939,7 @@ Prerelease packages are never inserted into any of these stable suites.
 Stable publication requires exactly one suite-matching package for both
 codenames before signing or repository writes begin.
 
-The APT repo is hosted at `https://tysmith.me/facelock/apt/` alongside the docs site. The public keyring is at `https://tysmith.me/facelock/apt/tysmith-archive-keyring.gpg`.
+The APT repo is hosted at `https://tysmith.me/facelock/apt/` alongside the docs site. The public keyring is at `https://tysmith.me/facelock/apt/tysmith-archive-keyring.gpg`. It carried one rsa4096 key when checked on 2026-09-06: `Ty Smith (Package Signing) <packages@m.tysmith.me>`, fingerprint `E7F8A4C424C6D59BD38536B536A81FCD934C17CE`, expiring 2029-03-27. Rotate before that date; the published user documentation quotes this fingerprint, so update it in the same release.
 
 **GPG key rotation**: When the signing key expires, generate a new key, update the `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE` secrets, and cut a new release. The public keyring is re-exported on every release, so users who re-fetch it will get the updated key.
 
