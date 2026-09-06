@@ -67,11 +67,15 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Build release
-        run: cargo build --release --workspace
+        run: cargo build --release --workspace --features tpm
 
       - name: Prepare artifacts
         run: |
           mkdir -p release
+          # facelock-bin (dist/PKGBUILD-bin) declares a tpm2-tss dependency,
+          # so the repackaged binary must actually link against it (#355).
+          ldd target/release/facelock | grep -q libtss2-esys \
+            || { echo "facelock is not linked against libtss2-esys: the tpm feature is missing" >&2; exit 1; }
           cp target/release/facelock release/facelock-x86_64-linux-gnu
           cp target/release/libpam_facelock.so release/pam_facelock.so
           cp target/release/facelock-polkit-agent release/facelock-polkit-agent-x86_64-linux-gnu

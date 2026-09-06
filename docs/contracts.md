@@ -2451,6 +2451,9 @@ release until it does.
   artifact other than its producer's is a builder's extra output; the release
   fails closed on it, and the failure names the remedy: fix the builder and
   re-run all jobs, since re-running only the failed job keeps the artifact.
+  `build` compiles the workspace with `--features tpm`, matching the deb and
+  rpm builders, and fails if the resulting binary does not link
+  `libtss2-esys`.
 - Every staged asset matches the SHA-256 its builder attested. Each builder
   writes a `release-digests-<slot>` artifact naming what it produced, the image
   it produced it in, and the components it consumed. An asset attested by no
