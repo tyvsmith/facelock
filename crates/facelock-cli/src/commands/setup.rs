@@ -1253,9 +1253,10 @@ fn provider_default_index(detected: Option<facelock_face::ProviderKind>, current
 /// Menu labels for the inference-device prompt, in `PROVIDER_CHOICES` order.
 ///
 /// The base text names all four providers unconditionally — detection can
-/// fail, and even a plain listing lets a user pick a provider that later
-/// setup steps (`warn_provider_preflight`) can check for the packages it
-/// needs. When detection succeeded, each GPU entry gets an `[available]` or
+/// fail, and even a plain listing lets a user pick a provider; the
+/// post-selection `ProviderNotInRuntime` warning covers any GPU provider the
+/// runtime lacks, and `warn_provider_preflight` adds CUDA's driver and
+/// runtime checks. When detection succeeded, each GPU entry gets an `[available]` or
 /// `[not in this ONNX Runtime build]` suffix. CPU never gets a suffix: it is
 /// not part of `ProviderDetection::available` (that list is GPU-only, see
 /// `ProviderKind::AUTO_PRIORITY`) and is always usable, so there is nothing
