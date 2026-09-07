@@ -7,12 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-07
+
 ### Changed
 
 - **The setup wizard's inference-device prompt now defaults from the installed ONNX Runtime** (#352):
   it probes the runtime the same way `--execution-provider=auto` does and highlights the provider it
-  finds, instead of always defaulting to CPU. The prompt also lists all four providers — CPU, CUDA,
-  ROCm, OpenVINO — annotating each GPU option as available or not in the installed build, rather than
+  finds, instead of always defaulting to CPU. The prompt also lists all four providers (CPU, CUDA,
+  ROCm, OpenVINO), annotating each GPU option as available or not in the installed build, rather than
   offering only CPU and CUDA. It now warns separately when the probe itself fails (the wizard still
   lets you choose by hand) and when the chosen provider is one the installed runtime does not report.
   The `auto` runtime search also widened to check the ROCm directories it previously only checked for
@@ -1069,6 +1071,7 @@ Initial open-source release.
 - **PAM install output**: Conditional install messages — suppressed when PAM entry already present (`c12a970`)
 - **PAM uninstall**: Uninstall now removes entries from all relevant PAM services, not just the primary one (`c12a970`)
 
+[0.2.1]: https://github.com/tyvsmith/facelock/releases/tag/v0.2.1
 [0.2.0]: https://github.com/tyvsmith/facelock/releases/tag/v0.2.0
 [0.1.3]: https://github.com/tyvsmith/facelock/releases/tag/v0.1.3
 [0.1.0]: https://github.com/tyvsmith/facelock/releases/tag/v0.1.0
