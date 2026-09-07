@@ -1103,7 +1103,7 @@ dependencies = [
  "serde",
  "serde_json",
  "signal-hook",
- "syn 2.0.117",
+ "syn 3.0.3",
  "tempfile",
  "thiserror",
  "tokio",
