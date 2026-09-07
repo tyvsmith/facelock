@@ -439,6 +439,15 @@ errors instead of falling back to RGB when no usable IR candidate remains. An
 explicit `--camera /dev/videoN` remains an operator override and is still
 subject to the auth/open fail-closed checks.
 
+**Encryption method transitions (`--encryption`).** Switching to tpm with a
+keyfile present seals that key (same bytes) rather than minting a new one.
+Switching to keyfile with a sealed key present and a usable TPM unseals it into
+the keyfile. A fresh key is minted only when no key artifact exists, behind the
+orphaned-models guard. When both artifacts exist and hold different keys, setup
+keeps the target's and prints a notice naming both files. A TPM device that
+exists but fails to initialize is reported (warn + notice) rather than silently
+downgrading to keyfile.
+
 ### facelock pam Semantics
 
 `facelock pam add | remove | status` and the machine-wide
@@ -3421,6 +3430,18 @@ corruption for those it cannot, and still falls through to the password prompt. 
 the key artifact lifts the refusal at the next authentication or enrollment attempt without
 restarting the daemon.
 
+**Sealing key identity and the keyring (#354).** Every model row written from
+this version records the key id of the key that sealed it. The daemon and the
+one-shot path load the configured method's key as primary and, best-effort, the
+other method's artifact as secondary (keyfile under tpm; sealed key under
+keyfile when built with tpm). A secondary that fails to load is logged and
+ignored, never fatal, and never mints a key. A row naming a key id decrypts only
+under that key; if it is not loaded the load fails naming the other artifact. A
+pre-V7 row (NULL key id) is tried under the primary then each secondary. New
+enrollments always seal under the primary. `facelock tpm encrypt` sets key id;
+`facelock tpm decrypt` clears it. `tpm seal-key`, `unseal-key`, and `reseal`
+never touch rows.
+
 **Enrollment atomicity (#308).** An enrollment writes to the store exactly once, at the
 end: after every accepted embedding has passed the minimum-capture and angle-diversity
 gates and, with encryption on, been sealed, one transaction removes the previous model
@@ -3588,6 +3609,7 @@ CREATE TABLE face_models (
     created_at INTEGER NOT NULL,
     embedder_model TEXT NOT NULL DEFAULT '',  -- V5: embedder that produced the embeddings
     device_id TEXT,                           -- V6: enrolling camera fingerprint "vid:pid:serial" (NULL = legacy/uncoupled)
+    key_id TEXT,                              -- V7: truncated SHA-256 id of the sealing key (NULL = pre-V7 or plaintext)
     UNIQUE(user, label)
 );
 
@@ -3606,7 +3628,7 @@ CREATE TABLE rate_limit (
 
 Only failed authentication attempts are recorded in `rate_limit`, and only those where a face was actually detected (ADR 008 §4 — see §facelock test Semantics for the full charging rule). Daemon mode and oneshot mode share the same SQLite-backed window, so daemon restarts do not clear lockout state.
 
-**Schema version** is tracked in `schema_version`; migrations are additive and forward-only. Current version: **6**. Migration V6 adds the nullable `face_models.device_id` column (Plan 02 device coupling); pre-V6 databases open cleanly, keep their rows, and leave `device_id` NULL. NULL rows are governed by `security.bind_legacy_templates` (default allow-with-warn), so upgrades never lock a user out.
+**Schema version** is tracked in `schema_version`; migrations are additive and forward-only. Current version: **7**. Migration V7 adds the nullable `face_models.key_id` column, recording the truncated SHA-256 fingerprint of each sealing key; NULL indicates a pre-V7 row or plaintext embedding. Migration V6 adds the nullable `face_models.device_id` column (Plan 02 device coupling); pre-V6 databases open cleanly, keep their rows, and leave `device_id` NULL. NULL rows are governed by `security.bind_legacy_templates` (default allow-with-warn), so upgrades never lock a user out.
 
 `device_id` is the canonical fingerprint (`"vid:pid:serial"`) of the camera that enrolled the template. It is **model-granularity at best and forgeable by a programmable USB device** — advisory defense-in-depth, NOT attestation. See `docs/security.md` §Device Coupling.
 
@@ -3653,14 +3675,15 @@ as it was and reports the failure. Recreating a database it could not migrate
 would destroy every enrollment on the machine and look like a clean first run.
 
 **Downgrade is supported back to v0.1.4, with one limit.** Migrations are
-additive and forward-only: there is no down-migration from V6, and a package
-downgrade leaves `schema_version` at 6. What is guaranteed is that the older
+additive and forward-only: there is no down-migration from V7, and a package
+downgrade leaves `schema_version` at 7. What is guaranteed is that the older
 release still opens that database, reads its rows, and decrypts what it
-encrypted, because V6 only adds a nullable `face_models.device_id` column that
-older queries never name. What is **not** guaranteed is that rows written by the
-newer release carry data the older one understands: a `device_id` recorded after
-the upgrade is invisible to v0.1.4, so a template enrolled on the alpha and then
-rolled back is uncoupled from its camera rather than refused.
+encrypted, because V7 only adds a nullable `face_models.key_id` column that
+older queries never name, and V6 only adds a nullable `face_models.device_id`
+column that older queries never name. What is **not** guaranteed is that rows written by the
+newer release carry data the older one understands: a `key_id` recorded after
+the upgrade is invisible to an older release, so a template enrolled on the newer version and then
+rolled back decrypts under the single key that older release loads if that key is the one that sealed it.
 
 `just test-upgrade-v014` is the gate for all of the above. It runs both halves
 against the real published v0.1.4 artifacts; see `docs/releasing.md`.

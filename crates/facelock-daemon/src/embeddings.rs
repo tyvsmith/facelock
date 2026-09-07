@@ -19,9 +19,12 @@
 //! `DaemonResponse::Error`, the direct path in `anyhow`. They are
 //! machine-facing (they cross D-Bus and land in logs) and must not localize.
 
-use facelock_core::config::Config;
+use facelock_core::config::{Config, EncryptionMethod};
 use facelock_core::types::{DeviceBinding, FaceEmbedding, Wiped};
-use tracing::warn;
+use facelock_store::RawEmbeddingRow;
+use tracing::{debug, warn};
+
+use crate::keyring::SealingKeys;
 
 /// How the decrypt loop reaches a TPM sealer when a TPM-sealed row appears.
 ///
@@ -87,22 +90,24 @@ pub fn needs_raw_rows(
     software_sealer_active || config.tpm.seal_database || sealer_unavailable
 }
 
-/// Decrypt raw `(id, blob, sealed, device_id)` rows into embeddings.
+/// Decrypt raw [`RawEmbeddingRow`] rows into embeddings.
 ///
-/// Per row: software-encrypted blobs unseal with the configured key and this
-/// template's own device-derived AAD (opt-in, matching enroll); TPM-sealed
-/// blobs unseal through `tpm`; plaintext rows are size-checked and cast. The
-/// first failing row fails the whole load — a partial compare set would
-/// silently narrow authentication.
+/// Per row: software-encrypted blobs unseal with this template's own
+/// device-derived AAD (opt-in, matching enroll) and the key that sealed it —
+/// a row naming a `key_id` (#354 wave 2 onward) is handed exactly that key
+/// from `keys`, and a pre-V7 row naming none is tried against every key
+/// `keys` has loaded, primary first. TPM-sealed blobs unseal through `tpm`;
+/// plaintext rows are size-checked and cast. The first failing row fails the
+/// whole load — a partial compare set would silently narrow authentication.
 ///
 /// Under hard device binding, rows with no device id are legacy unbound:
 /// they decrypt (never a lockout) and are reported once per load, before
 /// decryption, so a row failing elsewhere in the store does not hide them
 /// and the operator knows which templates to re-enroll (#312).
 pub fn decrypt_user_embeddings(
-    raw_rows: &[(u32, Vec<u8>, bool, Option<String>)],
+    raw_rows: &[RawEmbeddingRow],
     config: &Config,
-    software_sealer: Option<&facelock_tpm::SoftwareSealer>,
+    keys: &SealingKeys,
     tpm: TpmAccess<'_>,
 ) -> Result<Vec<(u32, FaceEmbedding)>, String> {
     // Reported before decrypting, so the diagnostic reaches the log even
@@ -115,23 +120,20 @@ pub fn decrypt_user_embeddings(
         );
     }
     let mut results = Vec::with_capacity(raw_rows.len());
-    decrypt_rows_into(raw_rows, config, software_sealer, tpm, &mut results)?;
+    decrypt_rows_into(raw_rows, config, keys, tpm, &mut results)?;
     Ok(results)
 }
 
 /// The models among `raw_rows` that stand as [`DeviceBinding::LegacyUnbound`]
 /// under the configured policy, each listed once. Empty unless
 /// `security.bind_device_aad` is on.
-fn unbound_model_ids(
-    raw_rows: &[(u32, Vec<u8>, bool, Option<String>)],
-    config: &Config,
-) -> Vec<u32> {
+fn unbound_model_ids(raw_rows: &[RawEmbeddingRow], config: &Config) -> Vec<u32> {
     let mut unbound: Vec<u32> = raw_rows
         .iter()
-        .filter(|(_, _, _, device_id)| {
-            config.classify_device_binding(device_id.as_deref()) == DeviceBinding::LegacyUnbound
+        .filter(|row| {
+            config.classify_device_binding(row.device_id.as_deref()) == DeviceBinding::LegacyUnbound
         })
-        .map(|(id, ..)| *id)
+        .map(|row| row.model_id)
         .collect();
     unbound.sort_unstable();
     unbound.dedup();
@@ -146,45 +148,31 @@ fn unbound_model_ids(
 /// from there the caller owns the plaintext, and every caller either wraps
 /// it or passes it to the wiping auth loop (D11).
 fn decrypt_rows_into(
-    raw_rows: &[(u32, Vec<u8>, bool, Option<String>)],
+    raw_rows: &[RawEmbeddingRow],
     config: &Config,
-    software_sealer: Option<&facelock_tpm::SoftwareSealer>,
+    keys: &SealingKeys,
     mut tpm: TpmAccess<'_>,
     out: &mut Vec<(u32, FaceEmbedding)>,
 ) -> Result<(), String> {
     let mut guarded = Wiped::new(&mut *out);
-    for (id, blob, sealed, device_id) in raw_rows {
+    for RawEmbeddingRow {
+        model_id: id,
+        blob,
+        sealed,
+        device_id,
+        key_id,
+    } in raw_rows
+    {
         let embedding = if *sealed && facelock_tpm::is_software_encrypted(blob) {
             // Software-encrypted (version byte 0x02)
-            let sealer = software_sealer.ok_or_else(|| {
-                format!("embedding {id} is software-encrypted but no key is configured")
-            })?;
-            let aad = config.security.device_aad(device_id.as_deref());
-            sealer
-                .unseal_embedding_with_aad(blob, aad.as_deref())
-                .map_err(|e| {
-                    let mut message = format!("software decryption failed for embedding {id}: {e}");
-                    // One cause the cipher cannot tell from a wrong key or a
-                    // corrupt blob: a row that records a device id but was
-                    // sealed before hard binding was enabled carries no AAD,
-                    // so it cannot open under the one derived now. Name that
-                    // possibility and its fix without asserting it.
-                    let has_id = device_id.as_deref().is_some_and(|d| !d.is_empty());
-                    if aad.is_some() {
-                        message.push_str(
-                            "; if this template predates security.bind_device_aad, re-enroll \
-                             to bind it",
-                        );
-                    } else if has_id {
-                        // The other direction: the flag was turned off, or
-                        // encryption disabled, over a store sealed under it.
-                        message.push_str(
-                            "; if this template was sealed under security.bind_device_aad, \
-                             re-enable it or re-enroll",
-                        );
-                    }
-                    message
-                })?
+            decrypt_software_row(
+                *id,
+                blob,
+                device_id.as_deref(),
+                key_id.as_deref(),
+                config,
+                keys,
+            )?
         } else if *sealed {
             // TPM-sealed (version byte 0x01/0x03)
             tpm.sealer()?
@@ -212,20 +200,161 @@ fn decrypt_rows_into(
     Ok(())
 }
 
+/// Decrypt one software-encrypted (version byte 0x02) row.
+///
+/// A row naming a `key_id` gets exactly that key — no trial against any
+/// other, even when one is loaded — and a lookup miss fails by name rather
+/// than falling back to "no key is configured", which was never true. A
+/// pre-V7 row naming none is tried against every key `keys` has loaded,
+/// primary first: AES-GCM makes this safe, because a wrong key fails the tag
+/// check rather than misreading the blob.
+fn decrypt_software_row(
+    id: u32,
+    blob: &[u8],
+    device_id: Option<&str>,
+    key_id: Option<&str>,
+    config: &Config,
+    keys: &SealingKeys,
+) -> Result<FaceEmbedding, String> {
+    let aad = config.security.device_aad(device_id);
+
+    if let Some(wanted) = key_id {
+        let sealer = keys.by_key_id(wanted).ok_or_else(|| {
+            format!(
+                "embedding {id} was sealed under key {wanted}, which is not loadable: restore \
+                 {} (the artifact for the other encryption method) or re-enroll",
+                other_key_artifact(config)
+            )
+        })?;
+        return sealer
+            .unseal_embedding_with_aad(blob, aad.as_deref())
+            .map_err(|e| software_decrypt_error(id, &e.to_string(), device_id, aad.is_some()));
+    }
+
+    // Pre-V7 row: no key_id recorded, so try every key this process has,
+    // primary first.
+    if !keys.any_loaded() {
+        return Err(format!(
+            "embedding {id} is software-encrypted but no key is configured"
+        ));
+    }
+    let mut last_error: Option<String> = None;
+    for (index, candidate) in keys.candidates_for_legacy_row().enumerate() {
+        match candidate.unseal_embedding_with_aad(blob, aad.as_deref()) {
+            Ok(embedding) => {
+                if index > 0 {
+                    // `debug`, not `info`: this runs on every authentication
+                    // for every legacy row, so at `info` a diverged host
+                    // would log a line per row per attempt in steady state.
+                    debug!(
+                        model_id = id,
+                        key_id = %candidate.key_id(),
+                        "legacy embedding decrypted under a secondary key"
+                    );
+                }
+                return Ok(embedding);
+            }
+            Err(e) => last_error = Some(e.to_string()),
+        }
+    }
+    let mut message = software_decrypt_error(
+        id,
+        last_error
+            .as_deref()
+            .unwrap_or("no loadable key could open it"),
+        device_id,
+        aad.is_some(),
+    );
+    message.push_str("; or sealed under a key that is no longer loadable");
+    Err(message)
+}
+
+/// The base "software decryption failed" message and its AAD hints, shared by
+/// the named-key and legacy-trial paths.
+///
+/// One cause the cipher cannot tell from a wrong key or a corrupt blob: a row
+/// that records a device id but was sealed before hard binding was enabled
+/// carries no AAD, so it cannot open under the one derived now. Name that
+/// possibility and its fix without asserting it.
+fn software_decrypt_error(
+    id: u32,
+    cause: &str,
+    device_id: Option<&str>,
+    aad_present: bool,
+) -> String {
+    let mut message = format!("software decryption failed for embedding {id}: {cause}");
+    let has_id = device_id.is_some_and(|d| !d.is_empty());
+    if aad_present {
+        message
+            .push_str("; if this template predates security.bind_device_aad, re-enroll to bind it");
+    } else if has_id {
+        // The other direction: the flag was turned off, or encryption
+        // disabled, over a store sealed under it.
+        message.push_str(
+            "; if this template was sealed under security.bind_device_aad, re-enable it or \
+             re-enroll",
+        );
+    }
+    message
+}
+
+/// The artifact the *other* encryption method would have written — named in
+/// the refusal for a row whose `key_id` names a key nothing loaded, so the
+/// operator restores the artifact that matches the row rather than the one
+/// the current method already reads.
+fn other_key_artifact(config: &Config) -> String {
+    match config.encryption.method {
+        EncryptionMethod::Tpm => config.encryption.key_path.clone(),
+        EncryptionMethod::Keyfile | EncryptionMethod::None => {
+            let sealed = &config.encryption.sealed_key_path;
+            #[cfg(feature = "tpm")]
+            {
+                sealed.clone()
+            }
+            #[cfg(not(feature = "tpm"))]
+            {
+                // Restoring the sealed key alone cannot help here: this build
+                // has no TPM support to unseal it with.
+                format!("{sealed} under a build with the tpm feature (this one has none)")
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn plaintext_row(id: u32, value: f32) -> (u32, Vec<u8>, bool, Option<String>) {
+    /// Build a [`RawEmbeddingRow`] for these tests, with `key_id` left
+    /// `None` (a pre-V7/legacy row). Tests that need a row naming a key
+    /// construct a [`RawEmbeddingRow`] directly.
+    fn raw_row(
+        model_id: u32,
+        blob: Vec<u8>,
+        sealed: bool,
+        device_id: Option<String>,
+    ) -> RawEmbeddingRow {
+        RawEmbeddingRow {
+            model_id,
+            blob,
+            sealed,
+            device_id,
+            key_id: None,
+        }
+    }
+
+    fn plaintext_row(id: u32, value: f32) -> RawEmbeddingRow {
         let emb: FaceEmbedding = [value; 512];
-        (id, bytemuck::cast_slice(&emb).to_vec(), false, None)
+        raw_row(id, bytemuck::cast_slice(&emb).to_vec(), false, None)
     }
 
     #[test]
     fn plaintext_rows_round_trip() {
         let config = Config::parse("").unwrap();
         let rows = vec![plaintext_row(1, 0.25), plaintext_row(2, 0.75)];
-        let out = decrypt_user_embeddings(&rows, &config, None, TpmAccess::Held(None)).unwrap();
+        let out =
+            decrypt_user_embeddings(&rows, &config, &SealingKeys::none(), TpmAccess::Held(None))
+                .unwrap();
         assert_eq!(out.len(), 2);
         assert_eq!(out[0], (1, [0.25; 512]));
         assert_eq!(out[1], (2, [0.75; 512]));
@@ -234,8 +363,10 @@ mod tests {
     #[test]
     fn wrong_size_plaintext_row_fails_the_load() {
         let config = Config::parse("").unwrap();
-        let rows = vec![(7u32, vec![0u8; 100], false, None)];
-        let err = decrypt_user_embeddings(&rows, &config, None, TpmAccess::Held(None)).unwrap_err();
+        let rows = vec![raw_row(7, vec![0u8; 100], false, None)];
+        let err =
+            decrypt_user_embeddings(&rows, &config, &SealingKeys::none(), TpmAccess::Held(None))
+                .unwrap_err();
         assert!(err.contains("invalid raw embedding size for id 7"), "{err}");
     }
 
@@ -245,8 +376,10 @@ mod tests {
         // Version byte 0x02 marks software encryption.
         let mut blob = vec![0x02u8];
         blob.extend_from_slice(&[0u8; 64]);
-        let rows = vec![(3u32, blob, true, None)];
-        let err = decrypt_user_embeddings(&rows, &config, None, TpmAccess::Held(None)).unwrap_err();
+        let rows = vec![raw_row(3, blob, true, None)];
+        let err =
+            decrypt_user_embeddings(&rows, &config, &SealingKeys::none(), TpmAccess::Held(None))
+                .unwrap_err();
         assert_eq!(
             err,
             "embedding 3 is software-encrypted but no key is configured"
@@ -262,11 +395,11 @@ mod tests {
 
         let emb: FaceEmbedding = [0.5; 512];
         let blob = sealer.seal_embedding(&emb).unwrap();
-        let rows = vec![(4u32, blob, true, None)];
+        let rows = vec![raw_row(4, blob, true, None)];
 
         let config = Config::parse("").unwrap();
-        let out =
-            decrypt_user_embeddings(&rows, &config, Some(&sealer), TpmAccess::Held(None)).unwrap();
+        let keys = SealingKeys::from_parts(Some(sealer), vec![]);
+        let out = decrypt_user_embeddings(&rows, &config, &keys, TpmAccess::Held(None)).unwrap();
         assert_eq!(out, vec![(4, emb)]);
     }
 
@@ -277,8 +410,10 @@ mod tests {
         let config = Config::parse("").unwrap();
         let mut blob = vec![0x01u8];
         blob.extend_from_slice(&[0u8; 64]);
-        let rows = vec![(5u32, blob, true, None)];
-        let err = decrypt_user_embeddings(&rows, &config, None, TpmAccess::Held(None)).unwrap_err();
+        let rows = vec![raw_row(5, blob, true, None)];
+        let err =
+            decrypt_user_embeddings(&rows, &config, &SealingKeys::none(), TpmAccess::Held(None))
+                .unwrap_err();
         assert_eq!(err, "TPM-sealed embeddings exist but TPM is not available");
     }
 
@@ -291,11 +426,11 @@ mod tests {
         let config = Config::parse("").unwrap();
         let mut blob = vec![0x01u8];
         blob.extend_from_slice(&[0u8; 64]);
-        let rows = vec![(6u32, blob, true, None)];
+        let rows = vec![raw_row(6, blob, true, None)];
         let err = decrypt_user_embeddings(
             &rows,
             &config,
-            None,
+            &SealingKeys::none(),
             TpmAccess::Lazy {
                 tcti: "device",
                 sealer: None,
@@ -316,11 +451,17 @@ mod tests {
         // Row 3 fails: software-encrypted with no key configured.
         let mut blob = vec![0x02u8];
         blob.extend_from_slice(&[0u8; 64]);
-        rows.push((3u32, blob, true, None));
+        rows.push(raw_row(3, blob, true, None));
 
         let mut out = Vec::new();
-        let err =
-            decrypt_rows_into(&rows, &config, None, TpmAccess::Held(None), &mut out).unwrap_err();
+        let err = decrypt_rows_into(
+            &rows,
+            &config,
+            &SealingKeys::none(),
+            TpmAccess::Held(None),
+            &mut out,
+        )
+        .unwrap_err();
         assert!(err.contains("software-encrypted"), "{err}");
 
         assert_eq!(out.len(), 2, "rows 1-2 were decrypted before row 3 failed");
@@ -348,30 +489,25 @@ mod tests {
         let enrolled = "046d:085e:REAL";
         let aad = config.security.device_aad(Some(enrolled));
 
-        let row = |id: u32, value: f32, device_id: &str| {
+        let sealed_row = |id: u32, value: f32, device_id: &str| {
             let emb: FaceEmbedding = [value; 512];
             let blob = sealer
                 .seal_embedding_with_aad(&emb, aad.as_deref())
                 .unwrap();
-            (id, blob, true, Some(device_id.to_string()))
+            raw_row(id, blob, true, Some(device_id.to_string()))
         };
         // Rows 1-2 decrypt fine; row 3's recorded device id derives a
         // different AAD than it was sealed under.
         let rows = vec![
-            row(1, 0.25, enrolled),
-            row(2, 0.75, enrolled),
-            row(3, 0.5, "ffff:ffff:OTHER"),
+            sealed_row(1, 0.25, enrolled),
+            sealed_row(2, 0.75, enrolled),
+            sealed_row(3, 0.5, "ffff:ffff:OTHER"),
         ];
 
+        let keys = SealingKeys::from_parts(Some(sealer), vec![]);
         let mut out = Vec::new();
-        let err = decrypt_rows_into(
-            &rows,
-            &config,
-            Some(&sealer),
-            TpmAccess::Held(None),
-            &mut out,
-        )
-        .unwrap_err();
+        let err =
+            decrypt_rows_into(&rows, &config, &keys, TpmAccess::Held(None), &mut out).unwrap_err();
         assert!(
             err.contains("software decryption failed for embedding 3"),
             "{err}"
@@ -409,12 +545,13 @@ mod tests {
         let legacy_emb: FaceEmbedding = [0.75; 512];
         let legacy_blob = sealer.seal_embedding_with_aad(&legacy_emb, None).unwrap();
         let rows = vec![
-            (1u32, bound_blob, true, Some(bound_id.to_string())),
-            (2u32, legacy_blob.clone(), true, None),
-            (2u32, legacy_blob, true, Some(String::new())),
+            raw_row(1, bound_blob, true, Some(bound_id.to_string())),
+            raw_row(2, legacy_blob.clone(), true, None),
+            raw_row(2, legacy_blob, true, Some(String::new())),
         ];
 
-        let out = decrypt_user_embeddings(&rows, &hard, Some(&sealer), TpmAccess::Held(None))
+        let keys = SealingKeys::from_parts(Some(sealer), vec![]);
+        let out = decrypt_user_embeddings(&rows, &hard, &keys, TpmAccess::Held(None))
             .expect("a legacy unbound row must never fail the load");
         assert_eq!(out.len(), 3, "every row authenticates");
         assert_eq!(out[1], (2, legacy_emb));
@@ -436,11 +573,16 @@ mod tests {
 
         let emb: FaceEmbedding = [0.5; 512];
         let unbound_blob = sealer.seal_embedding_with_aad(&emb, None).unwrap();
-        let rows = vec![(9u32, unbound_blob, true, Some("046d:085e:".to_string()))];
+        let rows = vec![raw_row(
+            9,
+            unbound_blob,
+            true,
+            Some("046d:085e:".to_string()),
+        )];
 
         let hard = Config::parse("[security]\nbind_device_aad = true\n").unwrap();
-        let err = decrypt_user_embeddings(&rows, &hard, Some(&sealer), TpmAccess::Held(None))
-            .unwrap_err();
+        let keys = SealingKeys::from_parts(Some(sealer), vec![]);
+        let err = decrypt_user_embeddings(&rows, &hard, &keys, TpmAccess::Held(None)).unwrap_err();
         assert!(
             err.contains("software decryption failed for embedding 9"),
             "{err}"
@@ -465,11 +607,11 @@ mod tests {
         let bound = sealer
             .seal_embedding_with_aad(&emb, hard.security.device_aad(Some(id)).as_deref())
             .unwrap();
-        let rows = vec![(4u32, bound, true, Some(id.to_string()))];
+        let rows = vec![raw_row(4, bound, true, Some(id.to_string()))];
 
         let off = Config::parse("").unwrap();
-        let err =
-            decrypt_user_embeddings(&rows, &off, Some(&sealer), TpmAccess::Held(None)).unwrap_err();
+        let keys = SealingKeys::from_parts(Some(sealer), vec![]);
+        let err = decrypt_user_embeddings(&rows, &off, &keys, TpmAccess::Held(None)).unwrap_err();
         assert!(
             err.contains("software decryption failed for embedding 4"),
             "{err}"
@@ -513,10 +655,11 @@ mod tests {
         let emb: FaceEmbedding = [0.5; 512];
         let unbound_blob = sealer.seal_embedding_with_aad(&emb, None).unwrap();
         let rows = vec![
-            (1u32, unbound_blob.clone(), true, None),
-            (2u32, unbound_blob, true, Some("046d:085e:".to_string())),
+            raw_row(1, unbound_blob.clone(), true, None),
+            raw_row(2, unbound_blob, true, Some("046d:085e:".to_string())),
         ];
         let hard = Config::parse("[security]\nbind_device_aad = true\n").unwrap();
+        let keys = SealingKeys::from_parts(Some(sealer), vec![]);
 
         let capture = Capture(Arc::new(Mutex::new(Vec::new())));
         let subscriber = tracing_subscriber::fmt()
@@ -524,7 +667,7 @@ mod tests {
             .with_ansi(false)
             .finish();
         let result = tracing::subscriber::with_default(subscriber, || {
-            decrypt_user_embeddings(&rows, &hard, Some(&sealer), TpmAccess::Held(None))
+            decrypt_user_embeddings(&rows, &hard, &keys, TpmAccess::Held(None))
         });
 
         let err = result.expect_err("the pre-flag id row fails the load");
@@ -561,5 +704,195 @@ mod tests {
     fn a_refused_sealer_forces_raw_rows() {
         let plain = Config::parse("").unwrap();
         assert!(needs_raw_rows(&plain, false, true));
+    }
+
+    // --- #354 wave 2: decrypt under the key that sealed the row ---
+
+    /// A row naming a `key_id` that is a *secondary*, not the primary, still
+    /// decrypts — the whole point of the keyring: a template sealed under a
+    /// key this process no longer configures as primary keeps working as
+    /// long as that key is still loadable from somewhere.
+    #[test]
+    fn row_naming_a_secondary_key_decrypts_under_it() {
+        let primary = facelock_tpm::SoftwareSealer::from_key([0x11u8; 32]);
+        let secondary = facelock_tpm::SoftwareSealer::from_key([0x22u8; 32]);
+        let secondary_id = secondary.key_id();
+
+        let emb: FaceEmbedding = [0.4; 512];
+        let blob = secondary.seal_embedding(&emb).unwrap();
+        let rows = vec![RawEmbeddingRow {
+            model_id: 10,
+            blob,
+            sealed: true,
+            device_id: None,
+            key_id: Some(secondary_id.clone()),
+        }];
+
+        let config = Config::parse("").unwrap();
+        let keys = SealingKeys::from_parts(Some(primary), vec![(secondary_id, secondary)]);
+        let out = decrypt_user_embeddings(&rows, &config, &keys, TpmAccess::Held(None)).unwrap();
+        assert_eq!(out, vec![(10, emb)]);
+    }
+
+    /// A row naming a key nothing loaded fails by name — not with "no key is
+    /// configured" (untrue: a primary is loaded) and not by silently trying
+    /// the primary anyway. The message names the artifact for the *other*
+    /// encryption method, since that is where a lost cross-method key lives.
+    #[test]
+    fn row_naming_an_unknown_key_id_fails_naming_the_other_artifact() {
+        let primary = facelock_tpm::SoftwareSealer::from_key([0x11u8; 32]);
+        let elsewhere = facelock_tpm::SoftwareSealer::from_key([0x99u8; 32]);
+        let unknown_id = elsewhere.key_id();
+
+        let emb: FaceEmbedding = [0.4; 512];
+        let blob = elsewhere.seal_embedding(&emb).unwrap();
+        let rows = vec![RawEmbeddingRow {
+            model_id: 11,
+            blob,
+            sealed: true,
+            device_id: None,
+            key_id: Some(unknown_id.clone()),
+        }];
+
+        // method = keyfile, so the "other artifact" named is sealed_key_path.
+        let config = Config::parse("[encryption]\nmethod = \"keyfile\"\n").unwrap();
+        let keys = SealingKeys::from_parts(Some(primary), vec![]);
+        let err =
+            decrypt_user_embeddings(&rows, &config, &keys, TpmAccess::Held(None)).unwrap_err();
+        assert!(
+            err.contains(&format!("embedding 11 was sealed under key {unknown_id}")),
+            "{err}"
+        );
+        assert!(err.contains("not loadable"), "{err}");
+        assert!(err.contains(&config.encryption.sealed_key_path), "{err}");
+        assert!(err.contains("re-enroll"), "{err}");
+    }
+
+    /// A pre-V7 row (no `key_id`) sealed under a loaded secondary decrypts
+    /// through the trial, and the win is logged naming the model and key —
+    /// a store mid-migration (some rows tagged, some not) must not regress a
+    /// row that still opens under a key this process kept around.
+    #[test]
+    fn legacy_row_sealed_under_a_secondary_decrypts_through_the_trial() {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct Capture(Arc<Mutex<Vec<u8>>>);
+        impl Write for Capture {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+            type Writer = Capture;
+            fn make_writer(&'a self) -> Capture {
+                self.clone()
+            }
+        }
+
+        let primary = facelock_tpm::SoftwareSealer::from_key([0x11u8; 32]);
+        let secondary = facelock_tpm::SoftwareSealer::from_key([0x22u8; 32]);
+        let secondary_id = secondary.key_id();
+
+        let emb: FaceEmbedding = [0.6; 512];
+        let blob = secondary.seal_embedding(&emb).unwrap();
+        let rows = vec![raw_row(12, blob, true, None)];
+
+        let config = Config::parse("").unwrap();
+        let keys = SealingKeys::from_parts(Some(primary), vec![(secondary_id.clone(), secondary)]);
+
+        let capture = Capture(Arc::new(Mutex::new(Vec::new())));
+        // The fallback logs at `debug` (it runs per row per authentication).
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(capture.clone())
+            .with_max_level(tracing::Level::DEBUG)
+            .with_ansi(false)
+            .finish();
+        let out = tracing::subscriber::with_default(subscriber, || {
+            decrypt_user_embeddings(&rows, &config, &keys, TpmAccess::Held(None))
+        })
+        .unwrap();
+        assert_eq!(out, vec![(12, emb)]);
+
+        let log = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+        assert!(log.contains("secondary key"), "{log}");
+        assert!(log.contains(&secondary_id), "{log}");
+    }
+
+    /// A legacy row sealed under a key that is neither the primary nor any
+    /// loaded secondary fails with the trial's own clause, distinct from "no
+    /// key is configured" (untrue: keys ARE loaded, just not this row's).
+    #[test]
+    fn legacy_row_sealed_under_an_unloaded_third_key_fails_with_the_trial_clause() {
+        let primary = facelock_tpm::SoftwareSealer::from_key([0x11u8; 32]);
+        let secondary = facelock_tpm::SoftwareSealer::from_key([0x22u8; 32]);
+        let elsewhere = facelock_tpm::SoftwareSealer::from_key([0x33u8; 32]);
+
+        let emb: FaceEmbedding = [0.7; 512];
+        let blob = elsewhere.seal_embedding(&emb).unwrap();
+        let rows = vec![raw_row(13, blob, true, None)];
+
+        let config = Config::parse("").unwrap();
+        let keys = SealingKeys::from_parts(Some(primary), vec![(secondary.key_id(), secondary)]);
+        let err =
+            decrypt_user_embeddings(&rows, &config, &keys, TpmAccess::Held(None)).unwrap_err();
+        assert!(
+            err.contains("software decryption failed for embedding 13"),
+            "{err}"
+        );
+        assert!(
+            err.contains("sealed under a key that is no longer loadable"),
+            "{err}"
+        );
+    }
+
+    /// Naming a `key_id` is not a bypass of hard device binding: the same AAD
+    /// derivation applies whether or not the row names its key, and a forged
+    /// device id still fails to open a named-key row.
+    #[test]
+    fn named_key_row_still_enforces_hard_binding_aad() {
+        let primary = facelock_tpm::SoftwareSealer::from_key([0x11u8; 32]);
+        let primary_id = primary.key_id();
+
+        let hard = Config::parse("[security]\nbind_device_aad = true\n").unwrap();
+        let device_id = "046d:085e:REAL";
+        let aad = hard.security.device_aad(Some(device_id));
+        let emb: FaceEmbedding = [0.3; 512];
+        let blob = primary
+            .seal_embedding_with_aad(&emb, aad.as_deref())
+            .unwrap();
+        let keys = SealingKeys::from_parts(Some(primary), vec![]);
+
+        let good_row = RawEmbeddingRow {
+            model_id: 20,
+            blob: blob.clone(),
+            sealed: true,
+            device_id: Some(device_id.to_string()),
+            key_id: Some(primary_id.clone()),
+        };
+        let out =
+            decrypt_user_embeddings(&[good_row], &hard, &keys, TpmAccess::Held(None)).unwrap();
+        assert_eq!(out, vec![(20, emb)]);
+
+        // A forged device id derives a different AAD, so the same named key
+        // still fails to open it: naming the key must not bypass binding.
+        let forged_row = RawEmbeddingRow {
+            model_id: 21,
+            blob,
+            sealed: true,
+            device_id: Some("ffff:ffff:forged".to_string()),
+            key_id: Some(primary_id),
+        };
+        let err = decrypt_user_embeddings(&[forged_row], &hard, &keys, TpmAccess::Held(None))
+            .unwrap_err();
+        assert!(
+            err.contains("software decryption failed for embedding 21"),
+            "{err}"
+        );
     }
 }

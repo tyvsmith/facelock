@@ -6952,14 +6952,14 @@
           "path": "docs/contracts.md",
           "anchor": "facelock-pam-semantics",
           "ordinal": 13,
-          "line": 1263,
+          "line": 1272,
           "sha256": "63c460d2967465f764a77bec938f1ab6183bba3b9758048020ee3de0d5dc3e82"
         },
         {
           "path": "docs/contracts.md",
           "anchor": "facelock-pam-semantics",
           "ordinal": 14,
-          "line": 1265,
+          "line": 1274,
           "sha256": "9d893de87b927d4a16bf54f82add2a2e2b2a9c56d12e4d04d2a27cbed5ef49c7"
         }
       ],
@@ -10590,7 +10590,7 @@
           "path": "docs/security.md",
           "anchor": "b-systemd-hardening-implemented",
           "ordinal": 3,
-          "line": 1535,
+          "line": 1547,
           "sha256": "8798eab946c173be56a1f11cc506ac362d12ba935d90fa159ae04196d6e6c692"
         }
       ],

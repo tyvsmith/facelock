@@ -13,6 +13,7 @@ use crate::audit::AuditSource;
 use crate::auth::{self, AuthOutcome, CANCELLED_MESSAGE, PreCheckContext};
 use crate::cancel::CancelToken;
 use crate::enroll::{self, EnrollOutcome};
+use crate::keyring::SealingKeys;
 use crate::rate_limit::RateLimiter;
 
 /// Why an authentication is being run.
@@ -593,11 +594,11 @@ pub struct Handler<C: CameraSource, E: FaceProcessor> {
     /// feature this is the passthrough sealer, whose per-row unseal reports a
     /// clear "compile with tpm" error instead of misreading sealed blobs.
     tpm_sealer: Option<facelock_tpm::TpmSealer>,
-    software_sealer: Option<facelock_tpm::SoftwareSealer>,
-    /// Why the software sealer could not be initialized for a configured
-    /// encryption method. `Some` means enroll must fail CLOSED rather than
-    /// silently downgrade to plaintext biometric storage (auth is unaffected).
-    sealer_init_error: Option<String>,
+    /// The primary key that seals new rows, plus any secondary key still
+    /// needed to open a row a previous configuration sealed under a
+    /// different key (#354). Replaces the old separate `software_sealer` and
+    /// `sealer_init_error` fields — see [`crate::keyring::SealingKeys`].
+    keys: SealingKeys,
     /// Per-preview-session compare set (see [`PreviewEmbeddings`]). `None`
     /// between preview sessions; setting it back to `None` zeroizes the set.
     preview_embeddings: Option<PreviewEmbeddings>,
@@ -629,62 +630,19 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
             None
         };
 
-        // Initialize software sealer based on encryption method. On failure for a
-        // method that requires encryption, we record `sealer_init_error` and leave
-        // the sealer `None` so ENROLL can fail closed (see `handle`). We do NOT
-        // fail the whole handler here: that would take the daemon down and block
-        // the auth path, which must keep falling through to password as before.
-        let mut sealer_init_error: Option<String> = None;
-        let software_sealer = match config.encryption.method {
-            EncryptionMethod::Keyfile => {
-                // Encrypt-by-default (finding #8): auto-generate the key on
-                // first use so a keyfile default actually encrypts — but only
-                // for a database that holds no encrypted row. `key_policy` is
-                // the one gate; the daemon, the one-shot path, `facelock
-                // setup` and `facelock encrypt` all mint through it, because a
-                // refusal wired into one writer is not a refusal (#231).
-                match Self::resolve_keyfile_sealer(&config, &store) {
-                    Ok(sealer) => Some(sealer),
-                    // Fail CLOSED on enroll: record the cause so `handle`
-                    // refuses to enroll rather than silently storing the
-                    // biometric template as plaintext (finding: silent
-                    // plaintext downgrade). Auth is untouched and keeps
-                    // falling through to password.
-                    Err(msg) => {
-                        warn!(
-                            "software encryption sealer unavailable — enroll will be refused: {msg}"
-                        );
-                        sealer_init_error = Some(msg);
-                        None
-                    }
-                }
-            }
-            EncryptionMethod::Tpm => {
-                #[cfg(feature = "tpm")]
-                {
-                    let sealed_path = std::path::Path::new(&config.encryption.sealed_key_path);
-                    let mut tpm = facelock_tpm::TpmSealer::new(&config.tpm.tcti)
-                        .map_err(|e| format!("TPM initialization failed: {e}"))?;
-                    let key = tpm.unseal_key_from_file(sealed_path).map_err(|e| {
-                        format!(
-                            "failed to unseal AES key from {}: {e}",
-                            sealed_path.display()
-                        )
-                    })?;
-                    info!("AES key unsealed from TPM ({})", sealed_path.display());
-                    Some(facelock_tpm::SoftwareSealer::from_key(key))
-                }
-                #[cfg(not(feature = "tpm"))]
-                {
-                    return Err(
-                        "encryption method is 'tpm' but TPM support is not compiled in \
-                         (rebuild with --features tpm)"
-                            .into(),
-                    );
-                }
-            }
-            EncryptionMethod::None => None,
-        };
+        // Load the sealing keyring for the configured encryption method
+        // through the one shared loader (`crate::keyring`, #354): the daemon
+        // and the CLI's one-shot path used to each mint sealers on their own,
+        // which is exactly how a stale key survives a `facelock setup`
+        // method flip undetected. A `keyfile` refusal is recorded in
+        // `keys.primary_error()` so ENROLL can fail closed (see `handle`)
+        // without failing the whole handler — that would take the daemon
+        // down and block auth, which must keep falling through to password.
+        // A `tpm` primary that cannot be resolved is fatal, as before.
+        let keys = SealingKeys::load(&config, &store)?;
+        if let Some(msg) = keys.primary_error() {
+            warn!("software encryption sealer unavailable — enroll will be refused: {msg}");
+        }
 
         Ok(Self {
             config,
@@ -696,44 +654,9 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
             lease: CameraLease::new(camera_factory, warmup_frames_override),
             jpeg_buf: Vec::with_capacity(JPEG_BUF_CAPACITY),
             tpm_sealer,
-            software_sealer,
-            sealer_init_error,
+            keys,
             preview_embeddings: None,
         })
-    }
-
-    /// Resolve the keyfile sealer: mint the encrypt-by-default key when that
-    /// is allowed, then read it. `Err` is the reason enroll must fail closed.
-    fn resolve_keyfile_sealer(
-        config: &Config,
-        store: &FaceStore,
-    ) -> Result<facelock_tpm::SoftwareSealer, String> {
-        let key_path = std::path::Path::new(&config.encryption.key_path);
-        if let Some(refusal) =
-            crate::key_policy::ensure_encrypt_by_default_key(store, config).refusal()
-        {
-            return Err(refusal.to_string());
-        }
-        match facelock_tpm::SoftwareSealer::from_key_file(key_path) {
-            Ok(sealer) => {
-                info!(
-                    "software encryption sealer initialized from {}",
-                    key_path.display()
-                );
-                Ok(sealer)
-            }
-            Err(e) => {
-                let complaint = format!("{} keyfile could not be read: {e}", key_path.display());
-                // A key that cannot be read leaves an operator holding
-                // encrypted rows in exactly the predicament a missing one
-                // does. The generic byte-count complaint names neither what
-                // is at risk nor the artifact that brings it back.
-                match crate::key_policy::encrypted_rows_at_risk(store, config) {
-                    Some(at_risk) => Err(format!("{complaint} — {at_risk}")),
-                    None => Err(complaint),
-                }
-            }
-        }
     }
 
     /// Re-ask whether the keyfile sealer is available, for a handler that is
@@ -753,23 +676,20 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
     /// exclusive store section over one projection query, and can wait up
     /// to the busy timeout behind a concurrent enrollment.
     fn refresh_software_sealer(&mut self) {
-        if self.sealer_init_error.is_none()
+        if self.keys.primary_error().is_none()
             || self.config.encryption.method != EncryptionMethod::Keyfile
         {
             return;
         }
-        match Self::resolve_keyfile_sealer(&self.config, &self.store) {
-            Ok(sealer) => {
-                info!("encryption key is readable again — enrollment is no longer refused");
-                self.software_sealer = Some(sealer);
-                self.sealer_init_error = None;
-                // The compare set was decrypted (or not) under the old
-                // decision; the next frame reloads it under this one.
-                self.preview_embeddings = None;
-            }
-            // Still refused — but report the *current* reason, which may name
-            // a different artifact than the one construction found.
-            Err(msg) => self.sealer_init_error = Some(msg),
+        // Only the primary is re-resolved: the secondaries loaded at
+        // construction are unchanged, and reloading them would re-open the
+        // TPM on every attempt made while the keyfile stays missing.
+        self.keys.refresh_primary(&self.config, &self.store);
+        if self.keys.primary_error().is_none() {
+            info!("encryption key is readable again — enrollment is no longer refused");
+            // The compare set was decrypted (or not) under the old
+            // decision; the next frame reloads it under this one.
+            self.preview_embeddings = None;
         }
     }
 
@@ -802,10 +722,10 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         // the store called the database corrupt. The rows are unreadable
         // either way; which of the two things the operator is told decides
         // whether they restore a key or reinstall a database.
-        let refusal = self.sealer_init_error.clone();
+        let refusal = self.keys.primary_error().map(str::to_string);
         if !crate::embeddings::needs_raw_rows(
             &self.config,
-            self.software_sealer.is_some(),
+            self.keys.any_loaded(),
             refusal.is_some(),
         ) {
             // Fast path: no encryption, use standard method (no overhead)
@@ -829,7 +749,7 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         crate::embeddings::decrypt_user_embeddings(
             &raw_rows,
             &self.config,
-            self.software_sealer.as_ref(),
+            &self.keys,
             crate::embeddings::TpmAccess::Held(self.tpm_sealer.as_mut()),
         )
         .map_err(|message| DaemonResponse::Error {
@@ -905,11 +825,15 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                 // legitimate `method = "none"` + `allow_plaintext` path is handled
                 // above and never reaches here (its sealer is intentionally None).
                 if self.config.encryption.method != EncryptionMethod::None
-                    && self.software_sealer.is_none()
+                    && self.keys.primary().is_none()
                 {
-                    let cause = self.sealer_init_error.clone().unwrap_or_else(|| {
-                        "the configured encryption sealer could not be initialized".to_string()
-                    });
+                    let cause = self
+                        .keys
+                        .primary_error()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| {
+                            "the configured encryption sealer could not be initialized".to_string()
+                        });
                     let message = format!(
                         "refusing to enroll: {} Storing your face would otherwise fall \
                          back to plaintext. Fix the keyfile path/permissions (or set \
@@ -937,6 +861,7 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                     return DaemonResponse::Error { message };
                 }
                 let device_id = fingerprint.canonical_for_storage();
+                let key_id = self.keys.primary().map(|s| s.key_id());
                 let result = enroll::enroll(
                     camera,
                     &mut self.engine,
@@ -944,8 +869,9 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                     &self.config,
                     &user,
                     &label,
-                    self.software_sealer.as_ref(),
+                    self.keys.primary(),
                     device_id.as_deref(),
+                    key_id.as_deref(),
                     cancel,
                 );
                 self.lease.finish(Outcome::from(&result), &self.config);

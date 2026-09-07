@@ -882,6 +882,39 @@ impl SoftwareSealer {
         Self { key }
     }
 
+    /// A lookup tag for which key sealed a row — not key material.
+    ///
+    /// Lowercase hex of the first 8 bytes of SHA-256 over the domain string
+    /// `b"facelock-key-id-v1"` followed by the 32 raw key bytes. A truncated
+    /// hash of a 256-bit random key reveals nothing usable about the key
+    /// itself; it exists only so a stored row can record which key sealed it,
+    /// so `facelock setup` flipping `encryption.method` (and thus the active
+    /// key) is detectable instead of silently producing undecryptable rows.
+    pub fn key_id(&self) -> String {
+        Self::key_id_for(&self.key)
+    }
+
+    /// [`Self::key_id`] for a caller holding raw key bytes but not a
+    /// [`SoftwareSealer`].
+    pub fn key_id_for(key: &[u8; AES_KEY_SIZE]) -> String {
+        use sha2::{Digest, Sha256};
+
+        const DOMAIN: &[u8] = b"facelock-key-id-v1";
+
+        let mut hasher = Sha256::new();
+        hasher.update(DOMAIN);
+        hasher.update(key);
+        let digest = hasher.finalize();
+
+        use std::fmt::Write;
+        let mut id = String::with_capacity(16);
+        for byte in &digest[..8] {
+            // Infallible on a String; the Result only exists for the trait.
+            let _ = write!(id, "{byte:02x}");
+        }
+        id
+    }
+
     /// Generate a new random 256-bit key and write it to a file at 0600.
     ///
     /// The file is created at mode 0600 in the same `open(2)` that creates it
@@ -897,19 +930,31 @@ impl SoftwareSealer {
     /// gap between it and the open free to be followed.
     pub fn generate_key_file(path: &std::path::Path) -> Result<()> {
         use rand::Rng;
-        use std::io::Write;
         use zeroize::Zeroize;
+
+        let mut key = [0u8; AES_KEY_SIZE];
+        rand::rng().fill_bytes(&mut key);
+
+        let write_result = Self::write_key_file(path, &key);
+
+        key.zeroize();
+        write_result
+    }
+
+    /// Write `key` to `path` as the plaintext keyfile: one `O_NOFOLLOW`
+    /// create-or-truncate at 0600, the bytes, then `sync_all`. The file
+    /// never holds a partial or placeholder key under the real name; a
+    /// failed write leaves it truncated rather than holding a random key
+    /// that a later `setup` would adopt as genuine (#354).
+    pub fn write_key_file(path: &std::path::Path, key: &[u8; AES_KEY_SIZE]) -> Result<()> {
+        use std::io::Write;
 
         if facelock_core::fs_security::is_symlink(path) {
             return Err(FacelockError::Encryption(symlink_key_refusal(path)));
         }
 
-        let mut key = [0u8; AES_KEY_SIZE];
-        rand::rng().fill_bytes(&mut key);
-
-        let write_result = (|| -> Result<()> {
-            let mut file = facelock_core::fs_security::create_truncate_file_nofollow(path, 0o600)
-                .map_err(|e| {
+        let mut file = facelock_core::fs_security::create_truncate_file_nofollow(path, 0o600)
+            .map_err(|e| {
                 if facelock_core::fs_security::is_symlink(path) {
                     FacelockError::Encryption(symlink_key_refusal(path))
                 } else {
@@ -919,18 +964,14 @@ impl SoftwareSealer {
                     ))
                 }
             })?;
-            file.write_all(&key)
-                .and_then(|()| file.sync_all())
-                .map_err(|e| {
-                    FacelockError::Encryption(format!(
-                        "failed to write key file {}: {e}",
-                        path.display()
-                    ))
-                })
-        })();
-
-        key.zeroize();
-        write_result
+        file.write_all(key)
+            .and_then(|()| file.sync_all())
+            .map_err(|e| {
+                FacelockError::Encryption(format!(
+                    "failed to write key file {}: {e}",
+                    path.display()
+                ))
+            })
     }
 
     /// Create the default encryption key, refusing to replace one that exists.
@@ -1427,6 +1468,41 @@ mod tests {
     }
 
     #[test]
+    fn key_id_is_deterministic_for_the_same_key() {
+        let key = [0x42u8; 32];
+        let a = SoftwareSealer::from_key(key).key_id();
+        let b = SoftwareSealer::from_key(key).key_id();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn key_id_differs_for_different_keys() {
+        let a = SoftwareSealer::from_key([0x42u8; 32]).key_id();
+        let b = SoftwareSealer::from_key([0x43u8; 32]).key_id();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn key_id_is_16_lowercase_hex_chars() {
+        let id = SoftwareSealer::from_key([0x99u8; 32]).key_id();
+        assert_eq!(id.len(), 16);
+        assert!(
+            id.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()),
+            "key_id must be lowercase hex: {id}"
+        );
+    }
+
+    #[test]
+    fn key_id_golden_value_for_the_all_zero_key() {
+        // Pinned: sha256(b"facelock-key-id-v1" || [0u8; 32])[..8] as lowercase
+        // hex. A change here means the key_id scheme changed, which silently
+        // orphans every row that already recorded the old id.
+        let id = SoftwareSealer::key_id_for(&[0u8; 32]);
+        assert_eq!(id, "923b1993e51ace05");
+    }
+
+    #[test]
     fn software_encrypted_detection() {
         let key = [0x42u8; 32];
         let sealer = SoftwareSealer::from_key(key);
@@ -1454,6 +1530,45 @@ mod tests {
         // Too short: version byte only
         let result = sealer.unseal_bytes(&[SOFTWARE_ENCRYPTED_VERSION_BYTE]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn write_key_file_stores_exactly_the_given_key_at_0600() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("unsealed.key");
+        let key = [0x5au8; AES_KEY_SIZE];
+
+        SoftwareSealer::write_key_file(&key_path, &key).unwrap();
+
+        assert_eq!(std::fs::read(&key_path).unwrap(), key);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&key_path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        let sealer = SoftwareSealer::from_key_file(&key_path).unwrap();
+        assert_eq!(sealer.key_id(), SoftwareSealer::key_id_for(&key));
+
+        // A second write replaces the bytes in place; no placeholder key
+        // ever stands under the real name between the two (#354).
+        let other = [0xa5u8; AES_KEY_SIZE];
+        SoftwareSealer::write_key_file(&key_path, &other).unwrap();
+        assert_eq!(std::fs::read(&key_path).unwrap(), other);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_key_file_refuses_a_symlink_at_the_key_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("elsewhere");
+        std::fs::write(&target, b"x").unwrap();
+        let link = dir.path().join("link.key");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let err = SoftwareSealer::write_key_file(&link, &[0u8; AES_KEY_SIZE]).unwrap_err();
+        assert!(err.to_string().contains("symlink"), "{err}");
+        assert_eq!(std::fs::read(&target).unwrap(), b"x");
     }
 
     #[test]

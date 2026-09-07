@@ -116,5 +116,19 @@ pub(crate) fn run_migrations(path: &Path, conn: &rusqlite::Connection) -> Result
         .map_err(|e| migration_err(path, e))?;
     }
 
+    if version < 7 {
+        // V7: record which key sealed each model (#354). Nullable — NULL means
+        // a pre-V7 row or a plaintext (unencrypted) row, neither of which was
+        // ever tagged with a key identity. Additive column, mirroring the V6
+        // pattern exactly.
+        conn.execute_batch(
+            "
+            ALTER TABLE face_models ADD COLUMN key_id TEXT;
+            INSERT OR REPLACE INTO schema_version (version) VALUES (7);
+        ",
+        )
+        .map_err(|e| migration_err(path, e))?;
+    }
+
     Ok(())
 }

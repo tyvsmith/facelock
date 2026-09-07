@@ -15,7 +15,8 @@
 # 0.1.4 generated (or sealed, against a software TPM).
 #
 # What each shape proves after a native package-manager upgrade:
-#   * the V5 database migrated to V6 and legacy rows carry device_id = NULL
+#   * the V5 database migrated to V7 and legacy rows carry device_id = NULL
+#     and key_id = NULL
 #   * a **known embedding still decrypts** — the plaintext bytes are compared,
 #     not the file hash, because a file hash cannot tell a preserved key from a
 #     preserved ciphertext nobody can open any more
@@ -26,7 +27,7 @@
 #
 # Then the candidate is downgraded back to v0.1.4 — after the candidate daemon
 # has opened and migrated the database — and the released binary has to still
-# read its own encrypted rows. V6 has no down-migration, so this is the only
+# read its own encrypted rows. V7 has no down-migration, so this is the only
 # thing that says whether shipping the alpha strands a rollback.
 set -euo pipefail
 
@@ -643,8 +644,8 @@ PY
 
 # --- post-upgrade proofs ---------------------------------------------------
 
-assert_schema_v6_with_null_device_id() {
-    assert_eq 6 "$(schema_version)" "schema version after the candidate opened the database"
+assert_schema_v7_with_null_columns() {
+    assert_eq 7 "$(schema_version)" "schema version after the candidate opened the database"
     local columns
     columns="$(python3 - <<'PY'
 import sqlite3
@@ -660,11 +661,18 @@ PY
         *,device_id,*) ;;
         *) fail "V6 migration did not add face_models.device_id (columns: $columns)" ;;
     esac
+    case ",$columns," in
+        *,key_id,*) ;;
+        *) fail "V7 migration did not add face_models.key_id (columns: $columns)" ;;
+    esac
     # Legacy rows must stay uncoupled. A migration that invented a device id
-    # would bind every existing template to whatever camera happened to be
-    # plugged in during the upgrade.
+    # or a key id would bind every existing template to whatever camera
+    # happened to be plugged in during the upgrade, or to a key it was never
+    # sealed under.
     assert_eq 0 "$(sqlite_query 'SELECT COUNT(*) FROM face_models WHERE device_id IS NOT NULL')" \
         "legacy rows left with a non-NULL device_id"
+    assert_eq 0 "$(sqlite_query 'SELECT COUNT(*) FROM face_models WHERE key_id IS NOT NULL')" \
+        "legacy rows left with a non-NULL key_id"
 }
 
 # Which model's first embedding is the known fixture for a given shape. The
@@ -1056,7 +1064,7 @@ assert_real_password_behavior() {
 
 # --- the candidate daemon actually opens the database ----------------------
 #
-# The rollback question is not "does v0.1.4 read a V6 file" in the abstract, it
+# The rollback question is not "does v0.1.4 read a V7 file" in the abstract, it
 # is "does it read the file the alpha daemon has already opened, migrated and
 # written to". So the daemon runs for real before the downgrade.
 open_database_with_candidate_daemon() {
@@ -1067,11 +1075,11 @@ open_database_with_candidate_daemon() {
     # Wait for the outcome, not for a proxy that races it.
     # `reconcile_enrollment_markers` runs at daemon.rs:346, *before*
     # `build_handler_from`, and the migration happens inside it -- so the store
-    # reaches V6 partway through reconciliation. Polling on the schema version
+    # reaches V7 partway through reconciliation. Polling on the schema version
     # alone stopped the daemon mid-reconcile, which the Debian half won by luck
     # and the Fedora half lost.
     for _ in $(seq 1 120); do
-        if [ "$(schema_version)" = 6 ] &&
+        if [ "$(schema_version)" = 7 ] &&
             [ "$(marker_model_count)" = "$(database_model_count)" ]; then
             break
         fi
@@ -1083,7 +1091,7 @@ open_database_with_candidate_daemon() {
         echo "--- candidate daemon output ---" >&2
         tail -20 "$output" >&2 || true
     fi
-    assert_eq 6 "$(schema_version)" "schema version after the candidate daemon ran"
+    assert_eq 7 "$(schema_version)" "schema version after the candidate daemon ran"
 }
 
 database_model_count() {
@@ -1118,13 +1126,13 @@ assert_downgrade_usable() {
         "installed version after downgrade"
     ensure_system_bus
 
-    # V6 has no down-migration. The predecessor must still open the database the
+    # V7 has no down-migration. The predecessor must still open the database the
     # candidate migrated and read its enrollment state. `tpm status` is the
     # readback rather than `list`, which in v0.1.4 is a D-Bus call to a daemon
     # this phase deliberately does not run.
     released_facelock tpm status >>"$LOG" 2>&1 ||
-        fail "the released binary could not open the V6 database after rollback"
-    assert_eq 6 "$(schema_version)" "schema version is not rolled back by a package downgrade"
+        fail "the released binary could not open the V7 database after rollback"
+    assert_eq 7 "$(schema_version)" "schema version is not rolled back by a package downgrade"
 
     # The rollback claim is that the old binary can still *read the templates*,
     # so it decrypts the known embedding and the plaintext is compared. An exit
@@ -1185,7 +1193,7 @@ run_shape() {
         fail "the upgrade changed state it had to preserve"
     }
 
-    assert_schema_v6_with_null_device_id
+    assert_schema_v7_with_null_columns
     assert_known_embedding_decrypts "$shape"
     assert_enrollment_marker_reconciled
     assert_key_artifacts_preserved "$STATE_ROOT/$shape.before"
@@ -1353,14 +1361,14 @@ fault_positive_control() {
     local target="$FAULT_ROOT/control" status
     seed_fault_database "$target"
     status="$(run_fault_daemon "$target" 45)"
-    assert_eq 6 "$(fault_schema_version "$target")" \
+    assert_eq 7 "$(fault_schema_version "$target")" \
         "positive control: the candidate daemon migrates a healthy V5 database"
     assert_eq 3 "$(fault_row_count "$target")" "positive control: rows after migration"
     [ "$status" = 124 ] || {
         tail -20 "$target/daemon.log" >&2
         fail "positive control: the candidate daemon did not stay up (exit $status)"
     }
-    pass "positive control: a healthy V5 database migrates to V6"
+    pass "positive control: a healthy V5 database migrates to V7"
 }
 
 # Shared by the failure cases: the file is the same file, its rows are still

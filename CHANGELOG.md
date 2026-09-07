@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `facelock-x86_64-linux-gnu` release asset, and therefore `facelock-bin`,
   is now built with the `tpm` feature, so `facelock setup` offers the
   TPM-protected key and an `encryption.method = "tpm"` config loads (#355).
+- **Switching encryption methods on the same machine no longer orphans templates** (#354):
+  every model row now records the key id of the key that sealed it. `facelock setup --encryption tpm`
+  with a plaintext keyfile present seals that key rather than minting a new one. Switching to keyfile
+  with a sealed key present and a usable TPM unseals it. The daemon and one-shot path load both the
+  configured method's key as primary and the other method's artifact best-effort as secondary, so
+  a row sealed under either key can still decrypt. Pre-V7 rows (NULL key id) are tried under both.
+  A new nullable `face_models.key_id` column (schema V7) records the truncated SHA-256 fingerprint
+  of each sealing key.
 
 ## [0.2.0] - 2026-09-06
 

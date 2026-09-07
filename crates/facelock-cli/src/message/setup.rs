@@ -169,6 +169,43 @@ pub enum SetupMessage {
         count: u32,
     },
 
+    // -- carrying an existing key across an `--encryption` method change
+    // -- (issue #354): `setup_encryption_tpm_key` / `setup_encryption_keyfile`
+    // -- reuse the key already on disk instead of minting a new one.
+    SealingExistingKeyfile {
+        key_path: String,
+        sealed_path: String,
+    },
+    UnsealingExistingSealedKey {
+        sealed_path: String,
+        key_path: String,
+    },
+    /// The target is a keyfile, a TPM-sealed key already exists, but no
+    /// usable TPM can unseal it right now: a fresh keyfile is minted instead,
+    /// and the sealed key is left on disk rather than deleted.
+    SealedKeyLeftInPlace {
+        sealed_path: String,
+    },
+    /// Both a plaintext keyfile and a TPM-sealed key exist and no longer
+    /// carry the same key material — most likely left behind by a `facelock
+    /// setup` run from before this guard existed.
+    DivergedKeysNotice {
+        key_path: String,
+        sealed_path: String,
+    },
+    /// A TPM device node exists but did not initialize; surfaced because the
+    /// caller silently falls back to a software keyfile from here.
+    TpmNotFunctional {
+        tcti: String,
+        reason: String,
+    },
+    /// `encryption.method` is already `"tpm"`, but no usable TPM was found on
+    /// this run of the wizard: the sealed key stays in place, and this run
+    /// falls through to the keyfile choice.
+    TpmConfiguredButUnavailable {
+        sealed_path: String,
+    },
+
     // -- hyprlock handoff --
     HyprlockHint,
     HyprlockApplied {
@@ -377,6 +414,60 @@ impl Message for SetupMessage {
                 translate("  Removed {count} orphaned model(s)."),
                 &[("count", count.to_string())],
             ),
+            SealingExistingKeyfile {
+                key_path,
+                sealed_path,
+            } => fill(
+                translate(
+                    "  Sealing the existing key at {key_path} with the TPM (writing {sealed_path})...",
+                ),
+                &[
+                    ("key_path", key_path.clone()),
+                    ("sealed_path", sealed_path.clone()),
+                ],
+            ),
+            UnsealingExistingSealedKey {
+                sealed_path,
+                key_path,
+            } => fill(
+                translate(
+                    "  Unsealing the existing TPM-sealed key at {sealed_path} into {key_path}...",
+                ),
+                &[
+                    ("sealed_path", sealed_path.clone()),
+                    ("key_path", key_path.clone()),
+                ],
+            ),
+            SealedKeyLeftInPlace { sealed_path } => fill(
+                translate(
+                    "  NOTE: leaving the TPM-sealed key at {sealed_path} in place; models sealed under it stay readable while a TPM can still unseal it.",
+                ),
+                &[("sealed_path", sealed_path.clone())],
+            ),
+            DivergedKeysNotice {
+                key_path,
+                sealed_path,
+            } => fill(
+                translate(
+                    "  NOTE: {key_path} and {sealed_path} no longer hold the same key; models sealed under either stay readable only while that file is kept.",
+                ),
+                &[
+                    ("key_path", key_path.clone()),
+                    ("sealed_path", sealed_path.clone()),
+                ],
+            ),
+            TpmNotFunctional { tcti, reason } => fill(
+                translate(
+                    "  NOTE: a TPM device is present but not usable (tcti: {tcti}): {reason}. Falling back to a software keyfile.",
+                ),
+                &[("tcti", tcti.clone()), ("reason", reason.clone())],
+            ),
+            TpmConfiguredButUnavailable { sealed_path } => fill(
+                translate(
+                    "  NOTE: encryption.method is \"tpm\" but no usable TPM was found right now; the sealed key at {sealed_path} stays in place. Continuing with a software keyfile for this run.",
+                ),
+                &[("sealed_path", sealed_path.clone())],
+            ),
             HyprlockHint => translate(
                 "\n==> To finish hyprlock integration, run as your normal user:\n==>     facelock hyprlock enable",
             ),
@@ -400,7 +491,7 @@ impl Message for SetupMessage {
 /// above: no wildcard arm, so a variant that renders nothing does not build.
 #[cfg(test)]
 impl super::Samples for SetupMessage {
-    const VARIANT_COUNT: usize = 70;
+    const VARIANT_COUNT: usize = 76;
 
     fn samples() -> Vec<Self> {
         use SetupMessage::*;
@@ -486,6 +577,28 @@ impl super::Samples for SetupMessage {
             EncryptionEnabledKeyfileAuto,
             OrphanModelsWarning { db_path: s("/db") },
             OrphanModelsRemoved { count: 2 },
+            SealingExistingKeyfile {
+                key_path: s("/k"),
+                sealed_path: s("/s"),
+            },
+            UnsealingExistingSealedKey {
+                sealed_path: s("/s"),
+                key_path: s("/k"),
+            },
+            SealedKeyLeftInPlace {
+                sealed_path: s("/s"),
+            },
+            DivergedKeysNotice {
+                key_path: s("/k"),
+                sealed_path: s("/s"),
+            },
+            TpmNotFunctional {
+                tcti: s("device:/dev/tpmrm0"),
+                reason: s("e"),
+            },
+            TpmConfiguredButUnavailable {
+                sealed_path: s("/s"),
+            },
             HyprlockHint,
             HyprlockApplied { user: s("u") },
             BlankLine,
@@ -679,6 +792,54 @@ mod tests {
         assert_eq!(
             OrphanModelsRemoved { count: 3 }.localized(),
             "  Removed 3 orphaned model(s)."
+        );
+
+        // -- carrying an existing key across a method change (#354) --
+        assert_eq!(
+            SealingExistingKeyfile {
+                key_path: "/etc/facelock/facelock.key".into(),
+                sealed_path: "/etc/facelock/sealed.key".into(),
+            }
+            .localized(),
+            "  Sealing the existing key at /etc/facelock/facelock.key with the TPM (writing /etc/facelock/sealed.key)..."
+        );
+        assert_eq!(
+            UnsealingExistingSealedKey {
+                sealed_path: "/etc/facelock/sealed.key".into(),
+                key_path: "/etc/facelock/facelock.key".into(),
+            }
+            .localized(),
+            "  Unsealing the existing TPM-sealed key at /etc/facelock/sealed.key into /etc/facelock/facelock.key..."
+        );
+        assert_eq!(
+            SealedKeyLeftInPlace {
+                sealed_path: "/etc/facelock/sealed.key".into()
+            }
+            .localized(),
+            "  NOTE: leaving the TPM-sealed key at /etc/facelock/sealed.key in place; models sealed under it stay readable while a TPM can still unseal it."
+        );
+        assert_eq!(
+            DivergedKeysNotice {
+                key_path: "/etc/facelock/facelock.key".into(),
+                sealed_path: "/etc/facelock/sealed.key".into(),
+            }
+            .localized(),
+            "  NOTE: /etc/facelock/facelock.key and /etc/facelock/sealed.key no longer hold the same key; models sealed under either stay readable only while that file is kept."
+        );
+        assert_eq!(
+            TpmNotFunctional {
+                tcti: "device:/dev/tpmrm0".into(),
+                reason: "no such device".into(),
+            }
+            .localized(),
+            "  NOTE: a TPM device is present but not usable (tcti: device:/dev/tpmrm0): no such device. Falling back to a software keyfile."
+        );
+        assert_eq!(
+            TpmConfiguredButUnavailable {
+                sealed_path: "/etc/facelock/sealed.key".into()
+            }
+            .localized(),
+            "  NOTE: encryption.method is \"tpm\" but no usable TPM was found right now; the sealed key at /etc/facelock/sealed.key stays in place. Continuing with a software keyfile for this run."
         );
 
         // -- hyprlock handoff --

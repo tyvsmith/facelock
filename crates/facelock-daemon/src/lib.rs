@@ -5,6 +5,7 @@ pub mod embeddings;
 pub mod enroll;
 pub mod handler;
 pub mod key_policy;
+pub mod keyring;
 pub mod liveness;
 pub mod quality;
 pub mod rate_limit;

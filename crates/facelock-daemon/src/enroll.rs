@@ -134,6 +134,7 @@ pub fn enroll<C: CameraSource, E: FaceProcessor>(
     label: &str,
     sealer: Option<&SoftwareSealer>,
     device_id: Option<&str>,
+    key_id: Option<&str>,
     cancel: &CancelToken,
 ) -> EnrollOutcome {
     // Opt-in hard device binding (Plan 04): when enabled, fold this camera's
@@ -318,6 +319,7 @@ pub fn enroll<C: CameraSource, E: FaceProcessor>(
         label,
         sealer,
         device_id,
+        key_id,
         device_aad.as_deref(),
         &accepted,
         cancel,
@@ -364,6 +366,7 @@ fn persist_enrollment<S: EmbeddingSealer>(
     label: &str,
     sealer: Option<&S>,
     device_id: Option<&str>,
+    key_id: Option<&str>,
     device_aad: Option<&[u8]>,
     accepted: &[FaceEmbedding],
     cancel: &CancelToken,
@@ -414,6 +417,7 @@ fn persist_enrollment<S: EmbeddingSealer>(
         sealer.is_some(),
         embedder_model,
         device_id,
+        key_id,
     ) {
         Ok(model_id) => {
             info!(
@@ -590,6 +594,7 @@ mod tests {
             "2026-08-08-1",
             None,
             None,
+            None,
             &CancelToken::new(),
         );
 
@@ -644,7 +649,7 @@ mod tests {
     ) -> EnrollOutcome {
         let config = Config::parse("[recognition]\ntimeout_secs = 2\n").unwrap();
         enroll(
-            camera, engine, store, &config, "alice", label, sealer, None, cancel,
+            camera, engine, store, &config, "alice", label, sealer, None, None, cancel,
         )
     }
 
@@ -783,6 +788,7 @@ mod tests {
             Some(&sealer),
             None,
             None,
+            None,
             &accepted,
             &CancelToken::new(),
         );
@@ -846,6 +852,7 @@ mod tests {
             "alice",
             "front",
             Some(&sealer),
+            None,
             None,
             None,
             &accepted,
@@ -916,6 +923,49 @@ mod tests {
             assert!(
                 known.contains(&plain),
                 "each row unseals to one of the accepted embeddings"
+            );
+        }
+    }
+
+    /// #354: the `key_id` passed in is what the persisted model carries —
+    /// this is the only writer of the column outside wave 1's `None`, and a
+    /// row that names the wrong key (or none) defeats the whole point of
+    /// recording it.
+    #[test]
+    fn persisted_model_carries_the_key_id_passed_in() {
+        let store = FaceStore::open_memory().unwrap();
+        let sealer = SoftwareSealer::from_key([7u8; 32]);
+        let key_id = sealer.key_id();
+        let accepted: Vec<FaceEmbedding> = [0, 40, 80]
+            .into_iter()
+            .map(fixtures::known_embedding)
+            .collect();
+
+        let outcome = persist_enrollment(
+            &store,
+            "",
+            "alice",
+            "front",
+            Some(&sealer),
+            None,
+            Some(key_id.as_str()),
+            None,
+            &accepted,
+            &CancelToken::new(),
+        );
+        let model_id = match outcome {
+            EnrollOutcome::Enrolled { model_id, .. } => model_id,
+            other => panic!("expected success, got: {other:?}"),
+        };
+
+        let rows = store.get_user_embeddings_raw_with_device("alice").unwrap();
+        assert_eq!(rows.len(), accepted.len());
+        for row in &rows {
+            assert_eq!(row.model_id, model_id);
+            assert_eq!(
+                row.key_id.as_deref(),
+                Some(key_id.as_str()),
+                "every row of the persisted model must carry the key_id passed to enroll"
             );
         }
     }
@@ -1015,6 +1065,7 @@ mod tests {
             &config,
             "alice",
             "front",
+            None,
             None,
             None,
             &CancelToken::new(),

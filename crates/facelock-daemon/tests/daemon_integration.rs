@@ -1146,7 +1146,8 @@ fn hard_binding_seals_under_the_enrolling_camera_aad_and_authenticates() {
     assert!(!rows.is_empty());
     let sealer = sealer_for(key_dir.path());
     let bound = device_binding_aad(Some("046d:085e:")).unwrap();
-    for (id, blob, sealed, device_id) in &rows {
+    for row in &rows {
+        let (id, blob, sealed, device_id) = (row.model_id, &row.blob, row.sealed, &row.device_id);
         assert!(sealed, "row {id} must be sealed");
         assert_eq!(device_id.as_deref(), Some("046d:085e:"));
         sealer
@@ -1196,7 +1197,8 @@ fn ordinary_encryption_seals_without_aad() {
         .unwrap();
     assert!(!rows.is_empty());
     let sealer = sealer_for(key_dir.path());
-    for (id, blob, sealed, _) in &rows {
+    for row in &rows {
+        let (id, blob, sealed) = (row.model_id, &row.blob, row.sealed);
         assert!(sealed, "row {id} must be sealed");
         sealer
             .unseal_embedding_with_aad(blob, None)
@@ -2341,6 +2343,147 @@ fn restoring_the_key_lifts_the_refusal_for_authentication() {
         !matches!(response, DaemonResponse::Error { .. }),
         "the restored key must lift the refusal for authentication too: {response:?}"
     );
+
+    cleanup_db(&db_path);
+}
+
+// --- #354 wave 2: decrypt each template under the key that sealed it ---
+
+/// `facelock setup` flipping `encryption.method`'s key must not strand rows
+/// sealed under the previous one. Model A is enrolled through a real handler
+/// under K1 — proving wave 2a's writer wiring: `enroll` now records the row's
+/// `key_id`, not wave 1's `None`. Model B is then added directly, sealed
+/// under K2 with `key_id` set to K2's id, mirroring what a fresh enrollment
+/// after the key flip would record. A second handler is built with K2 as its
+/// primary — as `facelock setup` leaves it — and loads the user's compare
+/// set.
+///
+/// This host has no TPM, so the keyfile-primary secondary path (which reads a
+/// TPM-sealed artifact) never actually loads K1: `SealingKeys` correctly
+/// reports it as not loadable, and the load must fail naming model A's key
+/// id and the artifact to restore — never silently drop model A, and never
+/// report the store as corrupt. `embeddings.rs` unit tests
+/// (`row_naming_a_secondary_key_decrypts_under_it`,
+/// `legacy_row_sealed_under_a_secondary_decrypts_through_the_trial`) cover
+/// the successful decrypt-under-a-loaded-secondary branch directly, since
+/// forcing a live cross-method secondary through this handler would need
+/// real TPM hardware.
+#[test]
+fn a_key_swap_fails_the_load_naming_the_stranded_key_and_its_artifact() {
+    use facelock_core::config::EncryptionMethod;
+    use facelock_daemon::handler::Handler;
+    use facelock_daemon::rate_limit::RateLimiter;
+
+    let dir = tempfile::tempdir().unwrap();
+    let key1_path = dir.path().join("k1.key");
+    let key2_path = dir.path().join("k2.key");
+    let db_path = temp_db_path("keyring-cross-method-swap");
+
+    let k1 = [0x11u8; 32];
+    let k2 = [0x22u8; 32];
+    std::fs::write(&key1_path, k1).unwrap();
+    std::fs::write(&key2_path, k2).unwrap();
+
+    let store = FaceStore::create(&db_path).unwrap();
+
+    // Enroll model A for real, under K1.
+    let mut config_a = test_config();
+    config_a.encryption.method = EncryptionMethod::Keyfile;
+    config_a.encryption.key_path = key1_path.to_string_lossy().into_owned();
+    config_a.storage.db_path = db_path.display().to_string();
+    let factory_a: MockCameraFactory = Box::new(move |_cfg| Ok(MockCamera::bright(640, 480, 40)));
+    let engine_a = MockFaceEngine::cycling(vec![
+        fixtures::known_embedding(0),
+        fixtures::known_embedding(40),
+        fixtures::known_embedding(80),
+        fixtures::known_embedding(120),
+    ]);
+    let mut handler_a = Handler::new(
+        config_a,
+        engine_a,
+        store,
+        RateLimiter::new(5, 60),
+        CameraCaps::default(),
+        Some(factory_a),
+        Some(0),
+    )
+    .expect("handler builds under K1");
+
+    match handler_a.handle(DaemonRequest::Enroll {
+        user: "alice".into(),
+        label: "front".into(),
+    }) {
+        DaemonResponse::Enrolled { .. } => {}
+        other => panic!("enrollment under K1 must succeed: {other:?}"),
+    }
+
+    let k1_id = facelock_tpm::SoftwareSealer::from_key(k1).key_id();
+    let rows_under_k1 = handler_a
+        .store
+        .get_user_embeddings_raw_with_device("alice")
+        .unwrap();
+    assert!(
+        rows_under_k1
+            .iter()
+            .all(|r| r.key_id.as_deref() == Some(k1_id.as_str())),
+        "enroll must record which key sealed the row: {rows_under_k1:?}"
+    );
+
+    // Insert model B directly, sealed under K2 — mirroring what a fresh
+    // enrollment after `facelock setup` flips the key would record.
+    let sealer2 = facelock_tpm::SoftwareSealer::from_key(k2);
+    let emb_b: facelock_core::types::FaceEmbedding = [0.5; 512];
+    let blob_b = sealer2.seal_embedding(&emb_b).unwrap();
+    let model_b_id = handler_a
+        .store
+        .add_model_raw("alice", "second", &blob_b, true, "embedder")
+        .unwrap();
+    handler_a
+        .store
+        .set_model_key_id(model_b_id, Some(&sealer2.key_id()))
+        .unwrap();
+
+    // A fresh handler whose primary is K2 — as if `facelock setup` had just
+    // flipped the configured key. No TPM is available on this host to load
+    // K1 as a secondary, so it is not loadable: the load must name it and
+    // the artifact to restore rather than reporting store corruption or
+    // silently dropping model A.
+    let mut config_b = test_config();
+    config_b.encryption.method = EncryptionMethod::Keyfile;
+    config_b.encryption.key_path = key2_path.to_string_lossy().into_owned();
+    let sealed_key_path = config_b.encryption.sealed_key_path.clone();
+    config_b.storage.db_path = db_path.display().to_string();
+    let store_b = FaceStore::open_existing(&db_path).unwrap();
+    let factory_b: MockCameraFactory = Box::new(move |_cfg| Ok(MockCamera::bright(640, 480, 5)));
+    let mut handler_b = Handler::new(
+        config_b,
+        MockFaceEngine::no_faces(),
+        store_b,
+        RateLimiter::new(5, 60),
+        CameraCaps::default(),
+        Some(factory_b),
+        None,
+    )
+    .expect("handler builds under K2");
+
+    match handler_b.handle_authenticate(
+        "alice".to_string(),
+        AuthIntent::Authenticate,
+        &CancelToken::new(),
+    ) {
+        DaemonResponse::Error { message } => {
+            assert!(
+                message.contains(&format!("was sealed under key {k1_id}")),
+                "{message}"
+            );
+            assert!(message.contains("not loadable"), "{message}");
+            assert!(message.contains(&sealed_key_path), "{message}");
+            assert!(message.contains("re-enroll"), "{message}");
+        }
+        other => panic!(
+            "a template sealed under an unloaded key must fail the load by name, got: {other:?}"
+        ),
+    }
 
     cleanup_db(&db_path);
 }
