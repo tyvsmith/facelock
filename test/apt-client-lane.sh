@@ -131,7 +131,8 @@ expires = datetime.datetime.fromtimestamp(int(expires_epoch), tz=datetime.timezo
 
 with open(matrix_path, encoding="utf-8") as handle:
     matrix = json.load(handle)
-matrix["apt_signing_key"] = {"fingerprint": fpr, "uid": uid, "expires": expires, "checked_on": expires}
+checked_on = datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+matrix["apt_signing_key"] = {"fingerprint": fpr, "uid": uid, "expires": expires, "checked_on": checked_on}
 with open(output_path, "w", encoding="utf-8") as handle:
     json.dump(matrix, handle)
 PY

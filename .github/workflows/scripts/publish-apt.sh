@@ -92,11 +92,23 @@ if [ ! -f "$APT_SIGNING_KEY_MATRIX" ]; then
   echo "APT signing key matrix not found: $APT_SIGNING_KEY_MATRIX" >&2
   exit 1
 fi
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "python3 is required to read the apt_signing_key pin from $APT_SIGNING_KEY_MATRIX" >&2
+  exit 1
+fi
 matrix_signing_key_field() {
   python3 -c '
 import json, sys
-with open(sys.argv[1], encoding="utf-8") as handle:
-    print(json.load(handle)["apt_signing_key"][sys.argv[2]])
+path, field = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as handle:
+        value = json.load(handle)["apt_signing_key"][field]
+except (OSError, ValueError, KeyError, TypeError) as error:
+    sys.exit(f"{path}: cannot read apt_signing_key.{field} ({error}); "
+             "the pin is an object with fingerprint, uid, expires and checked_on")
+if not isinstance(value, str) or not value:
+    sys.exit(f"{path}: apt_signing_key.{field} must be a non-empty string")
+print(value)
 ' "$APT_SIGNING_KEY_MATRIX" "$1"
 }
 PIN_FPR="$(matrix_signing_key_field fingerprint)"
@@ -105,9 +117,23 @@ PIN_EXPIRES="$(matrix_signing_key_field expires)"
 
 # The pin, checked before the key is trusted for anything: a rotated secret
 # whose fingerprint, uid, or expiry drifted from the matrix must fail here,
-# not sign a keyring the published docs do not match (#346).
-GPG_COLONS="$(gpg --list-keys --with-colons)"
-KEY_FPR=$(awk -F: '/^pub/{found=1} found && /^fpr/{print $10; exit}' <<<"$GPG_COLONS")
+# not sign a keyring the published docs do not match (#346). The secret must
+# hold exactly one secret key, so `SignWith: default` cannot pick a different
+# key from the one the pin was checked against.
+SECRET_FPRS=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{found=1} found && /^fpr/{print $10; found=0}')
+SECRET_COUNT=$(printf '%s\n' "$SECRET_FPRS" | grep -c .)
+if [ "$SECRET_COUNT" -ne 1 ]; then
+  echo "APT_GPG_PRIVATE_KEY must hold exactly one secret key; found ${SECRET_COUNT}:" >&2
+  printf '%s\n' "$SECRET_FPRS" | sed 's/^/  /' >&2
+  exit 1
+fi
+KEY_FPR="$SECRET_FPRS"
+if [ "$KEY_FPR" != "$PIN_FPR" ]; then
+  echo "imported APT signing key does not match the ${APT_SIGNING_KEY_MATRIX} pin:" >&2
+  echo "  fingerprint: imported ${KEY_FPR}, matrix pins ${PIN_FPR}" >&2
+  exit 1
+fi
+GPG_COLONS="$(gpg --list-keys --with-colons "$KEY_FPR")"
 KEY_UID=$(awk -F: '/^pub/{found=1} found && /^uid/{print $10; exit}' <<<"$GPG_COLONS")
 KEY_EXPIRES_EPOCH=$(awk -F: '/^pub/{print $7; exit}' <<<"$GPG_COLONS")
 if [ -z "$KEY_EXPIRES_EPOCH" ]; then
@@ -120,7 +146,6 @@ print(datetime.datetime.fromtimestamp(int(sys.argv[1]), tz=datetime.timezone.utc
 ' "$KEY_EXPIRES_EPOCH")"
 
 PIN_MISMATCH=()
-[ "$KEY_FPR" = "$PIN_FPR" ] || PIN_MISMATCH+=("fingerprint: imported ${KEY_FPR}, matrix pins ${PIN_FPR}")
 [ "$KEY_UID" = "$PIN_UID" ] || PIN_MISMATCH+=("uid: imported '${KEY_UID}', matrix pins '${PIN_UID}'")
 [ "$KEY_EXPIRES" = "$PIN_EXPIRES" ] || PIN_MISMATCH+=("expiry: imported ${KEY_EXPIRES}, matrix pins ${PIN_EXPIRES}")
 if [ "${#PIN_MISMATCH[@]}" -gt 0 ]; then

@@ -1485,14 +1485,13 @@ for doc_path in ("docs/quickstart.md", "docs/releasing.md"):
         f"missing {','.join(missing_fingerprints) if missing_fingerprints else 'none'}; "
         f"extra {','.join(extra_fingerprints) if extra_fingerprints else 'none'}",
     )
+    # Markdown wraps the uid across lines in quickstart; compare on
+    # whitespace-normalized text, the file's idiom for wrapped phrases.
+    require(
+        signing_uid in re.sub(r"\s+", " ", doc_text),
+        f"{doc_path} does not quote the pinned APT signing key uid {signing_uid!r}",
+    )
     if doc_path == "docs/quickstart.md":
-        # Markdown wraps the uid across two lines; the check tolerates
-        # whitespace wherever the source wraps.
-        uid_pattern = re.compile(r"\s+".join(re.escape(word) for word in signing_uid.split()))
-        require(
-            uid_pattern.search(doc_text) is not None,
-            f"{doc_path} does not quote the pinned APT signing key uid {signing_uid!r}",
-        )
         require(
             f"checked on {signing_checked_on}" in doc_text,
             f"{doc_path} does not carry 'checked on {signing_checked_on}'",
