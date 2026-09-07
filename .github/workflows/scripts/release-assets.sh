@@ -126,7 +126,16 @@ expected_attestations() {
         *) fail "prerelease must be true or false, got: $prerelease" ;;
     esac
 
-    printf 'build\tbuild\tattestation\t-\t-\t-\n'
+    # The binary asset is built in the trixie image build-deb also compiles
+    # in, so its attestation names that image; see the build job.
+    local trixie=""
+    read_debian_suites
+    for entry in "${DEBIAN_SUITES[@]}"; do
+        IFS='	' read -r suite architecture image <<<"$entry"
+        [ "$suite" = trixie ] && trixie="$image"
+    done
+    [ -n "$trixie" ] || fail "the release matrix pins no trixie image: $RELEASE_MATRIX"
+    printf 'build\tbuild\tattestation\t-\t%s\t-\n' "$trixie"
     printf 'onnxruntime\tdownload-ort\tattestation\t-\t-\tonnxruntime\n'
     printf 'cargo-vendor\tprepare-cargo-vendor\tattestation\t-\t-\tcargo-vendor\n'
     read_debian_suites
