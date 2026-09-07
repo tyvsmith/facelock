@@ -1220,29 +1220,102 @@ fn wizard_model_quality(theme: &ColorfulTheme, config: &mut Config) -> anyhow::R
     )
 }
 
-fn wizard_execution_provider(theme: &ColorfulTheme, config: &mut Config) -> anyhow::Result<()> {
-    let current = config.recognition.execution_provider.as_str();
+/// The four providers the wizard offers, in `ProviderKind::ALL` order. A
+/// selection index into this array is a selection index into
+/// [`provider_labels`]'s output — the two must stay the same length and order,
+/// which `provider_choices_cover_every_kind_in_order` guards.
+const PROVIDER_CHOICES: [facelock_face::ProviderKind; 4] = facelock_face::ProviderKind::ALL;
 
-    let default_idx = match current {
-        "cuda" => 1,
-        _ => 0,
+/// Pick the wizard's highlighted default.
+///
+/// Precedence: an explicit GPU choice already in the config wins over
+/// detection — the user set it deliberately, e.g. by editing the file or
+/// running `--execution-provider` between setup runs. Otherwise, what
+/// detection found. Otherwise cpu.
+///
+/// A config value of plain `cpu` does not count as "explicit": it is what
+/// every fresh install starts with, so treating it as a deliberate choice
+/// would make detection pointless on the first run, which is the bug this
+/// function exists to fix. An unparseable config value is treated the same as
+/// cpu — it names no provider to prefer.
+fn provider_default_index(detected: Option<facelock_face::ProviderKind>, current: &str) -> usize {
+    let explicit_gpu = facelock_face::ProviderKind::parse(current)
+        .filter(|kind| *kind != facelock_face::ProviderKind::Cpu);
+    let chosen = explicit_gpu
+        .or(detected)
+        .unwrap_or(facelock_face::ProviderKind::Cpu);
+    PROVIDER_CHOICES
+        .iter()
+        .position(|kind| *kind == chosen)
+        .unwrap_or(0)
+}
+
+/// Menu labels for the inference-device prompt, in `PROVIDER_CHOICES` order.
+///
+/// The base text names all four providers unconditionally — detection can
+/// fail, and even a plain listing lets a user pick a provider that later
+/// setup steps (`warn_provider_preflight`) can check for the packages it
+/// needs. When detection succeeded, each GPU entry gets an `[available]` or
+/// `[not in this ONNX Runtime build]` suffix. CPU never gets a suffix: it is
+/// not part of `ProviderDetection::available` (that list is GPU-only, see
+/// `ProviderKind::AUTO_PRIORITY`) and is always usable, so there is nothing
+/// conditional to report about it.
+fn provider_labels(detection: Option<&facelock_face::ProviderDetection>) -> Vec<String> {
+    const BASE: [&str; 4] = [
+        "CPU — works everywhere",
+        "CUDA (NVIDIA GPU — needs an ONNX Runtime built with CUDA, e.g. onnxruntime-opt-cuda)",
+        "ROCm (AMD GPU — needs an ONNX Runtime built with ROCm)",
+        "OpenVINO (Intel — needs an ONNX Runtime built with OpenVINO)",
+    ];
+
+    PROVIDER_CHOICES
+        .iter()
+        .zip(BASE)
+        .map(|(kind, label)| {
+            if *kind == facelock_face::ProviderKind::Cpu {
+                return label.to_string();
+            }
+            let Some(detection) = detection else {
+                return label.to_string();
+            };
+            let suffix = if detection.available.contains(kind) {
+                " [available]"
+            } else {
+                " [not in this ONNX Runtime build]"
+            };
+            format!("{label}{suffix}")
+        })
+        .collect()
+}
+
+fn wizard_execution_provider(theme: &ColorfulTheme, config: &mut Config) -> anyhow::Result<()> {
+    let current = config.recognition.execution_provider.clone();
+
+    let detection = match facelock_face::detect_execution_provider() {
+        Ok(detection) => {
+            Terminal.info(&DeviceMessage::DetectedProvider {
+                detail: detection.summarize(),
+            });
+            Some(detection)
+        }
+        Err(e) => {
+            Terminal.info(&DeviceMessage::ProviderQueryFailed {
+                error: e.to_string(),
+            });
+            None
+        }
     };
 
-    let options = [
-        "CPU (recommended — works everywhere)",
-        "CUDA (NVIDIA GPU — requires onnxruntime-opt-cuda package)",
-    ];
+    let default_idx = provider_default_index(detection.as_ref().map(|d| d.provider), &current);
+    let labels = provider_labels(detection.as_ref());
 
     let selection = Select::with_theme(theme)
         .with_prompt(DeviceMessage::PromptSelectInferenceDevice.localized())
-        .items(&options[..])
+        .items(&labels[..])
         .default(default_idx)
         .interact()?;
 
-    let provider = match selection {
-        1 => "cuda",
-        _ => "cpu",
-    };
+    let provider = PROVIDER_CHOICES[selection.min(PROVIDER_CHOICES.len() - 1)].as_str();
 
     config.recognition.execution_provider = provider.to_string();
     Terminal.info(&DeviceMessage::SelectedValue {
@@ -1312,9 +1385,10 @@ fn warn_provider_preflight(provider: &str) {
     }
 }
 
-/// Apply `--execution-provider`. The prompt only offers CPU and CUDA; `rocm`
-/// and `openvino` are valid config values (see `facelock-face`'s provider
-/// registry) and are accepted from the flag.
+/// Apply `--execution-provider`. All four providers `facelock-face`'s
+/// registry knows — cpu, cuda, rocm, openvino — are valid config values here
+/// and in the wizard prompt (`wizard_execution_provider`); this is the flag's
+/// path onto the same set.
 fn apply_execution_provider(
     config: &mut Config,
     choice: ExecutionProviderChoice,
@@ -5852,6 +5926,80 @@ mod choice_tests {
             provider_name(ExecutionProviderChoice::Auto).unwrap(),
             resolved,
             "provider_name must not diverge from resolve_execution_provider_auto"
+        );
+    }
+
+    // -- wizard default index / labels ---------------------------------------
+
+    use facelock_face::{ProviderDetection, ProviderKind};
+
+    #[test]
+    fn detection_beats_a_default_cpu_config() {
+        let idx = provider_default_index(Some(ProviderKind::Cuda), "cpu");
+        assert_eq!(PROVIDER_CHOICES[idx], ProviderKind::Cuda);
+    }
+
+    #[test]
+    fn explicit_gpu_config_beats_detection() {
+        let idx = provider_default_index(Some(ProviderKind::Cuda), "rocm");
+        assert_eq!(PROVIDER_CHOICES[idx], ProviderKind::Rocm);
+    }
+
+    #[test]
+    fn unparseable_current_falls_back_to_detection_then_cpu() {
+        let idx = provider_default_index(Some(ProviderKind::Rocm), "bogus");
+        assert_eq!(PROVIDER_CHOICES[idx], ProviderKind::Rocm);
+
+        let idx = provider_default_index(None, "bogus");
+        assert_eq!(PROVIDER_CHOICES[idx], ProviderKind::Cpu);
+    }
+
+    #[test]
+    fn default_index_always_in_range() {
+        let detections = std::iter::once(None).chain(ProviderKind::ALL.into_iter().map(Some));
+        let names = ["cpu", "cuda", "rocm", "openvino", "", "bogus"];
+        for detected in detections {
+            for name in names {
+                let idx = provider_default_index(detected, name);
+                assert!(
+                    idx < PROVIDER_CHOICES.len(),
+                    "{detected:?} {name:?} -> {idx}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn provider_choices_cover_every_kind_in_order() {
+        assert_eq!(PROVIDER_CHOICES, ProviderKind::ALL);
+    }
+
+    #[test]
+    fn labels_mark_unavailable_builds() {
+        let detection = ProviderDetection {
+            provider: ProviderKind::Cuda,
+            available: vec![ProviderKind::Cuda],
+        };
+        let labels = provider_labels(Some(&detection));
+        assert_eq!(labels.len(), 4);
+        assert!(!labels[0].contains('['), "cpu label: {}", labels[0]);
+        assert!(labels[1].ends_with("[available]"), "{}", labels[1]);
+        assert!(
+            labels[2].ends_with("[not in this ONNX Runtime build]"),
+            "{}",
+            labels[2]
+        );
+        assert!(
+            labels[3].ends_with("[not in this ONNX Runtime build]"),
+            "{}",
+            labels[3]
+        );
+
+        let no_detection = provider_labels(None);
+        assert_eq!(no_detection.len(), 4);
+        assert!(
+            no_detection.iter().all(|l| !l.contains('[')),
+            "{no_detection:?}"
         );
     }
 

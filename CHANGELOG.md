@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The setup wizard's inference-device prompt now defaults from the installed ONNX Runtime** (#352):
+  it probes the runtime the same way `--execution-provider=auto` does and highlights the provider it
+  finds, instead of always defaulting to CPU. The prompt also lists all four providers — CPU, CUDA,
+  ROCm, OpenVINO — annotating each GPU option as available or not in the installed build, rather than
+  offering only CPU and CUDA.
+
+- The Arch test containers now disable pacman's download timeout, so a slow
+  transfer from the pinned `archive.archlinux.org` mirror no longer aborts
+  the whole transaction and fails the job (#332).
+
 ### Fixed
 
 - **Package removal no longer aborts on a drifted vendor override** (#350): `pam remove --all` refused any `/etc/pam.d` file that shadows a vendor file and was not a byte-exact Facelock copy, even when the only Facelock content was its own canonical `auth      sufficient pam_facelock.so` (that exact spacing is what ownership is judged on). Omarchy's `/etc/pam.d/polkit-1` is such a file, so `pacman -R facelock` failed in the `PreTransaction` hook and the package could not be removed. The machine-wide cleanup now applies its ownership check to those files instead of refusing them outright: an owned canonical rule is removed in place and the file is kept, the in-place rewrite named removal already performed. A file edited after `pam add`, whose recorded hash no longer matches, is judged by the same canonical-line rule instead of blocking outright. Unowned references still block, and those blockers now name `facelock pam remove --service <name>` as the way out.
@@ -21,12 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a row sealed under either key can still decrypt. Pre-V7 rows (NULL key id) are tried under both.
   A new nullable `face_models.key_id` column (schema V7) records the truncated SHA-256 fingerprint
   of each sealing key.
-
-### Changed
-
-- The Arch test containers now disable pacman's download timeout, so a slow
-  transfer from the pinned `archive.archlinux.org` mirror no longer aborts
-  the whole transaction and fails the job (#332).
 
 ## [0.2.0] - 2026-09-06
 

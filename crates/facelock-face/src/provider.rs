@@ -1149,22 +1149,24 @@ pub struct ProviderDetection {
 }
 
 impl ProviderDetection {
-    /// One line explaining the choice, suitable for the setup wizard. The
-    /// point of `auto` is that a user on a CPU-only ORT learns *why* they got
-    /// CPU rather than silently getting it.
-    pub fn explain(&self) -> String {
+    /// What the installed ONNX Runtime reports, without saying what was
+    /// picked from it. The setup wizard prints this ahead of its own prompt,
+    /// where "selecting X" would be premature — nothing has been selected
+    /// yet, the user is about to be asked.
+    pub fn summarize(&self) -> String {
         if self.available.is_empty() {
-            "the installed ONNX Runtime has no GPU execution providers compiled in; \
-             selecting cpu"
-                .to_string()
+            "the installed ONNX Runtime has no GPU execution providers compiled in".to_string()
         } else {
             let names: Vec<&str> = self.available.iter().map(|k| k.as_str()).collect();
-            format!(
-                "the installed ONNX Runtime supports {}; selecting {}",
-                names.join(", "),
-                self.provider.as_str()
-            )
+            format!("the installed ONNX Runtime supports {}", names.join(", "))
         }
+    }
+
+    /// One line explaining the choice, suitable for `--execution-provider=auto`.
+    /// The point of `auto` is that a user on a CPU-only ORT learns *why* they
+    /// got CPU rather than silently getting it.
+    pub fn explain(&self) -> String {
+        format!("{}; selecting {}", self.summarize(), self.provider.as_str())
     }
 }
 
@@ -2176,6 +2178,29 @@ mod tests {
         let msg = detection.explain();
         assert!(msg.contains("cuda, rocm"), "{msg}");
         assert!(msg.ends_with("selecting cuda"), "{msg}");
+    }
+
+    /// `explain()` is `summarize()` plus a "selecting X" suffix — the setup
+    /// wizard prints `summarize()` alone ahead of its own prompt, and relies
+    /// on it being a strict prefix of what `auto` prints.
+    #[test]
+    fn explain_starts_with_summarize() {
+        for detection in [
+            ProviderDetection {
+                provider: ProviderKind::Cpu,
+                available: vec![],
+            },
+            ProviderDetection {
+                provider: ProviderKind::Cuda,
+                available: vec![ProviderKind::Cuda, ProviderKind::Rocm],
+            },
+        ] {
+            let (summary, explanation) = (detection.summarize(), detection.explain());
+            assert!(
+                explanation.starts_with(&summary),
+                "{explanation:?} does not start with {summary:?}"
+            );
+        }
     }
 
     // -- live detection -----------------------------------------------------
