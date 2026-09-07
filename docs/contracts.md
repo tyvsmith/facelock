@@ -2463,7 +2463,10 @@ release until it does.
   `build` and `build-rpm` compile through `just build-release`, the recipe
   `just install` and the packaging lanes use, which carries the `tpm`
   feature; `build` fails if the resulting binary does not link
-  `libtss2-esys`.
+  `libtss2-esys`. The justfile needs just 1.36 or later, and the Ubuntu
+  builder's apt package is 1.21.0, so `install-ubuntu-deps.sh` installs a
+  just release pinned by version and digest; the release artifacts contract
+  refuses the apt package and any pin below that floor.
 - Every staged asset matches the SHA-256 its builder attested. Each builder
   writes a `release-digests-<slot>` artifact naming what it produced, the image
   it produced it in, and the components it consumed. An asset attested by no
