@@ -28,30 +28,6 @@ fail() {
 [ -f "$workflow_path" ] || fail "missing release workflow: $workflow_path"
 [ -x "$helper_path" ] || fail "release asset helper must be executable: $helper_path"
 
-# ------------------------------------------------------------ builder tooling
-
-# The `build` job runs `just build-release` on ubuntu-latest, whose apt
-# package is just 1.21.0. The justfile needs 1.36 or later (hyphenated
-# variable names), and v0.2.1's first release run died on that parse before
-# compiling anything. The deps script pins a release by digest instead.
-deps_script=.github/workflows/scripts/install-ubuntu-deps.sh
-just_floor=1.36.0
-[ -x "$deps_script" ] || fail "Ubuntu deps script must be executable: $deps_script"
-# Join backslash continuations first, so `apt-get install -y just` on one
-# line and `just \` inside a multi-line package list are read the same way.
-if grep -v '^[[:space:]]*#' "$deps_script" | sed -e ':a' -e '/\\$/N; s/\\\n//; ta' |
-    grep -E 'apt(-get)?[[:space:]]+install' | grep -Eq '(^|[[:space:]])just([[:space:]]|$)'; then
-    fail "the Ubuntu deps script must not install just from apt (noble ships 1.21.0, below the $just_floor the justfile needs)"
-fi
-pinned_just="$(sed -n 's/^JUST_VERSION="\([0-9][0-9.]*\)"$/\1/p' "$deps_script")"
-[ -n "$pinned_just" ] || fail "the Ubuntu deps script must pin JUST_VERSION"
-[ "$(printf '%s\n' "$just_floor" "$pinned_just" | sort -V | head -n1)" = "$just_floor" ] ||
-    fail "the Ubuntu deps script pins just $pinned_just, below the $just_floor the justfile needs"
-grep -Eq '^JUST_SHA256="[0-9a-f]{64}"$' "$deps_script" ||
-    fail "the Ubuntu deps script must pin the just tarball digest as JUST_SHA256"
-grep -Fq 'sha256sum -c' "$deps_script" ||
-    fail "the Ubuntu deps script must verify the just tarball against JUST_SHA256"
-echo "release artifacts contract: Ubuntu builder pins just $pinned_just by digest"
 
 job_body() {
     awk -v job="$1" '
@@ -525,7 +501,7 @@ attest_step() {
 matrix_image() {
     job_body "$1" | awk -v suite="$2" '
         /^          - suite: / { current = $3 }
-        current == suite && /^            image: / { sub(/^            image: /, ""); print; exit }
+        !seen && current == suite && /^            image: / { sub(/^            image: /, ""); print; seen = 1 }
     '
 }
 
@@ -598,6 +574,31 @@ workflow_attestations() {
         done <<<"$outputs"
     done
 }
+
+# ------------------------------------------------------------ builder tooling
+
+# The binary asset carries the tpm feature, and the hosted Ubuntu runner cannot
+# build it: tss-esapi-sys needs tpm2-tss 4.1.3, noble ships 4.0.1, and noble's
+# just (1.21.0) does not even parse the justfile (1.36 or later). v0.2.1's
+# first two tag runs died on exactly those two lines. `build` therefore runs
+# in the pinned trixie image build-deb compiles in, and attests that image.
+build_statements="$(job_body build | grep -v '^[[:space:]]*#' || true)"
+# No early awk exit: the body is long enough that printf would take SIGPIPE.
+build_container_image="$(printf '%s\n' "$build_statements" | awk '!seen && /^      image: /{ sub(/^      image: /, ""); print; seen = 1 }')"
+build_env_image="$(printf '%s\n' "$build_statements" | awk '!seen && /^      BUILD_IMAGE: /{ sub(/^      BUILD_IMAGE: /, ""); print; seen = 1 }')"
+[ -n "$build_container_image" ] ||
+    fail "the build job must run in a pinned container; the hosted Ubuntu runner cannot build the tpm feature"
+trixie_matrix_image="$(matrix_image build-deb trixie)"
+[ -n "$trixie_matrix_image" ] || fail "build-deb pins no trixie image to compare the build job against"
+[ "$build_container_image" = "$trixie_matrix_image" ] ||
+    fail "the build job must compile in build-deb's trixie image ('$trixie_matrix_image'), not '$build_container_image'"
+[ "$build_env_image" = "$build_container_image" ] ||
+    fail "build BUILD_IMAGE ('$build_env_image') must repeat container.image ('$build_container_image')"
+printf '%s\n' "$build_statements" | grep -Fq -- '--image "$BUILD_IMAGE"' ||
+    fail "the build job must attest the image it built in (--image \"\$BUILD_IMAGE\")"
+[ ! -e .github/workflows/scripts/install-ubuntu-deps.sh ] ||
+    fail "install-ubuntu-deps.sh is back; the build job must not depend on the hosted runner's packages"
+echo "release artifacts contract: build compiles in the pinned trixie image"
 
 attesting_set="$(mktemp "${TMPDIR:-/tmp}/facelock-attesting.XXXXXX")"
 "$helper_path" expected-attestations false >"$attesting_set"
@@ -822,6 +823,7 @@ build_artifacts() {
     local -x GITHUB_OUTPUT="$work/github-output"
     : >"$GITHUB_OUTPUT"
     "$attest" build "$artifacts/release-digests-build" \
+        --image "$(image_of build)" \
         "$artifacts"/release-binaries/* >/dev/null
     "$attest" build-deb "$artifacts/release-digests-deb-trixie" \
         --suite trixie --image "$(image_of deb-trixie)" \
@@ -1304,8 +1306,16 @@ restate onnxruntime '{"components": null}'
 assert_rejects "attestation omitting its component" "declares components" \
     verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
 build_artifacts
-restate build '{"image": "docker.io/library/ubuntu:24.04@sha256:dead"}'
+restate apt '{"image": "docker.io/library/ubuntu:24.04@sha256:dead"}'
 assert_rejects "attestation declaring an image its slot has none of" "declares the build image" \
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
+build_artifacts
+restate build '{"image": "docker.io/library/ubuntu:24.04@sha256:dead"}'
+assert_rejects "attestation declaring an image other than the one its slot pins" "declares the build image" \
+    verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
+build_artifacts
+restate build '{"image": null}'
+assert_rejects "attestation omitting the image its slot pins" "declares the build image" \
     verify-digests "$artifacts" "$job_outputs" "$staged" "$work/actual-staged" false
 build_artifacts
 restate build '{"toolchain": {"rustc": "1.95.0"}}'
