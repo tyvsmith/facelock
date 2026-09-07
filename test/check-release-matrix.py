@@ -101,62 +101,44 @@ for platform_id, expected_variant in expected_non_debian_variants.items():
     row = next((candidate for candidate in matrix.get("platforms", []) if candidate.get("id") == platform_id), {})
     require(row.get("variant") == expected_variant, f"{platform_id} non-Debian variant/channel drifted")
 require(matrix.get("reviewed_on") == "2026-08-18", "matrix review date must be 2026-08-18")
-require(matrix.get("fedora", {}).get("43_eol_gate") == "2026-12-02", "Fedora 43 EOL gate drifted")
 today = date.fromisoformat(os.environ.get("RELEASE_MATRIX_TODAY", date.today().isoformat()))
-fedora_43_eol = date.fromisoformat(matrix["fedora"]["43_eol_gate"])
-require(today < fedora_43_eol, f"Fedora 43 reached its {fedora_43_eol.isoformat()} EOL gate; revise the matrix")
 
+
+def iso_date(field_name: str, value: object) -> date:
+    require(isinstance(value, str), f"{field_name} must be a string: {value!r}")
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        fail(f"{field_name} must be an ISO date: {value!r}")
+
+
+# Checked, and its expiry hard-failed, before the Fedora 43 EOL gate below:
+# any RELEASE_MATRIX_TODAY at or past this key's 2029-03-27 expiry is also
+# past Fedora 43's 2026-12-02 gate, so without this ordering that gate's
+# message would hide the key's. docs/releasing.md promises the key message
+# (#346).
+FINGERPRINT_PATTERN = re.compile(r"(?<![0-9A-F])[0-9A-F]{40}(?![0-9A-F])")
 apt_signing_key = matrix.get("apt_signing_key", {})
 signing_fingerprint = apt_signing_key.get("fingerprint")
 require(
-    isinstance(signing_fingerprint, str) and re.fullmatch(r"[0-9A-F]{40}", signing_fingerprint) is not None,
+    isinstance(signing_fingerprint, str) and FINGERPRINT_PATTERN.fullmatch(signing_fingerprint) is not None,
     f"apt_signing_key fingerprint must be a 40-character uppercase hex string: {signing_fingerprint!r}",
 )
 signing_uid = apt_signing_key.get("uid")
 require(isinstance(signing_uid, str) and signing_uid, "apt_signing_key uid must be a non-empty string")
+signing_checked_on = apt_signing_key.get("checked_on")
+iso_date("apt_signing_key checked_on", signing_checked_on)
 signing_expires = apt_signing_key.get("expires")
-require(
-    isinstance(signing_expires, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", signing_expires) is not None,
-    f"apt_signing_key expires must be an ISO date: {signing_expires!r}",
-)
-signing_key_expiry = date.fromisoformat(signing_expires)
+signing_key_expiry = iso_date("apt_signing_key expires", signing_expires)
 require(
     today < signing_key_expiry,
     f"APT signing key {signing_fingerprint} expired {signing_key_expiry.isoformat()}; rotate the key, "
     "refresh the published keyring, and update the matrix",
 )
-require(
-    isinstance(apt_signing_key.get("checked_on"), str)
-    and re.fullmatch(r"\d{4}-\d{2}-\d{2}", apt_signing_key["checked_on"]) is not None,
-    f"apt_signing_key checked_on must be an ISO date: {apt_signing_key.get('checked_on')!r}",
-)
 
-# The fingerprint is a client's only defense against a mismatched keyring
-# looking exactly like tampering (#346): the published docs must quote the
-# one pinned here, and a leftover fingerprint from a prior key must not
-# linger once this one rotates. Fingerprints print uppercase; the pattern is
-# scoped to uppercase hex so it does not catch an unrelated lowercase git SHA
-# (docs/releasing.md pins one at the pre-tag attestation section).
-fingerprint_pattern = re.compile(r"[0-9A-F]{40}")
-for doc_path in ("docs/quickstart.md", "docs/releasing.md"):
-    doc_text = (ROOT / doc_path).read_text()
-    found_fingerprints = set(fingerprint_pattern.findall(doc_text))
-    require(
-        signing_fingerprint in found_fingerprints,
-        f"{doc_path} does not quote the pinned APT signing key fingerprint {signing_fingerprint}",
-    )
-    require(
-        found_fingerprints == {signing_fingerprint},
-        f"{doc_path} carries a fingerprint besides the pinned one: {sorted(found_fingerprints - {signing_fingerprint})}",
-    )
-    if doc_path == "docs/quickstart.md":
-        # Markdown wraps the uid across two lines; the check tolerates
-        # whitespace wherever the source wraps.
-        uid_pattern = re.compile(r"\s+".join(re.escape(word) for word in signing_uid.split()))
-        require(
-            uid_pattern.search(doc_text) is not None,
-            f"{doc_path} does not quote the pinned APT signing key uid {signing_uid!r}",
-        )
+require(matrix.get("fedora", {}).get("43_eol_gate") == "2026-12-02", "Fedora 43 EOL gate drifted")
+fedora_43_eol = date.fromisoformat(matrix["fedora"]["43_eol_gate"])
+require(today < fedora_43_eol, f"Fedora 43 reached its {fedora_43_eol.isoformat()} EOL gate; revise the matrix")
 
 require(matrix.get("fedora", {}).get("branched") == "45", "Fedora 45 must remain a separate branched target")
 require(matrix.get("fedora", {}).get("rawhide_development_release") == "46", "Rawhide must identify Fedora 46 development")
@@ -1488,6 +1470,51 @@ install_docs = {
 # raw-text checking for an independently edited book page.
 if install_docs["book/src/quickstart.md"].strip() == "{{#include ../../docs/quickstart.md}}":
     install_docs["book/src/quickstart.md"] = (ROOT / "docs/quickstart.md").read_text()
+
+# The published fingerprint is a client's only defense against a mismatched
+# keyring looking exactly like tampering (#346): docs/quickstart.md and
+# docs/releasing.md must quote the pinned fingerprint, uid, and expiry.
+for doc_path in ("docs/quickstart.md", "docs/releasing.md"):
+    doc_text = (ROOT / doc_path).read_text()
+    found_fingerprints = set(FINGERPRINT_PATTERN.findall(doc_text))
+    missing_fingerprints = sorted({signing_fingerprint} - found_fingerprints)
+    extra_fingerprints = sorted(found_fingerprints - {signing_fingerprint})
+    require(
+        not missing_fingerprints and not extra_fingerprints,
+        f"{doc_path} APT signing key fingerprint drifted from the apt_signing_key pin: "
+        f"missing {','.join(missing_fingerprints) if missing_fingerprints else 'none'}; "
+        f"extra {','.join(extra_fingerprints) if extra_fingerprints else 'none'}",
+    )
+    if doc_path == "docs/quickstart.md":
+        # Markdown wraps the uid across two lines; the check tolerates
+        # whitespace wherever the source wraps.
+        uid_pattern = re.compile(r"\s+".join(re.escape(word) for word in signing_uid.split()))
+        require(
+            uid_pattern.search(doc_text) is not None,
+            f"{doc_path} does not quote the pinned APT signing key uid {signing_uid!r}",
+        )
+        require(
+            f"checked on {signing_checked_on}" in doc_text,
+            f"{doc_path} does not carry 'checked on {signing_checked_on}'",
+        )
+    if doc_path == "docs/releasing.md":
+        require(
+            signing_expires in doc_text,
+            f"{doc_path} does not quote the pinned APT signing key expiry {signing_expires}",
+        )
+
+# A stale fingerprint must not linger anywhere a first-time installer might
+# read once the key rotates: every document with install instructions, plus
+# the release runbook. Reuses install_docs rather than a parallel file list.
+fingerprint_scan_docs = dict(install_docs)
+fingerprint_scan_docs["docs/releasing.md"] = (ROOT / "docs/releasing.md").read_text()
+for doc_path, doc_text in fingerprint_scan_docs.items():
+    extra_fingerprints = sorted(set(FINGERPRINT_PATTERN.findall(doc_text)) - {signing_fingerprint})
+    require(
+        not extra_fingerprints,
+        f"{doc_path} carries an APT signing key fingerprint besides the pinned one: {extra_fingerprints}",
+    )
+
 apt_platform_mappings = (
     ("Debian 13", "trixie", "TPM"),
     ("Ubuntu 26.04", "resolute", "TPM"),
