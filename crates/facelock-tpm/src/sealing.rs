@@ -906,9 +906,11 @@ impl SoftwareSealer {
         hasher.update(key);
         let digest = hasher.finalize();
 
+        use std::fmt::Write;
         let mut id = String::with_capacity(16);
         for byte in &digest[..8] {
-            id.push_str(&format!("{byte:02x}"));
+            // Infallible on a String; the Result only exists for the trait.
+            let _ = write!(id, "{byte:02x}");
         }
         id
     }

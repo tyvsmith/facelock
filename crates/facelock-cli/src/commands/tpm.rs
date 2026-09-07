@@ -195,8 +195,10 @@ pub(crate) fn seal_existing_keyfile(config: &Config) -> Result<()> {
     let sealed_path = Path::new(&config.encryption.sealed_key_path);
 
     // Read the plaintext key
-    let key_data = std::fs::read(key_path)
-        .with_context(|| format!("failed to read key file {}", key_path.display()))?;
+    let key_data = zeroize::Zeroizing::new(
+        std::fs::read(key_path)
+            .with_context(|| format!("failed to read key file {}", key_path.display()))?,
+    );
     if key_data.len() != 32 {
         anyhow::bail!("key file must be exactly 32 bytes, got {}", key_data.len());
     }

@@ -22,7 +22,7 @@
 use facelock_core::config::{Config, EncryptionMethod};
 use facelock_core::types::{DeviceBinding, FaceEmbedding, Wiped};
 use facelock_store::RawEmbeddingRow;
-use tracing::{info, warn};
+use tracing::{debug, warn};
 
 use crate::keyring::SealingKeys;
 
@@ -243,7 +243,10 @@ fn decrypt_software_row(
         match candidate.unseal_embedding_with_aad(blob, aad.as_deref()) {
             Ok(embedding) => {
                 if index > 0 {
-                    info!(
+                    // `debug`, not `info`: this runs on every authentication
+                    // for every legacy row, so at `info` a diverged host
+                    // would log a line per row per attempt in steady state.
+                    debug!(
                         model_id = id,
                         key_id = %candidate.key_id(),
                         "legacy embedding decrypted under a secondary key"
@@ -299,10 +302,22 @@ fn software_decrypt_error(
 /// the refusal for a row whose `key_id` names a key nothing loaded, so the
 /// operator restores the artifact that matches the row rather than the one
 /// the current method already reads.
-fn other_key_artifact(config: &Config) -> &str {
+fn other_key_artifact(config: &Config) -> String {
     match config.encryption.method {
-        EncryptionMethod::Tpm => &config.encryption.key_path,
-        EncryptionMethod::Keyfile | EncryptionMethod::None => &config.encryption.sealed_key_path,
+        EncryptionMethod::Tpm => config.encryption.key_path.clone(),
+        EncryptionMethod::Keyfile | EncryptionMethod::None => {
+            let sealed = &config.encryption.sealed_key_path;
+            #[cfg(feature = "tpm")]
+            {
+                sealed.clone()
+            }
+            #[cfg(not(feature = "tpm"))]
+            {
+                // Restoring the sealed key alone cannot help here: this build
+                // has no TPM support to unseal it with.
+                format!("{sealed} under a build with the tpm feature (this one has none)")
+            }
+        }
     }
 }
 
@@ -792,8 +807,10 @@ mod tests {
         let keys = SealingKeys::from_parts(Some(primary), vec![(secondary_id.clone(), secondary)]);
 
         let capture = Capture(Arc::new(Mutex::new(Vec::new())));
+        // The fallback logs at `debug` (it runs per row per authentication).
         let subscriber = tracing_subscriber::fmt()
             .with_writer(capture.clone())
+            .with_max_level(tracing::Level::DEBUG)
             .with_ansi(false)
             .finish();
         let out = tracing::subscriber::with_default(subscriber, || {

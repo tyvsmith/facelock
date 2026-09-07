@@ -147,6 +147,33 @@ impl SealingKeys {
     }
 
     /// The configured method's key — what enroll seals new rows under.
+    /// Re-resolve a keyfile primary that was refused or unreadable at the
+    /// last load, leaving every secondary as it is.
+    ///
+    /// The daemon calls this before each authentication and enrollment while
+    /// the primary is missing. Going through [`Self::load`] there would
+    /// re-open the TPM and retry the sealed-key unseal on every attempt,
+    /// warning each time it fails, for a secondary that has not changed.
+    /// A secondary that turns out to be the restored primary's own key is
+    /// dropped so the legacy trial never tries the same key twice.
+    ///
+    /// Only the keyfile method has a refreshable primary: a TPM primary that
+    /// fails fails [`Self::load`] itself, so no keyring exists to refresh.
+    pub fn refresh_primary(&mut self, config: &Config, store: &FaceStore) {
+        if config.encryption.method != EncryptionMethod::Keyfile || self.primary.is_some() {
+            return;
+        }
+        match resolve_keyfile_sealer(config, store) {
+            Ok(sealer) => {
+                let id = sealer.key_id();
+                self.secondary.retain(|(key_id, _)| *key_id != id);
+                self.primary = Some(sealer);
+                self.primary_error = None;
+            }
+            Err(msg) => self.primary_error = Some(msg),
+        }
+    }
+
     pub fn primary(&self) -> Option<&SoftwareSealer> {
         self.primary.as_ref()
     }
@@ -352,6 +379,53 @@ mod tests {
     /// stop `load` from returning — enroll fails closed on `primary_error`,
     /// but a running daemon still needs to be able to report the refusal
     /// rather than fail to build at all.
+    /// A restored keyfile lifts the refusal through `refresh_primary`
+    /// without touching the secondaries, and a secondary that held the
+    /// restored key is dropped so the legacy trial never tries it twice.
+    #[test]
+    fn refresh_primary_lifts_the_refusal_and_drops_a_duplicate_secondary() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("facelock.key");
+        let config = config_for(&key_path);
+        let store = FaceStore::open_memory().unwrap();
+        let restored = SoftwareSealer::from_key([0x11u8; 32]);
+        store
+            .add_model_raw(
+                "alice",
+                "front",
+                &restored.seal_embedding(&[0.5f32; 512]).unwrap(),
+                true,
+                "embedder",
+            )
+            .unwrap();
+
+        // Refused: encrypted rows exist and the keyfile is absent.
+        let mut keys = SealingKeys::load(&config, &store).unwrap();
+        assert!(keys.primary().is_none());
+        let other = SoftwareSealer::from_key([0x22u8; 32]);
+        keys.secondary = vec![
+            (restored.key_id(), SoftwareSealer::from_key([0x11u8; 32])),
+            (other.key_id(), other),
+        ];
+
+        // Still absent: the refresh keeps the refusal and the secondaries.
+        keys.refresh_primary(&config, &store);
+        assert!(keys.primary().is_none());
+        assert!(keys.primary_error().is_some());
+        assert_eq!(keys.secondary.len(), 2);
+
+        SoftwareSealer::write_key_file(&key_path, &[0x11u8; 32]).unwrap();
+        keys.refresh_primary(&config, &store);
+        assert!(keys.primary_error().is_none());
+        assert_eq!(keys.primary().unwrap().key_id(), restored.key_id());
+        assert_eq!(
+            keys.secondary.len(),
+            1,
+            "the duplicate of the restored key is dropped"
+        );
+        assert_eq!(keys.candidates_for_legacy_row().count(), 2);
+    }
+
     #[test]
     fn keyfile_refusal_leaves_nothing_loaded_but_records_the_reason() {
         let dir = tempfile::tempdir().unwrap();

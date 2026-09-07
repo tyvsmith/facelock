@@ -681,24 +681,15 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         {
             return;
         }
-        match SealingKeys::load(&self.config, &self.store) {
-            Ok(keys) => {
-                if keys.primary_error().is_none() {
-                    info!("encryption key is readable again — enrollment is no longer refused");
-                    // The compare set was decrypted (or not) under the old
-                    // decision; the next frame reloads it under this one.
-                    self.preview_embeddings = None;
-                }
-                self.keys = keys;
-            }
-            // `load` only returns `Err` for a `tpm` primary; the keyfile
-            // method this guard is scoped to always returns `Ok`, refused or
-            // not. Kept defensive rather than `unreachable!`: a future
-            // `load` change that starts erroring for `keyfile` too must not
-            // panic a running daemon on its next refresh.
-            Err(msg) => {
-                warn!("re-checking the encryption key failed: {msg}");
-            }
+        // Only the primary is re-resolved: the secondaries loaded at
+        // construction are unchanged, and reloading them would re-open the
+        // TPM on every attempt made while the keyfile stays missing.
+        self.keys.refresh_primary(&self.config, &self.store);
+        if self.keys.primary_error().is_none() {
+            info!("encryption key is readable again — enrollment is no longer refused");
+            // The compare set was decrypted (or not) under the old
+            // decision; the next frame reloads it under this one.
+            self.preview_embeddings = None;
         }
     }
 

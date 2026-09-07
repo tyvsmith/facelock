@@ -2251,10 +2251,14 @@ fn apply_encryption_choice(
         EncryptionChoice::Keyfile => setup_encryption_keyfile(config, theme, detect_tpm(config)),
         EncryptionChoice::None => setup_encryption_none(config),
         EncryptionChoice::Auto => {
-            if auto_encryption_needs_keygen(config, detect_tpm(config)) {
+            // One probe for both questions: each device-backed probe creates
+            // a TPM primary and prints a detection notice, so probing again
+            // inside the auto policy doubled both.
+            let tpm_available = detect_tpm(config);
+            if auto_encryption_needs_keygen(config, tpm_available) {
                 handle_orphan_models_before_keygen(config, theme)?;
             }
-            setup_encryption_auto(config)
+            setup_encryption_auto(config, Some(tpm_available))
         }
     }
 }
@@ -2991,7 +2995,7 @@ fn run_non_interactive(plan: &SetupPlan) -> anyhow::Result<()> {
     match plan.encryption {
         // No theme: nothing here may prompt under a non-interactive base.
         Some(choice) => apply_encryption_choice(&mut config, choice, None)?,
-        None => setup_encryption_auto(&config)?,
+        None => setup_encryption_auto(&config, None)?,
     }
 
     secure_setup_paths(&config, Some(&manifest))?;
@@ -3080,7 +3084,11 @@ fn keygen_refusal(config: &Config) -> anyhow::Result<Option<String>> {
 
 /// Auto-configure encryption in non-interactive mode.
 /// Prefers TPM-sealed key if TPM is available, falls back to keyfile.
-fn setup_encryption_auto(config: &Config) -> anyhow::Result<()> {
+///
+/// `tpm_available` carries a probe the caller already ran; `None` probes
+/// here, and only after the already-configured early return so a configured
+/// host never touches the TPM for a no-op.
+fn setup_encryption_auto(config: &Config, tpm_available: Option<bool>) -> anyhow::Result<()> {
     use facelock_core::config::EncryptionMethod;
 
     // Skip if already configured
@@ -3095,7 +3103,7 @@ fn setup_encryption_auto(config: &Config) -> anyhow::Result<()> {
     }
 
     // Try TPM first
-    if detect_tpm(config) {
+    if tpm_available.unwrap_or_else(|| detect_tpm(config)) {
         #[cfg(feature = "tpm")]
         {
             let sealed_path = Path::new(&config.encryption.sealed_key_path);
