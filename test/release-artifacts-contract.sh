@@ -28,6 +28,28 @@ fail() {
 [ -f "$workflow_path" ] || fail "missing release workflow: $workflow_path"
 [ -x "$helper_path" ] || fail "release asset helper must be executable: $helper_path"
 
+# ------------------------------------------------------------ builder tooling
+
+# The `build` job runs `just build-release` on ubuntu-latest, whose apt
+# package is just 1.21.0. The justfile needs 1.36 or later (hyphenated
+# variable names), and v0.2.1's first release run died on that parse before
+# compiling anything. The deps script pins a release by digest instead.
+deps_script=.github/workflows/scripts/install-ubuntu-deps.sh
+just_floor=1.36.0
+[ -x "$deps_script" ] || fail "Ubuntu deps script must be executable: $deps_script"
+if grep -v '^[[:space:]]*#' "$deps_script" | grep -Eq '^[[:space:]]+just[[:space:]]*\\?$'; then
+    fail "the Ubuntu deps script must not install just from apt (noble ships 1.21.0, below the $just_floor the justfile needs)"
+fi
+pinned_just="$(sed -n 's/^JUST_VERSION="\([0-9][0-9.]*\)"$/\1/p' "$deps_script")"
+[ -n "$pinned_just" ] || fail "the Ubuntu deps script must pin JUST_VERSION"
+[ "$(printf '%s\n' "$just_floor" "$pinned_just" | sort -V | head -n1)" = "$just_floor" ] ||
+    fail "the Ubuntu deps script pins just $pinned_just, below the $just_floor the justfile needs"
+grep -Eq '^JUST_SHA256="[0-9a-f]{64}"$' "$deps_script" ||
+    fail "the Ubuntu deps script must pin the just tarball digest as JUST_SHA256"
+grep -Fq 'sha256sum -c' "$deps_script" ||
+    fail "the Ubuntu deps script must verify the just tarball against JUST_SHA256"
+echo "release artifacts contract: Ubuntu builder pins just $pinned_just by digest"
+
 job_body() {
     awk -v job="$1" '
         $0 == "  " job ":" { inside = 1; next }
