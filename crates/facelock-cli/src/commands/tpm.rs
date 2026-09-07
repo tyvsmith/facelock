@@ -286,33 +286,26 @@ fn seal_key(config: &Config) -> Result<()> {
 /// `unseal_key` below and by `setup_encryption_keyfile`'s
 /// `UnsealExistingSealed` path (issue #354).
 ///
-/// Calls `generate_key_file` then overwrites it with the real unsealed key:
-/// kept as-is (rather than writing the key directly) so the file is created
-/// with the same one-`open(2)`-at-0600 path `generate_key_file` already uses,
-/// with no separate `chmod` window.
+/// The unsealed bytes go to the keyfile in one write (`write_key_file`):
+/// the previous mint-then-overwrite left a random placeholder key under the
+/// real name if the overwrite failed, which the next `setup` would reuse.
 #[cfg(feature = "tpm")]
 pub(crate) fn unseal_into_keyfile(config: &Config) -> Result<()> {
+    use zeroize::Zeroize;
+
     let key_path = Path::new(&config.encryption.key_path);
     let sealed_path = Path::new(&config.encryption.sealed_key_path);
 
     let mut tpm =
         facelock_tpm::TpmSealer::new(&config.tpm.tcti).context("failed to initialize TPM")?;
-    let key = tpm
+    let mut key = tpm
         .unseal_key_from_file(sealed_path)
         .context("failed to unseal key from TPM")?;
 
-    // Write plaintext key file
-    facelock_tpm::SoftwareSealer::generate_key_file(key_path)
-        .context("failed to create key file")?;
-    // Overwrite with the actual unsealed key (generate_key_file creates a random one)
-    std::fs::write(key_path, key).context("failed to write unsealed key")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(key_path, std::fs::Permissions::from_mode(0o600))
-            .context("failed to set key file permissions")?;
-    }
-    Ok(())
+    let written = facelock_tpm::SoftwareSealer::write_key_file(key_path, &key)
+        .context("failed to write unsealed key");
+    key.zeroize();
+    written
 }
 
 #[cfg_attr(not(feature = "tpm"), allow(unused_variables))]

@@ -235,6 +235,19 @@ pub fn run_encrypt(config: &Config, generate_key: bool) -> Result<()> {
             .seal_bytes(blob)
             .with_context(|| format!("failed to encrypt embedding {id}"))?;
 
+        // The model names its key before its first row is sealed (#354): a
+        // failure later in this loop then never leaves a sealed row whose
+        // model records no key, which the decrypt path would have to open
+        // by blind trial. Plaintext rows ignore key_id, so recording it
+        // early is harmless for rows this run never reaches.
+        if sealed_models.insert(*model_id) {
+            store
+                .set_model_key_id(*model_id, Some(&key_id))
+                .with_context(|| {
+                    format!("failed to record the sealing key for model {model_id}")
+                })?;
+        }
+
         // Store with sealed=true and sealed column value distinguishes TPM (1) from software (2)
         // We use sealed=true since the DB uses a boolean flag; the version byte in the blob
         // distinguishes TPM from software encryption.
@@ -242,17 +255,7 @@ pub fn run_encrypt(config: &Config, generate_key: bool) -> Result<()> {
             .update_embedding_sealed(*id, &encrypted_blob, true)
             .with_context(|| format!("failed to update embedding {id}"))?;
 
-        sealed_models.insert(*model_id);
         encrypted_count += 1;
-    }
-
-    // Every model that gained a sealed row now knows which key sealed it
-    // (#354) — a row naming no key falls back to a blind trial on decrypt,
-    // which this command can avoid simply by recording what it just did.
-    for model_id in sealed_models {
-        store
-            .set_model_key_id(model_id, Some(&key_id))
-            .with_context(|| format!("failed to record the sealing key for model {model_id}"))?;
     }
 
     println!("Encrypted {encrypted_count} embedding(s) with AES-256-GCM.");
