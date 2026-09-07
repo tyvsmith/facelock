@@ -13,7 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it probes the runtime the same way `--execution-provider=auto` does and highlights the provider it
   finds, instead of always defaulting to CPU. The prompt also lists all four providers — CPU, CUDA,
   ROCm, OpenVINO — annotating each GPU option as available or not in the installed build, rather than
-  offering only CPU and CUDA.
+  offering only CPU and CUDA. It now warns separately when the probe itself fails (the wizard still
+  lets you choose by hand) and when the chosen provider is one the installed runtime does not report.
+  The `auto` runtime search also widened to check the ROCm directories it previously only checked for
+  an explicitly configured `rocm` provider, so the probe itself does not miss a ROCm-only runtime.
 
 - The Arch test containers now disable pacman's download timeout, so a slow
   transfer from the pinned `archive.archlinux.org` mirror no longer aborts

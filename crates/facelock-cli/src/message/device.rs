@@ -33,7 +33,7 @@ pub enum DeviceMessage {
     SelectedModelsHigh,
     DetectedProvider { detail: String },
 
-    // The three warnings below reach `Terminal::info`, so `--quiet` suppresses
+    // The five warnings below reach `Terminal::info`, so `--quiet` suppresses
     // them. Deliberate, and re-decided when `Terminal::notice` arrived —
     // `notice` would keep them on stdout *and* make them unsuppressible, which
     // is what `EncryptionDisabledWarning` needed. These do not: they are
@@ -42,6 +42,17 @@ pub enum DeviceMessage {
     // one. `error` is wrong for a third reason — it would move them to stderr,
     // breaking the byte-identity pins and any script reading setup's stdout.
     ProviderQueryFailed { error: String },
+    // `--execution-provider=auto` uses `ProviderQueryFailed`: it falls back to
+    // cpu itself, so "selecting cpu" is true. The wizard cannot say that — it
+    // still shows the menu and may highlight a GPU provider already in the
+    // config — so it gets its own wording rather than a misleading shared one.
+    ProviderQueryFailedInWizard { error: String },
+    // Printed after the wizard's selection when detection succeeded and the
+    // chosen provider is not in what the installed runtime reports it was
+    // built with. The config is still written, same as an explicit provider
+    // named on the flag (`docs/cli.md`: "written without proving it is
+    // usable") — this only says inference will not use it yet.
+    ProviderNotInRuntime { provider: String },
     NvidiaDriverMissing,
     CudaRuntimeMissing,
 }
@@ -112,6 +123,18 @@ impl Message for DeviceMessage {
                 ),
                 &[("error", error.clone())],
             ),
+            ProviderQueryFailedInWizard { error } => fill(
+                translate(
+                    "  ⚠ Could not query the ONNX Runtime for available providers: {error}\n    Choose the device by hand; nothing is written until you confirm.",
+                ),
+                &[("error", error.clone())],
+            ),
+            ProviderNotInRuntime { provider } => fill(
+                translate(
+                    "  ⚠ The installed ONNX Runtime was not built with {provider}; inference will fall back to CPU until a matching runtime is installed.",
+                ),
+                &[("provider", provider.clone())],
+            ),
             NvidiaDriverMissing => translate(
                 "  ⚠ NVIDIA driver not detected. Install the NVIDIA driver package\n    before starting the daemon.",
             ),
@@ -130,7 +153,7 @@ impl Message for DeviceMessage {
 /// above: no wildcard arm, so a variant that renders nothing does not build.
 #[cfg(test)]
 impl super::Samples for DeviceMessage {
-    const VARIANT_COUNT: usize = 19;
+    const VARIANT_COUNT: usize = 21;
 
     fn samples() -> Vec<Self> {
         use DeviceMessage::*;
@@ -164,6 +187,8 @@ impl super::Samples for DeviceMessage {
             SelectedModelsHigh,
             DetectedProvider { detail: s("d") },
             ProviderQueryFailed { error: s("e") },
+            ProviderQueryFailedInWizard { error: s("e") },
+            ProviderNotInRuntime { provider: s("p") },
             NvidiaDriverMissing,
             CudaRuntimeMissing,
         ]
@@ -207,6 +232,20 @@ mod tests {
             }
             .localized(),
             "  \u{26a0} Could not query the ONNX Runtime for available providers: libonnxruntime.so not found\n    Selecting cpu. Re-run with an explicit --execution-provider once the\n    runtime is installed if you need GPU inference."
+        );
+        assert_eq!(
+            ProviderQueryFailedInWizard {
+                error: "libonnxruntime.so not found".into()
+            }
+            .localized(),
+            "  \u{26a0} Could not query the ONNX Runtime for available providers: libonnxruntime.so not found\n    Choose the device by hand; nothing is written until you confirm."
+        );
+        assert_eq!(
+            ProviderNotInRuntime {
+                provider: "rocm".into()
+            }
+            .localized(),
+            "  \u{26a0} The installed ONNX Runtime was not built with rocm; inference will fall back to CPU until a matching runtime is installed."
         );
         assert_eq!(
             NvidiaDriverMissing.localized(),

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: facelock\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-06 16:45-0700\n"
+"POT-Creation-Date: 2026-09-06 20:06-0700\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -78,41 +78,41 @@ msgid ""
 "Falling back to text-only mode.\n"
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:54
+#: crates/facelock-cli/src/message/device.rs:65
 msgid ""
 "  No video devices found.\n"
 "  Check that your camera is connected and the v4l2 module is loaded."
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:57
+#: crates/facelock-cli/src/message/device.rs:68
 #, python-brace-format
 msgid "  Auto-selected IR camera: {path} ({name})"
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:61
+#: crates/facelock-cli/src/message/device.rs:72
 #, python-brace-format
 msgid "  Auto-selected IR camera: {path}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:65
+#: crates/facelock-cli/src/message/device.rs:76
 #, python-brace-format
 msgid "  Selected: {path} ({name})"
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:69
+#: crates/facelock-cli/src/message/device.rs:80
 #, python-brace-format
 msgid "  Selected: {value}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:72
+#: crates/facelock-cli/src/message/device.rs:83
 msgid "Select camera device"
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:74
+#: crates/facelock-cli/src/message/device.rs:85
 msgid "--camera=auto found no video devices; check that the camera is connected and the v4l2 module is loaded"
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:78
+#: crates/facelock-cli/src/message/device.rs:89
 #, python-brace-format
 msgid ""
 "--camera=auto found no IR-capable camera among the detected devices:\n"
@@ -120,7 +120,7 @@ msgid ""
 "  Pass an explicit device path, e.g. --camera={example}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:84
+#: crates/facelock-cli/src/message/device.rs:95
 #, python-brace-format
 msgid ""
 "--camera=auto found {count} IR-capable cameras:\n"
@@ -128,37 +128,37 @@ msgid ""
 "  Pass an explicit device path to choose one."
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:90
+#: crates/facelock-cli/src/message/device.rs:101
 #, python-brace-format
 msgid "camera device {path} does not exist; pass a valid /dev/video* path or --camera=auto"
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:94
+#: crates/facelock-cli/src/message/device.rs:105
 msgid "Select model quality"
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:95
+#: crates/facelock-cli/src/message/device.rs:106
 msgid "Select inference device"
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:97
+#: crates/facelock-cli/src/message/device.rs:108
 msgid "  Selected standard models (fast, good accuracy)."
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:100
+#: crates/facelock-cli/src/message/device.rs:111
 msgid "  Selected balanced models (fast detection, high-accuracy embedding)."
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:103
+#: crates/facelock-cli/src/message/device.rs:114
 msgid "  Selected high-accuracy models (larger, ~40-50ms slower)."
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:106
+#: crates/facelock-cli/src/message/device.rs:117
 #, python-brace-format
 msgid "  Detected: {detail}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:111
+#: crates/facelock-cli/src/message/device.rs:122
 #, python-brace-format
 msgid ""
 "  ⚠ Could not query the ONNX Runtime for available providers: {error}\n"
@@ -166,13 +166,25 @@ msgid ""
 "    runtime is installed if you need GPU inference."
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:116
+#: crates/facelock-cli/src/message/device.rs:128
+#, python-brace-format
+msgid ""
+"  ⚠ Could not query the ONNX Runtime for available providers: {error}\n"
+"    Choose the device by hand; nothing is written until you confirm."
+msgstr ""
+
+#: crates/facelock-cli/src/message/device.rs:134
+#, python-brace-format
+msgid "  ⚠ The installed ONNX Runtime was not built with {provider}; inference will fall back to CPU until a matching runtime is installed."
+msgstr ""
+
+#: crates/facelock-cli/src/message/device.rs:139
 msgid ""
 "  ⚠ NVIDIA driver not detected. Install the NVIDIA driver package\n"
 "    before starting the daemon."
 msgstr ""
 
-#: crates/facelock-cli/src/message/device.rs:119
+#: crates/facelock-cli/src/message/device.rs:142
 msgid ""
 "  ⚠ CUDA-enabled ONNX Runtime not found. Install onnxruntime-opt-cuda\n"
 "    before starting the daemon, or inference will fall back to CPU."

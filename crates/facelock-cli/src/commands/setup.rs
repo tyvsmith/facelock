@@ -1288,6 +1288,25 @@ fn provider_labels(detection: Option<&facelock_face::ProviderDetection>) -> Vec<
         .collect()
 }
 
+/// Whether the chosen provider is one detection ruled out — a GPU provider
+/// the installed ONNX Runtime does not report having been built with.
+///
+/// `None` (detection failed or never ran) and `Cpu` (always usable, and not
+/// tracked in `ProviderDetection::available` — see `provider_labels`) both
+/// answer `false`: there is nothing to warn about in either case.
+fn provider_missing_from_runtime(
+    detection: Option<&facelock_face::ProviderDetection>,
+    kind: facelock_face::ProviderKind,
+) -> bool {
+    if kind == facelock_face::ProviderKind::Cpu {
+        return false;
+    }
+    match detection {
+        Some(detection) => !detection.available.contains(&kind),
+        None => false,
+    }
+}
+
 fn wizard_execution_provider(theme: &ColorfulTheme, config: &mut Config) -> anyhow::Result<()> {
     let current = config.recognition.execution_provider.clone();
 
@@ -1299,7 +1318,7 @@ fn wizard_execution_provider(theme: &ColorfulTheme, config: &mut Config) -> anyh
             Some(detection)
         }
         Err(e) => {
-            Terminal.info(&DeviceMessage::ProviderQueryFailed {
+            Terminal.info(&DeviceMessage::ProviderQueryFailedInWizard {
                 error: e.to_string(),
             });
             None
@@ -1315,12 +1334,18 @@ fn wizard_execution_provider(theme: &ColorfulTheme, config: &mut Config) -> anyh
         .default(default_idx)
         .interact()?;
 
-    let provider = PROVIDER_CHOICES[selection.min(PROVIDER_CHOICES.len() - 1)].as_str();
+    let kind = PROVIDER_CHOICES[selection.min(PROVIDER_CHOICES.len() - 1)];
+    let provider = kind.as_str();
 
     config.recognition.execution_provider = provider.to_string();
     Terminal.info(&DeviceMessage::SelectedValue {
         value: provider.to_string(),
     });
+    if provider_missing_from_runtime(detection.as_ref(), kind) {
+        Terminal.info(&DeviceMessage::ProviderNotInRuntime {
+            provider: provider.to_string(),
+        });
+    }
     warn_provider_preflight(provider);
 
     update_config_provider(config)?;
@@ -6001,6 +6026,47 @@ mod choice_tests {
             no_detection.iter().all(|l| !l.contains('[')),
             "{no_detection:?}"
         );
+    }
+
+    #[test]
+    fn provider_missing_from_runtime_is_false_without_detection() {
+        assert!(!provider_missing_from_runtime(None, ProviderKind::Cuda));
+    }
+
+    #[test]
+    fn provider_missing_from_runtime_is_false_for_cpu() {
+        let detection = ProviderDetection {
+            provider: ProviderKind::Cpu,
+            available: vec![],
+        };
+        assert!(!provider_missing_from_runtime(
+            Some(&detection),
+            ProviderKind::Cpu
+        ));
+    }
+
+    #[test]
+    fn provider_missing_from_runtime_is_false_when_available() {
+        let detection = ProviderDetection {
+            provider: ProviderKind::Cuda,
+            available: vec![ProviderKind::Cuda],
+        };
+        assert!(!provider_missing_from_runtime(
+            Some(&detection),
+            ProviderKind::Cuda
+        ));
+    }
+
+    #[test]
+    fn provider_missing_from_runtime_is_true_when_absent() {
+        let detection = ProviderDetection {
+            provider: ProviderKind::Cuda,
+            available: vec![ProviderKind::Cuda],
+        };
+        assert!(provider_missing_from_runtime(
+            Some(&detection),
+            ProviderKind::Rocm
+        ));
     }
 
     #[test]

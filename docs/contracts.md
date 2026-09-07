@@ -2620,11 +2620,12 @@ The resolver considers candidates in this order and stops at the first one
 that passes the applicable trust checks and initializes ORT:
 
 1. A non-empty `ORT_DYLIB_PATH`, **only in an unprivileged process**.
-2. Trusted system locations for the configured GPU provider. ROCm first checks
-   `libonnxruntime.so.1` beneath `/usr/lib64/rocm/lib`, then
-   `/usr/lib/rocm/lib`; any non-CPU provider then checks the configured-GPU
-   compatibility name `libonnxruntime.so` beneath `/usr/lib64`, then
-   `/usr/lib`.
+2. Trusted system locations for the configured GPU provider, or for `auto`,
+   which searches every one of them since it does not yet know which
+   provider it will pick. ROCm and `auto` first check `libonnxruntime.so.1`
+   beneath `/usr/lib64/rocm/lib`, then `/usr/lib/rocm/lib`; any non-CPU
+   provider, `auto` included, then checks the configured-GPU compatibility
+   name `libonnxruntime.so` beneath `/usr/lib64`, then `/usr/lib`.
 3. Package-manager stable-SONAME candidates
    `/usr/lib64/libonnxruntime.so.1`, then
    `/usr/lib/libonnxruntime.so.1`.
