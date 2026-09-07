@@ -3,6 +3,15 @@ FROM docker.io/library/archlinux:base-devel@sha256:714acd1eef9ae997d95691b1c5220
 
 RUN printf '%s\n' 'Server = https://archive.archlinux.org/repos/2026/08/18/$repo/os/$arch' > /etc/pacman.d/mirrorlist
 
+# The pinned archive above serves large packages slowly enough that pacman's
+# low-speed abort ("Operation too slow... transferred the last 10 seconds")
+# kills the whole transaction. Disable that timeout instead of the pin.
+RUN if grep -q '^#DisableDownloadTimeout' /etc/pacman.conf; then \
+        sed -i 's/^#DisableDownloadTimeout/DisableDownloadTimeout/' /etc/pacman.conf; \
+    else \
+        sed -i '0,/^\[options\]/s//[options]\nDisableDownloadTimeout/' /etc/pacman.conf; \
+    fi
+
 # Install dependencies
 # `sqlite` provides the sqlite3 CLI used by the device-coupling E2E assertions
 # (Plan 02) to inspect/seed face_models.device_id deterministically.

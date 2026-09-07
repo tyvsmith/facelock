@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A new nullable `face_models.key_id` column (schema V7) records the truncated SHA-256 fingerprint
   of each sealing key.
 
+### Changed
+
+- The Arch test containers now disable pacman's download timeout, so a slow
+  transfer from the pinned `archive.archlinux.org` mirror no longer aborts
+  the whole transaction and fails the job (#332).
+
 ## [0.2.0] - 2026-09-06
 
 ### Added
