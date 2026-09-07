@@ -724,6 +724,18 @@ falling back to the plaintext `encryption.key` backup once they have moved. Beca
 the still-valid blob, it is safe to run proactively before a firmware or kernel update.
 `facelock tpm unseal-check` reports which of the two recovery paths a machine is on.
 
+**The keyring and cross-method recovery (#354).** Every row records the key id
+that sealed it. On startup, the daemon and the one-shot path load the configured
+method's key as primary and, best-effort, the other method's artifact as
+secondary (plaintext keyfile when tpm is primary; sealed key when keyfile is
+primary). Loading the plaintext keyfile while method is tpm reads a 0600
+root-only file the `seal-key` backup tradeoff already documents, so at-rest
+confidentiality is unchanged. Trial-decrypting a legacy row under a secondary
+key is safe because AES-GCM authenticates before returning plaintext and cannot
+widen who authenticates. Recovery is to restore the other method's artifact (the
+sealed key if the keyfile is lost, or the keyfile if the sealed key is
+unreadable); that artifact is enough for rows sealed under it.
+
 **Why the default stays off.** The recommended setup keeps a plaintext `encryption.key`
 backup, so a PCR change costs a reseal instead of a re-enrollment. While that backup exists,
 PCR binding buys nothing against an attacker with disk access: the AES key sits beside the
