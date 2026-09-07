@@ -175,7 +175,15 @@ fn runtime_candidates(
     }
 
     if provider != "cpu" {
-        if provider == "rocm" {
+        // `auto` must search everywhere an explicitly configured provider
+        // would: it is what `detect_execution_provider` loads before it
+        // knows which provider it will pick, and a probe that skips the ROCm
+        // directories would report ROCm unavailable on a machine that has it
+        // only there, then leave that same CPU-only load pinned in the
+        // process-wide `OnceLock` for every ORT use for the rest of the run
+        // (see `load_ort`) — including a same-process enrollment later in the
+        // same `setup` invocation.
+        if provider == "rocm" || provider == "auto" {
             candidates.push(RuntimeCandidate::trusted(
                 CandidateSource::ConfiguredGpu,
                 "/usr/lib64/rocm/lib",
@@ -1149,22 +1157,24 @@ pub struct ProviderDetection {
 }
 
 impl ProviderDetection {
-    /// One line explaining the choice, suitable for the setup wizard. The
-    /// point of `auto` is that a user on a CPU-only ORT learns *why* they got
-    /// CPU rather than silently getting it.
-    pub fn explain(&self) -> String {
+    /// What the installed ONNX Runtime reports, without saying what was
+    /// picked from it. The setup wizard prints this ahead of its own prompt,
+    /// where "selecting X" would be premature — nothing has been selected
+    /// yet, the user is about to be asked.
+    pub fn summarize(&self) -> String {
         if self.available.is_empty() {
-            "the installed ONNX Runtime has no GPU execution providers compiled in; \
-             selecting cpu"
-                .to_string()
+            "the installed ONNX Runtime has no GPU execution providers compiled in".to_string()
         } else {
             let names: Vec<&str> = self.available.iter().map(|k| k.as_str()).collect();
-            format!(
-                "the installed ONNX Runtime supports {}; selecting {}",
-                names.join(", "),
-                self.provider.as_str()
-            )
+            format!("the installed ONNX Runtime supports {}", names.join(", "))
         }
+    }
+
+    /// One line explaining the choice, suitable for `--execution-provider=auto`.
+    /// The point of `auto` is that a user on a CPU-only ORT learns *why* they
+    /// got CPU rather than silently getting it.
+    pub fn explain(&self) -> String {
+        format!("{}; selecting {}", self.summarize(), self.provider.as_str())
     }
 }
 
@@ -1475,9 +1485,45 @@ mod tests {
             PrivilegeContext::Privileged,
         );
 
+        // rocm/lib, then the unversioned dev-symlink candidates: four
+        // ConfiguredGpu entries ahead of the first PackageManager one.
         assert_eq!(candidates[0].source, CandidateSource::ConfiguredGpu);
         assert_eq!(candidates[1].source, CandidateSource::ConfiguredGpu);
-        assert_eq!(candidates[2].source, CandidateSource::PackageManager);
+        assert_eq!(candidates[2].source, CandidateSource::ConfiguredGpu);
+        assert_eq!(candidates[3].source, CandidateSource::ConfiguredGpu);
+        assert_eq!(candidates[4].source, CandidateSource::PackageManager);
+    }
+
+    /// `auto` must search the same ROCm directories an explicitly configured
+    /// `rocm` provider does. Before this, `detect_execution_provider`'s probe
+    /// (which always loads with `RuntimeProvider::Auto`) never looked in
+    /// `/usr/lib64/rocm/lib` or `/usr/lib/rocm/lib`, so a machine with a ROCm
+    /// ORT only under those directories plus a CPU ORT elsewhere had `auto`
+    /// silently load the CPU build and report ROCm unavailable.
+    #[test]
+    fn auto_runtime_includes_the_rocm_directories_ahead_of_the_unversioned_candidate() {
+        let candidates = runtime_candidates(
+            RuntimeProvider::Auto.as_str(),
+            None,
+            PrivilegeContext::Privileged,
+        );
+        let paths = candidate_paths(&candidates);
+
+        let rocm64 = paths
+            .iter()
+            .position(|p| p == Path::new("/usr/lib64/rocm/lib/libonnxruntime.so.1"))
+            .expect("auto must probe /usr/lib64/rocm/lib");
+        let rocm32 = paths
+            .iter()
+            .position(|p| p == Path::new("/usr/lib/rocm/lib/libonnxruntime.so.1"))
+            .expect("auto must probe /usr/lib/rocm/lib");
+        let unversioned = paths
+            .iter()
+            .position(|p| p == Path::new("/usr/lib64/libonnxruntime.so"))
+            .expect("auto must still probe the unversioned dev-symlink candidate");
+
+        assert!(rocm64 < unversioned, "{paths:?}");
+        assert!(rocm32 < unversioned, "{paths:?}");
     }
 
     #[test]
@@ -2176,6 +2222,29 @@ mod tests {
         let msg = detection.explain();
         assert!(msg.contains("cuda, rocm"), "{msg}");
         assert!(msg.ends_with("selecting cuda"), "{msg}");
+    }
+
+    /// `explain()` is `summarize()` plus a "selecting X" suffix — the setup
+    /// wizard prints `summarize()` alone ahead of its own prompt, and relies
+    /// on it being a strict prefix of what `auto` prints.
+    #[test]
+    fn explain_starts_with_summarize() {
+        for detection in [
+            ProviderDetection {
+                provider: ProviderKind::Cpu,
+                available: vec![],
+            },
+            ProviderDetection {
+                provider: ProviderKind::Cuda,
+                available: vec![ProviderKind::Cuda, ProviderKind::Rocm],
+            },
+        ] {
+            let (summary, explanation) = (detection.summarize(), detection.explain());
+            assert!(
+                explanation.starts_with(&summary),
+                "{explanation:?} does not start with {summary:?}"
+            );
+        }
     }
 
     // -- live detection -----------------------------------------------------

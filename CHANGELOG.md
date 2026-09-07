@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The setup wizard's inference-device prompt now defaults from the installed ONNX Runtime** (#352):
+  it probes the runtime the same way `--execution-provider=auto` does and highlights the provider it
+  finds, instead of always defaulting to CPU. The prompt also lists all four providers — CPU, CUDA,
+  ROCm, OpenVINO — annotating each GPU option as available or not in the installed build, rather than
+  offering only CPU and CUDA. It now warns separately when the probe itself fails (the wizard still
+  lets you choose by hand) and when the chosen provider is one the installed runtime does not report.
+  The `auto` runtime search also widened to check the ROCm directories it previously only checked for
+  an explicitly configured `rocm` provider, so the probe itself does not miss a ROCm-only runtime.
+
+- The Arch test containers now disable pacman's download timeout, so a slow
+  transfer from the pinned `archive.archlinux.org` mirror no longer aborts
+  the whole transaction and fails the job (#332).
+
 ### Fixed
 
 - **Arch post-install advice no longer trips shelly's privilege-escalation scan** (#351): `dist/facelock.install` told installers to `Run 'sudo facelock setup' to complete configuration`. shelly's PKGBUILD scanner reports any `sudo` command word in a scriptlet as privilege escalation, and the nested single quotes made it report the call as hidden, even though the scriptlet only echoes advice. The line now reads `Complete configuration as root: facelock setup`, with no `sudo` token at all.
@@ -22,12 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a row sealed under either key can still decrypt. Pre-V7 rows (NULL key id) are tried under both.
   A new nullable `face_models.key_id` column (schema V7) records the truncated SHA-256 fingerprint
   of each sealing key.
-
-### Changed
-
-- The Arch test containers now disable pacman's download timeout, so a slow
-  transfer from the pinned `archive.archlinux.org` mirror no longer aborts
-  the whole transaction and fails the job (#332).
 
 ## [0.2.0] - 2026-09-06
 

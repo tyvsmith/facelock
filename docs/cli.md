@@ -81,9 +81,9 @@ print their payload and now print nothing; the exit code is unchanged.
 ## facelock setup
 
 Interactive setup wizard. Walks through camera selection, model quality,
-inference device (CPU or CUDA in the menu; ROCm and OpenVINO via flags), model
-downloads, encryption, the daemon, enrollment and PAM configuration. Every step can also be answered,
-or declined, from the command line.
+inference device, model downloads, encryption, the daemon, enrollment and PAM
+configuration. Every step can also be answered, or declined, from the command
+line.
 
 The daemon is configured before enrollment on purpose. `enroll` and `test`
 select their transport once, when they start, so on a first install a daemon
@@ -240,6 +240,11 @@ built with CPU support only therefore resolves `auto` to `cpu`, even on a
 machine with a supported GPU. Setup prints the resolved provider before it
 writes the configuration. If the runtime cannot be queried, `auto` warns and
 selects `cpu`.
+
+The interactive inference-device prompt runs this same probe and highlights
+the provider it finds — an explicit GPU provider already in the config wins
+over detection — annotating CUDA, ROCm and OpenVINO as available or not in the
+installed build. Nothing is written until a selection is confirmed.
 
 An explicit provider name is written without proving it is usable. CUDA gets
 driver/runtime presence warnings, but setup does not install those dependencies;

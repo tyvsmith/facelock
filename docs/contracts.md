@@ -62,7 +62,7 @@ follow it.
 | `facelock pam remove` | Remove it. Root. Cleans validated Facelock-owned rollback state by default; `--keep-backup` preserves it |
 | `facelock pam remove --all` | Config-independent, whole-machine removal of recognized Facelock-owned direct PAM edits beneath compiled roots. Root. Conflicts with `--service` |
 | `facelock pam status` | Report whether services carry the line. Reads only, **no root** — the probe to branch on instead of grepping `/etc/pam.d` |
-| `facelock setup` choice flags | `--camera <PATH\|auto>`, `--models <standard\|balanced\|high>`, `--execution-provider <cpu\|cuda\|rocm\|openvino\|auto>`, `--encryption <tpm\|keyfile\|none\|auto>`. Precedence: CLI flag > config file > built-in default |
+| `facelock setup` choice flags | `--camera <PATH\|auto>`, `--models <standard\|balanced\|high>`, `--execution-provider <cpu\|cuda\|rocm\|openvino\|auto>`, `--encryption <tpm\|keyfile\|none\|auto>`. Precedence: CLI flag > config file > built-in default. Inside the interactive prompt, the wizard's highlighted default comes from ONNX Runtime detection unless the config already names a GPU provider |
 | `facelock setup` action opt-outs | `--no-pam`, `--no-systemd`, `--no-enroll` decline an action outright (and their `--pam`/`--systemd`/`--enroll` counterparts force it). Later flag wins |
 | `facelock is-enrolled` | Report the user's enrollment marker state, a hint rather than proof that face auth is operational. Exit code is the contract; no daemon activation, no camera, no group: it opens the user's `0600` marker under `0711` directories (ADR 010) |
 | `facelock capabilities` | Report what this build can do: one capability name per line, or `--json` for `{"version", "capabilities"}`. Unprivileged, reads no config, activates no daemon. The feature probe to branch on instead of grepping `--help` |
@@ -2620,11 +2620,12 @@ The resolver considers candidates in this order and stops at the first one
 that passes the applicable trust checks and initializes ORT:
 
 1. A non-empty `ORT_DYLIB_PATH`, **only in an unprivileged process**.
-2. Trusted system locations for the configured GPU provider. ROCm first checks
-   `libonnxruntime.so.1` beneath `/usr/lib64/rocm/lib`, then
-   `/usr/lib/rocm/lib`; any non-CPU provider then checks the configured-GPU
-   compatibility name `libonnxruntime.so` beneath `/usr/lib64`, then
-   `/usr/lib`.
+2. Trusted system locations for the configured GPU provider, or for `auto`,
+   which searches every one of them since it does not yet know which
+   provider it will pick. ROCm and `auto` first check `libonnxruntime.so.1`
+   beneath `/usr/lib64/rocm/lib`, then `/usr/lib/rocm/lib`; any non-CPU
+   provider, `auto` included, then checks the configured-GPU compatibility
+   name `libonnxruntime.so` beneath `/usr/lib64`, then `/usr/lib`.
 3. Package-manager stable-SONAME candidates
    `/usr/lib64/libonnxruntime.so.1`, then
    `/usr/lib/libonnxruntime.so.1`.

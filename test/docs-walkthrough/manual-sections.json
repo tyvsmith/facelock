@@ -4020,28 +4020,28 @@
           "path": "docs/cli.md",
           "anchor": "facelock-is-enrolled",
           "ordinal": 1,
-          "line": 267,
+          "line": 272,
           "sha256": "2bd04842c99e96a83a5ea4270a6b7be94cf54afd8f25cfaae9e1e2093c2a9c1f"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-is-enrolled",
           "ordinal": 2,
-          "line": 268,
+          "line": 273,
           "sha256": "52ee2339e6c1539f932c433cd9e80088a27d3e37adb985733c8f97443218c3c5"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-is-enrolled",
           "ordinal": 3,
-          "line": 269,
+          "line": 274,
           "sha256": "fa486cf3d2d4ca438dcb3f9524f2159cd00826386c6fd08955322b911fcc05d7"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-is-enrolled",
           "ordinal": 4,
-          "line": 270,
+          "line": 275,
           "sha256": "b7ebc7970099f018a9ac8db1e4b5e58038a24b5c1fecdc1777a748d7dca8a735"
         }
       ],
@@ -4133,14 +4133,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-capabilities",
           "ordinal": 1,
-          "line": 304,
+          "line": 309,
           "sha256": "28a89b2a0f73fd0d933b4ff0feca92dcb4f25b91483b6e75ab387a38c199e388"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-capabilities",
           "ordinal": 2,
-          "line": 305,
+          "line": 310,
           "sha256": "149e6d0858b93c8412ee2af9f7cf52f286ee92ced7dfcc2897450d781a7e299b"
         }
       ],
@@ -4209,28 +4209,28 @@
           "path": "docs/cli.md",
           "anchor": "facelock-enroll",
           "ordinal": 1,
-          "line": 329,
+          "line": 334,
           "sha256": "c4690fbd7fc9c8306ad09a3c9908dc8705b6b432c357ef42feefdb9a364e56ec"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-enroll",
           "ordinal": 2,
-          "line": 330,
+          "line": 335,
           "sha256": "f6258456e1c316bf195463b75d4cc3ca46505e310b4f647148666799f433ab59"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-enroll",
           "ordinal": 3,
-          "line": 331,
+          "line": 336,
           "sha256": "1d6fbfd963d2c16abc573dd78da48ef57c0d217acc29a134e1aecaa85f35d614"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-enroll",
           "ordinal": 4,
-          "line": 332,
+          "line": 337,
           "sha256": "81c7de8a62e99df3226e7e1bb6f63cdb9cce4d5091b285b192bbdb5c9264353e"
         }
       ],
@@ -4325,14 +4325,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-test",
           "ordinal": 1,
-          "line": 363,
+          "line": 368,
           "sha256": "5ab4f1b6fedde6787c4fb43b69eeb1c159f1ff183919367a4ac9cb51820a350f"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-test",
           "ordinal": 2,
-          "line": 364,
+          "line": 369,
           "sha256": "28722151cac514aa003f48f72e4321595e66cb19d8a816f9085dbf04c18f728b"
         }
       ],
@@ -4398,21 +4398,21 @@
           "path": "docs/cli.md",
           "anchor": "facelock-list",
           "ordinal": 1,
-          "line": 378,
+          "line": 383,
           "sha256": "7f220563e04bc45a76f02a61b8eb0afb298dd33cfd8972f361770f61c20399aa"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-list",
           "ordinal": 2,
-          "line": 379,
+          "line": 384,
           "sha256": "524ea3ba083a3a38ebb44924a684ce8583847864158d305a133141f856b149fc"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-list",
           "ordinal": 3,
-          "line": 380,
+          "line": 385,
           "sha256": "d1e86905d9d838b8eb49771aebf9687895f0b3211597595073b6c55d8c14fda4"
         }
       ],
@@ -4491,21 +4491,21 @@
           "path": "docs/cli.md",
           "anchor": "facelock-remove",
           "ordinal": 2,
-          "line": 405,
+          "line": 410,
           "sha256": "27338f9ae2413e2ef21b38e42e05a2a2490b1f780d8e7e817d52339d683a7324"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-remove",
           "ordinal": 3,
-          "line": 406,
+          "line": 411,
           "sha256": "0af0948744c8bafa140deb7089dcf9719da1ac10be9ae2868d76243779ea1bd7"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-remove",
           "ordinal": 4,
-          "line": 407,
+          "line": 412,
           "sha256": "cbea5ca7d1e12e8561a612b2057301bf3c512b6b8b3d691fb322accfcd7b6530"
         }
       ],
@@ -4584,14 +4584,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-clear",
           "ordinal": 1,
-          "line": 419,
+          "line": 424,
           "sha256": "d2dfce10542560cbe6122a63df9aeb9755e63469dd0c21c3719f878b2ec9f685"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-clear",
           "ordinal": 2,
-          "line": 420,
+          "line": 425,
           "sha256": "4e0e038ae39d1490654a07db5f43aed34ebb10983743eddabae75b4b5800e00c"
         }
       ],
@@ -4661,21 +4661,21 @@
           "path": "docs/cli.md",
           "anchor": "facelock-preview",
           "ordinal": 1,
-          "line": 432,
+          "line": 437,
           "sha256": "c8908606f325342085d3495d74311a130d5e691391c890bc378d30e1521deb30"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-preview",
           "ordinal": 2,
-          "line": 433,
+          "line": 438,
           "sha256": "4c3f386571095d38a30ac9d3a006fed92c34bd14956d42ae1c589e2bd937c284"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-preview",
           "ordinal": 3,
-          "line": 434,
+          "line": 439,
           "sha256": "9f4f6abe61aa4b300f4a546043710abdf2ca149b2061b9c5ec1c24d52612aae3"
         }
       ],
@@ -4754,14 +4754,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-devices",
           "ordinal": 1,
-          "line": 468,
+          "line": 473,
           "sha256": "6f6b179ea3830b95038c6708805c55ec33823224dc1b072d3e0173b1dc50f478"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-devices",
           "ordinal": 2,
-          "line": 469,
+          "line": 474,
           "sha256": "b9599e555bfca95fe805614377cdc83dfad7fea07c59141141f966e7e1d9ff54"
         }
       ],
@@ -4827,21 +4827,21 @@
           "path": "docs/cli.md",
           "anchor": "facelock-status",
           "ordinal": 1,
-          "line": 493,
+          "line": 498,
           "sha256": "86f52ed2f7666bdedf55c234a0dbb3ac1a7adc82d3950ec5f6598e7320037716"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-status",
           "ordinal": 2,
-          "line": 494,
+          "line": 499,
           "sha256": "2fa0aa24fbff10a809db35ede0b836a2e359bab74c2648b3761cff7d06514b25"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-status",
           "ordinal": 3,
-          "line": 495,
+          "line": 500,
           "sha256": "7805400e991b5e839d46f70fa49a6b7fa7bf0b4bb1783a4c5333993b5ac23171"
         }
       ],
@@ -4920,14 +4920,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-config-show",
           "ordinal": 1,
-          "line": 544,
+          "line": 549,
           "sha256": "dee8b1721c24583cb06dd78ce2884faf096a1962011dbd560968a175d3153b7e"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-config-show",
           "ordinal": 2,
-          "line": 545,
+          "line": 550,
           "sha256": "401a6a00db8783b2c58c603aeaf4026ad1052b54ea54a973522cd9a696594641"
         }
       ],
@@ -4994,7 +4994,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-config-edit",
           "ordinal": 1,
-          "line": 558,
+          "line": 563,
           "sha256": "fe77ea967f972a8c0e8bd2eda3f3076e2a630a8924e60d5374634199d0e49c9d"
         }
       ],
@@ -5048,28 +5048,28 @@
           "path": "docs/cli.md",
           "anchor": "facelock-daemon-run",
           "ordinal": 1,
-          "line": 576,
+          "line": 581,
           "sha256": "b80f6d5f764cde7ab522b3cbf22c7986e20f51fc039796257228f1f51c5fc845"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-daemon-run",
           "ordinal": 2,
-          "line": 577,
+          "line": 582,
           "sha256": "00dd98162d7092ee106e9894406e1b1e06a042a03dabb54d7d4f84aa26b4d2a3"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-daemon-run",
           "ordinal": 3,
-          "line": 578,
+          "line": 583,
           "sha256": "be639265e3883d4fc1d455da35ca8cce93ed68f3c8bf7903ae256a3b654d4002"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-daemon-run",
           "ordinal": 4,
-          "line": 579,
+          "line": 584,
           "sha256": "a4552a1fb14a6b33b56e8261c9ab64ce1ce066e77c64423975b91337e52ea73f"
         }
       ],
@@ -5162,7 +5162,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-daemon-restart",
           "ordinal": 2,
-          "line": 595,
+          "line": 600,
           "sha256": "b021d1e37ed78848e5433303a291f2b10a6fca9c9f4f0fe8d649d2e721fc0b0d"
         }
       ],
@@ -5218,14 +5218,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-auth",
           "ordinal": 1,
-          "line": 603,
+          "line": 608,
           "sha256": "fb9b7999909b796262e02103e1b0a1cef2841e0b467d70311a3e3ee168ad9acb"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-auth",
           "ordinal": 2,
-          "line": 604,
+          "line": 609,
           "sha256": "47631a002fea60873a34d234a14601bfc74585d9acf15dfe9407a0ba83bf37c6"
         }
       ],
@@ -5295,7 +5295,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-status",
           "ordinal": 1,
-          "line": 627,
+          "line": 632,
           "sha256": "1e37647a931e4a204b63afb5cd33a5f25ea3429de9f8ca4c70eeda14d78553e7"
         }
       ],
@@ -5352,7 +5352,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-seal-key",
           "ordinal": 1,
-          "line": 638,
+          "line": 643,
           "sha256": "1190debc41af06e46fd2389583ef769beecb0d863da2648c2d4ca8c87c6796a4"
         }
       ],
@@ -5409,7 +5409,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-unseal-key",
           "ordinal": 1,
-          "line": 649,
+          "line": 654,
           "sha256": "23e1b19479c52044c5beb15e88d8c969cded85fa052156e43c7e652652061678"
         }
       ],
@@ -5466,7 +5466,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-unseal-check",
           "ordinal": 2,
-          "line": 662,
+          "line": 667,
           "sha256": "b08f379bf0dc441d4272942db0fbbd3cfb5d56d6bec9614a1ac437f3a94e2c51"
         }
       ],
@@ -5523,7 +5523,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-pcr-baseline",
           "ordinal": 1,
-          "line": 672,
+          "line": 677,
           "sha256": "d39176967362ebf744cb8147f4fe56538330745e332223ad615c945aac03088e"
         }
       ],
@@ -5580,14 +5580,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-encrypt",
           "ordinal": 1,
-          "line": 681,
+          "line": 686,
           "sha256": "ba5854cd2e6c8f85e6f187b4afd3e879295ceeac97fbd11028b6ddbe3f469865"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-encrypt",
           "ordinal": 2,
-          "line": 682,
+          "line": 687,
           "sha256": "d1e061e0eb1b1ac145c49d977d3ec275eb33706ac9a6c3276ec743b466bcf891"
         }
       ],
@@ -5657,7 +5657,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-decrypt",
           "ordinal": 1,
-          "line": 701,
+          "line": 706,
           "sha256": "457a78faf1b8f34a332835610ec0d72777c05910471e258ab484aa1f83220859"
         }
       ],
@@ -5714,7 +5714,7 @@
           "path": "docs/cli.md",
           "anchor": "facelock-tpm-reseal",
           "ordinal": 1,
-          "line": 712,
+          "line": 717,
           "sha256": "ca52638beb8b81752047d1c4cfbeb5f5163e88c7236a263be28b86a84ad799a9"
         }
       ],
@@ -5770,14 +5770,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-bench-camera-reopen",
           "ordinal": 1,
-          "line": 785,
+          "line": 790,
           "sha256": "c5daf997e938d2c8a1aeed87aaf0e3f000d211290ff0fdd9861be7ce2fa738ed"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-bench-camera-reopen",
           "ordinal": 2,
-          "line": 786,
+          "line": 791,
           "sha256": "ff32430cb4d6cbed8cfa526a7b04cbc76c2ce2162ed5a38a88b92a205022d84a"
         }
       ],
@@ -5845,42 +5845,42 @@
           "path": "docs/cli.md",
           "anchor": "facelock-pam-add",
           "ordinal": 1,
-          "line": 841,
+          "line": 846,
           "sha256": "121d1c12b2cf9010d5ce3e7f50340d05bc9c33bb76569cc9ac4a75afcad08b06"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-add",
           "ordinal": 2,
-          "line": 842,
+          "line": 847,
           "sha256": "0d218379aefa72e43b0ef742495161e6c43581f3263c388e15fd7cc663f23ce1"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-add",
           "ordinal": 3,
-          "line": 843,
+          "line": 848,
           "sha256": "105a666417784cdb4a3d6cf2a3e66616ff4dabb7809f12eb6148acb0d9dc7852"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-add",
           "ordinal": 4,
-          "line": 844,
+          "line": 849,
           "sha256": "3d403d3690fb75798f7f56e04b09cb78be9d8034e6040e60978d3d18cee583ca"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-add",
           "ordinal": 5,
-          "line": 845,
+          "line": 850,
           "sha256": "761596cf101f9b504259d30685c0fe5ec54798826d3ef0c6370c9f9c1d9a92c9"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-add",
           "ordinal": 6,
-          "line": 846,
+          "line": 851,
           "sha256": "4a8f2227f6aaf1308e3549e415662c6701cee8c644770e8ee204de8f3af1ba07"
         }
       ],
@@ -6000,49 +6000,49 @@
           "path": "docs/cli.md",
           "anchor": "facelock-pam-remove",
           "ordinal": 1,
-          "line": 905,
+          "line": 910,
           "sha256": "3d763dbb98539599b04d2bd7b1e65cc615e794c98b964ee91ac74add464cc8f2"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-remove",
           "ordinal": 2,
-          "line": 906,
+          "line": 911,
           "sha256": "84b751818484731f6257fa479bf0a889316baa840f9b496361cf19493223f3cd"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-remove",
           "ordinal": 3,
-          "line": 907,
+          "line": 912,
           "sha256": "a097975710fc37db87341fe7beafc0cbaba3554587a588806a44d6ae45d32545"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-remove",
           "ordinal": 4,
-          "line": 908,
+          "line": 913,
           "sha256": "ec131f97827d440dd2bbfa4d680b3b5d8f4160e882afedecb46cdd2a84fe7ac2"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-remove",
           "ordinal": 5,
-          "line": 909,
+          "line": 914,
           "sha256": "65db2f597cd3f5b975ced31c36fa0358a82082a5fccec30c30e1f7f7894329dd"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-remove",
           "ordinal": 6,
-          "line": 910,
+          "line": 915,
           "sha256": "7c22f4e8bc91a8aa47089d45e94d767cd6a04401aa45a7a7b898822f9e7cf334"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-remove",
           "ordinal": 7,
-          "line": 911,
+          "line": 916,
           "sha256": "2d41ff9caee74fa64ba8b0f0648abe1df6777fc6e4b129bdd73833bceb28f97f"
         }
       ],
@@ -6175,63 +6175,63 @@
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 1,
-          "line": 1028,
+          "line": 1033,
           "sha256": "c2d4cb81a70a757b5ea3473440877c7b25e72ecd0f6a38e0277f9eb341d30703"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 2,
-          "line": 1029,
+          "line": 1034,
           "sha256": "9d52e3f8347950cbf75dd51946862472634fea266dd6476763677f64ce7b4162"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 3,
-          "line": 1030,
+          "line": 1035,
           "sha256": "a0c9375582b346cb8d10fdce38847fd6dfb83eaf9c39948ba145f3c80548f89d"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 4,
-          "line": 1031,
+          "line": 1036,
           "sha256": "dd40b2b7b6743ae13cee5613deb0e484a0dc1dbd59fb81fde26f4bf2ed80feed"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 5,
-          "line": 1032,
+          "line": 1037,
           "sha256": "3e0732a8246a050783f5191ddeb5e69148e38eecbf3b832c4cce59668c7b3319"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 6,
-          "line": 1057,
+          "line": 1062,
           "sha256": "197fafab4e331240a63b84541bebe5377a0a64d5bb22d5637a5fadeed73ffec7"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 7,
-          "line": 1058,
+          "line": 1063,
           "sha256": "e0adde2c2e12d45e595be824b229aa6d10a914d10f8422b1a4585bc2f798fb5e"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 8,
-          "line": 1064,
+          "line": 1069,
           "sha256": "b42d490b43c9e19854dbbc972bb984c86718ddb4ce20ba0807d478791c80f93f"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status",
           "ordinal": 9,
-          "line": 1066,
+          "line": 1071,
           "sha256": "9d893de87b927d4a16bf54f82add2a2e2b2a9c56d12e4d04d2a27cbed5ef49c7"
         }
       ],
@@ -6389,14 +6389,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status---all",
           "ordinal": 1,
-          "line": 1100,
+          "line": 1105,
           "sha256": "55d6d60023b921ebdfcef3376ad8aaac593085268fc8fce245a026da7fb5e28e"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-pam-status---all",
           "ordinal": 2,
-          "line": 1101,
+          "line": 1106,
           "sha256": "3e0732a8246a050783f5191ddeb5e69148e38eecbf3b832c4cce59668c7b3319"
         }
       ],
@@ -6463,14 +6463,14 @@
           "path": "docs/cli.md",
           "anchor": "facelock-hyprlock-enable",
           "ordinal": 1,
-          "line": 1159,
+          "line": 1164,
           "sha256": "5ecc5a03020ca8e1ec8385d0afae5fee9b6b03a77b018e8f162f56c563b247d2"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-hyprlock-enable",
           "ordinal": 2,
-          "line": 1160,
+          "line": 1165,
           "sha256": "7d4ad0e136316dea8a5aebc50f9f4ea4b72a4fd8cba14e81275d5ec7132fa996"
         }
       ],
@@ -6537,35 +6537,35 @@
           "path": "docs/cli.md",
           "anchor": "facelock-audit",
           "ordinal": 1,
-          "line": 1178,
+          "line": 1183,
           "sha256": "8b94b4691397f468db79cb6bc793a8ae9d14f93f161d7355e7ee8fe702c85644"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-audit",
           "ordinal": 2,
-          "line": 1179,
+          "line": 1184,
           "sha256": "725334ef5505ffa9d950d85cc604913a47cbfe0ca734ebe533477d5c9b12b20b"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-audit",
           "ordinal": 3,
-          "line": 1180,
+          "line": 1185,
           "sha256": "212c16a1e2e2020d56641528f8f7bbd4be1cdd29d7786cc38790cc1006a4d979"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-audit",
           "ordinal": 4,
-          "line": 1181,
+          "line": 1186,
           "sha256": "4980897d49919a4c97a89db2eab19c20964e7c7bfaf6f3274c6a6636a00a20a1"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-audit",
           "ordinal": 5,
-          "line": 1182,
+          "line": 1187,
           "sha256": "69ebe923517fe3317aa47a44965a38691a55d4699e61b2eef6cf93e10918387a"
         }
       ],
@@ -6671,35 +6671,35 @@
           "path": "docs/cli.md",
           "anchor": "facelock-data-purge",
           "ordinal": 1,
-          "line": 1220,
+          "line": 1225,
           "sha256": "d969551ca077f316f66d95970d4fdd344494b89937bf1e628e86f39f377b1738"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-data-purge",
           "ordinal": 2,
-          "line": 1221,
+          "line": 1226,
           "sha256": "89dcedd16b34cf3f6649b498056125110ec7c590ccb9962b6c74503a7f198a5d"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-data-purge",
           "ordinal": 3,
-          "line": 1222,
+          "line": 1227,
           "sha256": "41d4befd24c1488ef5e8e6c1a0cee6cffc6996150cbceebb30ec3c2c6bd8202c"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-data-purge",
           "ordinal": 4,
-          "line": 1223,
+          "line": 1228,
           "sha256": "1f108183f61e82e3789fc6d6513c7ee72f49045ef12d4228a67445c414c9a38a"
         },
         {
           "path": "docs/cli.md",
           "anchor": "facelock-data-purge",
           "ordinal": 5,
-          "line": 1224,
+          "line": 1229,
           "sha256": "bf4f5442b682aca00f4dba336a4e211fe28f9c9a4d89679b3cefbeebcf260078"
         }
       ],
