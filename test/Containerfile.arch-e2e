@@ -15,6 +15,15 @@ FROM docker.io/library/archlinux:base-devel@sha256:714acd1eef9ae997d95691b1c5220
 # whatever Arch shipped this morning.
 RUN printf '%s\n' 'Server = https://archive.archlinux.org/repos/2026/08/18/$repo/os/$arch' > /etc/pacman.d/mirrorlist
 
+# The pinned archive above serves large packages slowly enough that pacman's
+# low-speed abort ("Operation too slow... transferred the last 10 seconds")
+# kills the whole transaction. Disable that timeout instead of the pin.
+RUN if grep -q '^#DisableDownloadTimeout' /etc/pacman.conf; then \
+        sed -i 's/^#DisableDownloadTimeout/DisableDownloadTimeout/' /etc/pacman.conf; \
+    else \
+        sed -i '0,/^\[options\]/s//[options]\nDisableDownloadTimeout/' /etc/pacman.conf; \
+    fi
+
 # base-devel already supplies sudo (makepkg --syncdeps calls pacman through it),
 # gettext (msgfmt, for the recipe's locale stanza) and fakeroot. git is not in
 # base-devel and cargo wants it for any git-sourced crate; util-linux supplies
