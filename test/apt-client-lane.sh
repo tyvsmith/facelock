@@ -179,8 +179,9 @@ for suite in "${!compat_source[@]}"; do
 done
 
 echo "=== APT client ==="
-install -d -m 0755 /etc/apt/keyrings
-install -m 0644 "$site/tysmith-archive-keyring.gpg" /etc/apt/keyrings/tysmith-archive-keyring.gpg
+# /usr/share/keyrings ships with the base image (debian-archive-keyring on
+# Debian, ubuntu-keyring on Ubuntu), so no install -d is needed here.
+install -m 0644 "$site/tysmith-archive-keyring.gpg" /usr/share/keyrings/tysmith-archive-keyring.gpg
 # Only the Facelock source is under test, and there is no network anyway.
 mkdir -p "$work/image-sources"
 find /etc/apt/sources.list.d -mindepth 1 -maxdepth 1 -exec mv -t "$work/image-sources" {} +
@@ -191,7 +192,7 @@ served_base="file://$site"
 source_entry() {
     # The README entry, identical in v0.1.4 and now but for the suite; only the
     # base is rewritten so the served tree stands in for the public host.
-    printf 'deb [signed-by=/etc/apt/keyrings/tysmith-archive-keyring.gpg] %s %s facelock\n' "$1" "$2"
+    printf 'deb [signed-by=/usr/share/keyrings/tysmith-archive-keyring.gpg] %s %s facelock\n' "$1" "$2"
 }
 
 # Replay the client that last updated from the v0.1.4 tree: it updates from

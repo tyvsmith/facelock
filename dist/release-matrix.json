@@ -33,6 +33,12 @@
       }
     }
   },
+  "apt_signing_key": {
+    "fingerprint": "E7F8A4C424C6D59BD38536B536A81FCD934C17CE",
+    "uid": "Ty Smith (Package Signing) <packages@m.tysmith.me>",
+    "expires": "2029-03-27",
+    "checked_on": "2026-09-06"
+  },
   "fedora": {
     "43_eol_gate": "2026-12-02",
     "branched": "45",

@@ -1051,6 +1051,54 @@ assert_matrix_mutation_rejected \
     ".packit.yaml" \
     's/"fedora-45-x86_64"/"fedora-rawhide-x86_64"/'
 
+# The APT signing key fingerprint is pinned so a rotation cannot silently
+# leave the published docs quoting a key that is no longer in the keyring:
+# that mismatch looks exactly like tampering to a first-time installer
+# (#346). The matrix, docs/quickstart.md and docs/releasing.md must all name
+# the same fingerprint and uid, and neither doc may carry a leftover one.
+assert_matrix_mutation_rejected \
+    "APT signing key fingerprint rotated in the matrix without the docs" \
+    "dist/release-matrix.json" \
+    's/E7F8A4C424C6D59BD38536B536A81FCD934C17CE/E7F8A4C424C6D59BD38536B536A81FCD934C17CF/' \
+    "does not quote the pinned APT signing key fingerprint"
+assert_matrix_mutation_rejected \
+    "APT signing key fingerprint not uppercase hex" \
+    "dist/release-matrix.json" \
+    's/"fingerprint": "E7F8A4C424C6D59BD38536B536A81FCD934C17CE"/"fingerprint": "e7f8a4c424c6d59bd38536b536a81fcd934c17ce"/' \
+    "apt_signing_key fingerprint must be a 40-character uppercase hex string"
+assert_matrix_mutation_rejected \
+    "APT signing key uid changed in the matrix without the quickstart" \
+    "dist/release-matrix.json" \
+    's/"uid": "Ty Smith (Package Signing) <packages@m.tysmith.me>"/"uid": "Ty Smith (Signing) <packages@m.tysmith.me>"/' \
+    "does not quote the pinned APT signing key uid"
+assert_matrix_mutation_rejected \
+    "quickstart drops the APT signing key fingerprint" \
+    "docs/quickstart.md" \
+    's/E7F8A4C424C6D59BD38536B536A81FCD934C17CE//' \
+    "does not quote the pinned APT signing key fingerprint"
+assert_matrix_mutation_rejected \
+    "releasing.md leaves a stale APT signing key fingerprint behind a rotation" \
+    "docs/releasing.md" \
+    's/E7F8A4C424C6D59BD38536B536A81FCD934C17CE/&, formerly E7F8A4C424C6D59BD38536B536A81FCD934C17AA/' \
+    "carries a fingerprint besides the pinned one"
+
+# apt refuses an expired key's signature, so the pinned expiry is a hard date
+# gate exactly like the Fedora 43 EOL gate above, isolated to a date well
+# ahead of that gate so the two do not collide.
+signing_key_expiry_root="$tmp_root/matrix-signing-key-expiry"
+cp -R "$matrix_root" "$signing_key_expiry_root"
+sed -i 's/"expires": "2029-03-27"/"expires": "2026-09-10"/' "$signing_key_expiry_root/dist/release-matrix.json"
+RELEASE_MATRIX_TODAY=2026-09-09 RELEASE_MATRIX_VERSION=0.2.0 python3 "$signing_key_expiry_root/test/check-release-matrix.py" >/dev/null
+echo "release matrix expiry case: APT signing key accepted the day before its expiry"
+if signing_key_expiry_output=$(RELEASE_MATRIX_TODAY=2026-09-10 RELEASE_MATRIX_VERSION=0.2.0 python3 "$signing_key_expiry_root/test/check-release-matrix.py" 2>&1); then
+    fail "release matrix checker accepted the APT signing key on its expiry date"
+fi
+case "$signing_key_expiry_output" in
+    *"APT signing key"*"expired 2026-09-10"*) ;;
+    *) fail "release matrix checker rejected the expired signing key for another reason: $signing_key_expiry_output" ;;
+esac
+echo "release matrix expiry case: APT signing key rejected on its expiry date"
+
 # Staging COPR publication (#236). The project is provisioned now, so the tree
 # carries the claimed shape: the switch true and the Packit job on the
 # pull-request trigger. The guards here are still config shape: the job that
