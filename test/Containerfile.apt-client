@@ -4,8 +4,9 @@ FROM ${BASE_IMAGE}
 ENV DEBIAN_FRONTEND=noninteractive
 
 # The stable publisher's own tools (reprepro, signing through gpg-agent) on top
-# of the suite's apt, plus gpgv to verify what apt will be handed. The lane
-# script runs from the repository mount, so a change to it needs no rebuild.
+# of the suite's apt, plus gpgv to verify what apt will be handed, plus python3
+# for the publisher's and the lane's own APT signing key pin checks (#346). The
+# lane script runs from the repository mount, so a change to it needs no rebuild.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends reprepro gnupg gpgv && \
+    apt-get install -y --no-install-recommends reprepro gnupg gpgv python3 && \
     rm -rf /var/lib/apt/lists/*

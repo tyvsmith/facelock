@@ -97,9 +97,45 @@ keygen_home="$work/keygen"
 mkdir -m 700 "$keygen_home"
 passphrase="apt-client-lane"
 GNUPGHOME="$keygen_home" gpg --batch --quiet --pinentry-mode loopback --passphrase "$passphrase" \
-    --quick-generate-key "Facelock APT lane <apt-lane@example.invalid>" ed25519 sign never
+    --quick-generate-key "Facelock APT lane <apt-lane@example.invalid>" ed25519 sign 1y
 private_key="$(GNUPGHOME="$keygen_home" gpg --batch --quiet --pinentry-mode loopback \
     --passphrase "$passphrase" --armor --export-secret-keys)"
+
+# The publisher refuses to sign with a key that does not match
+# dist/release-matrix.json's apt_signing_key pin (#346). Stage a copy of the
+# matrix naming this ephemeral key's own fingerprint, uid, and expiry so the
+# lane still exercises that check instead of bypassing it.
+GNUPGHOME="$keygen_home" gpg --list-keys --with-colons > "$work/keygen-colons.txt"
+signing_key_matrix="$work/apt-signing-key-matrix.json"
+python3 - "$src/dist/release-matrix.json" "$work/keygen-colons.txt" "$signing_key_matrix" <<'PY'
+import datetime
+import json
+import sys
+
+matrix_path, colons_path, output_path = sys.argv[1:4]
+fpr = uid = expires_epoch = None
+found_pub = False
+with open(colons_path, encoding="utf-8") as handle:
+    for line in handle:
+        fields = line.rstrip("\n").split(":")
+        if fields[0] == "pub":
+            found_pub = True
+            expires_epoch = fields[6] or None
+        elif found_pub and fields[0] == "fpr" and fpr is None:
+            fpr = fields[9]
+        elif found_pub and fields[0] == "uid" and uid is None:
+            uid = fields[9]
+if fpr is None or uid is None or not expires_epoch:
+    raise SystemExit("ephemeral signing key colon listing is missing a fingerprint, uid, or expiry")
+expires = datetime.datetime.fromtimestamp(int(expires_epoch), tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+
+with open(matrix_path, encoding="utf-8") as handle:
+    matrix = json.load(handle)
+checked_on = datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+matrix["apt_signing_key"] = {"fingerprint": fpr, "uid": uid, "expires": expires, "checked_on": checked_on}
+with open(output_path, "w", encoding="utf-8") as handle:
+    json.dump(matrix, handle)
+PY
 
 # A client that last updated from the v0.1.4 tree keeps that tree's Release
 # data in /var/lib/apt/lists, and apt refuses a suite whose Origin, Label, or
@@ -138,6 +174,7 @@ repo="$work/apt-repo"
 (
     cd "$src"
     GNUPGHOME="$work/publisher-gnupg" APT_GPG_PRIVATE_KEY="$private_key" APT_GPG_PASSPHRASE="$passphrase" \
+        APT_SIGNING_KEY_MATRIX="$signing_key_matrix" \
         bash .github/workflows/scripts/publish-apt.sh "$repo" \
         "trixie=${package_path[trixie]}" "resolute=${package_path[resolute]}"
 )
@@ -179,6 +216,12 @@ for suite in "${!compat_source[@]}"; do
 done
 
 echo "=== APT client ==="
+# /usr/share/keyrings ships with the base image (debian-archive-keyring on
+# Debian, ubuntu-keyring on Ubuntu), so no install -d is needed here.
+install -m 0644 "$site/tysmith-archive-keyring.gpg" /usr/share/keyrings/tysmith-archive-keyring.gpg
+# A v0.1.4 client already has the keyring at /etc/apt/keyrings, the README's
+# guidance at the time (`git show v0.1.4:README.md`); the transition replay
+# below needs it there too, since it is the same underlying key either way.
 install -d -m 0755 /etc/apt/keyrings
 install -m 0644 "$site/tysmith-archive-keyring.gpg" /etc/apt/keyrings/tysmith-archive-keyring.gpg
 # Only the Facelock source is under test, and there is no network anyway.
@@ -189,8 +232,13 @@ find /etc/apt/sources.list.d -mindepth 1 -maxdepth 1 -exec mv -t "$work/image-so
 public_base='https://tysmith.me/facelock/apt'
 served_base="file://$site"
 source_entry() {
-    # The README entry, identical in v0.1.4 and now but for the suite; only the
-    # base is rewritten so the served tree stands in for the public host.
+    # The current docs' entry: /usr/share/keyrings. Only the base is rewritten
+    # so the served tree stands in for the public host.
+    printf 'deb [signed-by=/usr/share/keyrings/tysmith-archive-keyring.gpg] %s %s facelock\n' "$1" "$2"
+}
+source_entry_v014() {
+    # The v0.1.4 README entry: /etc/apt/keyrings, before the keyring moved to
+    # /usr/share/keyrings.
     printf 'deb [signed-by=/etc/apt/keyrings/tysmith-archive-keyring.gpg] %s %s facelock\n' "$1" "$2"
 }
 
@@ -201,7 +249,7 @@ if [ "${#transition_suites[@]}" -gt 0 ]; then
     echo "== client last updated from v0.1.4 (${transition_suites[*]})"
     : > /etc/apt/sources.list.d/facelock.list
     for suite in "${transition_suites[@]}"; do
-        source_entry "$served_base" "$suite" >> /etc/apt/sources.list.d/facelock.list
+        source_entry_v014 "$served_base" "$suite" >> /etc/apt/sources.list.d/facelock.list
     done
     rm -rf /var/lib/apt/lists/*
     serve_release "$old_repo"

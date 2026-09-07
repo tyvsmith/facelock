@@ -1051,6 +1051,85 @@ assert_matrix_mutation_rejected \
     ".packit.yaml" \
     's/"fedora-45-x86_64"/"fedora-rawhide-x86_64"/'
 
+# The APT signing key fingerprint is pinned so a rotation cannot silently
+# leave the published docs quoting a key that is no longer in the keyring:
+# that mismatch looks exactly like tampering to a first-time installer
+# (#346). The matrix, docs/quickstart.md and docs/releasing.md must all name
+# the same fingerprint and uid, and neither doc may carry a leftover one.
+# Values are read from the staged matrix rather than hardcoded, so a real
+# rotation of the pin does not silently turn these into no-op fixtures.
+staged_signing_key_field() {
+    python3 -c '
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    print(json.load(handle)["apt_signing_key"][sys.argv[2]])
+' "$matrix_root/dist/release-matrix.json" "$1"
+}
+staged_signing_fingerprint="$(staged_signing_key_field fingerprint)"
+staged_signing_uid="$(staged_signing_key_field uid)"
+staged_signing_expires="$(staged_signing_key_field expires)"
+# A single hex-digit flip on the last character: always a different, still
+# well-formed 40-character fingerprint.
+if [ "${staged_signing_fingerprint: -1}" = E ]; then
+    mutated_signing_fingerprint="${staged_signing_fingerprint%?}F"
+else
+    mutated_signing_fingerprint="${staged_signing_fingerprint%?}E"
+fi
+mutated_signing_uid="${staged_signing_uid/Package Signing/Signing}"
+[ "$mutated_signing_uid" != "$staged_signing_uid" ] || fail "uid mutation fixture did not change the staged uid"
+
+assert_matrix_mutation_rejected \
+    "APT signing key fingerprint rotated in the matrix without the docs" \
+    "dist/release-matrix.json" \
+    "s/${staged_signing_fingerprint}/${mutated_signing_fingerprint}/" \
+    "APT signing key fingerprint drifted from the apt_signing_key pin"
+assert_matrix_mutation_rejected \
+    "APT signing key fingerprint not uppercase hex" \
+    "dist/release-matrix.json" \
+    "s/\"fingerprint\": \"${staged_signing_fingerprint}\"/\"fingerprint\": \"$(tr 'A-F' 'a-f' <<<"$staged_signing_fingerprint")\"/" \
+    "apt_signing_key fingerprint must be a 40-character uppercase hex string"
+assert_matrix_mutation_rejected \
+    "APT signing key uid changed in the matrix without the quickstart" \
+    "dist/release-matrix.json" \
+    "s/${staged_signing_uid}/${mutated_signing_uid}/" \
+    "does not quote the pinned APT signing key uid"
+assert_matrix_mutation_rejected \
+    "quickstart drops the APT signing key fingerprint" \
+    "docs/quickstart.md" \
+    "s/${staged_signing_fingerprint}//" \
+    "APT signing key fingerprint drifted from the apt_signing_key pin"
+assert_matrix_mutation_rejected \
+    "releasing.md leaves a stale APT signing key fingerprint behind a rotation" \
+    "docs/releasing.md" \
+    "s/${staged_signing_fingerprint}/&, formerly ${mutated_signing_fingerprint}/" \
+    "APT signing key fingerprint drifted from the apt_signing_key pin"
+
+# apt refuses an expired key's signature, so the pinned expiry is a hard date
+# gate exactly like the Fedora 43 EOL gate above, isolated to a date well
+# ahead of that gate so the two do not collide. The match target is read from
+# the staged matrix, not hardcoded, and the acceptance fixture is cmp-guarded
+# so a sed that silently matched nothing cannot pass as a clean run.
+mutated_signing_expires=2026-09-10
+signing_key_expiry_root="$tmp_root/matrix-signing-key-expiry"
+cp -R "$matrix_root" "$signing_key_expiry_root"
+sed -i "s/\"expires\": \"${staged_signing_expires}\"/\"expires\": \"${mutated_signing_expires}\"/" \
+    "$signing_key_expiry_root/dist/release-matrix.json"
+cmp -s "$matrix_root/dist/release-matrix.json" "$signing_key_expiry_root/dist/release-matrix.json" \
+    && fail "signing-key expiry fixture did not change dist/release-matrix.json"
+# docs/releasing.md must keep quoting whatever expiry the matrix pins, so the
+# fixture carries the mutated date there too.
+sed -i "s/${staged_signing_expires}/${mutated_signing_expires}/g" "$signing_key_expiry_root/docs/releasing.md"
+cmp -s "$matrix_root/docs/releasing.md" "$signing_key_expiry_root/docs/releasing.md" \
+    && fail "signing-key expiry fixture did not change docs/releasing.md"
+RELEASE_MATRIX_TODAY=2026-09-09 RELEASE_MATRIX_VERSION=0.2.0 python3 "$signing_key_expiry_root/test/check-release-matrix.py" >/dev/null
+echo "release matrix expiry case: APT signing key accepted the day before its expiry"
+
+RELEASE_MATRIX_TODAY="$mutated_signing_expires" assert_matrix_mutation_rejected \
+    "APT signing key expiry reached" \
+    "dist/release-matrix.json" \
+    "s/\"expires\": \"${staged_signing_expires}\"/\"expires\": \"${mutated_signing_expires}\"/" \
+    "expired ${mutated_signing_expires}"
+
 # Staging COPR publication (#236). The project is provisioned now, so the tree
 # carries the claimed shape: the switch true and the Packit job on the
 # pull-request trigger. The guards here are still config shape: the job that
@@ -2245,9 +2324,45 @@ apt_tree_debs="$tmp_root/apt-tree-debs"
 mkdir -p "$apt_tree_debs"
 mkdir -m 700 "$apt_keygen_home"
 GNUPGHOME="$apt_keygen_home" gpg --batch --quiet --pinentry-mode loopback --passphrase contract-passphrase \
-    --quick-generate-key "Facelock contract test <apt-contract@example.invalid>" ed25519 sign never
+    --quick-generate-key "Facelock contract test <apt-contract@example.invalid>" ed25519 sign 1y
 apt_private_key="$(GNUPGHOME="$apt_keygen_home" gpg --batch --quiet --pinentry-mode loopback \
     --passphrase contract-passphrase --armor --export-secret-keys)"
+
+# The publisher refuses to sign with a key that does not match
+# dist/release-matrix.json's apt_signing_key pin (#346). Stage a copy of the
+# checked-out matrix naming this generated key's own fingerprint, uid, and
+# expiry so the fixture still exercises that check.
+GNUPGHOME="$apt_keygen_home" gpg --list-keys --with-colons > "$tmp_root/apt-keygen-colons.txt"
+apt_signing_key_matrix="$tmp_root/apt-signing-key-matrix.json"
+python3 - "$repo_root/dist/release-matrix.json" "$tmp_root/apt-keygen-colons.txt" "$apt_signing_key_matrix" <<'PY'
+import datetime
+import json
+import sys
+
+matrix_path, colons_path, output_path = sys.argv[1:4]
+fpr = uid = expires_epoch = None
+found_pub = False
+with open(colons_path, encoding="utf-8") as handle:
+    for line in handle:
+        fields = line.rstrip("\n").split(":")
+        if fields[0] == "pub":
+            found_pub = True
+            expires_epoch = fields[6] or None
+        elif found_pub and fields[0] == "fpr" and fpr is None:
+            fpr = fields[9]
+        elif found_pub and fields[0] == "uid" and uid is None:
+            uid = fields[9]
+if fpr is None or uid is None or not expires_epoch:
+    raise SystemExit("contract test signing key colon listing is missing a fingerprint, uid, or expiry")
+expires = datetime.datetime.fromtimestamp(int(expires_epoch), tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+
+with open(matrix_path, encoding="utf-8") as handle:
+    matrix = json.load(handle)
+checked_on = datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+matrix["apt_signing_key"] = {"fingerprint": fpr, "uid": uid, "expires": expires, "checked_on": checked_on}
+with open(output_path, "w", encoding="utf-8") as handle:
+    json.dump(matrix, handle)
+PY
 for suite in trixie resolute; do
     : > "$apt_tree_debs/$suite.deb"
 done
@@ -2286,6 +2401,7 @@ chmod +x "$tmp_root/bin/dpkg-deb" "$tmp_root/bin/reprepro"
 if ! apt_tree_output=$(
     cd "$repo_root" && \
         GNUPGHOME="$apt_publisher_gnupg" APT_GPG_PRIVATE_KEY="$apt_private_key" APT_GPG_PASSPHRASE=contract-passphrase \
+        APT_SIGNING_KEY_MATRIX="$apt_signing_key_matrix" \
         PATH="$tmp_root/bin:$PATH" \
         bash .github/workflows/scripts/publish-apt.sh "$apt_tree_root" \
         "trixie=$apt_tree_debs/trixie.deb" "resolute=$apt_tree_debs/resolute.deb" 2>&1
@@ -2315,6 +2431,42 @@ case "$apt_tree_output" in
 esac
 echo "stable APT publisher case: codenamed and compatibility suites published"
 
+# A key that does not match the pin must be refused before any suite is
+# signed, not just detected after the fact (#346). The already-imported and
+# already-trusted key is unchanged; only the pin it is compared against is
+# wrong.
+apt_mismatched_signing_key_matrix="$tmp_root/apt-signing-key-matrix-mismatched.json"
+python3 -c '
+import json
+import sys
+
+matrix_path, output_path = sys.argv[1:3]
+with open(matrix_path, encoding="utf-8") as handle:
+    matrix = json.load(handle)
+fingerprint = matrix["apt_signing_key"]["fingerprint"]
+flipped = fingerprint[:-1] + ("F" if fingerprint[-1] != "F" else "E")
+matrix["apt_signing_key"]["fingerprint"] = flipped
+with open(output_path, "w", encoding="utf-8") as handle:
+    json.dump(matrix, handle)
+' "$apt_signing_key_matrix" "$apt_mismatched_signing_key_matrix"
+apt_tree_mismatched_root="$tmp_root/apt-tree-mismatched"
+if apt_mismatch_output=$(
+    cd "$repo_root" && \
+        GNUPGHOME="$apt_publisher_gnupg" APT_GPG_PRIVATE_KEY="$apt_private_key" APT_GPG_PASSPHRASE=contract-passphrase \
+        APT_SIGNING_KEY_MATRIX="$apt_mismatched_signing_key_matrix" \
+        PATH="$tmp_root/bin:$PATH" \
+        bash .github/workflows/scripts/publish-apt.sh "$apt_tree_mismatched_root" \
+        "trixie=$apt_tree_debs/trixie.deb" "resolute=$apt_tree_debs/resolute.deb" 2>&1
+); then
+    fail "stable APT publisher signed with a key whose fingerprint does not match the pin"
+fi
+case "$apt_mismatch_output" in
+    *"does not match"*"pin"*"fingerprint: imported"*) ;;
+    *) fail "stable APT publisher rejected the fingerprint mismatch for another reason: $apt_mismatch_output" ;;
+esac
+[ ! -e "$apt_tree_mismatched_root/dists" ] || fail "stable APT publisher wrote suite data before the pin check failed"
+echo "stable APT publisher case: fingerprint mismatch against the matrix pin rejected"
+
 # With the stanzas deleted and the publisher untouched, the compatibility
 # steps must not run: an undeclared codename would make reprepro fail the
 # release under set -e (#320).
@@ -2327,6 +2479,7 @@ cp "$retired_root/dist/apt/conf/distributions" "$apt_retired_publisher_root/dist
 if ! apt_tree_output=$(
     cd "$apt_retired_publisher_root" && \
         GNUPGHOME="$apt_publisher_gnupg" APT_GPG_PRIVATE_KEY="$apt_private_key" APT_GPG_PASSPHRASE=contract-passphrase \
+        APT_SIGNING_KEY_MATRIX="$apt_signing_key_matrix" \
         PATH="$tmp_root/bin:$PATH" \
         bash .github/workflows/scripts/publish-apt.sh "$apt_retired_tree_root" \
         "trixie=$apt_tree_debs/trixie.deb" "resolute=$apt_tree_debs/resolute.deb" 2>&1

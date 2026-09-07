@@ -103,11 +103,12 @@ def apt(case, identity, work):
     key_hash = repository.get("key_sha256", "")
     if not run.evidence.digest(key_hash):
         raise ValueError("APT identity needs the independently reviewed signing-key SHA256")
-    command(["sudo", "install", "-d", "-m", "0755", "/etc/apt/keyrings"])
+    # /usr/share/keyrings ships with the base image (debian-archive-keyring on
+    # Debian, ubuntu-keyring on Ubuntu), so no install -d is needed here.
     key = fetch("https://tysmith.me/facelock/apt/tysmith-archive-keyring.gpg", work / "archive-keyring.gpg", key_hash)
-    command(["sudo", "install", "-m", "0644", str(key), "/etc/apt/keyrings/tysmith-archive-keyring.gpg"])
+    command(["sudo", "install", "-m", "0644", str(key), "/usr/share/keyrings/tysmith-archive-keyring.gpg"])
     suite = case["suite"]
-    entry = f"deb [signed-by=/etc/apt/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt {suite} facelock\n"
+    entry = f"deb [signed-by=/usr/share/keyrings/tysmith-archive-keyring.gpg] https://tysmith.me/facelock/apt {suite} facelock\n"
     Path("/etc/apt/sources.list.d/facelock.list").write_text(entry)
     print(f"write /etc/apt/sources.list.d/facelock.list: {entry}", end="")
     command(["sudo", "apt", "update"])
