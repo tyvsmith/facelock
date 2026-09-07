@@ -37,7 +37,10 @@ fail() {
 deps_script=.github/workflows/scripts/install-ubuntu-deps.sh
 just_floor=1.36.0
 [ -x "$deps_script" ] || fail "Ubuntu deps script must be executable: $deps_script"
-if grep -v '^[[:space:]]*#' "$deps_script" | grep -Eq '^[[:space:]]+just[[:space:]]*\\?$'; then
+# Join backslash continuations first, so `apt-get install -y just` on one
+# line and `just \` inside a multi-line package list are read the same way.
+if grep -v '^[[:space:]]*#' "$deps_script" | sed -e ':a' -e '/\\$/N; s/\\\n//; ta' |
+    grep -E 'apt(-get)?[[:space:]]+install' | grep -Eq '(^|[[:space:]])just([[:space:]]|$)'; then
     fail "the Ubuntu deps script must not install just from apt (noble ships 1.21.0, below the $just_floor the justfile needs)"
 fi
 pinned_just="$(sed -n 's/^JUST_VERSION="\([0-9][0-9.]*\)"$/\1/p' "$deps_script")"
