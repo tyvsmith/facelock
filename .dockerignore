@@ -8,13 +8,10 @@ target/
 # test/Containerfile.copr-e2e can install the exact artifact under test.
 !target/copr-lane/facelock.rpm
 
-# Worktree checkouts, which live inside the main checkout. `target/` above is
-# root-anchored, so it does not match their build artifacts and every build run
-# from the main checkout streams them as context. Building from inside a
-# worktree is unaffected: the context root is that worktree, which holds no
-# nested worktrees of its own.
-.worktrees/
-.claude/worktrees/
+# Worktree checkouts live inside the main checkout and can contain their own build artifacts.
+# Exclude them from the build context to avoid accidentally streaming nested checkouts.
+/.worktrees/
+/.claude/worktrees/
 
 # Git history not needed in containers
 .git/
