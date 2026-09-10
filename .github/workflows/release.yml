@@ -456,8 +456,14 @@ jobs:
       - name: Build RPM
         run: .github/workflows/scripts/build-rpm.sh "${{ needs.metadata.outputs.cargo-version }}" "${{ needs.metadata.outputs.rpm-counter }}"
 
+      # find, not a glob: the old `**` fallback needed bash globstar, which
+      # this /bin/sh step never set, so it only ever reached one directory
+      # below RPMS/ (#344). The trailing ls fails the step when nothing was
+      # copied instead of leaving the next step to explain an empty directory.
       - name: Copy RPM to workspace
-        run: cp ~/rpmbuild/RPMS/x86_64/*.rpm ./ 2>/dev/null || cp ~/rpmbuild/RPMS/**/*.rpm ./ 2>/dev/null || true
+        run: |
+          find ~/rpmbuild/RPMS -type f -name '*.rpm' -exec cp -t ./ {} +
+          ls ./*.rpm
 
       - name: Select the packages the validated metadata names
         id: rpm
