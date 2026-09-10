@@ -12,6 +12,13 @@
     {
       "matchUpdateTypes": ["patch"],
       "automerge": true
+    },
+    {
+      "description": "The vendor-preparation toolchain in release.yml must match the channel in rust-toolchain.toml; bump both by hand together.",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["rust"],
+      "matchDepTypes": ["uses-with"],
+      "enabled": false
     }
   ]
 }
