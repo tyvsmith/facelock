@@ -487,8 +487,8 @@ network denied, its dependency closure still proved, the booted lifecycle still
 run. A lane that skipped the rebuild records `depth=partial`, which the release
 matrix requires of nothing, so `just release-preflight` refuses it -- it refuses
 pull-request runs regardless. The nightly, the dispatch, and a local
-`just test-deb-*-pkg` or `just test-packaging-matrix` keep the rebuild. What
-survives a pull request, then, is an incomplete source package: a file the
+`just test-deb` or `just test-packaging-matrix` keep the rebuild. What survives
+a pull request, then, is an incomplete source package: a file the
 `.dsc` does not carry, or a build that only works from the Git checkout. The
 nightly catches it within a day, the release gate before anything ships.
 
