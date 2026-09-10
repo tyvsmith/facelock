@@ -24,12 +24,12 @@ class InventoryTest(unittest.TestCase):
     def test_container_workspace_tests_trust_only_the_checkout(self):
         workflow = (MODULE.ROOT / '.github/workflows/ci.yml').read_text()
         trust = '\n        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"'
-        for job in ('build-and-test', 'tpm-tests'):
+        for job, tests in (('build-and-test', 'run: just test'), ('tpm-tests', 'run: cargo test --workspace')):
             with self.subTest(job=job):
                 body = re.search(r'(?ms)^  ' + job + r':\n(.*?)(?=^  \S|\Z)', workflow)[1]
                 self.assertIn(trust, body)
                 self.assertLess(body.index('uses: actions/checkout@'), body.index(trust))
-                self.assertLess(body.index(trust), body.index('run: cargo test --workspace'))
+                self.assertLess(body.index(trust), body.index(tests))
 
     def test_source_archive_discovery_finds_new_docs_and_excludes_build_outputs(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -10,6 +10,17 @@ build-release:
     cargo build --release --workspace
     cargo build --release -p facelock-cli --features tpm
 
+# The CI smoke tiers consume two files: `facelock` (with tpm, as every package
+# ships it) and `libpam_facelock.so`. The release profile is fat LTO with one
+# codegen unit, so every final artifact is a multi-minute link that no cache
+# survives (rust-cache drops workspace crates). `build-release` links five of
+# them; this links the two that are uploaded, in one cargo invocation so the
+# shared dependencies compile once.
+
+# Build only the release `facelock` (tpm) and PAM module the CI smoke tiers consume.
+build-smoke-binaries:
+    cargo build --release -p facelock-cli -p pam-facelock --features facelock-cli/tpm
+
 # Run all unit tests
 test:
     cargo test --workspace
@@ -30,6 +41,14 @@ test-all:
 # Lint every workspace target with Clippy, denying warnings (matches CI).
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
+
+# The `tpm` feature gates real code (`cfg(feature = "tpm")` across the cli,
+# daemon and tpm crates), so the default lint never sees it. CI runs both; a
+# lint that only passes without the feature ships in every packaged build.
+
+# Lint every workspace target with the `tpm` feature enabled (matches CI).
+lint-tpm:
+    cargo clippy --workspace --all-targets --features tpm -- -D warnings
 
 # Format check
 fmt-check:
@@ -52,7 +71,8 @@ audit:
 # it. The dep guard then forbids the async-io runtime backend (async-io/async-signal/
 # polling + the async-executor/async-fs/async-lock trio) while allowing
 # signal-hook-registry, which the correct tokio backend legitimately pulls via
-# tokio's "process" feature. Keep in sync with .github/workflows/ci.yml
+# tokio's "process" feature. CI runs this recipe; .claude/rules/pam-boundary.md
+# documents the same list, and `just check-agent-docs` holds the two together.
 
 # Build PAM independently and reject forbidden async-io backend dependencies.
 check-pam-standalone:

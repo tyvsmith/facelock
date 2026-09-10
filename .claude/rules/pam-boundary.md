@@ -26,5 +26,5 @@ in the wrong zbus feature set still fails CI — this has already cost two fixes
 (#107, #123), because the ceiling was documented and the backend was not.
 
 Run `just check-pam-standalone` after any change to `crates/pam-facelock/Cargo.toml`.
-CI runs the same guard as the "Verify pam-facelock dependency surface" step in
-`build-and-test`.
+CI runs the same recipe as the "Build pam-facelock in isolation and verify its
+dependency surface" step in `build-and-test`.
