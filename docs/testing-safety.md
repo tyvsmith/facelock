@@ -77,7 +77,7 @@ the nodes are missing:
 
 ```bash
 sudo modprobe v4l2loopback devices=2 video_nr=20,21 \
-    card_label=facelock-synth-ir,facelock-synth-rgb exclusive_caps=1,1
+    card_label=facelock-synth-mono,facelock-synth-color exclusive_caps=1,1
 sudo udevadm settle && sudo chmod a+rw /dev/video20 /dev/video21
 ```
 
@@ -89,9 +89,23 @@ If v4l2loopback is already loaded for something else, add nodes without
 unloading it (`v4l2loopback-utils`, module 0.13 or later):
 
 ```bash
-sudo v4l2loopback-ctl add -x 1 -n facelock-synth-ir /dev/video20
-sudo v4l2loopback-ctl add -x 1 -n facelock-synth-rgb /dev/video21
+sudo v4l2loopback-ctl add -x 1 -n facelock-synth-mono /dev/video20
+sudo v4l2loopback-ctl add -x 1 -n facelock-synth-color /dev/video21
 ```
+
+While the tier feeds them, the nodes are visible to the host too. An idle
+`exclusive_caps=1` node enumerates no formats and auto-detection ignores it,
+but a fed `facelock-synth-mono` node enumerates `GREY` only and classifies
+as IR by format evidence, exactly as a real IR camera without a quirk entry
+does; whichever of the two enumerates first wins a host auto-detect, so a
+host face-auth attempt during the run (a `sudo` prompt, a lock screen) can
+be judged against the synthetic face and fall through to the password. A
+camera the quirks database knows still ranks above it. The labels carry no
+`ir` token on purpose: auto-detection prefers a format-classified node whose
+name says `ir`, and a synthetic node should never beat a real sensor on its
+name (`has_ir_name_token` in `crates/facelock-camera/src/device.rs`). The
+tier itself never reads the label. Pin `device.path` on the host or wait out
+the run, which takes about two minutes.
 
 `FACELOCK_LOOPBACK_IR` and `FACELOCK_LOOPBACK_RGB` pick other nodes
 (`FACELOCK_LOOPBACK_RGB=none` runs without the twin). The script refuses a

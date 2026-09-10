@@ -40,11 +40,11 @@ setup_hint() {
        The tier needs two v4l2loopback nodes nothing else is feeding. On a
        host where the module is not loaded:
          sudo modprobe v4l2loopback devices=2 video_nr=20,21 \\
-             card_label=facelock-synth-ir,facelock-synth-rgb exclusive_caps=1,1
+             card_label=facelock-synth-mono,facelock-synth-color exclusive_caps=1,1
        If v4l2loopback is already loaded for something else, add nodes
        without unloading it (v4l2loopback-utils):
-         sudo v4l2loopback-ctl add -x 1 -n facelock-synth-ir /dev/video20
-         sudo v4l2loopback-ctl add -x 1 -n facelock-synth-rgb /dev/video21
+         sudo v4l2loopback-ctl add -x 1 -n facelock-synth-mono /dev/video20
+         sudo v4l2loopback-ctl add -x 1 -n facelock-synth-color /dev/video21
        Then make them writable by your user (they are root:video by default;
        settle first, or udev's own mode lands after yours):
          sudo udevadm settle && sudo chmod a+rw /dev/video20 /dev/video21

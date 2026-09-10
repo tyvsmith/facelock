@@ -410,7 +410,7 @@ jobs:
       - name: Load v4l2loopback
         run: |
           sudo modprobe v4l2loopback devices=2 video_nr=20,21 \
-              card_label=facelock-synth-ir,facelock-synth-rgb exclusive_caps=1,1
+              card_label=facelock-synth-mono,facelock-synth-color exclusive_caps=1,1
           # udev applies its own 0660 root:video mode when it processes the
           # add event, which can land after a chmod issued right behind the
           # modprobe; settle first so the mode set here is the one that stays.
