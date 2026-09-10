@@ -14,6 +14,7 @@ one. An entry here records an interface, not evidence that a release or hardware
 | `facelock` | `facelock-cli` | [Reference](cli.md) |
 | `facelock-bench` | `facelock-bench` | [Reference](auxiliary-commands.md) |
 | `facelock-polkit-agent` | `facelock-polkit` | [Reference](auxiliary-commands.md) |
+| `facelock-synth-face` | `facelock-test-support` | [Reference](auxiliary-commands.md) |
 
 The PAM module is a shared library, not a command: see [contracts](contracts.md#binaries).
 
@@ -66,6 +67,7 @@ index, so substitute real values for metavariables before running a recipe.
 | `just test-arch-dev-shell` | Dev shell — interactive Arch container with host models for fast iteration (requires camera) |
 | `just test-arch-integration` | Automated daemon integration tests (Arch, requires camera) |
 | `just test-arch-layout` | Check installed state-directory permissions and enrollment-marker visibility in Arch. |
+| `just test-arch-loopback [ir=] [rgb=]` | Both camera-required E2E tiers against a synthetic v4l2loopback camera, recorded for release-preflight |
 | `just test-arch-oneshot` | Automated oneshot (daemonless) integration tests (Arch, requires camera) |
 | `just test-arch-package-select` | Test selection of the main Arch package rather than its debug split. |
 | `just test-arch-pam` | Automated PAM smoke tests (Arch container) |

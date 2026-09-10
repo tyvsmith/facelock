@@ -32,7 +32,7 @@ Facelock is a Cargo workspace with 11 crates:
 | `pam-facelock` | cdylib | PAM module (libc + toml + serde + zbus only) |
 | `facelock-tpm` | lib | Optional TPM-bound encryption for embeddings at rest |
 | `facelock-polkit` | bin | Polkit authentication agent for face auth |
-| `facelock-test-support` | lib | Mocks and fixtures for testing |
+| `facelock-test-support` | lib | Mocks and fixtures for testing, plus the `facelock-synth-face` fixture writer; see [Auxiliary Commands](auxiliary-commands.md) |
 
 Version is declared once in the root `Cargo.toml` and inherited via `version.workspace = true`. Inter-crate dependencies use relative paths.
 

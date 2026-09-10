@@ -3,49 +3,10 @@
   "binaries": {
     "facelock": "docs/cli.md",
     "facelock-bench": "docs/auxiliary-commands.md",
-    "facelock-polkit-agent": "docs/auxiliary-commands.md"
+    "facelock-polkit-agent": "docs/auxiliary-commands.md",
+    "facelock-synth-face": "docs/auxiliary-commands.md"
   },
   "files": {
-    "docs/command-audit.md": {
-      "role": "current",
-      "reason": "Audit scope, reproducible conformance checks and dated evidence limitations"
-    },
-    "book/src/command-audit.md": {
-      "role": "summary",
-      "reason": "Published include of command audit scope and evidence limitations"
-    },
-    "docs/testing-walkthrough.md": {
-      "role": "canonical",
-      "reason": "Clean-system walkthrough matrix, evidence requirements and guarded runner usage"
-    },
-    "book/src/testing-walkthrough.md": {
-      "role": "summary",
-      "reason": "Published include of the canonical walkthrough guide"
-    },
-    "book/src/testing-safety.md": {
-      "role": "summary",
-      "reason": "Published include of the testing safety tiers"
-    },
-    "book/src/releasing.md": {
-      "role": "summary",
-      "reason": "Published include of the canonical release process"
-    },
-    "docs/auxiliary-commands.md": {
-      "role": "canonical",
-      "reason": "Reference for the standalone benchmark and polkit session executable"
-    },
-    "book/src/auxiliary-commands.md": {
-      "role": "summary",
-      "reason": "Published include of the canonical auxiliary executable reference"
-    },
-    "book/src/developer-commands.md": {
-      "role": "summary",
-      "reason": "Published include of the generated developer recipe reference"
-    },
-    "docs/developer-commands.md": {
-      "role": "generated",
-      "reason": "Public recipe and executable index derived from just and Cargo metadata"
-    },
     ".claude/rules/pam-boundary.md": {
       "role": "internal",
       "reason": "Repository development instructions checked by check-agent-docs and command inventory"
@@ -114,9 +75,17 @@
       "role": "summary",
       "reason": "Published book chapter; current command examples and links are checked"
     },
+    "book/src/auxiliary-commands.md": {
+      "role": "summary",
+      "reason": "Published include of the canonical auxiliary executable reference"
+    },
     "book/src/cli-reference.md": {
       "role": "summary",
       "reason": "Published book chapter; current command examples and links are checked"
+    },
+    "book/src/command-audit.md": {
+      "role": "summary",
+      "reason": "Published include of command audit scope and evidence limitations"
     },
     "book/src/compatibility.md": {
       "role": "summary",
@@ -134,6 +103,10 @@
       "role": "summary",
       "reason": "Published book chapter; current command examples and links are checked"
     },
+    "book/src/developer-commands.md": {
+      "role": "summary",
+      "reason": "Published include of the generated developer recipe reference"
+    },
     "book/src/gpu.md": {
       "role": "summary",
       "reason": "Published book chapter; current command examples and links are checked"
@@ -146,9 +119,21 @@
       "role": "summary",
       "reason": "Published include of the canonical Quickstart; prerequisites and install commands share one source"
     },
+    "book/src/releasing.md": {
+      "role": "summary",
+      "reason": "Published include of the canonical release process"
+    },
     "book/src/security.md": {
       "role": "summary",
       "reason": "Published book chapter; current command examples and links are checked"
+    },
+    "book/src/testing-safety.md": {
+      "role": "summary",
+      "reason": "Published include of the testing safety tiers"
+    },
+    "book/src/testing-walkthrough.md": {
+      "role": "summary",
+      "reason": "Published include of the canonical walkthrough guide"
     },
     "book/src/testing.md": {
       "role": "summary",
@@ -214,9 +199,17 @@
       "role": "current",
       "reason": "Current project instructions and reference links"
     },
+    "docs/auxiliary-commands.md": {
+      "role": "canonical",
+      "reason": "Reference for the standalone benchmark and polkit session executable"
+    },
     "docs/cli.md": {
       "role": "canonical",
       "reason": "Canonical command, system, or configuration reference"
+    },
+    "docs/command-audit.md": {
+      "role": "current",
+      "reason": "Audit scope, reproducible conformance checks and dated evidence limitations"
     },
     "docs/compatibility.md": {
       "role": "current",
@@ -229,6 +222,10 @@
     "docs/contracts.md": {
       "role": "canonical",
       "reason": "Canonical command, system, or configuration reference"
+    },
+    "docs/developer-commands.md": {
+      "role": "generated",
+      "reason": "Public recipe and executable index derived from just and Cargo metadata"
     },
     "docs/integrating.md": {
       "role": "current",
@@ -254,6 +251,10 @@
       "role": "current",
       "reason": "Current project instructions and reference links"
     },
+    "docs/testing-walkthrough.md": {
+      "role": "canonical",
+      "reason": "Clean-system walkthrough matrix, evidence requirements and guarded runner usage"
+    },
     "docs/troubleshooting.md": {
       "role": "current",
       "reason": "Current project instructions and reference links"
@@ -277,6 +278,10 @@
     "templates/spec-execution-report.md": {
       "role": "historical",
       "reason": "Decision history or report template; not an installation sequence; current ADR contracts retain their existing Rust guards"
+    },
+    "test/loopback/NOTICE.md": {
+      "role": "summary",
+      "reason": "Provenance statement for the procedurally rendered loopback fixture, not an install guide"
     },
     "website/index.html": {
       "role": "current",

@@ -498,6 +498,7 @@ Run this before creating/pushing a release tag:
 
 ```bash
 just test-arch-camera-required        # camera + a person in frame; records the commit
+just test-arch-loopback               # the same tiers on a synthetic camera; records the commit
 gh workflow run packaging.yml --ref main   # the packaging matrix, at this commit
 just release-preflight                # stable release checks
 just release-preflight v0.2.0-rc.1   # prerelease checks; no stable secret access
@@ -519,6 +520,16 @@ one-shot path PAM falls back to. Nothing else ran them, and three of their
 assertions rotted undetected as a result (#139). If they were already run by
 hand at this exact commit, acknowledge that by naming it:
 `FACELOCK_HARDWARE_TIERS_ACK=<sha> just release-preflight`.
+
+`just test-arch-loopback` runs the same two tiers against a v4l2loopback node
+fed with a procedurally rendered face, with `require_ir` and
+`require_frame_variance` on, and records the commit to
+`.loopback-tier-verified`. Preflight requires that record at HEAD as well
+(`FACELOCK_LOOPBACK_TIER_ACK=<sha>` acknowledges a run by hand). It needs no
+person and takes a few minutes, so there is no reason for it to be missing;
+it does not replace the camera-required record, because it cannot show that
+a real sensor's frames match a real face. The loopback nodes it needs and
+the `modprobe` line are in [Testing Safety](testing-safety.md).
 
 Preflight also refuses to pass without complete packaging evidence for HEAD.
 Every packaging lane writes a record of what it claimed and what it counted,
@@ -1126,7 +1137,8 @@ Since facelock is a PAM module, broken releases can lock users out. Every releas
 2. Pass `just test-arch-pam` (Arch container PAM smoke tests)
 3. Pass `just test-arch-camera-free` (camera-free daemon and one-shot E2E)
 4. Pass `just test-arch-camera-required` against the final release commit, with
-   a camera and a person in frame; `just release-preflight` fails until it has
+   a camera and a person in frame, and `just test-arch-loopback` against the
+   same commit; `just release-preflight` fails until both have
 5. Pass `just test-rpm` and `just test-deb` (multi-distro package validation)
 6. Not change PAM auth semantics without explicit changelog entry
 5. Preserve `/etc/pam.d/sudo` backup on install (`/var/lib/facelock/pam-backups/sudo.<timestamp>`)

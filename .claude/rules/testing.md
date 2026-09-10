@@ -23,6 +23,7 @@ paths:
 | 3a | Arch container E2E, camera-free | `just test-arch-camera-free` |
 | 3b | Arch container E2E (daemon), needs a camera | `just test-arch-integration` |
 | 3c | Arch container E2E (oneshot), needs a camera | `just test-arch-oneshot` |
+| 3h | 3b + 3c against a synthetic v4l2loopback camera, no person | `just test-arch-loopback` |
 | 4 | VM testing | Disposable VM with snapshots |
 | 5 | Host PAM | After tiers 3-4, with root shell backup |
 
@@ -44,13 +45,14 @@ each; Rawhide is experimental and never a lane.
 
 `.github/workflows/ci.yml` gates every pull request: format, clippy (with and
 without `tpm`), test, docs contracts, the PAM standalone surface, audit, agent
-docs, translation catalogs, and tier 3/3a in `container-pam-test`. The
-`build-and-test` job is a sequence of justfile recipes (`fmt-check`, `lint`,
-`lint-tpm`, `test`, `check-docs`, `check-pam-standalone`,
-`build-smoke-binaries`), so what CI checks is what the recipe says; there is no
-separate `cargo build` step because clippy `--all-targets` type-checks every
-target and `test` builds the workspace. `tpm-tests` is the only job that runs
-`cargo test --features tpm`.
+docs, translation catalogs, tier 3/3a in `container-pam-test`, and tier 3h in
+`loopback-e2e` (the runner is a VM, so it can load the out-of-tree v4l2loopback
+module). The `build-and-test` job is a sequence of justfile recipes
+(`fmt-check`, `lint`, `lint-tpm`, `test`, `check-docs`,
+`check-pam-standalone`, `build-smoke-binaries`), so what CI checks is what the
+recipe says; there is no separate `cargo build` step because clippy
+`--all-targets` type-checks every target and `test` builds the workspace.
+`tpm-tests` is the only job that runs `cargo test --features tpm`.
 
 `.github/workflows/packaging.yml` gates the packaged artifacts: tiers 3d and 3e,
 both Debian suite lanes, and the native version-ordering matrix. It runs on three
@@ -101,3 +103,16 @@ of their assertions rotted there undetected (#139).
 Tiers 3b and 3c are gated at release time, not at review time.
 `just test-arch-camera-required` runs both and records the commit they passed
 at; `just release-preflight` fails until that record names HEAD.
+
+Tier 3h runs the same two scripts against a v4l2loopback node fed with a
+procedurally rendered face (`test/loopback/`, nobody's face), so it needs
+no camera and no person. The fed node enumerates GREY only and classifies as
+IR by format evidence — the residual `docs/security.md` §A documents — and
+the run keeps `require_ir` and `require_frame_variance` on because the
+sequence drifts frame to frame the way a person does. It records
+`.loopback-tier-verified`, which `just release-preflight` also requires at
+HEAD. It is cheaper evidence, not the same evidence: only 3b/3c on a real
+sensor say that real frames match a real face. The fixture's bands against
+the real models are pinned by
+`crates/facelock-daemon/tests/synthetic_face_contract.rs` (tier 2). Never
+loosen a classification or liveness rule to make 3h pass.

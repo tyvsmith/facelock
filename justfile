@@ -626,6 +626,56 @@ test-arch-camera-required: _require-clean-tree test-arch-integration test-arch-o
     echo "Recorded: camera-required tiers passed at $commit"
     echo "'just release-preflight' accepts this until HEAD moves."
 
+# The same two tiers against a synthetic camera (#139): a v4l2loopback node
+# fed by ffmpeg with the procedurally rendered face sequence from
+# crates/facelock-test-support (nobody's face, see test/loopback/NOTICE.md).
+# The fed node enumerates GREY only, so it classifies as IR by format
+# evidence -- the residual docs/security.md §A documents -- and the run
+# enrolls and authenticates under the product defaults, require_ir and
+# require_frame_variance both on, because the sequence drifts frame to
+# frame the way a person does. No camera, nobody in frame, no live timeout
+# to relax.
+#
+# Only the loopback nodes are passed into the container; a real camera on
+# the host is never opened. The script refuses a node that has a parent
+# device in sysfs (a real camera) or is already being fed.
+#
+# Needs two idle loopback nodes the calling user can write (root:video by
+# default). Without them the script exits 2 and prints the modprobe line;
+# see docs/testing-safety.md. FACELOCK_LOOPBACK_IR / FACELOCK_LOOPBACK_RGB
+# pick other nodes; FACELOCK_LOOPBACK_RGB=none runs without the RGB twin
+# (the two require_ir refusal assertions then SKIP).
+#
+# Recorded for `just release-preflight` like the camera-required run, in
+# its own file: it is cheaper evidence, not the same evidence. It cannot
+# show that a real sensor's frames match a real face; the human-in-frame
+# record still says that.
+#
+
+# Both camera-required E2E tiers against a synthetic v4l2loopback camera, recorded for release-preflight
+test-arch-loopback ir="" rgb="": _require-models _build-test-container
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=()
+    [ -n "{{ ir }}" ] && args+=("{{ ir }}")
+    [ -n "{{ rgb }}" ] && args+=("{{ rgb }}")
+    if [ -n "${FACELOCK_LIVE_TIMEOUT:-}" ] && [[ ! "$FACELOCK_LIVE_TIMEOUT" =~ ^[0-9]+(\.[0-9]+)?[smhd]?$ ]]; then
+        echo "error: FACELOCK_LIVE_TIMEOUT='$FACELOCK_LIVE_TIMEOUT' is not a timeout(1) duration (e.g. 300s, 5m)" >&2
+        exit 1
+    fi
+    test/loopback/run-loopback-tier.sh "${args[@]}"
+    if [ -n "$(git status --porcelain)" ]; then
+        echo ""
+        echo "Not recorded: the working tree is dirty, so a record would name a commit"
+        echo "that is not what was tested. Commit, then re-run to record for release-preflight."
+        exit 0
+    fi
+    commit="$(git rev-parse HEAD)"
+    printf '%s\n' "$commit" > .loopback-tier-verified
+    echo ""
+    echo "Recorded: loopback tier passed at $commit"
+    echo "'just release-preflight' accepts this until HEAD moves."
+
 # Dev shell — interactive Arch container with host models for fast iteration (requires camera)
 test-arch-dev-shell: _build-test-container
     #!/usr/bin/env bash
@@ -1726,6 +1776,34 @@ release-preflight tag='':
         echo "    just test-arch-camera-required"
         echo "  If they were already run by hand at this exact commit, say so:"
         echo "    FACELOCK_HARDWARE_TIERS_ACK=$HEAD_SHA just release-preflight"
+        failed=1
+    fi
+
+    echo ""
+    echo "== Loopback tier evidence =="
+    # The same two tiers against a synthetic camera, which needs no person
+    # and so has no excuse for not having run. Cheaper evidence, not a
+    # substitute for the camera-required record above: only that one says a
+    # real sensor's frames match a real face.
+    LOOPBACK_RECORDED=""
+    if [ -f .loopback-tier-verified ]; then
+        LOOPBACK_RECORDED="$(head -1 .loopback-tier-verified)"
+    fi
+    LOOPBACK_ACK="${FACELOCK_LOOPBACK_TIER_ACK:-}"
+    if [ "$LOOPBACK_RECORDED" = "$HEAD_SHA" ]; then
+        echo "OK: loopback tier recorded green at $HEAD_SHA"
+    elif [ "${#LOOPBACK_ACK}" -ge 7 ] && [ "${HEAD_SHA#"$LOOPBACK_ACK"}" != "$HEAD_SHA" ]; then
+        echo "OK: loopback tier acknowledged by hand at $HEAD_SHA"
+    else
+        if [ -z "$LOOPBACK_RECORDED" ]; then
+            echo "MISSING: no loopback tier run recorded for any commit"
+        else
+            echo "STALE: loopback tier recorded at $LOOPBACK_RECORDED, HEAD is $HEAD_SHA"
+        fi
+        echo "  Run both tiers against the synthetic camera (no person needed):"
+        echo "    just test-arch-loopback"
+        echo "  If it was already run by hand at this exact commit, say so:"
+        echo "    FACELOCK_LOOPBACK_TIER_ACK=$HEAD_SHA just release-preflight"
         failed=1
     fi
 

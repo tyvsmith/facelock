@@ -147,6 +147,17 @@ sed -i 's|db_path.*|db_path = "/tmp/facelock-test.db"|' /etc/facelock/config.tom
 # real daemon authentication/capture path.
 sed -i '/^\[security\]/a abort_if_ssh = false' /etc/facelock/config.toml
 
+# The loopback tier (test/loopback/run-loopback-tier.sh) feeds a synthetic IR
+# sequence with real inter-frame drift, so it can afford the product defaults
+# test/container-config.toml relaxes for an RGB webcam and a person who may
+# be sitting still: the IR gate and the passive frame-variance gate. Flipped
+# on request rather than by default so a run against a real RGB camera keeps
+# exercising recognition instead of stopping at the IR gate.
+if [ "${FACELOCK_E2E_STRICT_SECURITY:-0}" = "1" ]; then
+    sed -i 's|^require_ir\b.*|require_ir = true|; s|^require_frame_variance\b.*|require_frame_variance = true|' /etc/facelock/config.toml
+    echo "strict security: require_ir = true, require_frame_variance = true"
+fi
+
 # Start a real system bus so CLI commands use the D-Bus daemon path.
 mkdir -p /run/dbus
 dbus-uuidgen --ensure=/etc/machine-id >/dev/null 2>&1 || true

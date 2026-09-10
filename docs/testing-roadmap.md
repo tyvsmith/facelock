@@ -12,6 +12,7 @@ CI workflows, release matrix, and generated
 | Unit and static | workspace logic, formatting, clippy, contracts, docs, supply chain | `just check` |
 | Hardware | ignored camera/model tests | `cargo test --workspace -- --ignored` |
 | Container | PAM smoke, camera-free E2E, real-camera daemon/oneshot flows | `just test-arch-pam`, `just test-arch-integration`, `just test-arch-oneshot` |
+| Synthetic camera | the daemon/oneshot flows against a v4l2loopback node fed a procedurally rendered face, no person | `just test-arch-loopback` |
 | Package | Debian suites, Fedora direct RPM and COPR modes, Arch package, upgrade/lifecycle behavior | package matrix recipes and `.github/workflows/packaging.yml` |
 | Booted guest | clean-install and authentication walkthrough evidence | [Testing Walkthrough](testing-walkthrough.md) |
 | Host PAM | final manual confidence only, with retained root recovery shell | [Testing Safety](testing-safety.md) |
@@ -30,18 +31,23 @@ exists.
 ## What CI establishes
 
 The main CI workflow covers build/test/clippy, the PAM dependency ceiling,
-RustSec, TPM tests, agent-document consistency, catalogs, PAM smoke, and the
-camera-free E2E tier. Packaging has its own workflow and change classifier. A
+RustSec, TPM tests, agent-document consistency, catalogs, PAM smoke, the
+camera-free E2E tier, and the synthetic-camera tier (`loopback-e2e`, which
+loads v4l2loopback on the hosted VM). Packaging has its own workflow and change classifier. A
 green pull request does not imply that path-filtered packaging jobs ran; the
 nightly and release preflight provide the unfiltered package evidence.
 
 Camera-required tests do not run on ordinary hosted runners. Their evidence is
-commit-bound at release time. Keep new assertions in the camera-free tier
-unless they genuinely require a frame.
+commit-bound at release time. `just test-arch-loopback` runs the same two
+scripts against a synthetic camera and is commit-bound the same way; it
+proves the capture, classification, liveness and PAM paths end to end, not
+that a real sensor's frames match a real face. Keep new assertions in the
+camera-free tier unless they genuinely require a frame.
 
 ## Remaining gaps
 
-- no hosted real-camera CI or maintained self-hosted camera runner
+- no hosted real-camera CI or maintained self-hosted camera runner; the
+  synthetic-camera tier covers the pipeline, not real-sensor recognition
 - no broad hardware matrix beyond the devices named in
   [Compatibility](compatibility.md)
 - no production claim for live desktop polkit-agent coexistence/fallback
