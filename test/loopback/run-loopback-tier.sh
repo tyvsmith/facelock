@@ -75,26 +75,50 @@ check_node() {
         setup_hint
         exit 2
     fi
-    # v4l2loopback reports "capture" once a producer has attached.
-    if [ -r "$sys/state" ] && [ "$(cat "$sys/state")" = "capture" ]; then
+    if node_is_fed "$node"; then
         echo "error: $node ($(cat "$sys/name" 2>/dev/null || echo '?')) is already being fed by another process" >&2
         exit 2
     fi
+}
+
+# Has a producer attached to the node? v4l2loopback 0.13 and later say so in
+# a sysfs `state` attribute ("capture" once fed). Older releases, such as
+# the 0.12 Ubuntu packages, have no such attribute; there the node's device
+# caps are the tell, since with exclusive_caps=1 (which every hint here
+# passes) a loopback node reports Video Capture only while it is fed.
+node_is_fed() {
+    local node="$1"
+    local sys="/sys/class/video4linux/$(basename "$node")"
+    if [ -r "$sys/state" ]; then
+        [ "$(cat "$sys/state")" = "capture" ]
+        return
+    fi
+    v4l2-ctl -d "$node" --info 2>/dev/null \
+        | sed -n '/Device Caps/,$p' | grep -q 'Video Capture'
+}
+
+# The format the node currently serves, as "FOURCC:WxH", from the driver's
+# own answer to VIDIOC_G_FMT.
+node_format() {
+    local node="$1"
+    v4l2-ctl -d "$node" --get-fmt-video 2>/dev/null | awk -F': *' '
+        /Width\/Height/ { split($2, wh, "/"); w = wh[1]; h = wh[2] }
+        /Pixel Format/ { match($2, /\x27[A-Z0-9 ]+\x27/); f = substr($2, RSTART + 1, RLENGTH - 2); gsub(/ /, "", f) }
+        END { if (f != "") printf "%s:%sx%s\n", f, w, h }'
 }
 
 # Wait until v4l2loopback has taken the producer's format, so the container
 # enumerates the fed format and not the whole loopback format list.
 wait_fed() {
     local node="$1" want="$2"
-    local sys="/sys/class/video4linux/$(basename "$node")"
     local deadline=$((SECONDS + 10))
     while [ "$SECONDS" -lt "$deadline" ]; do
-        if [ -r "$sys/state" ] && [ "$(cat "$sys/state")" = "capture" ]; then
+        if node_is_fed "$node"; then
             local fmt
-            fmt="$(cat "$sys/format" 2>/dev/null || echo '?')"
+            fmt="$(node_format "$node")"
             case "$fmt" in
-                "$want:${WIDTH}x${HEIGHT}"*) echo "$node: $fmt"; return 0 ;;
-                *) echo "error: $node negotiated '$fmt', expected $want ${WIDTH}x${HEIGHT}" >&2; return 1 ;;
+                "$want:${WIDTH}x${HEIGHT}") echo "$node: $fmt"; return 0 ;;
+                *) echo "error: $node negotiated '$fmt', expected $want:${WIDTH}x${HEIGHT}" >&2; return 1 ;;
             esac
         fi
         sleep 0.2
@@ -103,7 +127,7 @@ wait_fed() {
     return 1
 }
 
-for tool in ffmpeg podman; do
+for tool in ffmpeg podman v4l2-ctl; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         echo "error: $tool is not installed" >&2
         exit 2
