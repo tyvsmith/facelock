@@ -77,9 +77,13 @@ the nodes are missing:
 
 ```bash
 sudo modprobe v4l2loopback devices=2 video_nr=20,21 \
-    card_label=facelock-synth-ir,facelock-synth-rgb exclusive_caps=1
-sudo chmod a+rw /dev/video20 /dev/video21
+    card_label=facelock-synth-ir,facelock-synth-rgb exclusive_caps=1,1
+sudo udevadm settle && sudo chmod a+rw /dev/video20 /dev/video21
 ```
+
+The `settle` matters: udev applies its own `0660 root:video` mode when it
+processes the add event, which can land after a `chmod` issued right behind
+the `modprobe`.
 
 If v4l2loopback is already loaded for something else, add nodes without
 unloading it (`v4l2loopback-utils`, module 0.13 or later):
