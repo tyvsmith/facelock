@@ -6,8 +6,8 @@ name: Packaging
 # Three schedules, because the full matrix takes about 1 h 45 min (measured
 # 2026-09-02) and most pull requests touch no packaging:
 #
-#   pull request   path-filtered by the `changes` job below, and never the
-#                  copr job -- mock needs a privileged container
+#   pull request   path-filtered per lane by the `changes` job below, and
+#                  never the copr job -- mock needs a privileged container
 #   nightly        the whole matrix, unfiltered
 #   release        `just release-preflight` refuses to pass without a green
 #                  run of this workflow at the release commit
@@ -38,8 +38,13 @@ jobs:
     name: Classify Changed Paths
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # One output per lane; see classify-changes.sh for the path-to-lane map.
     outputs:
-      packaging: ${{ steps.classify.outputs.packaging }}
+      deb: ${{ steps.classify.outputs.deb }}
+      rpm: ${{ steps.classify.outputs.rpm }}
+      arch: ${{ steps.classify.outputs.arch }}
+      release_binaries: ${{ steps.classify.outputs.release_binaries }}
+      release_matrix: ${{ steps.classify.outputs.release_matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -60,7 +65,7 @@ jobs:
     # Not GitHub's `paths:` filter: a workflow skipped that way leaves a
     # required check pending forever. A job-level `if:` reports "skipped",
     # which branch protection accepts. See classify-changes.sh.
-    if: needs.changes.outputs.packaging == 'true'
+    if: needs.changes.outputs.deb == 'true'
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -113,7 +118,7 @@ jobs:
     name: Release Binaries (Arch)
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.packaging == 'true'
+    if: needs.changes.outputs.release_binaries == 'true'
     timeout-minutes: 60
     container: docker.io/library/archlinux:base-devel@sha256:61f7de2dd88cc4ba1fe36c24cfe1a503c3936984492d6405eeab013ce6ac68c5
     steps:
@@ -154,7 +159,8 @@ jobs:
     name: Fedora ${{ matrix.release }} ${{ matrix.depth }}
     runs-on: ubuntu-latest
     needs: [changes, binaries]
-    if: needs.changes.outputs.packaging == 'true'
+    # `rpm` implies `release_binaries`, so the artifact is there when this runs.
+    if: needs.changes.outputs.rpm == 'true'
     timeout-minutes: 90
     env:
       # Checked, not trusted: the lane fails if the artifact did not land.
@@ -231,7 +237,7 @@ jobs:
     name: Fedora ${{ matrix.release }} COPR ${{ matrix.depth }}
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.packaging == 'true' && github.event_name != 'pull_request'
+    if: needs.changes.outputs.rpm == 'true' && github.event_name != 'pull_request'
     # Twice the rpm job's budget: mock compiles the workspace and runs the
     # spec's %check inside the chroot before the lifecycle half starts.
     timeout-minutes: 120
@@ -284,7 +290,7 @@ jobs:
     name: Arch Package From dist/PKGBUILD
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.packaging == 'true'
+    if: needs.changes.outputs.arch == 'true'
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -319,7 +325,7 @@ jobs:
     name: Release Version Ordering Matrix
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.packaging == 'true'
+    if: needs.changes.outputs.release_matrix == 'true'
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
