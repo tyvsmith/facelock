@@ -475,6 +475,23 @@ not otherwise — survives its own pull request even when the filter fires. The
 nightly and the pre-release `workflow_dispatch` are unfiltered and do run them;
 locally, `just test-copr-lanes`.
 
+**The Debian lanes skip the `.dsc` rebuild on pull requests.** The full gate
+compiles the workspace twice per suite: once to assemble the candidate `.deb`,
+once more from the extracted `.dsc` in a clean image to prove the source
+package rebuilds standalone. Both are `lto = true` release builds and no cache
+applies, so the rebuild is about ten of the lane's twenty-six minutes on a
+runner that has reached the 90-minute cap (#337). `packaging.yml` sets
+`FACELOCK_DEB_SKIP_DSC_REBUILD=1` on pull requests, which drops that second
+compile and nothing else: the `.deb` is still built from source with the
+network denied, its dependency closure still proved, the booted lifecycle still
+run. A lane that skipped the rebuild records `depth=partial`, which the release
+matrix requires of nothing, so `just release-preflight` refuses it -- it refuses
+pull-request runs regardless. The nightly, the dispatch, and a local
+`just test-deb-*-pkg` or `just test-packaging-matrix` keep the rebuild. What
+survives a pull request, then, is an incomplete source package: a file the
+`.dsc` does not carry, or a build that only works from the Git checkout. The
+nightly catches it within a day, the release gate before anything ships.
+
 ### Release preflight (recommended)
 
 Run this before creating/pushing a release tag:

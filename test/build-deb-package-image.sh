@@ -86,16 +86,26 @@ manifest="$(find "$artifact_dir" -maxdepth 1 -type f -name 'facelock_*.manifest'
     exit 1
 }
 
-podman build \
-    --build-arg "BASE_IMAGE=$base_image" \
-    --build-arg "SUITE=$suite" \
-    -t "$rebuild_image" \
-    -f "$context/test/Containerfile.deb-rebuild" \
-    "$context"
-podman run --rm --network=none \
-    -v "$artifact_dir:/artifacts:ro,Z" \
-    -v "$rebuild_dir:/rebuild:Z" \
-    "$rebuild_image" rebuild-dsc /artifacts /rebuild
+# The clean-image rebuild of the emitted .dsc is a second full release
+# compile, about ten of the gate's twenty-six minutes on a CI runner (#337).
+# FACELOCK_DEB_SKIP_DSC_REBUILD=1 leaves it out; the lane recipe then records
+# `depth=partial`, which `just release-preflight` refuses, so the shortened
+# gate can never stand in for the release gate. packaging.yml sets it on pull
+# requests only; the nightly and dispatch runs rebuild.
+if [ "${FACELOCK_DEB_SKIP_DSC_REBUILD:-0}" = 1 ]; then
+    echo "SKIP: clean-image .dsc rebuild (FACELOCK_DEB_SKIP_DSC_REBUILD=1); this run is not release evidence" >&2
+else
+    podman build \
+        --build-arg "BASE_IMAGE=$base_image" \
+        --build-arg "SUITE=$suite" \
+        -t "$rebuild_image" \
+        -f "$context/test/Containerfile.deb-rebuild" \
+        "$context"
+    podman run --rm --network=none \
+        -v "$artifact_dir:/artifacts:ro,Z" \
+        -v "$rebuild_dir:/rebuild:Z" \
+        "$rebuild_image" rebuild-dsc /artifacts /rebuild
+fi
 
 package_name="$(grep -E '\.deb$' "$manifest")"
 [ "$(printf '%s\n' "$package_name" | wc -l)" -eq 1 ] || {
