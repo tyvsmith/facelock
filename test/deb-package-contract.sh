@@ -252,3 +252,5 @@ if [ -n "$stage" ]; then
 fi
 
 echo "deb package contract: ok"
+
+# probe: deb-only diff for the per-lane classifier (#371); this branch is closed unmerged
