@@ -58,19 +58,24 @@ schedules:
 
 | When | What | Filter |
 |---|---|---|
-| Pull request | every lane | only when the diff reaches a package |
+| Pull request | every lane | per lane, only the lanes the diff reaches |
 | Nightly (07:00 UTC) | every lane | none |
 | `just release-preflight` | lane evidence uploaded by a green run at HEAD, or the marker a local `just test-packaging-matrix` wrote at HEAD | none |
 
 The pull-request filter is a `changes` job running
 `.github/workflows/scripts/classify-changes.sh`, plain bash over a merge-base
-diff. It is not GitHub's `paths:`, which strands a required check as pending
-forever, and not a third-party filter action, which would be another pinned SHA
-to review. Add a path there when a new file can reach a built package.
+diff and emits one output per lane (`deb`, `rpm`, `arch`, `release_binaries`,
+`release_matrix`). It is not GitHub's `paths:`, which strands a required check
+as pending forever, and not a third-party filter action, which would be another
+pinned SHA to review. Add a path there when a new file can reach a built
+package, mapped to one family's lane when only that family reads it and to
+every lane otherwise; the table is in docs/releasing.md and
+`just test-classify-changes` pins it.
 
 So a green pull request is **not** packaging-verified unless the packaging jobs
-actually ran on it. A Rust-only change that breaks the packaged runtime is caught
-by the nightly matrix within a day, and by the release gate before it ships.
+actually ran on it. A Rust-only change runs only the release-binaries build on
+its pull request; if it breaks the packaged runtime, the nightly matrix catches
+it within a day, and the release gate before it ships.
 `just test-packaging-matrix` runs every lane locally and records each lane's
 evidence, for a maintainer without CI in reach; a run that skipped anything is
 refused, not recorded.

@@ -8,9 +8,11 @@ description: Pick and run the right facelock packaging or container test for a c
 CI runs the packaging lanes in `.github/workflows/packaging.yml`: both Debian
 suite gates, every declared Fedora lane, the Arch package built from the real
 `dist/PKGBUILD`, and the native version-ordering matrix. On a pull request they
-run **only when the diff reaches a package**. A `changes` job classifies the
-merge-base diff, and every lane sits behind
-`if: needs.changes.outputs.packaging == 'true'`. Unfiltered runs happen nightly
+run **only the lanes the diff reaches**. A `changes` job classifies the
+merge-base diff per lane, and each job sits behind its own output
+(`if: needs.changes.outputs.deb == 'true'`, `rpm`, `arch`, `release_binaries`,
+`release_matrix`; the path-to-lane table is in docs/releasing.md). Unfiltered
+runs happen nightly
 and at `just release-preflight`, which refuses to pass without complete lane
 evidence at HEAD: the `packaging-evidence-*` artifacts a green run uploads, or
 the record a local `just test-packaging-matrix` writes.
