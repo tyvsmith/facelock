@@ -303,7 +303,7 @@ pub fn pre_check_with_context(
         return Some(AuthOutcome::error(ErrorKind::SshSession));
     }
 
-    if !ctx.skip_lid_gate && config.security.abort_if_lid_closed && is_lid_closed() {
+    if !ctx.skip_lid_gate && config.security.abort_if_lid_closed && lid::is_lid_closed() {
         info!(user, "lid closed, aborting");
         return Some(AuthOutcome::error(ErrorKind::LidClosed));
     }
@@ -993,10 +993,17 @@ fn is_ssh_session() -> bool {
     std::env::var("SSH_CONNECTION").is_ok() || std::env::var("SSH_TTY").is_ok()
 }
 
-fn is_lid_closed() -> bool {
-    std::fs::read_to_string("/proc/acpi/button/lid/LID0/state")
-        .map(|s| s.contains("closed"))
-        .unwrap_or(false)
+/// The lid resolver, compiled from `pam-facelock`'s source so the daemon
+/// and the PAM module cannot disagree on which `/proc/acpi/button/lid/*`
+/// device counts (issue #365). The module cannot link this crate (its
+/// dependency ceiling is libc/toml/serde/zbus), so the source is shared
+/// the way `oneshot_exit.rs` is; the file's own tests run in both crates.
+mod lid {
+    #![allow(dead_code)]
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../pam-facelock/src/lid.rs"
+    ));
 }
 
 #[cfg(test)]
@@ -1474,11 +1481,6 @@ enabled = false
         if let Some(v) = old_tty {
             unsafe { std::env::set_var("SSH_TTY", v) };
         }
-    }
-
-    #[test]
-    fn lid_closed_returns_false_on_missing_file() {
-        let _result = is_lid_closed();
     }
 
     fn test_pre_check_config() -> Config {

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`abort_if_lid_closed` now sees every ACPI lid device** (#365): the daemon read only
+  `/proc/acpi/button/lid/LID0/state`, so a laptop whose firmware names the device `LID`,
+  `LID1` or anything else got no lid gate from the daemon, while the PAM module checked a
+  different fixed list. Both now enumerate `/proc/acpi/button/lid/*/state` from one shared
+  resolver: the lid is closed when any device reports `closed`, and no lid device counts as
+  open. `docs/contracts.md` and `docs/security.md` now say why the PAM line sits above
+  distribution skip guards (the module and daemon self-gate on SSH and lid) and that
+  `abort_if_lid_closed = false` is the opt-out for a docked laptop with an external camera.
+
 ### Added
 
 - **A synthetic camera for the camera-required test tiers** (#139): `just test-arch-loopback`

@@ -1356,6 +1356,27 @@ There is intentionally no `--control` option. A caller cannot silently
 substitute `required`, an extended control, or another stack policy for the
 line whose behavior downstream consumers and Facelock cleanup rely on.
 
+The line sits **above** any distribution skip guard (Omarchy's
+`omarchy-hw-laptop-closed` / SSH / no-camera checks, or their equivalents)
+on purpose, and the writer does not add one. `pam_facelock.so` self-gates
+before it opens a camera or contacts the daemon: `security.disabled`,
+`abort_if_ssh` and `abort_if_lid_closed` each return `PAM_IGNORE`, and the
+daemon repeats the SSH and lid physical-presence gates in its own pre-flight
+(`pre_check`, before enrollment, the rate-limit check and `require_ir`), so a
+stack that reaches the line with the lid closed falls through to the next
+rule without a camera being opened. `abort_if_lid_closed = false` is the
+opt-out for a docked laptop that authenticates through an external camera
+with the lid shut; nothing in the stack needs to move for that.
+
+**Lid rule.** Both gates resolve the lid the same way, from one shared
+source (`crates/pam-facelock/src/lid.rs`, compiled into the module and
+`include!`d by the daemon): every `/proc/acpi/button/lid/*/state` is read,
+whatever the firmware names the device (`LID0`, `LID`, `LID1`, ...); the lid
+is closed when any of them reports `closed`; a device whose `state` cannot be
+read is skipped; no readable device at all means no lid, which the gate
+treats as open. Only `closed` aborts, so a desktop, a VM or a missing
+`/proc/acpi` never blocks face auth.
+
 The line is inserted immediately before the first *logical* rule whose first
 ASCII-whitespace-delimited type token is `auth`, matched
 ASCII-case-insensitively and with Linux-PAM's optional leading `-`;

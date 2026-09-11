@@ -1652,6 +1652,23 @@ guarantees:
   which *does* gate the PAM path). So "unscoped across actions" does not mean
   "unscoped across defenses."
 
+**Placement above distribution skip guards.** The `auth sufficient
+pam_facelock.so` line goes above any distribution-owned skip guard (Omarchy's
+`omarchy-hw-laptop-closed`, an SSH or no-camera check) rather than behind one.
+That is deliberate: the module self-gates on `security.disabled`,
+`abort_if_ssh` and `abort_if_lid_closed` before it touches a camera or the
+daemon, and the daemon repeats the SSH and lid gates in its own pre-flight,
+ahead of enrollment, the rate limiter and `require_ir`. A closed lid therefore
+returns `PAM_IGNORE` from the module itself, and the stack continues to the
+password. The lid is resolved by enumerating every
+`/proc/acpi/button/lid/*/state` (`LID0`, `LID`, `LID1`, whatever the firmware
+names it) from one source shared by the module and the daemon; the lid is
+closed when any device reports `closed`, and no lid device at all counts as
+open. `abort_if_lid_closed = false` is the opt-out for a docked laptop using an
+external camera with the lid shut. Failing direction: if the lid cannot be
+read, the attempt proceeds to the camera and times out to the password, the
+same fallback as every other unavailable-face case.
+
 Operators who want face auth for only some actions under the PAM model should
 control it at the PAM layer (which service files include `pam_facelock.so`), not
 via `polkit.face_eligible_actions` (which the PAM path ignores). Per-action
