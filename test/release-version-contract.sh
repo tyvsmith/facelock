@@ -2926,6 +2926,36 @@ with open(sys.argv[1], encoding="utf-8") as handle:
 assert lane["depth"] == "partial", lane
 DEPTH
 
+# A Debian lane that skipped the clean-image .dsc rebuild -- what packaging.yml
+# asks for on a pull request (#337) -- records the same depth, and both suite
+# records are refused, so the shortened gate can never become release evidence.
+if run_packaging_matrix FACELOCK_DEB_SKIP_DSC_REBUILD=1 >"$tmp_root/evidence-no-rebuild.log" 2>&1; then
+    fail "test-packaging-matrix recorded a run whose Debian lanes skipped the .dsc rebuild"
+fi
+[ ! -e "$evidence_root/.packaging-matrix-verified" ] ||
+    fail "the skipped-rebuild run left a marker behind"
+for suite in trixie resolute; do
+    grep -q "lane test-deb-$suite-pkg: depth is 'partial'" "$tmp_root/evidence-no-rebuild.log" ||
+        fail "the skipped-rebuild refusal did not name test-deb-$suite-pkg's depth: $(cat "$tmp_root/evidence-no-rebuild.log")"
+    python3 - "$evidence_root/.packaging-evidence/test-deb-$suite-pkg.json" <<'DEPTH'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    lane = json.load(handle)
+assert lane["depth"] == "partial" and lane["status"] == "pass", lane
+DEPTH
+done
+python3 - "$evidence_root/.packaging-evidence/test-arch-pkg.json" <<'DEPTH'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    lane = json.load(handle)
+# The opt-out is Debian's alone; every other lane still records its full depth.
+assert lane["depth"] == "full", lane
+DEPTH
+
 evidence_case_index=0
 assert_evidence_refused() {
     local context="$1"

@@ -67,6 +67,16 @@ jobs:
     # which branch protection accepts. See classify-changes.sh.
     if: needs.changes.outputs.deb == 'true'
     timeout-minutes: 90
+    env:
+      # A pull request skips the clean-image rebuild of the emitted .dsc, the
+      # second of the gate's two full release compiles: about ten of its
+      # twenty-six minutes, measured 2026-09-09, on lanes that have reached the
+      # cap above (#337). The lane then records depth=partial, so its evidence
+      # can never satisfy `just release-preflight` -- which refuses
+      # pull-request runs anyway. The nightly and a dispatch run keep the
+      # rebuild, so the source package is proven complete once a day and at
+      # every release commit.
+      FACELOCK_DEB_SKIP_DSC_REBUILD: ${{ github.event_name == 'pull_request' && '1' || '0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -88,8 +98,9 @@ jobs:
         uses: ./.github/actions/fetch-models
 
       # The suite gate builds the exact candidate .deb from source, rebuilds
-      # the .dsc, proves the dependency closure, then boots it under systemd
-      # for the install/upgrade/remove/purge lifecycle.
+      # the .dsc (nightly and dispatch only, see the job env), proves the
+      # dependency closure, then boots it under systemd for the
+      # install/upgrade/remove/purge lifecycle.
       - name: Run the ${{ matrix.suite }} package gate
         run: just ${{ matrix.recipe }}
 

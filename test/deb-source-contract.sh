@@ -641,6 +641,21 @@ grep -Fq 'Containerfile.deb-rebuild' test/build-deb-package-image.sh ||
     fail "Debian package gate must use a source-rebuild-only image"
 grep -Fq 'Containerfile.deb-runtime' test/build-deb-package-image.sh ||
     fail "Debian package gate must install the release package in a separate runtime image"
+# The pull-request lane drops the second full compile (#337). What guards the
+# shortcut is the record: a run that skipped the rebuild must say so in a way
+# `just release-preflight` refuses, and only a pull request may ask for it.
+grep -Fq 'FACELOCK_DEB_SKIP_DSC_REBUILD' test/build-deb-package-image.sh ||
+    fail "Debian package gate must expose the .dsc rebuild opt-out the pull-request lane uses"
+# shellcheck disable=SC2016
+[ "$(grep -Fc 'if [ "${FACELOCK_DEB_SKIP_DSC_REBUILD:-0}" = 1 ]; then depth=partial; fi' justfile)" -eq 2 ] ||
+    fail "both Debian suite recipes must record depth=partial when the .dsc rebuild is skipped"
+packaging_workflow=".github/workflows/packaging.yml"
+[ "$(grep -Fc 'FACELOCK_DEB_SKIP_DSC_REBUILD' "$packaging_workflow")" -eq 1 ] ||
+    fail "packaging.yml must set FACELOCK_DEB_SKIP_DSC_REBUILD in exactly one place"
+# shellcheck disable=SC2016
+grep -Fxq "      FACELOCK_DEB_SKIP_DSC_REBUILD: \${{ github.event_name == 'pull_request' && '1' || '0' }}" \
+    "$packaging_workflow" ||
+    fail "packaging.yml must skip the Debian .dsc rebuild on pull requests only"
 # The assembler already validates the exact manifest with Debian tooling. The
 # host orchestrator must remain portable and must not require dpkg-deb.
 # shellcheck disable=SC2016

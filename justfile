@@ -1223,6 +1223,12 @@ test-deb: test-deb-trixie-pkg test-deb-resolute-pkg
 # the runner writes .packaging-evidence/<lane>.json from the validator's counts.
 # test/packaging-evidence.py derives what each lane must claim from
 # dist/release-matrix.json, so a claim that drifts from the matrix is refused.
+#
+# FACELOCK_DEB_SKIP_DSC_REBUILD=1 drops the clean-image .dsc rebuild, the
+# second of the gate's two full release compiles (#337). The lane then records
+# depth=partial, which the release matrix requires of nothing, so the
+# shortened run is never release evidence. packaging.yml sets it on pull
+# requests; the nightly, a dispatch and `just test-packaging-matrix` rebuild.
 
 # Debian 13 Trixie package — exact source build, TPM/PCR, and booted lifecycle.
 test-deb-trixie-pkg: (_require-models "1")
@@ -1235,7 +1241,9 @@ test-deb-trixie-pkg: (_require-models "1")
     podman run --rm -v "$package:/facelock-test-package.deb:ro,Z" \
         facelock-deb-trixie-pkg \
         /bin/bash -c '/deb-package-lifecycle.sh install && exec /tpm-pcr-e2e.sh'
-    PACKAGING_LANE='test-deb-trixie-pkg target=debian-trixie channel=apt build_origin=container-source-build runtime_policy=bundled-ort depth=full' \
+    depth=full
+    if [ "${FACELOCK_DEB_SKIP_DSC_REBUILD:-0}" = 1 ]; then depth=partial; fi
+    PACKAGING_LANE="test-deb-trixie-pkg target=debian-trixie channel=apt build_origin=container-source-build runtime_policy=bundled-ort depth=$depth" \
         test/run-pkg-validate-systemd.sh facelock-deb-trixie-pkg "$package"
 
 # Ubuntu 26.04 Resolute package — exact source build, TPM/PCR, and booted lifecycle.
@@ -1249,7 +1257,9 @@ test-deb-resolute-pkg: (_require-models "1")
     podman run --rm -v "$package:/facelock-test-package.deb:ro,Z" \
         facelock-deb-resolute-pkg \
         /bin/bash -c '/deb-package-lifecycle.sh install && exec /tpm-pcr-e2e.sh'
-    PACKAGING_LANE='test-deb-resolute-pkg target=ubuntu-resolute channel=apt build_origin=container-source-build runtime_policy=bundled-ort depth=full' \
+    depth=full
+    if [ "${FACELOCK_DEB_SKIP_DSC_REBUILD:-0}" = 1 ]; then depth=partial; fi
+    PACKAGING_LANE="test-deb-resolute-pkg target=ubuntu-resolute channel=apt build_origin=container-source-build runtime_policy=bundled-ort depth=$depth" \
         test/run-pkg-validate-systemd.sh facelock-deb-resolute-pkg "$package"
 
 # Same model requirement (and same opt-out) as the two Debian suite package gates.

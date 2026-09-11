@@ -58,7 +58,7 @@ schedules:
 
 | When | What | Filter |
 |---|---|---|
-| Pull request | every lane | per lane, only the lanes the diff reaches |
+| Pull request | every lane; Debian lanes without the `.dsc` rebuild | per lane, only the lanes the diff reaches |
 | Nightly (07:00 UTC) | every lane | none |
 | `just release-preflight` | lane evidence uploaded by a green run at HEAD, or the marker a local `just test-packaging-matrix` wrote at HEAD | none |
 
@@ -71,6 +71,12 @@ pinned SHA to review. Add a path there when a new file can reach a built
 package, mapped to one family's lane when only that family reads it and to
 every lane otherwise; the table is in docs/releasing.md and
 `just test-classify-changes` pins it.
+
+The Debian lanes on a pull request run with `FACELOCK_DEB_SKIP_DSC_REBUILD=1`:
+the candidate `.deb` is still built from source and put through the booted
+lifecycle, but the clean-image rebuild of the emitted `.dsc`, a second full LTO
+compile, is left to the nightly and the dispatch (#337). Such a lane records
+`depth=partial`, which `just release-preflight` refuses.
 
 So a green pull request is **not** packaging-verified unless the packaging jobs
 actually ran on it. A Rust-only change runs only the release-binaries build on
