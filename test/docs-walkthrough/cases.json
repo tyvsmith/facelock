@@ -320,8 +320,8 @@
       {
         "path": "docs/releasing.md",
         "anchor": "release-preflight-recommended",
-        "ordinal": 16,
-        "line": 563,
+        "ordinal": 19,
+        "line": 575,
         "sha256": "655d50b2ad3658f69f4548aa1da652750d17bec282f550281f9cc518912ca460"
       }
     ],
@@ -371,8 +371,8 @@
       {
         "path": "docs/releasing.md",
         "anchor": "upgrade-safety",
-        "ordinal": 7,
-        "line": 1130,
+        "ordinal": 8,
+        "line": 1144,
         "sha256": "45f087a5c09ff21da36fd7763813fdc1ddbc4627af61d1b795636ab1a3fb3448"
       }
     ],
@@ -443,8 +443,8 @@
       {
         "path": "docs/releasing.md",
         "anchor": "upgrade-safety",
-        "ordinal": 6,
-        "line": 1130,
+        "ordinal": 7,
+        "line": 1144,
         "sha256": "4981bfb4bf82b5fffa2693be6c87209a35f34a2496e6f5ecddbc52cde3a0ca0f"
       }
     ],
@@ -546,7 +546,7 @@
         "path": "docs/testing-safety.md",
         "anchor": "host-pam-testing",
         "ordinal": 1,
-        "line": 94,
+        "line": 162,
         "sha256": "0677a306f44c09bf7779105645adecf936718a3add5e8a9384cd8819f219b449"
       }
     ],
