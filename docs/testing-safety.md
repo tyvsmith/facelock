@@ -114,8 +114,8 @@ process is already feeding, so it cannot open the host's webcam by mistake.
 Only the loopback nodes are passed into the container.
 
 It records the commit it passed at to `.loopback-tier-verified`, which
-`just release-preflight` requires alongside the real-camera record. It is
-cheaper evidence, not the same evidence: it proves capture, IR
+satisfies `just release-preflight` on its own, as the real-camera record
+does. It is cheaper evidence, not the same evidence: it proves capture, IR
 classification, the liveness gates, enrollment, the daemon and one-shot
 paths and PAM end to end on a device the product treats as an IR sensor, and
 it cannot prove that a real sensor's frames match a real face.

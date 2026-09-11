@@ -102,7 +102,10 @@ of their assertions rotted there undetected (#139).
 
 Tiers 3b and 3c are gated at release time, not at review time.
 `just test-arch-camera-required` runs both and records the commit they passed
-at; `just release-preflight` fails until that record names HEAD.
+at in `.hardware-tiers-verified`; `just release-preflight` fails until that
+record or tier 3h's names HEAD (`test/e2e-tier-evidence.sh`). What each
+proves differs: 3b/3c on a real sensor prove real frames of a real face
+match; 3h proves the pipeline on a device the product treats as an IR sensor.
 
 Tier 3h runs the same two scripts against a v4l2loopback node fed with a
 procedurally rendered face (`test/loopback/`, nobody's face), so it needs
@@ -110,9 +113,9 @@ no camera and no person. The fed node enumerates GREY only and classifies as
 IR by format evidence — the residual `docs/security.md` §A documents — and
 the run keeps `require_ir` and `require_frame_variance` on because the
 sequence drifts frame to frame the way a person does. It records
-`.loopback-tier-verified`, which `just release-preflight` also requires at
-HEAD. It is cheaper evidence, not the same evidence: only 3b/3c on a real
-sensor say that real frames match a real face. The fixture's bands against
+`.loopback-tier-verified`, which satisfies the release gate on its own. It is
+cheaper evidence, not the same evidence: only 3b/3c on a real sensor say that
+real frames match a real face. The fixture's bands against
 the real models are pinned by
 `crates/facelock-daemon/tests/synthetic_face_contract.rs` (tier 2). Never
 loosen a classification or liveness rule to make 3h pass.

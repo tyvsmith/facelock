@@ -357,6 +357,7 @@ cp "$repo_root/crates/facelock-cli/src/commands/pam.rs" "$matrix_root/crates/fac
 cp "$repo_root/crates/facelock-cli/src/commands/setup.rs" "$matrix_root/crates/facelock-cli/src/commands/"
 cp "$repo_root/website/index.html" "$matrix_root/website/"
 cp "$repo_root/test/check-release-matrix.py" "$matrix_root/test/"
+cp "$repo_root/test/e2e-tier-evidence.sh" "$matrix_root/test/"
 cp "$repo_root/test/Containerfile" "$matrix_root/test/"
 cp "$repo_root/test/Containerfile.rpm-e2e" "$matrix_root/test/"
 # Every Fedora lane Containerfile the checker reads, not just the e2e one. The
@@ -512,6 +513,10 @@ assert_matrix_mutation_rejected \
     "release preflight validating something other than the packaging marker" \
     "justfile" \
     's@validate --commit "\$HEAD_SHA" .packaging-matrix-verified@validate --commit "$HEAD_SHA" .hardware-tiers-verified@'
+assert_matrix_mutation_rejected \
+    "release preflight dropping the end-to-end tier gate" \
+    "justfile" \
+    's@    if bash test/e2e-tier-evidence.sh "\$HEAD_SHA"; then@    if true; then@'
 assert_matrix_mutation_rejected \
     "release preflight skipping the workflow-run evidence download" \
     "justfile" \
@@ -3465,5 +3470,74 @@ git -C "$git_pkgver_repo" tag assets
 if git_pkgver_output="$(git_pkgver_run 2>/dev/null)"; then
     fail "facelock-git pkgver invented a version with no release tag: $git_pkgver_output"
 fi
+
+# --- End-to-end tier gate (test/e2e-tier-evidence.sh) --------------------
+# `just release-preflight` refuses until a real-camera or a loopback record
+# names HEAD; either satisfies it, an acknowledgement has to name the commit.
+e2e_root="$tmp_root/e2e-gate"
+e2e_head="0123456789abcdef0123456789abcdef01234567"
+e2e_older="fedcba9876543210fedcba9876543210fedcba98"
+e2e_gate() {
+    env -u FACELOCK_HARDWARE_TIERS_ACK -u FACELOCK_LOOPBACK_TIER_ACK "$@" \
+        bash "$repo_root/test/e2e-tier-evidence.sh" "$e2e_head" "$e2e_root"
+}
+e2e_case() {
+    local context="$1" expect="$2"
+    shift 2
+    local output rc=0
+    output="$(e2e_gate "$@" 2>&1)" || rc=$?
+    if [ "$rc" -ne "$expect" ]; then
+        fail "e2e gate $context: expected exit $expect, got $rc: $output"
+    fi
+    printf '%s' "$output"
+}
+
+rm -rf "$e2e_root"; mkdir -p "$e2e_root"
+out="$(e2e_case "no record at all" 1)"
+case "$out" in
+    *"MISSING: no camera-required tiers run"*"MISSING: no loopback tier run"*"just test-arch-loopback"*"just test-arch-camera-required"*) ;;
+    *) fail "e2e gate with no record did not name both missing records and both recipes: $out" ;;
+esac
+
+printf '%s\n' "$e2e_head" > "$e2e_root/.hardware-tiers-verified"
+out="$(e2e_case "real-camera record at HEAD alone" 0)"
+case "$out" in
+    *"OK: camera-required tiers recorded green at $e2e_head"*"real sensor, real face"*) ;;
+    *) fail "e2e gate did not credit the real-camera record: $out" ;;
+esac
+case "$out" in
+    *"loopback"*) fail "e2e gate mentioned the loopback tier when only the real-camera record was present: $out" ;;
+esac
+
+rm -f "$e2e_root/.hardware-tiers-verified"
+printf '%s\n' "$e2e_head" > "$e2e_root/.loopback-tier-verified"
+out="$(e2e_case "loopback record at HEAD alone" 0)"
+case "$out" in
+    *"OK: loopback tier recorded green at $e2e_head"*"synthetic camera"*"not real-sensor recognition"*) ;;
+    *) fail "e2e gate did not credit the loopback record, or credited it as real-sensor evidence: $out" ;;
+esac
+
+printf '%s\n' "$e2e_older" > "$e2e_root/.loopback-tier-verified"
+printf '%s\n' "$e2e_older" > "$e2e_root/.hardware-tiers-verified"
+out="$(e2e_case "both records stale" 1)"
+case "$out" in
+    *"STALE: camera-required tiers recorded at $e2e_older"*"STALE: loopback tier recorded at $e2e_older"*) ;;
+    *) fail "e2e gate did not report both stale records: $out" ;;
+esac
+
+e2e_case "loopback acknowledgement naming HEAD" 0 FACELOCK_LOOPBACK_TIER_ACK="${e2e_head:0:7}" >/dev/null
+e2e_case "real-camera acknowledgement naming HEAD" 0 FACELOCK_HARDWARE_TIERS_ACK="${e2e_head:0:12}" >/dev/null
+e2e_case "acknowledgement naming another commit" 1 FACELOCK_LOOPBACK_TIER_ACK="${e2e_older:0:7}" >/dev/null
+e2e_case "acknowledgement shorter than a short sha" 1 FACELOCK_LOOPBACK_TIER_ACK="${e2e_head:0:6}" >/dev/null
+e2e_case "bare =1 acknowledgement" 1 FACELOCK_HARDWARE_TIERS_ACK=1 >/dev/null
+
+printf '%s\n' "$e2e_head" > "$e2e_root/.hardware-tiers-verified"
+printf '%s\n' "$e2e_head" > "$e2e_root/.loopback-tier-verified"
+out="$(e2e_case "both records at HEAD" 0)"
+case "$out" in
+    *"OK: camera-required tiers"*"OK: loopback tier"*) ;;
+    *) fail "e2e gate with both records did not report both: $out" ;;
+esac
+echo "e2e tier gate: record, staleness, and acknowledgement cases OK"
 
 echo "release version contract: OK"

@@ -497,8 +497,8 @@ nightly catches it within a day, the release gate before anything ships.
 Run this before creating/pushing a release tag:
 
 ```bash
-just test-arch-camera-required        # camera + a person in frame; records the commit
 just test-arch-loopback               # the same tiers on a synthetic camera; records the commit
+just test-arch-camera-required        # or: camera + a person in frame; records the commit
 gh workflow run packaging.yml --ref main   # the packaging matrix, at this commit
 just release-preflight                # stable release checks
 just release-preflight v0.2.0-rc.1   # prerelease checks; no stable secret access
@@ -507,29 +507,30 @@ just test-arch-pam
 just test-arch-camera-free
 ```
 
-`just test-arch-camera-required` comes first because it is the only step a
-human has to perform. It runs `test-arch-integration` and `test-arch-oneshot`,
-the two tiers that need `/dev/video*` and a live face, and writes the commit
-they passed at to `.hardware-tiers-verified`. Preflight fails while that record
-is absent or names an older commit, so run it after the last commit that will
-ship, not before.
+The end-to-end tiers come first because preflight cannot run them. It refuses
+to pass until one of two records names HEAD, so run whichever you choose after
+the last commit that will ship, not before:
 
-Those two tiers are the only automated evidence that face authentication works
-end to end: real D-Bus activation, the real PAM stack, real capture, and the
-one-shot path PAM falls back to. Nothing else ran them, and three of their
-assertions rotted undetected as a result (#139). If they were already run by
-hand at this exact commit, acknowledge that by naming it:
-`FACELOCK_HARDWARE_TIERS_ACK=<sha> just release-preflight`.
+- `just test-arch-loopback` runs `test-arch-integration` and `test-arch-oneshot`
+  against a v4l2loopback node fed with a procedurally rendered face, with
+  `require_ir` and `require_frame_variance` on, and writes the commit to
+  `.loopback-tier-verified`. No camera, no person, a few minutes. It proves
+  the capture, IR classification, liveness, enrollment, daemon, one-shot and
+  PAM paths end to end; it cannot prove that a real sensor's frames match a
+  real face. The loopback nodes it needs and the `modprobe` line are in
+  [Testing Safety](testing-safety.md).
+- `just test-arch-camera-required` runs the same two tiers against
+  `/dev/video*` with a person in frame and writes the commit to
+  `.hardware-tiers-verified`. It is the only run that proves real-sensor
+  recognition of a real face.
 
-`just test-arch-loopback` runs the same two tiers against a v4l2loopback node
-fed with a procedurally rendered face, with `require_ir` and
-`require_frame_variance` on, and records the commit to
-`.loopback-tier-verified`. Preflight requires that record at HEAD as well
-(`FACELOCK_LOOPBACK_TIER_ACK=<sha>` acknowledges a run by hand). It needs no
-person and takes a few minutes, so there is no reason for it to be missing;
-it does not replace the camera-required record, because it cannot show that
-a real sensor's frames match a real face. The loopback nodes it needs and
-the `modprobe` line are in [Testing Safety](testing-safety.md).
+Either satisfies the gate (`test/e2e-tier-evidence.sh`). Those two tiers are
+the only automated evidence that face authentication works end to end: real
+D-Bus activation, the real PAM stack, real capture, and the one-shot path PAM
+falls back to. Nothing else ran them, and three of their assertions rotted
+undetected as a result (#139). A run done by hand at this exact commit is
+acknowledged by naming it: `FACELOCK_LOOPBACK_TIER_ACK=<sha>` or
+`FACELOCK_HARDWARE_TIERS_ACK=<sha>` on the `just release-preflight` command.
 
 Preflight also refuses to pass without complete packaging evidence for HEAD.
 Every packaging lane writes a record of what it claimed and what it counted,
@@ -1136,9 +1137,10 @@ Since facelock is a PAM module, broken releases can lock users out. Every releas
 1. Pass `just check` (tests + clippy + fmt)
 2. Pass `just test-arch-pam` (Arch container PAM smoke tests)
 3. Pass `just test-arch-camera-free` (camera-free daemon and one-shot E2E)
-4. Pass `just test-arch-camera-required` against the final release commit, with
-   a camera and a person in frame, and `just test-arch-loopback` against the
-   same commit; `just release-preflight` fails until both have
+4. Pass `just test-arch-loopback` (synthetic camera, no person) or
+   `just test-arch-camera-required` (a camera and a person in frame, the only
+   run that proves real-sensor recognition) against the final release commit;
+   `just release-preflight` fails until one has
 5. Pass `just test-rpm` and `just test-deb` (multi-distro package validation)
 6. Not change PAM auth semantics without explicit changelog entry
 5. Preserve `/etc/pam.d/sudo` backup on install (`/var/lib/facelock/pam-backups/sudo.<timestamp>`)
