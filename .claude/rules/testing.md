@@ -81,10 +81,11 @@ compile, is left to the nightly and the dispatch (#337). Such a lane records
 `depth=partial`, which `just release-preflight` refuses.
 
 So a green pull request is **not** packaging-verified unless the packaging jobs
-actually ran on it. A change to Rust source alone (Cargo manifests and the
-lockfile reach every lane) runs only the release-binaries build on its pull
-request; if it breaks the packaged runtime, the nightly matrix catches
-it within a day, and the release gate before it ships.
+actually ran on it. A change to Rust source alone runs only the release-binaries
+build on its pull request, except `pam.rs`, `daemon.rs`, and `lifecycle.rs` in
+`facelock-cli`, which the classifier routes to every lane along with Cargo
+manifests and the lockfile; if it breaks the packaged runtime, the nightly
+matrix catches it within a day, and the release gate before it ships.
 `just test-packaging-matrix` runs every lane locally and records each lane's
 evidence, for a maintainer without CI in reach; a run that skipped anything is
 refused, not recorded.
