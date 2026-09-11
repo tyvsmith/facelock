@@ -10,7 +10,8 @@
 #   deb               both Debian suite lifecycle gates
 #   rpm               the Fedora direct-RPM lanes, and the COPR lanes off PR
 #   arch              the Arch package built from dist/PKGBUILD
-#   release_binaries  the Arch-container build the rpm lanes stage from
+#   release_binaries  the Arch-container build the rpm lanes stage from, and
+#                     the one lane a Rust-only diff runs
 #   release_matrix    the native version-ordering matrix
 #   packaging         any of the above
 #
@@ -32,8 +33,8 @@
 set -euo pipefail
 
 # `pattern=lanes`, first match wins, so a family-specific rule must precede the
-# generic rule for the same directory. Lanes are `deb`, `rpm`, `arch`, `matrix`
-# or `all`. Note that `*` in a bash pattern match crosses `/`, so `dist/*` is
+# generic rule for the same directory. Lanes are `deb`, `rpm`, `arch`, `matrix`,
+# `binaries` or `all`. Note that `*` in a bash pattern match crosses `/`, so `dist/*` is
 # `dist/**`.
 #
 # What a package is built from, plus what its scriptlets execute at install,
@@ -56,6 +57,12 @@ set -euo pipefail
 # lifecycle.rs owns the purge exclusion interval a Debian purge runs inside,
 # and daemon.rs is what postinst try-restarts and what pkg-validate.sh starts
 # under the hardened unit.
+#
+# Every other Rust file runs only the release-binaries build: `just
+# build-release` in the pinned Arch container proves the workspace still
+# compiles the way the packages consume it, in minutes rather than the hour
+# the lifecycle lanes take. The deb, rpm and Arch lifecycles stay nightly for
+# a Rust-only diff (docs/releasing.md, "Residual risk").
 RULES=(
     # Recipes.
     'debian/*=deb'
@@ -123,17 +130,20 @@ RULES=(
     'crates/facelock-cli/src/commands/pam.rs=all'
     'crates/facelock-cli/src/commands/daemon.rs=all'
     'crates/facelock-cli/src/lifecycle.rs=all'
+    'crates/*=binaries'
 )
 
-declare -A lane=([deb]=false [rpm]=false [arch]=false [matrix]=false)
+declare -A lane=([deb]=false [rpm]=false [arch]=false [matrix]=false [binaries]=false)
 
 select_lanes() {
     case "$1" in
-        all) lane[deb]=true; lane[rpm]=true; lane[arch]=true; lane[matrix]=true ;;
+        all) lane[deb]=true; lane[rpm]=true; lane[arch]=true; lane[matrix]=true; lane[binaries]=true ;;
         # Versions live in debian/changelog, the spec and the PKGBUILD, so any
-        # package lane also re-proves their ordering.
-        deb|rpm|arch) lane[$1]=true; lane[matrix]=true ;;
-        matrix) lane[matrix]=true ;;
+        # package lane also re-proves their ordering. The rpm lanes stage the
+        # release binaries, so rpm implies binaries.
+        rpm) lane[rpm]=true; lane[binaries]=true; lane[matrix]=true ;;
+        deb|arch) lane[$1]=true; lane[matrix]=true ;;
+        matrix|binaries) lane[$1]=true ;;
     esac
 }
 
@@ -143,7 +153,7 @@ emit() {
         [deb]="${lane[deb]}"
         [rpm]="${lane[rpm]}"
         [arch]="${lane[arch]}"
-        [release_binaries]="${lane[rpm]}"
+        [release_binaries]="${lane[binaries]}"
         [release_matrix]="${lane[matrix]}"
     )
     for name in deb rpm arch release_binaries release_matrix; do

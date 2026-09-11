@@ -9,9 +9,10 @@
 # to make loud. The other direction matters too: a family-specific path that
 # starts selecting every lane costs the Debian long pole on each pull request.
 #
-# The `rust-only` case is not an oversight. It pins the documented residual risk
-# (docs/releasing.md): a change touching no packaging path is not gated by its
-# own pull request, only by the nightly matrix and the release gate.
+# The `rust-only` case pins the documented residual risk (docs/releasing.md): a
+# Rust change outside the maintainer-script files runs only the release-binaries
+# build on its own pull request; the deb, rpm and Arch lifecycles wait for the
+# nightly matrix and the release gate.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -75,6 +76,7 @@ all=deb,rpm,arch,release_binaries,release_matrix
 deb=deb,release_matrix
 rpm=rpm,release_binaries,release_matrix
 arch=arch,release_matrix
+binaries=release_binaries
 
 expect_diff() {
     local want="$1" name="$2"
@@ -133,10 +135,13 @@ expect_diff "$arch" arch-harness test/arch-package-validate.sh
 expect_diff release_matrix ordering-harness test/release-native-ordering.sh
 expect_diff deb,arch,release_matrix deb-and-arch debian/control dist/PKGBUILD
 
+echo "classify-changes -- a Rust diff reaches only the release-binaries build"
+expect_diff "$binaries" rust-only crates/facelock-cli/src/commands/enroll.rs crates/facelock-daemon/src/handler.rs
+expect_diff deb,release_binaries,release_matrix rust-and-debian crates/facelock-daemon/src/handler.rs debian/control
+
 echo "classify-changes -- a diff that reaches no lane"
 expect_diff none docs-only docs/releasing.md README.md
 expect_diff none ci-workflow-only .github/workflows/ci.yml
-expect_diff none rust-only crates/facelock-cli/src/commands/enroll.rs crates/facelock-daemon/src/handler.rs
 
 echo "classify-changes -- unfiltered events and fail-open"
 expect_event "$all" schedule

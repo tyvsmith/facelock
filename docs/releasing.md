@@ -442,21 +442,25 @@ lane.
 | `test/release-*` | release_matrix |
 | the rest of `dist/`, `systemd/`, `dbus/`, `config/`, `scripts/`, `justfile`, `Cargo.toml`, `Cargo.lock`, `crates/*/Cargo.toml`, `test/Containerfile*`, `test/*pkg*`, the shared PAM/polkit/TPM validators, `.github/workflows/packaging.yml`, `.github/workflows/release.yml`, the other workflow scripts, `.github/actions/` | all |
 | `crates/facelock-cli/src/commands/pam.rs`, `commands/daemon.rs`, `lifecycle.rs` | all |
+| any other file under `crates/` | release_binaries |
 
 Any package lane also selects `release_matrix`, since the versions it orders
-live in `debian/changelog`, the spec and the PKGBUILD. The Rust files are
-listed because `facelock pam remove --all` runs from `%preun`, from Arch's
+live in `debian/changelog`, the spec and the PKGBUILD; `rpm` also selects
+`release_binaries`, which it stages from. The three Rust files are listed because `facelock pam remove --all` runs from `%preun`, from Arch's
 `pre_remove` and from Debian's `prerm`, so a change to that command can abort a
 package removal without touching a packaging file. `ci.yml` and the other
 non-packaging workflows select nothing; a container digest bump inside
 `packaging.yml` itself still selects every lane, because a path cannot say
 which job's image moved. `just test-classify-changes` pins the table.
 
-**Residual risk.** Path filtering means a change that touches no packaging path
-can still break the *packaged* runtime. A Rust change to daemon startup, a new
-runtime dependency, a file the spec does not ship: each of those leaves its own
-pull request green with every packaging job reported as skipped. Do not read
-that as packaging-verified. The nightly matrix catches it within a day, and the
+**Residual risk.** A Rust change outside those three files runs only the
+`release_binaries` lane on its own pull request: `just build-release` in the
+pinned Arch container, which proves the workspace still compiles the way the
+packages consume it, in minutes. It does not build or boot a package. A Rust
+change to daemon startup, a new runtime dependency, a file the spec does not
+ship: each of those leaves its own pull request green with the deb, rpm and
+Arch lifecycle jobs reported as skipped. Do not read that as
+packaging-verified. The nightly matrix catches it within a day, and the
 release gate below catches it before anything ships. When a change is
 packaging-relevant in a way the filter cannot see, run the lane by hand or add
 the path to `classify-changes.sh`.

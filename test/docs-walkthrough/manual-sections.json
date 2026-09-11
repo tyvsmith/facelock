@@ -9095,49 +9095,49 @@
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 1,
-          "line": 479,
+          "line": 483,
           "sha256": "dedfaf04fd23448baa602a476c6e384ab674dfd1ad445e0c3e935b5a96a9a2f1"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 2,
-          "line": 480,
+          "line": 484,
           "sha256": "a07a3db4c0fd5697107f1591eb62f6a2c9a2ac0d3801e25844e5c244f6688915"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 3,
-          "line": 481,
+          "line": 485,
           "sha256": "d9a223daf1f784e1bd0313866cfbfcff4b2b4958708dfab4674bc3ddc63de570"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 4,
-          "line": 482,
+          "line": 486,
           "sha256": "108c5e8edc6582d4ee70c2b8573afe99a7be3f4ad8ddd11fc2b12c44e7079568"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 5,
-          "line": 483,
+          "line": 487,
           "sha256": "017092419ea31d5de3fd4b6e7a52b2dd239d134f423f81bd0f5c38992c212208"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 6,
-          "line": 484,
+          "line": 488,
           "sha256": "a77a5aea7a4e8dcf9901e8ac5ee041109d525ce2f2bd7f018a21918d70da1326"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "release-preflight-recommended",
           "ordinal": 7,
-          "line": 485,
+          "line": 489,
           "sha256": "2b5e31a5fe163cb0998c87a9f505faf73a26e025df540bc210550dcb6cc27142"
         }
       ],
@@ -9270,231 +9270,231 @@
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 1,
-          "line": 563,
+          "line": 567,
           "sha256": "ce117958431b95a2b1b7736900f985d21b06e2b5672c9332ca300f7e2f728cec"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 2,
-          "line": 566,
+          "line": 570,
           "sha256": "496912e98f06a6851cefff636f7f9a738aea9093d8ca87d32427a71fc0d4e710"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 3,
-          "line": 567,
+          "line": 571,
           "sha256": "db66421d7339cfe66576a3d1816ccd849e3cce082609ed202f033e8766850f5e"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 4,
-          "line": 568,
+          "line": 572,
           "sha256": "eade2495c1c8af468788a81f22b4748844fb7e378dcb7b838f5b6a94478eca4a"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 5,
-          "line": 569,
+          "line": 573,
           "sha256": "436f245d1d2ff52f45e4708def3db88264f00a69f14ac45f3974e91213865413"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 6,
-          "line": 574,
+          "line": 578,
           "sha256": "5b6566b30a1c74929651fbf4d529d0b2bc03d901c23fb56fccf98720af6a3f52"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 7,
-          "line": 575,
+          "line": 579,
           "sha256": "d91ae6717b7b7778b93b9020d48bc3759649decdaa9abad31f36fa82cf0964e2"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 8,
-          "line": 577,
+          "line": 581,
           "sha256": "c9a3615c4b78b410f6374730cc6ae2a6f84f3cfc991e1d62afefeafdea301e7a"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 9,
-          "line": 578,
+          "line": 582,
           "sha256": "80b4949070e5c55d722d81d45af49fe18736316ae34f61992bb2500c59fbf83e"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 10,
-          "line": 579,
+          "line": 583,
           "sha256": "fe9e350dccdf906c3c342fa6d20e264cf09012c885bbc76709d25df82a557eec"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 11,
-          "line": 580,
+          "line": 584,
           "sha256": "9b13396a2d62293086b0bfda57435689ba59dde26f4398d2eba7624ef80916eb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 12,
-          "line": 581,
+          "line": 585,
           "sha256": "c1fe02ee74644b70083160af86534e360016dcbd5aa98097d7a570640e508a14"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 13,
-          "line": 582,
+          "line": 586,
           "sha256": "c32f2b1a66f8a79deadb74f533f3075c60a629df343b89e8c4477d40fa960ba8"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 14,
-          "line": 583,
+          "line": 587,
           "sha256": "ecc78bda27b832c6956a35bdf1ee8fb759f85425a9e8c85d28edb523bb6779f5"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 15,
-          "line": 586,
+          "line": 590,
           "sha256": "a1d2a470e9757ca1a468b4129de0e79687de54106b68c041ce621be96ad5f4f9"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 16,
-          "line": 587,
+          "line": 591,
           "sha256": "aa17fd000eb5853bf3764379438d5d60e6b847ef03e6028108af9563da1226d4"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 17,
-          "line": 588,
+          "line": 592,
           "sha256": "69a5e09dc6213aebcc57177e7aae3f399a2d5d3aae7842563b239795c0f3b0da"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 18,
-          "line": 589,
+          "line": 593,
           "sha256": "436f245d1d2ff52f45e4708def3db88264f00a69f14ac45f3974e91213865413"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 19,
-          "line": 590,
+          "line": 594,
           "sha256": "fe9e350dccdf906c3c342fa6d20e264cf09012c885bbc76709d25df82a557eec"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 20,
-          "line": 591,
+          "line": 595,
           "sha256": "9b13396a2d62293086b0bfda57435689ba59dde26f4398d2eba7624ef80916eb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 21,
-          "line": 592,
+          "line": 596,
           "sha256": "c1fe02ee74644b70083160af86534e360016dcbd5aa98097d7a570640e508a14"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 22,
-          "line": 593,
+          "line": 597,
           "sha256": "c32f2b1a66f8a79deadb74f533f3075c60a629df343b89e8c4477d40fa960ba8"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 23,
-          "line": 594,
+          "line": 598,
           "sha256": "ecc78bda27b832c6956a35bdf1ee8fb759f85425a9e8c85d28edb523bb6779f5"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 24,
-          "line": 597,
+          "line": 601,
           "sha256": "760d01df3d4b65d21ee36ae04052a37b260f722c68cf58ce52947c41720e08aa"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 25,
-          "line": 598,
+          "line": 602,
           "sha256": "88d89d47a06c2521dd75cba1300449b6861770cc6db54e68046a24baac5a5770"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 26,
-          "line": 599,
+          "line": 603,
           "sha256": "7e3163129541b685b8df8bb22a871dfcff84227081f53a25599b5cffd3900af2"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 27,
-          "line": 600,
+          "line": 604,
           "sha256": "436f245d1d2ff52f45e4708def3db88264f00a69f14ac45f3974e91213865413"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 28,
-          "line": 601,
+          "line": 605,
           "sha256": "fe9e350dccdf906c3c342fa6d20e264cf09012c885bbc76709d25df82a557eec"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 29,
-          "line": 602,
+          "line": 606,
           "sha256": "9b13396a2d62293086b0bfda57435689ba59dde26f4398d2eba7624ef80916eb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 30,
-          "line": 603,
+          "line": 607,
           "sha256": "c1fe02ee74644b70083160af86534e360016dcbd5aa98097d7a570640e508a14"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 31,
-          "line": 604,
+          "line": 608,
           "sha256": "c32f2b1a66f8a79deadb74f533f3075c60a629df343b89e8c4477d40fa960ba8"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 32,
-          "line": 608,
+          "line": 612,
           "sha256": "1548e502c894199d945d62477c663ac76551ae0a415c54d023829c8374fc5e20"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "aur-arch-linux",
           "ordinal": 33,
-          "line": 612,
+          "line": 616,
           "sha256": "2bb449e3f1e527e7ecac90a956b1a6b5722b264c3cfae4611d0cc62aa0265ba3"
         }
       ],
@@ -9965,21 +9965,21 @@
           "path": "docs/releasing.md",
           "anchor": "why-v014-never-reached-copr",
           "ordinal": 8,
-          "line": 788,
+          "line": 792,
           "sha256": "4f8c8f6471b5acc7be9447a1cc5a4ef869157bce60d91c20e453570df45d3af5"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "why-v014-never-reached-copr",
           "ordinal": 9,
-          "line": 789,
+          "line": 793,
           "sha256": "330b0e0d48e5cadecc7312bd0e67d8fe2c885d0d4ff881e165c92d12cd5de072"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "why-v014-never-reached-copr",
           "ordinal": 10,
-          "line": 790,
+          "line": 794,
           "sha256": "eafacd9bcae280d0368ab135f72ec91b7e2d8399382e1050b67ef96cd5e94ff8"
         }
       ],
@@ -10061,14 +10061,14 @@
           "path": "docs/releasing.md",
           "anchor": "pre-tag-attestation",
           "ordinal": 2,
-          "line": 894,
+          "line": 898,
           "sha256": "4fc7ae86753f046827e1eaf821e79f8502c861494f431ee06e627c16a0f582c5"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "pre-tag-attestation",
           "ordinal": 3,
-          "line": 895,
+          "line": 899,
           "sha256": "9daf87a90676b422783ead7510dc9cd9df3f7d35ec73a7f6b720b249814ed638"
         }
       ],
@@ -10136,21 +10136,21 @@
           "path": "docs/releasing.md",
           "anchor": "apt-debianubuntu",
           "ordinal": 1,
-          "line": 922,
+          "line": 926,
           "sha256": "3a7b17c8cfba23ce48b71f39c7a8e55fa570bf8596dac8e00622eaa2fd8f67b6"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "apt-debianubuntu",
           "ordinal": 2,
-          "line": 929,
+          "line": 933,
           "sha256": "bc5050fd8434b234ad64a8e1d0e102b7193ed203126d768b32c0f72286addf7f"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "apt-debianubuntu",
           "ordinal": 3,
-          "line": 934,
+          "line": 938,
           "sha256": "07aef43e7726b1c28642fe5034e46b275bb0175b1a8bf8b2ab09125586f97c02"
         }
       ],
@@ -10231,56 +10231,56 @@
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 1,
-          "line": 975,
+          "line": 979,
           "sha256": "bd978c87c0aadfa54d4ba4f05b48f51ea4197e79703f972a5b6e2e7db17facd1"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 2,
-          "line": 977,
+          "line": 981,
           "sha256": "6fbda588a984496fe15cc3910c5759c7f24c1920e358e38865bdf3f599bf2eaf"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 3,
-          "line": 981,
+          "line": 985,
           "sha256": "496912e98f06a6851cefff636f7f9a738aea9093d8ca87d32427a71fc0d4e710"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 4,
-          "line": 987,
+          "line": 991,
           "sha256": "db66421d7339cfe66576a3d1816ccd849e3cce082609ed202f033e8766850f5e"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 5,
-          "line": 988,
+          "line": 992,
           "sha256": "fe9e350dccdf906c3c342fa6d20e264cf09012c885bbc76709d25df82a557eec"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 6,
-          "line": 992,
+          "line": 996,
           "sha256": "9b13396a2d62293086b0bfda57435689ba59dde26f4398d2eba7624ef80916eb"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 7,
-          "line": 993,
+          "line": 997,
           "sha256": "1770d6f9d00ebdeba4277b6bd833aebdfe61df440fdc0e7cf518616c0f4fb84d"
         },
         {
           "path": "docs/releasing.md",
           "anchor": "manual-aur-update-fallback",
           "ordinal": 8,
-          "line": 994,
+          "line": 998,
           "sha256": "c32f2b1a66f8a79deadb74f533f3075c60a629df343b89e8c4477d40fa960ba8"
         }
       ],

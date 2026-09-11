@@ -73,8 +73,9 @@ every lane otherwise; the table is in docs/releasing.md and
 `just test-classify-changes` pins it.
 
 So a green pull request is **not** packaging-verified unless the packaging jobs
-actually ran on it. A Rust-only change that breaks the packaged runtime is caught
-by the nightly matrix within a day, and by the release gate before it ships.
+actually ran on it. A Rust-only change runs only the release-binaries build on
+its pull request; if it breaks the packaged runtime, the nightly matrix catches
+it within a day, and the release gate before it ships.
 `just test-packaging-matrix` runs every lane locally and records each lane's
 evidence, for a maintainer without CI in reach; a run that skipped anything is
 refused, not recorded.
