@@ -1949,6 +1949,42 @@ fn plan_key_action(
     }
 }
 
+/// The automatic policy's decision (`--encryption auto`, and the
+/// non-interactive base with no flag): pick the target from TPM usability,
+/// then make the same key-carrying decision as [`plan_key_action`].
+///
+/// Pulled out (issue #358) because `setup_encryption_auto` kept its own
+/// inline `!sealed_path.exists()` check after #354 routed the explicit flags
+/// through `plan_key_action`, so it still minted a second key beside an
+/// existing keyfile. `tpm_usable` must already fold in whether TPM support
+/// is compiled in: without it the keyfile target is the only one reachable,
+/// and no sealed key can be unsealed, so `Keyfile` is planned with the TPM
+/// marked unusable.
+fn plan_auto_key_action(
+    tpm_usable: bool,
+    keyfile_exists: bool,
+    sealed_exists: bool,
+) -> (facelock_core::config::EncryptionMethod, KeyAction) {
+    use facelock_core::config::EncryptionMethod;
+
+    if tpm_usable {
+        (
+            EncryptionMethod::Tpm,
+            plan_key_action(EncryptionMethod::Tpm, keyfile_exists, sealed_exists, true),
+        )
+    } else {
+        (
+            EncryptionMethod::Keyfile,
+            plan_key_action(
+                EncryptionMethod::Keyfile,
+                keyfile_exists,
+                sealed_exists,
+                false,
+            ),
+        )
+    }
+}
+
 #[cfg(test)]
 mod plan_key_action_tests {
     use super::*;
@@ -2043,6 +2079,69 @@ mod plan_key_action_tests {
     #[should_panic(expected = "only consulted for a Tpm or Keyfile target")]
     fn none_target_is_never_consulted() {
         plan_key_action(EncryptionMethod::None, false, false, false);
+    }
+
+    // -- the automatic policy (issue #358) --
+    //
+    // `--encryption auto`, and the non-interactive base with no flag at all,
+    // pick the target from TPM usability and then must make the same
+    // key-carrying decision the explicit flags make.
+
+    /// The bug issue #358 reports: a keyfile with no sealed key on a
+    /// TPM-capable host must be sealed, not shadowed by a fresh random key.
+    #[test]
+    fn auto_with_a_usable_tpm_seals_an_existing_keyfile() {
+        assert_eq!(
+            plan_auto_key_action(true, true, false),
+            (EncryptionMethod::Tpm, KeyAction::SealExistingKeyfile)
+        );
+    }
+
+    #[test]
+    fn auto_with_a_usable_tpm_reuses_an_existing_sealed_key() {
+        assert_eq!(
+            plan_auto_key_action(true, false, true),
+            (EncryptionMethod::Tpm, KeyAction::ReuseExisting)
+        );
+        assert_eq!(
+            plan_auto_key_action(true, true, true),
+            (EncryptionMethod::Tpm, KeyAction::ReuseExisting)
+        );
+    }
+
+    #[test]
+    fn auto_with_a_usable_tpm_mints_only_when_no_artifact_exists() {
+        assert_eq!(
+            plan_auto_key_action(true, false, false),
+            (EncryptionMethod::Tpm, KeyAction::Mint)
+        );
+    }
+
+    #[test]
+    fn auto_without_a_tpm_reuses_an_existing_keyfile() {
+        assert_eq!(
+            plan_auto_key_action(false, true, false),
+            (EncryptionMethod::Keyfile, KeyAction::ReuseExisting)
+        );
+        assert_eq!(
+            plan_auto_key_action(false, true, true),
+            (EncryptionMethod::Keyfile, KeyAction::ReuseExisting)
+        );
+    }
+
+    /// The mirror case: a sealed key nothing can unseal is not key material
+    /// the keyfile target can carry forward, so it mints — the same answer
+    /// `--encryption keyfile` gives, and the sealed artifact stays on disk.
+    #[test]
+    fn auto_without_a_tpm_mints_a_keyfile_beside_an_unreachable_sealed_key() {
+        assert_eq!(
+            plan_auto_key_action(false, false, true),
+            (EncryptionMethod::Keyfile, KeyAction::Mint)
+        );
+        assert_eq!(
+            plan_auto_key_action(false, false, false),
+            (EncryptionMethod::Keyfile, KeyAction::Mint)
+        );
     }
 }
 
@@ -2310,19 +2409,18 @@ fn setup_encryption_none(config: &mut Config) -> anyhow::Result<()> {
 }
 
 /// True if the auto policy would mint a new key, and therefore needs the
-/// orphaned-models guard first.
+/// orphaned-models guard first. The same decision `setup_encryption_auto`
+/// acts on, so the guard runs exactly when a key is minted (#358).
 fn auto_encryption_needs_keygen(config: &Config, tpm_available: bool) -> bool {
     use facelock_core::config::EncryptionMethod;
 
     if config.encryption.method != EncryptionMethod::None {
         return false;
     }
-    let key_path = if tpm_available {
-        &config.encryption.sealed_key_path
-    } else {
-        &config.encryption.key_path
-    };
-    !Path::new(key_path).exists()
+    let keyfile_exists = Path::new(&config.encryption.key_path).exists();
+    let sealed_exists = Path::new(&config.encryption.sealed_key_path).exists();
+    let tpm_usable = tpm_available && cfg!(feature = "tpm");
+    plan_auto_key_action(tpm_usable, keyfile_exists, sealed_exists).1 == KeyAction::Mint
 }
 
 /// Apply `--encryption`. `theme` is `None` where prompting is not allowed.
@@ -3202,24 +3300,61 @@ fn setup_encryption_auto(config: &Config, tpm_available: Option<bool>) -> anyhow
         return Ok(());
     }
 
-    // Try TPM first
-    if tpm_available.unwrap_or_else(|| detect_tpm(config)) {
+    let key_path = Path::new(&config.encryption.key_path);
+    let sealed_path = Path::new(&config.encryption.sealed_key_path);
+    let keyfile_exists = key_path.exists();
+    let sealed_exists = sealed_path.exists();
+    // Without TPM support compiled in, a usable device is still not a target
+    // this build can seal to; the keyfile fallback is all it has.
+    let tpm_usable = tpm_available.unwrap_or_else(|| detect_tpm(config)) && cfg!(feature = "tpm");
+
+    // The same key-carrying decision the explicit `--encryption` flags make
+    // (#354), so the auto path never mints a second key beside an existing
+    // one (#358).
+    let (target, action) = plan_auto_key_action(tpm_usable, keyfile_exists, sealed_exists);
+
+    if target == EncryptionMethod::Tpm {
         #[cfg(feature = "tpm")]
         {
-            let sealed_path = Path::new(&config.encryption.sealed_key_path);
-            if !sealed_path.exists() {
-                let pcr = if config.tpm.pcr_binding {
-                    Some(config.tpm.pcr_indices.as_slice())
-                } else {
-                    None
-                };
-                let mut tpm = facelock_tpm::TpmSealer::new(&config.tpm.tcti)
-                    .context("failed to initialize TPM")?;
-                facelock_tpm::generate_and_seal_key(&mut tpm, sealed_path, pcr)
-                    .context("failed to generate and seal key")?;
-                Terminal.info(&SetupMessage::GeneratedTpmKeyAt {
-                    path: sealed_path.display().to_string(),
-                });
+            match action {
+                KeyAction::ReuseExisting => {
+                    Terminal.info(&SetupMessage::TpmSealedKeyPresent {
+                        path: sealed_path.display().to_string(),
+                    });
+                    if keyfile_exists {
+                        notice_if_keys_diverged(config, key_path, sealed_path);
+                    }
+                }
+                KeyAction::SealExistingKeyfile => {
+                    Terminal.info(&SetupMessage::SealingExistingKeyfile {
+                        key_path: key_path.display().to_string(),
+                        sealed_path: sealed_path.display().to_string(),
+                    });
+                    super::tpm::seal_existing_keyfile(config)
+                        .context("failed to seal the existing key with the TPM")?;
+                    Terminal.info(&SetupMessage::TpmSealedKeyWritten {
+                        path: sealed_path.display().to_string(),
+                    });
+                }
+                KeyAction::Mint => {
+                    let pcr = if config.tpm.pcr_binding {
+                        Some(config.tpm.pcr_indices.as_slice())
+                    } else {
+                        None
+                    };
+                    let mut tpm = facelock_tpm::TpmSealer::new(&config.tpm.tcti)
+                        .context("failed to initialize TPM")?;
+                    facelock_tpm::generate_and_seal_key(&mut tpm, sealed_path, pcr)
+                        .context("failed to generate and seal key")?;
+                    Terminal.info(&SetupMessage::GeneratedTpmKeyAt {
+                        path: sealed_path.display().to_string(),
+                    });
+                }
+                KeyAction::UnsealExistingSealed => {
+                    unreachable!(
+                        "plan_key_action never returns UnsealExistingSealed for a Tpm target"
+                    )
+                }
             }
             let mut config = config.clone();
             config.encryption.method = EncryptionMethod::Tpm;
@@ -3227,9 +3362,13 @@ fn setup_encryption_auto(config: &Config, tpm_available: Option<bool>) -> anyhow
             Terminal.info(&SetupMessage::EncryptionEnabledTpmAuto);
             return Ok(());
         }
+        #[cfg(not(feature = "tpm"))]
+        {
+            unreachable!("plan_auto_key_action never targets Tpm without the tpm feature")
+        }
     }
 
-    // Fall back to keyfile. Through the gate shared with the daemon, the
+    // Keyfile: reuse or mint. Through the gate shared with the daemon, the
     // one-shot path and `facelock encrypt`, so no writer of this key can drift
     // on when a replacement may be written over encrypted templates (#231).
     // `handle_orphan_models_before_keygen` still guards the interactive
@@ -3237,15 +3376,32 @@ fn setup_encryption_auto(config: &Config, tpm_available: Option<bool>) -> anyhow
     // an offer to clear); this is the backstop for the automatic policy, which
     // `run_non_interactive` reaches with no flag at all — the command
     // `debian/postinst` tells operators to run.
-    let key_path = Path::new(&config.encryption.key_path);
-    let existed = key_path.exists();
     if let Some(refusal) = keygen_refusal(config)? {
         bail!("{refusal}");
     }
-    if !existed && key_path.exists() {
-        Terminal.info(&SetupMessage::GeneratedKeyfileAt {
-            path: key_path.display().to_string(),
-        });
+    match action {
+        KeyAction::ReuseExisting => {
+            if sealed_exists {
+                notice_if_keys_diverged(config, key_path, sealed_path);
+            }
+        }
+        KeyAction::Mint => {
+            if key_path.exists() {
+                Terminal.info(&SetupMessage::GeneratedKeyfileAt {
+                    path: key_path.display().to_string(),
+                });
+            }
+            // No usable TPM can unseal it, so it could not be carried over;
+            // it stays on disk for when the TPM comes back.
+            if sealed_exists {
+                Terminal.notice(&SetupMessage::SealedKeyLeftInPlace {
+                    sealed_path: sealed_path.display().to_string(),
+                });
+            }
+        }
+        KeyAction::SealExistingKeyfile | KeyAction::UnsealExistingSealed => {
+            unreachable!("plan_auto_key_action never carries a key across for a Keyfile target")
+        }
     }
 
     let mut config = config.clone();
@@ -6296,6 +6452,159 @@ mod choice_tests {
         assert_eq!(config.encryption.method, EncryptionMethod::Tpm);
     }
 
+    // -- the automatic policy (issue #358): `--encryption auto`, and the
+    // -- non-interactive base with no flag, must make the same key-carrying
+    // -- decision as the explicit flags above.
+
+    /// A TPM that no seal can reach, so a test that takes the seal branch
+    /// fails at the TPM step rather than at the decision — which is what
+    /// these tests pin.
+    fn config_for_auto(
+        dir: &std::path::Path,
+        key_path: &std::path::Path,
+        sealed_path: &std::path::Path,
+    ) -> Config {
+        let mut config = config_for_key_dispatch(dir, key_path, sealed_path);
+        config.encryption.method = EncryptionMethod::None;
+        config.tpm.tcti = "device:/nonexistent/facelock-test-tpm".to_string();
+        config
+    }
+
+    /// The bug issue #358 reports: with a usable TPM, a keyfile and no
+    /// sealed key, the auto policy minted a fresh sealed key beside the
+    /// keyfile. It must seal the existing keyfile instead — here the seal
+    /// step fails (no TPM), and that failure is the proof that nothing was
+    /// minted first.
+    #[cfg(feature = "tpm")]
+    #[test]
+    fn auto_policy_seals_the_existing_keyfile_instead_of_minting() {
+        let _lock = super::CONFIG_OVERRIDE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        struct OverrideGuard;
+        impl Drop for OverrideGuard {
+            fn drop(&mut self) {
+                facelock_core::paths::clear_process_config_override();
+            }
+        }
+        let (_cfg_dir, config_path) = temp_config("config.toml", "");
+        facelock_core::paths::set_process_config_override(config_path);
+        let _guard = OverrideGuard;
+
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("facelock.key");
+        let sealed_path = dir.path().join("sealed.key"); // absent
+        let original = [0x42u8; 32];
+        std::fs::write(&key_path, original).unwrap();
+
+        let config = config_for_auto(dir.path(), &key_path, &sealed_path);
+        let err = setup_encryption_auto(&config, Some(true))
+            .expect_err("sealing must be attempted, and no TPM can answer here");
+        let chain = format!("{err:#}");
+        assert!(
+            chain.contains("failed to seal the existing key"),
+            "the auto policy must seal the existing keyfile, not mint: {chain}"
+        );
+        assert_eq!(
+            std::fs::read(&key_path).unwrap().as_slice(),
+            &original[..],
+            "the keyfile must be left untouched"
+        );
+        assert!(!sealed_path.exists(), "no sealed key may be minted");
+    }
+
+    #[cfg(feature = "tpm")]
+    #[test]
+    fn auto_policy_reuses_an_existing_sealed_key_without_minting() {
+        let _lock = super::CONFIG_OVERRIDE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        struct OverrideGuard;
+        impl Drop for OverrideGuard {
+            fn drop(&mut self) {
+                facelock_core::paths::clear_process_config_override();
+            }
+        }
+        let (_cfg_dir, config_path) = temp_config("config.toml", "");
+        facelock_core::paths::set_process_config_override(config_path);
+        let _guard = OverrideGuard;
+
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("facelock.key"); // absent
+        let sealed_path = dir.path().join("sealed.key");
+        let sealed_bytes = b"an-existing-sealed-blob".to_vec();
+        std::fs::write(&sealed_path, &sealed_bytes).unwrap();
+
+        let config = config_for_auto(dir.path(), &key_path, &sealed_path);
+        setup_encryption_auto(&config, Some(true)).expect("reuse must not fail");
+
+        assert_eq!(std::fs::read(&sealed_path).unwrap(), sealed_bytes);
+        assert!(!key_path.exists(), "the tpm target must not mint a keyfile");
+    }
+
+    /// The mirror of #358: keyfile absent, sealed key present, TPM unusable.
+    /// Nothing can unseal it, so a keyfile is minted — and the sealed
+    /// artifact stays on disk, as `--encryption keyfile` leaves it.
+    #[test]
+    fn auto_policy_mint_leaves_an_unusable_sealed_key_in_place() {
+        let _lock = super::CONFIG_OVERRIDE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        struct OverrideGuard;
+        impl Drop for OverrideGuard {
+            fn drop(&mut self) {
+                facelock_core::paths::clear_process_config_override();
+            }
+        }
+        let (_cfg_dir, config_path) = temp_config("config.toml", "");
+        facelock_core::paths::set_process_config_override(config_path);
+        let _guard = OverrideGuard;
+
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("facelock.key"); // absent
+        let sealed_path = dir.path().join("sealed.key");
+        let sealed_bytes = b"not-really-a-sealed-blob".to_vec();
+        std::fs::write(&sealed_path, &sealed_bytes).unwrap();
+
+        let config = config_for_auto(dir.path(), &key_path, &sealed_path);
+        setup_encryption_auto(&config, Some(false)).expect("mint must not fail");
+
+        assert_eq!(std::fs::metadata(&key_path).unwrap().len(), 32);
+        assert_eq!(
+            std::fs::read(&sealed_path).unwrap(),
+            sealed_bytes,
+            "the unreachable sealed key must be left in place, not deleted"
+        );
+    }
+
+    #[test]
+    fn auto_policy_reuses_an_existing_keyfile_without_minting() {
+        let _lock = super::CONFIG_OVERRIDE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        struct OverrideGuard;
+        impl Drop for OverrideGuard {
+            fn drop(&mut self) {
+                facelock_core::paths::clear_process_config_override();
+            }
+        }
+        let (_cfg_dir, config_path) = temp_config("config.toml", "");
+        facelock_core::paths::set_process_config_override(config_path);
+        let _guard = OverrideGuard;
+
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("facelock.key");
+        let sealed_path = dir.path().join("sealed.key"); // absent
+        let original = [0x42u8; 32];
+        std::fs::write(&key_path, original).unwrap();
+
+        let config = config_for_auto(dir.path(), &key_path, &sealed_path);
+        setup_encryption_auto(&config, Some(false)).expect("reuse must not fail");
+
+        assert_eq!(std::fs::read(&key_path).unwrap().as_slice(), &original[..]);
+        assert!(!sealed_path.exists());
+    }
+
     /// The orphaned-models guard must not become a prompt when no theme is
     /// available — that is the non-interactive path, and it must not hang.
     #[test]
@@ -6318,6 +6627,18 @@ mod choice_tests {
         config.encryption.method = EncryptionMethod::None;
         config.encryption.key_path = key.display().to_string();
         assert!(!auto_encryption_needs_keygen(&config, false));
+
+        // With a usable TPM that keyfile is sealed, not shadowed by a fresh
+        // sealed key (#358) — so no key is minted and the guard is skipped.
+        #[cfg(feature = "tpm")]
+        assert!(!auto_encryption_needs_keygen(&config, true));
+
+        // A sealed key nothing can unseal does not spare the keyfile target a
+        // mint, so the guard must run.
+        let (_dir, sealed) = temp_config("encryption.key.sealed", "not-a-sealed-blob");
+        config.encryption.key_path = "/nonexistent/facelock/encryption.key".to_string();
+        config.encryption.sealed_key_path = sealed.display().to_string();
+        assert!(auto_encryption_needs_keygen(&config, false));
     }
 }
 

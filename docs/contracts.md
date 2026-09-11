@@ -446,7 +446,11 @@ the keyfile. A fresh key is minted only when no key artifact exists, behind the
 orphaned-models guard. When both artifacts exist and hold different keys, setup
 keeps the target's and prints a notice naming both files. A TPM device that
 exists but fails to initialize is reported (warn + notice) rather than silently
-downgrading to keyfile.
+downgrading to keyfile. `--encryption auto`, and the non-interactive base with
+no flag, make the same decision once the target is picked from TPM usability:
+a usable TPM seals an existing keyfile rather than minting beside it, and with
+no usable TPM an existing sealed key is left in place while a keyfile is
+minted (#358).
 
 ### facelock pam Semantics
 

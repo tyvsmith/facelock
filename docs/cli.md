@@ -161,7 +161,7 @@ TPM aborts. Provider selection has its own fallback behavior, described below.
 | `--camera <PATH\|auto>` | a `/dev/video*` path, or `auto` | Re-classifies the attached devices and picks the single IR-capable node that advertises a format Facelock can decode. Zero usable IR devices and more than one are both errors that list what was found; an IR node excluded for formats such as Y8/Y10/Y12 is reported with its path and formats. | 1 |
 | `--models <standard\|balanced\|high>` | three presets | *no `auto`*: quality is a preference, not something the machine can report | 2 |
 | `--execution-provider <cpu\|cuda\|rocm\|openvino\|auto>` | provider name | Asks the installed ONNX Runtime which providers it was built with and takes the best, in the order cuda > rocm > openvino > cpu. Availability is a property of the runtime build, not of the hardware, and the choice is always printed. | 3 |
-| `--encryption <tpm\|keyfile\|none\|auto>` | method | Uses the TPM when a working TPM 2.0 is present, otherwise a software keyfile. | 5 |
+| `--encryption <tpm\|keyfile\|none\|auto>` | method | Uses the TPM when a working TPM 2.0 is present, otherwise a software keyfile. Carries an existing key across like the explicit values: a keyfile is sealed rather than shadowed by a fresh sealed key. | 5 |
 
 When `security.require_ir = true` and the wizard detects IR-classified nodes but
 all of them advertise only unsupported formats, camera selection is a fatal
