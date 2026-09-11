@@ -42,9 +42,15 @@ each; Rawhide is experimental and never a lane.
 
 ## What CI runs, and when
 
-`.github/workflows/ci.yml` gates every pull request: build, test, clippy, audit,
-the PAM standalone surface, agent docs, translation catalogs, and tier 3/3a in
-`container-pam-test`.
+`.github/workflows/ci.yml` gates every pull request: format, clippy (with and
+without `tpm`), test, docs contracts, the PAM standalone surface, audit, agent
+docs, translation catalogs, and tier 3/3a in `container-pam-test`. The
+`build-and-test` job is a sequence of justfile recipes (`fmt-check`, `lint`,
+`lint-tpm`, `test`, `check-docs`, `check-pam-standalone`,
+`build-smoke-binaries`), so what CI checks is what the recipe says; there is no
+separate `cargo build` step because clippy `--all-targets` type-checks every
+target and `test` builds the workspace. `tpm-tests` is the only job that runs
+`cargo test --features tpm`.
 
 `.github/workflows/packaging.yml` gates the packaged artifacts: tiers 3d and 3e,
 both Debian suite lanes, and the native version-ordering matrix. It runs on three

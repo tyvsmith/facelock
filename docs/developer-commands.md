@@ -36,6 +36,7 @@ index, so substitute real values for metavariables before running a recipe.
 | `just audit` | Scan Cargo.lock for RustSec advisories; requires cargo-audit and applies .cargo/audit.toml. |
 | `just build` | Build in debug mode (development) |
 | `just build-release` | Build in release mode (for install) |
+| `just build-smoke-binaries` | Build only the release `facelock` (tpm) and PAM module the CI smoke tiers consume. |
 | `just check` | Run local tests, lint, format, audit, PAM isolation and documentation/install/release contracts; excludes full packaging and hardware lanes. |
 | `just check-agent-docs [base=]` | Check repository instructions and lifecycle contracts; optional base ref adds a coupling check. |
 | `just check-docs` | Verify instructional coverage, references and parser acceptance (no example execution). |
@@ -51,6 +52,7 @@ index, so substitute real values for metavariables before running a recipe.
 | `just install-files` | Install pre-built binaries to system (requires root, no build) |
 | `just link-models [src=]` | Populate models/*.onnx from an existing checkout or install tree |
 | `just lint` | Lint every workspace target with Clippy, denying warnings (matches CI). |
+| `just lint-tpm` | Lint every workspace target with the `tpm` feature enabled (matches CI). |
 | `just mo` | Compile and validate available PO catalogs into target/locale (requires msgfmt). |
 | `just pot` | Regenerate both gettext POT templates from source messages. |
 | `just release <version>` | Validate and update release versions, then print the commit/tag/push steps; does not publish. |

@@ -35,71 +35,56 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # cache-on-failure: a red run on a pull request still saves its
+      # dependency build, so the fix-up push starts warm instead of paying
+      # the full dependency compile again.
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          cache-on-failure: true
 
       # Documentation tests enumerate tracked files from this root-owned container.
       - name: Trust the workspace checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      # Every gate below is a justfile recipe so CI and `just check` share one
+      # definition; edit the recipe, not this file, to change what is checked.
+      #
+      # There is deliberately no plain `cargo build` step: `lint` runs clippy
+      # with --all-targets, which type-checks every target, and `test` builds
+      # the workspace for real. The two clippy passes stay because the `tpm`
+      # feature gates code in the cli, daemon and tpm crates. Tests run without
+      # the feature here; the `tpm-tests` job below runs them with it against
+      # swtpm. clippy and test share target/debug (dev profile), so the second
+      # reuses the first's build scripts and proc-macros.
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: just fmt-check
 
-      - name: Build workspace
-        run: cargo build --workspace
-
-      - name: Build workspace with TPM
-        run: cargo build --workspace --features tpm
-
-      # --all-targets so test/bench code is linted too; without it a
-      # deny-by-default lint in a test never fails CI. Keep in sync with the
-      # justfile `lint` recipe, which is the same command.
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: just lint
 
       - name: Run clippy with TPM
-        run: cargo clippy --workspace --all-targets --features tpm -- -D warnings
+        run: just lint-tpm
 
       - name: Run tests
-        run: cargo test --workspace
+        run: just test
 
       - name: Verify documented commands and walkthrough contracts
         run: just check-docs
 
-      # Build the PAM module ALONE — not via --workspace. `cargo build --workspace`
-      # unifies features across crates, so facelock-cli/facelock-polkit (which both
-      # request zbus ["tokio","blocking-api"]) silently repair an incoherent zbus
-      # feature set in pam-facelock. That masks a real breakage: zbus's `blocking`
-      # module is gated by `blocking-api`, NOT by the `blocking` feature, and with
-      # default-features off you must also pick a runtime (`tokio` or `async-io`).
-      # A standalone build is the only thing that proves the PAM crate compiles on
-      # its own. Keep in sync with `just check-pam-standalone`.
-      - name: Build pam-facelock in isolation
-        run: cargo build -p pam-facelock
+      # Builds the PAM module ALONE — not via --workspace — then guards its
+      # dependency surface. `cargo build --workspace` unifies features across
+      # crates, so facelock-cli/facelock-polkit silently repair an incoherent
+      # zbus feature set in pam-facelock; only a standalone build proves the
+      # crate compiles on its own. The forbidden-crate list and its rationale
+      # live with the recipe and in .claude/rules/pam-boundary.md.
+      - name: Build pam-facelock in isolation and verify its dependency surface
+        run: just check-pam-standalone
 
-      # The whole point of PR #107 is to keep the PAM module's dependency surface
-      # small, so forbid the async-io runtime backend: async-io/async-signal/polling
-      # plus the async-executor/async-fs/async-lock trio that only the async-io zbus
-      # backend pulls. We deliberately do NOT forbid signal-hook-registry: the
-      # correct tokio backend pulls it transitively via tokio's "process" feature,
-      # so listing it here would reject the very fix that shrinks the surface. If you
-      # think you need to add signal-hook-registry back, you have probably
-      # reintroduced the async-io backend — check for async-io first.
-      # Keep in sync with `just check-pam-standalone`.
-      - name: Verify pam-facelock dependency surface
-        run: |
-          cargo tree -p pam-facelock --edges normal --prefix none | awk '{print $1}' | sort -u > /tmp/pam-deps
-          echo "pam-facelock crate count: $(wc -l < /tmp/pam-deps)"
-          if grep -Eq '^(async-io|async-signal|async-executor|async-fs|async-lock|polling)$' /tmp/pam-deps; then
-            echo "forbidden async-io backend crates in pam-facelock (expected the tokio backend)"
-            exit 1
-          fi
-          echo "pam-facelock dependency guard passed"
-
-      - name: Build release binaries
-        run: |
-          cargo build --release --workspace
-          cargo build --release -p facelock-cli --features tpm
+      # Only the two files uploaded below are linked; see the recipe for why
+      # that is the single largest saving in this job.
+      - name: Build release binaries for the smoke tiers
+        run: just build-smoke-binaries
 
       - name: Upload release binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
