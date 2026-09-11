@@ -657,8 +657,14 @@ test-arch-camera-required: _require-clean-tree test-arch-integration test-arch-o
 test-arch-loopback ir="" rgb="": _require-models _build-test-container
     #!/usr/bin/env bash
     set -euo pipefail
+    # The script binds its positionals as IR then RGB, so an RGB-only call
+    # must still fill the IR slot or the RGB node would be fed as the IR one.
+    ir_node="{{ ir }}"
+    if [ -z "$ir_node" ] && [ -n "{{ rgb }}" ]; then
+        ir_node="${FACELOCK_LOOPBACK_IR:-/dev/video20}"
+    fi
     args=()
-    [ -n "{{ ir }}" ] && args+=("{{ ir }}")
+    [ -n "$ir_node" ] && args+=("$ir_node")
     [ -n "{{ rgb }}" ] && args+=("{{ rgb }}")
     if [ -n "${FACELOCK_LIVE_TIMEOUT:-}" ] && [[ ! "$FACELOCK_LIVE_TIMEOUT" =~ ^[0-9]+(\.[0-9]+)?[smhd]?$ ]]; then
         echo "error: FACELOCK_LIVE_TIMEOUT='$FACELOCK_LIVE_TIMEOUT' is not a timeout(1) duration (e.g. 300s, 5m)" >&2
