@@ -692,7 +692,12 @@ loopback-up:
                 echo "error: $node is a real camera ($(cat "$sys/name")); pick another with FACELOCK_LOOPBACK_${role^^}" >&2
                 exit 2
             fi
-            echo "$node already exists ($(cat "$sys/name" 2>/dev/null || echo '?')), keeping it"
+            name="$(cat "$sys/name" 2>/dev/null || echo '?')"
+            if [ "$name" != "facelock-synth-$role" ]; then
+                echo "error: $node is another tool's loopback ($name); pick a free node with FACELOCK_LOOPBACK_${role^^}" >&2
+                exit 2
+            fi
+            echo "$node already exists ($name), keeping it"
             continue
         fi
         echo "+ sudo v4l2loopback-ctl add -x 1 -n facelock-synth-$role $node"
