@@ -654,6 +654,74 @@ test-arch-camera-required: _require-clean-tree test-arch-integration test-arch-o
 #
 
 # Both camera-required E2E tiers against a synthetic v4l2loopback camera, recorded for release-preflight
+# The two v4l2loopback nodes `test-arch-loopback` feeds. Adding a node is a
+# root operation, so these recipes run exactly the privileged commands they
+# print, one sudo prompt, and nothing else elevated: `podman`, cargo, and the
+# tier itself stay rootless. Run them as yourself, never as `sudo just ...`,
+# which would make everything the session touches root-owned.
+#
+# `loopback-up` adds nodes only if they are missing and refuses a node that
+# is a real camera. `loopback-down` removes only nodes carrying the labels
+# below, so a module loaded for something else (NVbroadcast, OBS) is never
+# unloaded or touched.
+
+# Add the two v4l2loopback nodes test-arch-loopback feeds (one sudo prompt)
+loopback-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$(id -u)" = 0 ]; then
+        echo "error: run 'just loopback-up' as yourself; it calls sudo for the commands that need it" >&2
+        exit 2
+    fi
+    ir="${FACELOCK_LOOPBACK_IR:-/dev/video20}"
+    rgb="${FACELOCK_LOOPBACK_RGB:-/dev/video21}"
+    if ! command -v v4l2loopback-ctl >/dev/null; then
+        echo "error: v4l2loopback-ctl not found (package v4l2loopback-utils; the module is v4l2loopback-dkms)" >&2
+        exit 2
+    fi
+    if [ ! -e /dev/v4l2loopback ]; then
+        echo "module not loaded; loading it with no devices so nodes can be added by label"
+        echo "+ sudo modprobe v4l2loopback devices=0"
+        sudo modprobe v4l2loopback devices=0
+    fi
+    for pair in "mono:$ir" "color:$rgb"; do
+        role="${pair%%:*}"; node="${pair#*:}"
+        if [ -c "$node" ]; then
+            sys="/sys/class/video4linux/$(basename "$node")"
+            if [ -e "$sys/device" ]; then
+                echo "error: $node is a real camera ($(cat "$sys/name")); pick another with FACELOCK_LOOPBACK_${role^^}" >&2
+                exit 2
+            fi
+            echo "$node already exists ($(cat "$sys/name" 2>/dev/null || echo '?')), keeping it"
+            continue
+        fi
+        echo "+ sudo v4l2loopback-ctl add -x 1 -n facelock-synth-$role $node"
+        sudo v4l2loopback-ctl add -x 1 -n "facelock-synth-$role" "$node"
+    done
+    echo "+ sudo udevadm settle && sudo chmod a+rw $ir $rgb"
+    sudo udevadm settle && sudo chmod a+rw "$ir" "$rgb"
+    echo "loopback nodes ready: $ir (mono) $rgb (color); run 'just test-arch-loopback'"
+
+# Remove the facelock-synth-* loopback nodes and nothing else (one sudo prompt)
+loopback-down:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$(id -u)" = 0 ]; then
+        echo "error: run 'just loopback-down' as yourself; it calls sudo for the commands that need it" >&2
+        exit 2
+    fi
+    removed=0
+    for sys in /sys/class/video4linux/video*; do
+        [ -e "$sys/name" ] || continue
+        name="$(cat "$sys/name")"
+        case "$name" in facelock-synth-mono|facelock-synth-color) ;; *) continue ;; esac
+        node="/dev/$(basename "$sys")"
+        echo "+ sudo v4l2loopback-ctl delete $node   # $name"
+        sudo v4l2loopback-ctl delete "$node"
+        removed=$((removed + 1))
+    done
+    echo "removed $removed facelock loopback node(s); other v4l2loopback devices untouched"
+
 test-arch-loopback ir="" rgb="": _require-models _build-test-container
     #!/usr/bin/env bash
     set -euo pipefail

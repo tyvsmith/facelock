@@ -54,6 +54,8 @@ index, so substitute real values for metavariables before running a recipe.
 | `just link-models [src=]` | Populate models/*.onnx from an existing checkout or install tree |
 | `just lint` | Lint every workspace target with Clippy, denying warnings (matches CI). |
 | `just lint-tpm` | Lint every workspace target with the `tpm` feature enabled (matches CI). |
+| `just loopback-down` | Remove the facelock-synth-* loopback nodes and nothing else (one sudo prompt) |
+| `just loopback-up` | Add the two v4l2loopback nodes test-arch-loopback feeds (one sudo prompt) |
 | `just mo` | Compile and validate available PO catalogs into target/locale (requires msgfmt). |
 | `just pot` | Regenerate both gettext POT templates from source messages. |
 | `just release <version>` | Validate and update release versions, then print the commit/tag/push steps; does not publish. |
@@ -67,7 +69,7 @@ index, so substitute real values for metavariables before running a recipe.
 | `just test-arch-dev-shell` | Dev shell — interactive Arch container with host models for fast iteration (requires camera) |
 | `just test-arch-integration` | Automated daemon integration tests (Arch, requires camera) |
 | `just test-arch-layout` | Check installed state-directory permissions and enrollment-marker visibility in Arch. |
-| `just test-arch-loopback [ir=] [rgb=]` | Both camera-required E2E tiers against a synthetic v4l2loopback camera, recorded for release-preflight |
+| `just test-arch-loopback [ir=] [rgb=]` | See the recipe body and its prerequisites |
 | `just test-arch-oneshot` | Automated oneshot (daemonless) integration tests (Arch, requires camera) |
 | `just test-arch-package-select` | Test selection of the main Arch package rather than its debug split. |
 | `just test-arch-pam` | Automated PAM smoke tests (Arch container) |
