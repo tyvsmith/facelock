@@ -121,16 +121,23 @@ fn synthetic_sequence_sits_inside_every_live_gate() {
         "consecutive similarity: min={min_consecutive:.4} max={max_consecutive:.4} seam={wrap:.4}"
     );
 
-    let mut min_to_first = 1.0f32;
-    for (i, emb) in embeddings.iter().enumerate().skip(1) {
-        let sim = cosine_similarity(&embeddings[0], emb);
-        min_to_first = min_to_first.min(sim);
-        assert!(
-            sim >= CONTAINER_RECOGNITION_THRESHOLD,
-            "frame {i}: similarity to frame 0 is {sim:.4}, below the recognition threshold"
-        );
+    // Enrollment stores whichever consecutive window the feeder was on, and
+    // authentication takes the best match of a live frame against that
+    // window. The worst case is a live frame against a window that does not
+    // contain it, so every pair of frames has to clear the threshold, not
+    // just every frame against frame 0.
+    let mut min_pair = 1.0f32;
+    for (i, a) in embeddings.iter().enumerate() {
+        for (j, b) in embeddings.iter().enumerate().skip(i + 1) {
+            let sim = cosine_similarity(a, b);
+            min_pair = min_pair.min(sim);
+            assert!(
+                sim >= CONTAINER_RECOGNITION_THRESHOLD,
+                "frames {i} and {j}: similarity {sim:.4} is below the recognition threshold"
+            );
+        }
     }
-    eprintln!("similarity to frame 0: min={min_to_first:.4}");
+    eprintln!("pairwise similarity: min={min_pair:.4}");
 
     // Enrollment accepts up to ENROLL_WINDOW consecutive frames, starting
     // wherever the feeder happens to be. Every such window needs one pair

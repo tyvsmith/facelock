@@ -60,7 +60,7 @@ schedules:
 
 | When | What | Filter |
 |---|---|---|
-| Pull request | every lane; Debian lanes without the `.dsc` rebuild | per lane, only the lanes the diff reaches |
+| Pull request | every lane except COPR; Debian lanes without the `.dsc` rebuild | per lane, only the lanes the diff reaches |
 | Nightly (07:00 UTC) | every lane | none |
 | `just release-preflight` | lane evidence uploaded by a green run at HEAD, or the marker a local `just test-packaging-matrix` wrote at HEAD | none |
 
@@ -81,8 +81,9 @@ compile, is left to the nightly and the dispatch (#337). Such a lane records
 `depth=partial`, which `just release-preflight` refuses.
 
 So a green pull request is **not** packaging-verified unless the packaging jobs
-actually ran on it. A Rust-only change runs only the release-binaries build on
-its pull request; if it breaks the packaged runtime, the nightly matrix catches
+actually ran on it. A change to Rust source alone (Cargo manifests and the
+lockfile reach every lane) runs only the release-binaries build on its pull
+request; if it breaks the packaged runtime, the nightly matrix catches
 it within a day, and the release gate before it ships.
 `just test-packaging-matrix` runs every lane locally and records each lane's
 evidence, for a maintainer without CI in reach; a run that skipped anything is

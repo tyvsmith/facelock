@@ -436,8 +436,8 @@ lane.
 
 | Changed path | Lanes |
 |---|---|
-| `debian/`, `dist/apt/`, `test/*deb*`, `test/*apt*`, `.github/workflows/scripts/*deb*` | deb |
-| `dist/facelock.spec`, `dist/rpm/`, `.packit.yaml`, `test/Containerfile.{fedora,copr*,rpm*,packit}`, `test/*rpm*`, `test/*copr*`, `test/fedora-lane-image.sh`, `.github/workflows/scripts/*rpm*` | rpm, release_binaries |
+| `debian/`, `dist/apt/`, `test/*deb*`, `test/*apt*`, `.github/workflows/scripts/*deb*`, `.github/workflows/scripts/*apt*` | deb |
+| `dist/facelock.spec`, `dist/rpm/`, `.packit.yaml`, `test/Containerfile.{fedora,copr*,rpm*,packit}`, `test/*rpm*`, `test/*copr*`, `test/*packit*`, `test/fedora-lane-image.sh`, `.github/workflows/scripts/*rpm*`, `.github/workflows/scripts/*copr*` | rpm, release_binaries |
 | `dist/PKGBUILD*`, `dist/facelock.install`, `dist/facelock-pam-remove.hook`, `test/*arch*`, `.github/workflows/scripts/*aur*` | arch |
 | `test/release-*` | release_matrix |
 | the rest of `dist/`, `systemd/`, `dbus/`, `config/`, `scripts/`, `justfile`, `Cargo.toml`, `Cargo.lock`, `crates/*/Cargo.toml`, `test/Containerfile*`, `test/*pkg*`, the shared PAM/polkit/TPM validators, `.github/workflows/packaging.yml`, `.github/workflows/release.yml`, the other workflow scripts, `.github/actions/` | all |
@@ -1140,7 +1140,8 @@ Since facelock is a PAM module, broken releases can lock users out. Every releas
 4. Pass `just test-arch-loopback` (synthetic camera, no person) or
    `just test-arch-camera-required` (a camera and a person in frame, the only
    run that proves real-sensor recognition) against the final release commit;
-   `just release-preflight` fails until one has
+   `just release-preflight` fails until one tier has run at that commit, or a
+   hand-run tier has been acknowledged at it
 5. Pass `just test-rpm` and `just test-deb` (multi-distro package validation)
 6. Not change PAM auth semantics without explicit changelog entry
 5. Preserve `/etc/pam.d/sudo` backup on install (`/var/lib/facelock/pam-backups/sudo.<timestamp>`)
