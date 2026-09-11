@@ -23,10 +23,336 @@ fail() {
     exit 1
 }
 
-# ------------------------------------------------------------------ workflow
-
 [ -f "$workflow_path" ] || fail "missing release workflow: $workflow_path"
 [ -x "$helper_path" ] || fail "release asset helper must be executable: $helper_path"
+
+# --------------------------------------------------------- mutations: queued
+
+# Every mutant below re-runs this whole script, and a run that must be
+# accepted pays the full static pass. So the mutants are written first and
+# their runs start in the background, FACELOCK_MUTATION_JOBS at a time
+# (default: one per CPU), while this process goes on with its own static pass;
+# the verdicts are read out in queue order at the end, under "mutations".
+# FACELOCK_MUTATION_JOBS=1 keeps the runs serial for debugging. Runs share
+# nothing: each allocates its own mktemp work tree and only reads the checkout.
+work="$(mktemp -d "${TMPDIR:-/tmp}/facelock-release-artifacts.XXXXXX")"
+# The scheduler runs in its own process group so an early exit takes every
+# in-flight re-run down with it, not just xargs.
+trap '[ -z "${mutation_scheduler:-}" ] || kill -- -"$mutation_scheduler" 2>/dev/null; rm -rf -- "$work"' EXIT
+
+if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}" ] &&
+    [ -z "${FACELOCK_RELEASE_ATTESTATIONS:-}" ]; then
+    mutation_root="$work/mutations"
+    mutation_runs="$mutation_root/runs"
+    mkdir -p "$mutation_runs"
+    mutation_jobs="${FACELOCK_MUTATION_JOBS:-$(nproc 2>/dev/null || echo 4)}"
+    case "$mutation_jobs" in
+        '' | *[!0-9]* | 0) fail "FACELOCK_MUTATION_JOBS must be a positive integer: '$mutation_jobs'" ;;
+    esac
+    mutation_queue=()
+
+    # queue_mutation VERDICT VARIABLE MUTANT LABEL CONTEXT [NEEDLE]
+    #   VERDICT   rejected: the run must fail and its output must carry NEEDLE
+    #             accepted: the run must pass
+    #   VARIABLE  the env var that points the re-run at MUTANT
+    #   LABEL     the word after "release artifacts" in the success line
+    queue_mutation() {
+        mutation_queue+=("$1	$2	$3	$4	$5	${6:-}")
+    }
+
+    # One re-run per queued mutant, bounded by xargs -P. The runner always
+    # exits 0 and leaves the verdict in $index.status beside $index.log, so a
+    # failed contract never stops the scheduler early.
+    launch_mutations() {
+        local index=0 entry verdict variable mutant label context needle
+        for entry in "${mutation_queue[@]}"; do
+            IFS=$'\t' read -r verdict variable mutant label context needle <<<"$entry"
+            printf '%s\0%s\0%s\0' "$index" "$variable" "$mutant"
+            index=$((index + 1))
+        done >"$mutation_runs/queue"
+        # shellcheck disable=SC2016
+        setsid xargs -0 -n 3 -P "$mutation_jobs" -a "$mutation_runs/queue" -- bash -c '
+            runs="$1" self="$2" index="$3" variable="$4" mutant="$5"
+            if env "$variable=$mutant" bash "$self" >"$runs/$index.log" 2>&1; then
+                echo 0 >"$runs/$index.status"
+            else
+                echo 1 >"$runs/$index.status"
+            fi' _ "$mutation_runs" "$self" &
+        mutation_scheduler=$!
+    }
+
+    # Every verdict in queue order; every failure listed before the gate exits.
+    report_mutations() {
+        wait "$mutation_scheduler" || fail "the mutation runner failed"
+        mutation_scheduler=""
+        local index=0 failures=0 entry verdict variable mutant label context needle status output
+        for entry in "${mutation_queue[@]}"; do
+            IFS=$'\t' read -r verdict variable mutant label context needle <<<"$entry"
+            # A run killed before it wrote its verdict (out of memory, say)
+            # counts as a failure with its own message, never as an abort.
+            status="$(cat "$mutation_runs/$index.status" 2>/dev/null || echo missing)"
+            output="$(cat "$mutation_runs/$index.log" 2>/dev/null || true)"
+            index=$((index + 1))
+            case "$status:$verdict" in
+                missing:*)
+                    echo "release artifacts contract: $context run left no verdict: $output" >&2
+                    failures=$((failures + 1))
+                    ;;
+                *:rejected)
+                    if [ "$status" = 0 ]; then
+                        echo "release artifacts contract: release artifacts contract accepted $context" >&2
+                        failures=$((failures + 1))
+                    elif ! printf '%s\n' "$output" | grep -Fq "$needle"; then
+                        echo "release artifacts contract: $context mutation failed for an unrelated reason: $output" >&2
+                        failures=$((failures + 1))
+                    else
+                        echo "release artifacts $label: $context rejected"
+                    fi
+                    ;;
+                *:accepted)
+                    if [ "$status" != 0 ]; then
+                        echo "release artifacts contract: release artifacts contract rejected $context: $output" >&2
+                        failures=$((failures + 1))
+                    else
+                        echo "release artifacts $label: $context accepted"
+                    fi
+                    ;;
+            esac
+        done
+        [ "$failures" = 0 ] || fail "$failures of ${#mutation_queue[@]} mutation runs failed"
+    }
+
+    # The attesting set is the only thing standing between an extra artifact
+    # and forged provenance in MANIFEST.json, so prove the check is load-bearing.
+    assert_loader_mutation_rejected() {
+        local context="$1" expression="$2" needle="$3"
+        local loader=.github/workflows/scripts/release_attestations.py
+        local mutant
+        mutant="$mutation_root/release_attestations-$(printf '%s' "$context" | tr ' ' '-').py"
+        sed -E "$expression" "$loader" >"$mutant"
+        if cmp -s "$loader" "$mutant"; then
+            fail "$context mutation did not change the attestation loader"
+        fi
+        queue_mutation rejected FACELOCK_RELEASE_ATTESTATIONS "$mutant" mutation "$context" "$needle"
+    }
+
+    assert_loader_mutation_rejected "an unpinned attesting set" \
+        's/^    unexpected = sorted\(set\(present\) - set\(expected\)\)$/    unexpected = []/' \
+        "extra digest artifact forging another job's provenance: helper accepted"
+    assert_loader_mutation_rejected "attestations trusted to name their own job" \
+        's/^        if document.get\("job"\) != job:$/        if False:/' \
+        "attestation declaring a job that is not its slot: helper accepted"
+    assert_loader_mutation_rejected "attestations not held to their job outputs" \
+        's/^        if actual != recorded:$/        if False:/' \
+        "attestation replaced after its job recorded it: helper accepted"
+    assert_loader_mutation_rejected "a missing job output tolerated" \
+        's/^        if not isinstance\(recorded, str\) or not DIGEST.fullmatch\(recorded\):$/        if False:/' \
+        "attesting job that recorded no output"
+    assert_loader_mutation_rejected "build images taken from the attestation" \
+        's/^        if document.get\("image"\) != image:$/        if False:/' \
+        "attestation swapping its build image: helper accepted"
+    assert_loader_mutation_rejected "component keys taken from the attestation" \
+        's/^        if sorted\(document.get\("components", \{\}\)\) != components:$/        if False:/' \
+        "attestation adding a component: helper accepted"
+
+    # The helper itself, mutated into a tree of its own so the checkout stays
+    # clean: it resolves the repository root from its own location.
+    assert_helper_mutation_rejected() {
+        local context="$1" expression="$2" needle="$3"
+        local root mutant
+        root="$mutation_root/helper-$(printf '%s' "$context" | tr ' ' '-')"
+        mkdir -p "$root/.github/workflows/scripts"
+        ln -s "$repo_root/scripts" "$root/scripts"
+        ln -s "$repo_root/dist" "$root/dist"
+        cp .github/workflows/scripts/release_attestations.py "$root/.github/workflows/scripts/"
+        mutant="$root/.github/workflows/scripts/release-assets.sh"
+        sed -E "$expression" "$helper_path" >"$mutant"
+        chmod +x "$mutant"
+        if cmp -s "$helper_path" "$mutant"; then
+            fail "$context mutation did not change the release asset helper"
+        fi
+        queue_mutation rejected FACELOCK_RELEASE_ASSETS "$mutant" mutation "$context" "$needle"
+    }
+
+    # shellcheck disable=SC2016
+    assert_helper_mutation_rejected "an empty suite list tolerated" \
+        's/^    \[ -n "\$listing" \] \|\| fail "the release matrix names no Debian suite.*$/    [ -n "$listing" ] || return 0/' \
+        "allowlist from a matrix with no suite: helper accepted"
+    assert_helper_mutation_rejected "python running with the working directory on its path" \
+        's/^export PYTHONSAFEPATH=1$/: # safe path disabled/' \
+        "imported a module from its working directory"
+
+    assert_workflow_mutation_rejected() {
+        local context="$1" expression="$2" needle="$3"
+        local mutated
+        mutated="$mutation_root/release-$(printf '%s' "$context" | tr ' ' '-').yml"
+        sed -E "$expression" "$workflow_path" >"$mutated"
+        if cmp -s "$workflow_path" "$mutated"; then
+            fail "$context mutation did not change the workflow"
+        fi
+        queue_mutation rejected FACELOCK_RELEASE_WORKFLOW "$mutated" mutation "$context" "$needle"
+    }
+
+    assert_workflow_mutation_rejected "the deb step left on the image shell" \
+        '/^      - name: Build suite-specific \.deb package$/,/^        run: \|$/{/^        shell: bash$/d}' \
+        "declare 'shell: bash' on step: Build suite-specific .deb package"
+    assert_workflow_mutation_rejected "the rpm step left on the image shell" \
+        '/^      - name: Select the packages the validated metadata names$/,/^        run: \|$/{/^        shell: bash$/d}' \
+        "declare 'shell: bash' on step: Select the packages the validated metadata names"
+    assert_workflow_mutation_rejected "a container step shell weakened to sh" \
+        's/^        shell: bash$/        shell: sh/' \
+        "runs bash-only syntax under the image's /bin/sh"
+    assert_workflow_mutation_rejected "a one-line container step turning bash" \
+        's|^        run: scripts/prepare-cargo-vendor\.sh verify cargo-vendor$|        run: [[ -d cargo-vendor ]] \&\& scripts/prepare-cargo-vendor.sh verify cargo-vendor|' \
+        "declare 'shell: bash' on step: Verify exact Cargo vendor bundle"
+    assert_workflow_mutation_rejected "a nameless container step turning bash" \
+        '/^      - name: Verify exact Cargo vendor bundle$/,+1c\      - run: [[ -d cargo-vendor ]] && scripts/prepare-cargo-vendor.sh verify cargo-vendor' \
+        "runs bash-only syntax under the image's /bin/sh"
+
+    # The other direction of the step-shell rule: a workflow it must not
+    # reject. Whole-line YAML comments never reach the scanner because
+    # job_statements strips them first, so a comment illustrating bash syntax
+    # is documentation and not a step written in bash. Pinned because the
+    # stripping happens a long way from the scan, and a later rewrite reading
+    # job_body directly would make this comment look like script.
+    assert_workflow_mutation_accepted() {
+        local context="$1" expression="$2"
+        local mutated
+        mutated="$mutation_root/release-$(printf '%s' "$context" | tr ' ' '-').yml"
+        sed -E "$expression" "$workflow_path" >"$mutated"
+        if cmp -s "$workflow_path" "$mutated"; then
+            fail "$context mutation did not change the workflow"
+        fi
+        queue_mutation accepted FACELOCK_RELEASE_WORKFLOW "$mutated" case "$context"
+    }
+
+    assert_workflow_mutation_accepted "a container step commented with bash syntax" \
+        's|^        run: scripts/prepare-cargo-vendor\.sh verify cargo-vendor$|&\n        # example: [[ -f file ]] \&\& mapfile -t x < <(echo hi)|'
+    assert_workflow_mutation_rejected "public release creation" \
+        's/^          draft: true$//' \
+        "must create the GitHub release as a draft"
+    assert_workflow_mutation_rejected "builder holding the release write scope" \
+        '0,/^      contents: read$/s//      contents: write/' \
+        "only the publish job may hold contents: write"
+    # The mutation expressions below name literal workflow text, not shell
+    # expansions.
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "builder holding the publication credential" \
+        's/^      - name: Build release$/      - name: Build release\n        env:\n          TOKEN: ${{ secrets.RELEASE_PAT }}/' \
+        "builders produce artifacts only"
+    assert_workflow_mutation_rejected "builder writing the release directly" \
+        's|^      - name: Upload the APT repository artifact$|      - name: Write the release\n        uses: softprops/action-gh-release@0000\n\n      - name: Upload the APT repository artifact|' \
+        "builders produce artifacts only"
+    assert_workflow_mutation_rejected "compiling in the publishing job" \
+        's|^      - name: Verify the maintainer tag$|      - name: Rebuild\n        run: cargo build --release\n\n      - name: Verify the maintainer tag|' \
+        "must not compile or package anything"
+    # Neutralized, not deleted: the step stays in place as a no-op with its
+    # old text in a comment, which is what a careless edit leaves behind.
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "unverified tag" \
+        's|^( *)\$HELPER verify-tag .*|\1: # verify-tag disabled|' \
+        'must run $HELPER verify-tag'
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "unverified builder attestations" \
+        's|^( *)run: \$HELPER verify-digests .*|\1run: ": # verify-digests disabled"|' \
+        'must run $HELPER verify-digests'
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "manifest upload skipped" \
+        's|^( *)run: gh release upload "\$TAG" MANIFEST\.json --clobber$|\1: # disabled|' \
+        'must run gh release upload "$TAG" MANIFEST.json'
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "no revalidation before the flip" \
+        's|^( *)\$HELPER expected "\$VERSION" "\$DEBIAN_REVISION" "\$RPM_COUNTER" "\$PRERELEASE" final .*|\1: # final readback disabled|' \
+        'must run PRERELEASE" final'
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "final readback comparing names only" \
+        's|^( *)\$HELPER verify-published .*|\1: # verify-published disabled|' \
+        'must run $HELPER verify-published'
+    assert_workflow_mutation_rejected "two runs publishing one tag" \
+        '/^concurrency:$/,/^$/d' \
+        "must declare a concurrency group"
+    assert_workflow_mutation_rejected "runs cancelling the one in progress" \
+        's/^  cancel-in-progress: false$/  cancel-in-progress: true/' \
+        "never cancel it"
+    assert_workflow_mutation_rejected "flake evaluation that cannot fail" \
+        's|^        run: nix flake check ./dist/nix --no-build$|        run: nix flake check ./dist/nix --no-build\n        continue-on-error: true|' \
+        "flake evaluation must gate publication"
+
+    # The checkout-ownership exception. Removed, neutralized, displaced, or
+    # owed by a job that just acquired git: each is a tag-time-only failure,
+    # which is the class this whole gate exists for.
+    assert_workflow_mutation_rejected "a container job left untrusting" \
+        '/^      - name: Trust the workspace checkout$/,+1d' \
+        "must trust the workspace checkout"
+    assert_workflow_mutation_rejected "the ownership exception neutralized" \
+        's|^        run: git config --global --add safe\.directory .*$|        run: ": # trust disabled"|' \
+        "must trust the workspace checkout with exactly"
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "the ownership exception taken late" \
+        's|^      - name: Trust the workspace checkout$|      - name: Report the workspace\n        run: ls "$GITHUB_WORKSPACE"\n\n      - name: Trust the workspace checkout|' \
+        "immediately after checking it out"
+    assert_workflow_mutation_rejected "a container job gaining git untrusted" \
+        's|^            rust cargo clang-devel|            git rust cargo clang-devel|' \
+        "container job build-rpm installs git"
+    assert_workflow_mutation_rejected "an exception kept past its git install" \
+        's|^            git$||' \
+        "trusts the workspace checkout but installs no git"
+    # git as the very first package of the install, with no token before it.
+    assert_workflow_mutation_rejected "a container job installing git first" \
+        's|^          dnf install -y \\$|          dnf install git \\|' \
+        "container job build-rpm installs git"
+    # The exception read out of the job rather than out of its step: a no-op
+    # trust step beside a real `git config` line in a later one.
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "the exception moved out of its step" \
+        's|^        run: git config --global --add safe\.directory .*$|        run: ": # trust disabled"\n\n      - name: Trust it later\n        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"|' \
+        "must trust the workspace checkout with exactly"
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "attestation left unbound to its job" \
+        '0,/^      attestation: \$\{\{ steps.attest.outputs.sha256 \}\}$/s///' \
+        "declares no attestation output"
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "one suite of the matrix left unbound" \
+        '/^      attestation-resolute: /d' \
+        "differs from the release workflow's attestation outputs"
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "job outputs not passed through env" \
+        's/^          JOB_OUTPUTS: \$\{\{ toJSON\(needs\) \}\}$/          JOB_OUTPUTS: fixed/' \
+        "through exactly one env value"
+    assert_workflow_mutation_rejected "pages rebuild before publication" \
+        's/^    needs: \[publish-apt, publish\]$/    needs: [publish-apt]/' \
+        "trigger-pages must run after the release is published"
+    assert_workflow_mutation_rejected "COPR verification dropped" \
+        '/^  verify-copr:$/,/^  trigger-pages:$/{/^  trigger-pages:$/!d}' \
+        "release jobs drifted"
+    assert_workflow_mutation_rejected "COPR verification open to prereleases" \
+        '/^  verify-copr:$/,/^  trigger-pages:$/{/^    if: /d}' \
+        "verify-copr must be stable-only"
+    assert_workflow_mutation_rejected "COPR verification polling without a deadline" \
+        '/^  verify-copr:$/,/^  trigger-pages:$/{/^    timeout-minutes: /d}' \
+        "verify-copr polls and must carry its own timeout"
+    assert_workflow_mutation_rejected "release upload without the publication token" \
+        '0,/^          token: \$\{\{ secrets.RELEASE_PAT \}\}$/s///' \
+        "every release upload must pass the publication token"
+    # shellcheck disable=SC2016
+    assert_workflow_mutation_rejected "tag rewritten at publication" \
+        's/^      TAG: \$\{\{ github.ref_name \}\}$/      TAG: ${{ github.ref_name }}\n      TAG_TARGET: target_commitish/' \
+        "publishing must not send a tag or target commitish"
+
+    # Quote style is not semantics: a double-quoted --suite value must parse
+    # the same as the single-quoted one the workflow uses today, so extraction
+    # cannot silently go blind the day someone swaps the quoting.
+    suite_double_quoted="$mutation_root/release-suite-double-quoted.yml"
+    sed -E 's/--suite .(\$\{\{ matrix\.suite \}\})./--suite "\1"/' \
+        "$workflow_path" >"$suite_double_quoted"
+    cmp -s "$workflow_path" "$suite_double_quoted" &&
+        fail "double-quoted suite mutation did not change the workflow"
+    queue_mutation accepted FACELOCK_RELEASE_WORKFLOW "$suite_double_quoted" mutation "double-quoted --suite value"
+
+    launch_mutations
+fi
+
+# ------------------------------------------------------------------ workflow
 
 
 job_body() {
@@ -642,9 +968,6 @@ if grep -Eq "${git_command}push" "$helper_path"; then
 fi
 
 # ------------------------------------------------------- helper: by fixture
-
-work="$(mktemp -d "${TMPDIR:-/tmp}/facelock-release-artifacts.XXXXXX")"
-trap 'rm -rf -- "$work"' EXIT
 
 assert_rejects() {
     local context="$1" needle="$2"
@@ -1477,260 +1800,8 @@ assert_rejects "published asset the manifest does not cover" "not covered" \
     verify-published "$work/published-unlisted.json" v0.2.0 "$manifest"
 # ------------------------------------------------------------------ mutations
 
-if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}" ] &&
-    [ -z "${FACELOCK_RELEASE_ATTESTATIONS:-}" ]; then
-    mutation_root="$work/mutations"
-    mkdir -p "$mutation_root"
-
-    # The attesting set is the only thing standing between an extra artifact
-    # and forged provenance in MANIFEST.json, so prove the check is load-bearing.
-    assert_loader_mutation_rejected() {
-        local context="$1" expression="$2" needle="$3"
-        local loader=.github/workflows/scripts/release_attestations.py
-        local mutant
-        mutant="$mutation_root/release_attestations-$(printf '%s' "$context" | tr ' ' '-').py"
-        sed -E "$expression" "$loader" >"$mutant"
-        if cmp -s "$loader" "$mutant"; then
-            fail "$context mutation did not change the attestation loader"
-        fi
-        local output
-        if output="$(FACELOCK_RELEASE_ATTESTATIONS="$mutant" bash "$self" 2>&1)"; then
-            fail "release artifacts contract accepted $context"
-        fi
-        printf '%s\n' "$output" | grep -Fq "$needle" ||
-            fail "$context mutation failed for an unrelated reason: $output"
-        echo "release artifacts mutation: $context rejected"
-    }
-
-    assert_loader_mutation_rejected "an unpinned attesting set" \
-        's/^    unexpected = sorted\(set\(present\) - set\(expected\)\)$/    unexpected = []/' \
-        "extra digest artifact forging another job's provenance: helper accepted"
-    assert_loader_mutation_rejected "attestations trusted to name their own job" \
-        's/^        if document.get\("job"\) != job:$/        if False:/' \
-        "attestation declaring a job that is not its slot: helper accepted"
-    assert_loader_mutation_rejected "attestations not held to their job outputs" \
-        's/^        if actual != recorded:$/        if False:/' \
-        "attestation replaced after its job recorded it: helper accepted"
-    assert_loader_mutation_rejected "a missing job output tolerated" \
-        's/^        if not isinstance\(recorded, str\) or not DIGEST.fullmatch\(recorded\):$/        if False:/' \
-        "attesting job that recorded no output"
-    assert_loader_mutation_rejected "build images taken from the attestation" \
-        's/^        if document.get\("image"\) != image:$/        if False:/' \
-        "attestation swapping its build image: helper accepted"
-    assert_loader_mutation_rejected "component keys taken from the attestation" \
-        's/^        if sorted\(document.get\("components", \{\}\)\) != components:$/        if False:/' \
-        "attestation adding a component: helper accepted"
-
-    # The helper itself, mutated into a tree of its own so the checkout stays
-    # clean: it resolves the repository root from its own location.
-    assert_helper_mutation_rejected() {
-        local context="$1" expression="$2" needle="$3"
-        local root mutant
-        root="$mutation_root/helper-$(printf '%s' "$context" | tr ' ' '-')"
-        mkdir -p "$root/.github/workflows/scripts"
-        ln -s "$repo_root/scripts" "$root/scripts"
-        ln -s "$repo_root/dist" "$root/dist"
-        cp .github/workflows/scripts/release_attestations.py "$root/.github/workflows/scripts/"
-        mutant="$root/.github/workflows/scripts/release-assets.sh"
-        sed -E "$expression" "$helper_path" >"$mutant"
-        chmod +x "$mutant"
-        if cmp -s "$helper_path" "$mutant"; then
-            fail "$context mutation did not change the release asset helper"
-        fi
-        local output
-        if output="$(FACELOCK_RELEASE_ASSETS="$mutant" bash "$self" 2>&1)"; then
-            fail "release artifacts contract accepted $context"
-        fi
-        printf '%s\n' "$output" | grep -Fq "$needle" ||
-            fail "$context mutation failed for an unrelated reason: $output"
-        echo "release artifacts mutation: $context rejected"
-    }
-
-    # shellcheck disable=SC2016
-    assert_helper_mutation_rejected "an empty suite list tolerated" \
-        's/^    \[ -n "\$listing" \] \|\| fail "the release matrix names no Debian suite.*$/    [ -n "$listing" ] || return 0/' \
-        "allowlist from a matrix with no suite: helper accepted"
-    assert_helper_mutation_rejected "python running with the working directory on its path" \
-        's/^export PYTHONSAFEPATH=1$/: # safe path disabled/' \
-        "imported a module from its working directory"
-
-    assert_workflow_mutation_rejected() {
-        local context="$1" expression="$2" needle="$3"
-        local mutated
-        mutated="$mutation_root/release-$(printf '%s' "$context" | tr ' ' '-').yml"
-        sed -E "$expression" "$workflow_path" >"$mutated"
-        if cmp -s "$workflow_path" "$mutated"; then
-            fail "$context mutation did not change the workflow"
-        fi
-        local output
-        if output="$(FACELOCK_RELEASE_WORKFLOW="$mutated" bash "$self" 2>&1)"; then
-            fail "release artifacts contract accepted $context"
-        fi
-        printf '%s\n' "$output" | grep -Fq "$needle" ||
-            fail "$context mutation failed for an unrelated reason: $output"
-        echo "release artifacts mutation: $context rejected"
-    }
-
-    assert_workflow_mutation_rejected "the deb step left on the image shell" \
-        '/^      - name: Build suite-specific \.deb package$/,/^        run: \|$/{/^        shell: bash$/d}' \
-        "declare 'shell: bash' on step: Build suite-specific .deb package"
-    assert_workflow_mutation_rejected "the rpm step left on the image shell" \
-        '/^      - name: Select the packages the validated metadata names$/,/^        run: \|$/{/^        shell: bash$/d}' \
-        "declare 'shell: bash' on step: Select the packages the validated metadata names"
-    assert_workflow_mutation_rejected "a container step shell weakened to sh" \
-        's/^        shell: bash$/        shell: sh/' \
-        "runs bash-only syntax under the image's /bin/sh"
-    assert_workflow_mutation_rejected "a one-line container step turning bash" \
-        's|^        run: scripts/prepare-cargo-vendor\.sh verify cargo-vendor$|        run: [[ -d cargo-vendor ]] \&\& scripts/prepare-cargo-vendor.sh verify cargo-vendor|' \
-        "declare 'shell: bash' on step: Verify exact Cargo vendor bundle"
-    assert_workflow_mutation_rejected "a nameless container step turning bash" \
-        '/^      - name: Verify exact Cargo vendor bundle$/,+1c\      - run: [[ -d cargo-vendor ]] && scripts/prepare-cargo-vendor.sh verify cargo-vendor' \
-        "runs bash-only syntax under the image's /bin/sh"
-
-    # The other direction of the step-shell rule: a workflow it must not
-    # reject. Whole-line YAML comments never reach the scanner because
-    # job_statements strips them first, so a comment illustrating bash syntax
-    # is documentation and not a step written in bash. Pinned because the
-    # stripping happens a long way from the scan, and a later rewrite reading
-    # job_body directly would make this comment look like script.
-    assert_workflow_mutation_accepted() {
-        local context="$1" expression="$2"
-        local mutated
-        mutated="$mutation_root/release-$(printf '%s' "$context" | tr ' ' '-').yml"
-        sed -E "$expression" "$workflow_path" >"$mutated"
-        if cmp -s "$workflow_path" "$mutated"; then
-            fail "$context mutation did not change the workflow"
-        fi
-        FACELOCK_RELEASE_WORKFLOW="$mutated" bash "$self" >/dev/null 2>&1 ||
-            fail "release artifacts contract rejected $context"
-        echo "release artifacts case: $context accepted"
-    }
-
-    assert_workflow_mutation_accepted "a container step commented with bash syntax" \
-        's|^        run: scripts/prepare-cargo-vendor\.sh verify cargo-vendor$|&\n        # example: [[ -f file ]] \&\& mapfile -t x < <(echo hi)|'
-    assert_workflow_mutation_rejected "public release creation" \
-        's/^          draft: true$//' \
-        "must create the GitHub release as a draft"
-    assert_workflow_mutation_rejected "builder holding the release write scope" \
-        '0,/^      contents: read$/s//      contents: write/' \
-        "only the publish job may hold contents: write"
-    # The mutation expressions below name literal workflow text, not shell
-    # expansions.
-    # shellcheck disable=SC2016
-    assert_workflow_mutation_rejected "builder holding the publication credential" \
-        's/^      - name: Build release$/      - name: Build release\n        env:\n          TOKEN: ${{ secrets.RELEASE_PAT }}/' \
-        "builders produce artifacts only"
-    assert_workflow_mutation_rejected "builder writing the release directly" \
-        's|^      - name: Upload the APT repository artifact$|      - name: Write the release\n        uses: softprops/action-gh-release@0000\n\n      - name: Upload the APT repository artifact|' \
-        "builders produce artifacts only"
-    assert_workflow_mutation_rejected "compiling in the publishing job" \
-        's|^      - name: Verify the maintainer tag$|      - name: Rebuild\n        run: cargo build --release\n\n      - name: Verify the maintainer tag|' \
-        "must not compile or package anything"
-    # Neutralized, not deleted: the step stays in place as a no-op with its
-    # old text in a comment, which is what a careless edit leaves behind.
-    # shellcheck disable=SC2016
-    assert_workflow_mutation_rejected "unverified tag" \
-        's|^( *)\$HELPER verify-tag .*|\1: # verify-tag disabled|' \
-        'must run $HELPER verify-tag'
-    # shellcheck disable=SC2016
-    assert_workflow_mutation_rejected "unverified builder attestations" \
-        's|^( *)run: \$HELPER verify-digests .*|\1run: ": # verify-digests disabled"|' \
-        'must run $HELPER verify-digests'
-    # shellcheck disable=SC2016
-    assert_workflow_mutation_rejected "manifest upload skipped" \
-        's|^( *)run: gh release upload "\$TAG" MANIFEST\.json --clobber$|\1: # disabled|' \
-        'must run gh release upload "$TAG" MANIFEST.json'
-    # shellcheck disable=SC2016
-    assert_workflow_mutation_rejected "no revalidation before the flip" \
-        's|^( *)\$HELPER expected "\$VERSION" "\$DEBIAN_REVISION" "\$RPM_COUNTER" "\$PRERELEASE" final .*|\1: # final readback disabled|' \
-        'must run PRERELEASE" final'
-    # shellcheck disable=SC2016
-    assert_workflow_mutation_rejected "final readback comparing names only" \
-        's|^( *)\$HELPER verify-published .*|\1: # verify-published disabled|' \
-        'must run $HELPER verify-published'
-    assert_workflow_mutation_rejected "two runs publishing one tag" \
-        '/^concurrency:$/,/^$/d' \
-        "must declare a concurrency group"
-    assert_workflow_mutation_rejected "runs cancelling the one in progress" \
-        's/^  cancel-in-progress: false$/  cancel-in-progress: true/' \
-        "never cancel it"
-    assert_workflow_mutation_rejected "flake evaluation that cannot fail" \
-        's|^        run: nix flake check ./dist/nix --no-build$|        run: nix flake check ./dist/nix --no-build\n        continue-on-error: true|' \
-        "flake evaluation must gate publication"
-
-    # The checkout-ownership exception. Removed, neutralized, displaced, or
-    # owed by a job that just acquired git: each is a tag-time-only failure,
-    # which is the class this whole gate exists for.
-    assert_workflow_mutation_rejected "a container job left untrusting" \
-        '/^      - name: Trust the workspace checkout$/,+1d' \
-        "must trust the workspace checkout"
-    assert_workflow_mutation_rejected "the ownership exception neutralized" \
-        's|^        run: git config --global --add safe\.directory .*$|        run: ": # trust disabled"|' \
-        "must trust the workspace checkout with exactly"
-    # shellcheck disable=SC2016
-    assert_workflow_mutation_rejected "the ownership exception taken late" \
-        's|^      - name: Trust the workspace checkout$|      - name: Report the workspace\n        run: ls "$GITHUB_WORKSPACE"\n\n      - name: Trust the workspace checkout|' \
-        "immediately after checking it out"
-    assert_workflow_mutation_rejected "a container job gaining git untrusted" \
-        's|^            rust cargo clang-devel|            git rust cargo clang-devel|' \
-        "container job build-rpm installs git"
-    assert_workflow_mutation_rejected "an exception kept past its git install" \
-        's|^            git$||' \
-        "trusts the workspace checkout but installs no git"
-    # git as the very first package of the install, with no token before it.
-    assert_workflow_mutation_rejected "a container job installing git first" \
-        's|^          dnf install -y \\$|          dnf install git \\|' \
-        "container job build-rpm installs git"
-    # The exception read out of the job rather than out of its step: a no-op
-    # trust step beside a real `git config` line in a later one.
-    # shellcheck disable=SC2016
-    assert_workflow_mutation_rejected "the exception moved out of its step" \
-        's|^        run: git config --global --add safe\.directory .*$|        run: ": # trust disabled"\n\n      - name: Trust it later\n        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"|' \
-        "must trust the workspace checkout with exactly"
-    # shellcheck disable=SC2016
-    assert_workflow_mutation_rejected "attestation left unbound to its job" \
-        '0,/^      attestation: \$\{\{ steps.attest.outputs.sha256 \}\}$/s///' \
-        "declares no attestation output"
-    # shellcheck disable=SC2016
-    assert_workflow_mutation_rejected "one suite of the matrix left unbound" \
-        '/^      attestation-resolute: /d' \
-        "differs from the release workflow's attestation outputs"
-    # shellcheck disable=SC2016
-    assert_workflow_mutation_rejected "job outputs not passed through env" \
-        's/^          JOB_OUTPUTS: \$\{\{ toJSON\(needs\) \}\}$/          JOB_OUTPUTS: fixed/' \
-        "through exactly one env value"
-    assert_workflow_mutation_rejected "pages rebuild before publication" \
-        's/^    needs: \[publish-apt, publish\]$/    needs: [publish-apt]/' \
-        "trigger-pages must run after the release is published"
-    assert_workflow_mutation_rejected "COPR verification dropped" \
-        '/^  verify-copr:$/,/^  trigger-pages:$/{/^  trigger-pages:$/!d}' \
-        "release jobs drifted"
-    assert_workflow_mutation_rejected "COPR verification open to prereleases" \
-        '/^  verify-copr:$/,/^  trigger-pages:$/{/^    if: /d}' \
-        "verify-copr must be stable-only"
-    assert_workflow_mutation_rejected "COPR verification polling without a deadline" \
-        '/^  verify-copr:$/,/^  trigger-pages:$/{/^    timeout-minutes: /d}' \
-        "verify-copr polls and must carry its own timeout"
-    assert_workflow_mutation_rejected "release upload without the publication token" \
-        '0,/^          token: \$\{\{ secrets.RELEASE_PAT \}\}$/s///' \
-        "every release upload must pass the publication token"
-    # shellcheck disable=SC2016
-    assert_workflow_mutation_rejected "tag rewritten at publication" \
-        's/^      TAG: \$\{\{ github.ref_name \}\}$/      TAG: ${{ github.ref_name }}\n      TAG_TARGET: target_commitish/' \
-        "publishing must not send a tag or target commitish"
-
-    # Quote style is not semantics: a double-quoted --suite value must parse
-    # the same as the single-quoted one the workflow uses today, so extraction
-    # cannot silently go blind the day someone swaps the quoting.
-    suite_double_quoted="$mutation_root/release-suite-double-quoted.yml"
-    sed -E 's/--suite .(\$\{\{ matrix\.suite \}\})./--suite "\1"/' \
-        "$workflow_path" >"$suite_double_quoted"
-    cmp -s "$workflow_path" "$suite_double_quoted" &&
-        fail "double-quoted suite mutation did not change the workflow"
-    if ! output="$(FACELOCK_RELEASE_WORKFLOW="$suite_double_quoted" bash "$self" 2>&1)"; then
-        fail "release artifacts contract rejected a double-quoted --suite value: $output"
-    fi
-    echo "release artifacts mutation: double-quoted --suite value accepted"
+if [ -n "${mutation_scheduler:-}" ]; then
+    report_mutations
 fi
 
 # The helper's Python runs from whatever directory the workflow is in; a module

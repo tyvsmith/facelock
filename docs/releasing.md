@@ -213,7 +213,10 @@ run; fix the flake and re-run the failed jobs, never tag again.
 
 `test/release-artifacts-contract.sh` (`just test-release-artifacts`) proves this
 shape by fixture and by mutation. The workflow itself runs only on a tag, so
-the gate never tags anything to test it.
+the gate never tags anything to test it. Each mutation re-runs the script
+against a mutated copy; those runs execute concurrently, `FACELOCK_MUTATION_JOBS`
+at a time (default: one per CPU). Set `FACELOCK_MUTATION_JOBS=1` to run them
+one after another when debugging a mutation.
 
 #### Debian package channels
 
