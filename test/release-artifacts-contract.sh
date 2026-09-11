@@ -36,7 +36,9 @@ fail() {
 # FACELOCK_MUTATION_JOBS=1 keeps the runs serial for debugging. Runs share
 # nothing: each allocates its own mktemp work tree and only reads the checkout.
 work="$(mktemp -d "${TMPDIR:-/tmp}/facelock-release-artifacts.XXXXXX")"
-trap '[ -z "${mutation_scheduler:-}" ] || kill "$mutation_scheduler" 2>/dev/null; rm -rf -- "$work"' EXIT
+# The scheduler runs in its own process group so an early exit takes every
+# in-flight re-run down with it, not just xargs.
+trap '[ -z "${mutation_scheduler:-}" ] || kill -- -"$mutation_scheduler" 2>/dev/null; rm -rf -- "$work"' EXIT
 
 if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}" ] &&
     [ -z "${FACELOCK_RELEASE_ATTESTATIONS:-}" ]; then
@@ -69,7 +71,7 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
             index=$((index + 1))
         done >"$mutation_runs/queue"
         # shellcheck disable=SC2016
-        xargs -0 -n 3 -P "$mutation_jobs" -a "$mutation_runs/queue" -- bash -c '
+        setsid xargs -0 -n 3 -P "$mutation_jobs" -a "$mutation_runs/queue" -- bash -c '
             runs="$1" self="$2" index="$3" variable="$4" mutant="$5"
             if env "$variable=$mutant" bash "$self" >"$runs/$index.log" 2>&1; then
                 echo 0 >"$runs/$index.status"
@@ -86,11 +88,17 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
         local index=0 failures=0 entry verdict variable mutant label context needle status output
         for entry in "${mutation_queue[@]}"; do
             IFS=$'\t' read -r verdict variable mutant label context needle <<<"$entry"
-            status="$(cat "$mutation_runs/$index.status")"
-            output="$(cat "$mutation_runs/$index.log")"
+            # A run killed before it wrote its verdict (out of memory, say)
+            # counts as a failure with its own message, never as an abort.
+            status="$(cat "$mutation_runs/$index.status" 2>/dev/null || echo missing)"
+            output="$(cat "$mutation_runs/$index.log" 2>/dev/null || true)"
             index=$((index + 1))
-            case "$verdict" in
-                rejected)
+            case "$status:$verdict" in
+                missing:*)
+                    echo "release artifacts contract: $context run left no verdict: $output" >&2
+                    failures=$((failures + 1))
+                    ;;
+                *:rejected)
                     if [ "$status" = 0 ]; then
                         echo "release artifacts contract: release artifacts contract accepted $context" >&2
                         failures=$((failures + 1))
@@ -101,7 +109,7 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
                         echo "release artifacts $label: $context rejected"
                     fi
                     ;;
-                accepted)
+                *:accepted)
                     if [ "$status" != 0 ]; then
                         echo "release artifacts contract: release artifacts contract rejected $context: $output" >&2
                         failures=$((failures + 1))
