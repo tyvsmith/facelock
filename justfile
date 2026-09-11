@@ -684,17 +684,17 @@ loopback-up:
         echo "+ sudo modprobe v4l2loopback devices=0"
         sudo modprobe v4l2loopback devices=0
     fi
-    for pair in "mono:$ir" "color:$rgb"; do
-        role="${pair%%:*}"; node="${pair#*:}"
+    for pair in "mono:IR:$ir" "color:RGB:$rgb"; do
+        role="${pair%%:*}"; rest="${pair#*:}"; var="${rest%%:*}"; node="${rest#*:}"
         if [ -c "$node" ]; then
             sys="/sys/class/video4linux/$(basename "$node")"
             if [ -e "$sys/device" ]; then
-                echo "error: $node is a real camera ($(cat "$sys/name")); pick another with FACELOCK_LOOPBACK_${role^^}" >&2
+                echo "error: $node is a real camera ($(cat "$sys/name")); pick another with FACELOCK_LOOPBACK_$var" >&2
                 exit 2
             fi
             name="$(cat "$sys/name" 2>/dev/null || echo '?')"
             if [ "$name" != "facelock-synth-$role" ]; then
-                echo "error: $node is another tool's loopback ($name); pick a free node with FACELOCK_LOOPBACK_${role^^}" >&2
+                echo "error: $node is another tool's loopback ($name); pick a free node with FACELOCK_LOOPBACK_$var" >&2
                 exit 2
             fi
             echo "$node already exists ($name), keeping it"
