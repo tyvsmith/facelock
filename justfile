@@ -601,12 +601,13 @@ _require-clean-tree:
         exit 1
     fi
 
-# `just release-preflight` refuses to pass without that record (#139). These
-# two tiers are the only automated evidence that face authentication works end
-# to end — real D-Bus activation, the real PAM stack, real capture, the
-# one-shot fallback — and nothing else runs them, which is how three of their
-# assertions rotted undetected. They need a camera and someone sitting in
-# front of it, so this is the one gate a human has to perform.
+# `just release-preflight` refuses to pass without this record or the
+# loopback tier's (#139). These two tiers are the only automated evidence that
+# face authentication works end to end — real D-Bus activation, the real PAM
+# stack, real capture, the one-shot fallback — and nothing else runs them,
+# which is how three of their assertions rotted undetected. This run needs a
+# camera and someone sitting in front of it, and is the only one that proves
+# a real sensor's frames match a real face.
 #
 # FACELOCK_LIVE_TIMEOUT is forwarded by each tier; relax it here too when the
 # stock 90s per live step is not enough time to get into frame.
@@ -624,6 +625,56 @@ test-arch-camera-required: _require-clean-tree test-arch-integration test-arch-o
     printf '%s\n' "$commit" > .hardware-tiers-verified
     echo ""
     echo "Recorded: camera-required tiers passed at $commit"
+    echo "'just release-preflight' accepts this until HEAD moves."
+
+# The same two tiers against a synthetic camera (#139): a v4l2loopback node
+# fed by ffmpeg with the procedurally rendered face sequence from
+# crates/facelock-test-support (nobody's face, see test/loopback/NOTICE.md).
+# The fed node enumerates GREY only, so it classifies as IR by format
+# evidence -- the residual docs/security.md §A documents -- and the run
+# enrolls and authenticates under the product defaults, require_ir and
+# require_frame_variance both on, because the sequence drifts frame to
+# frame the way a person does. No camera, nobody in frame, no live timeout
+# to relax.
+#
+# Only the loopback nodes are passed into the container; a real camera on
+# the host is never opened. The script refuses a node that has a parent
+# device in sysfs (a real camera) or is already being fed.
+#
+# Needs two idle loopback nodes the calling user can write (root:video by
+# default). Without them the script exits 2 and prints the modprobe line;
+# see docs/testing-safety.md. FACELOCK_LOOPBACK_IR / FACELOCK_LOOPBACK_RGB
+# pick other nodes; FACELOCK_LOOPBACK_RGB=none runs without the RGB twin
+# (the two require_ir refusal assertions then SKIP).
+#
+# Recorded for `just release-preflight` in its own file; either this record
+# or the camera-required one satisfies the gate (test/e2e-tier-evidence.sh).
+# Cheaper evidence, not the same evidence: it cannot show that a real
+# sensor's frames match a real face; only the human-in-frame run says that.
+#
+
+# Both camera-required E2E tiers against a synthetic v4l2loopback camera, recorded for release-preflight
+test-arch-loopback ir="" rgb="": _require-models _build-test-container
+    #!/usr/bin/env bash
+    set -euo pipefail
+    args=()
+    [ -n "{{ ir }}" ] && args+=("{{ ir }}")
+    [ -n "{{ rgb }}" ] && args+=("{{ rgb }}")
+    if [ -n "${FACELOCK_LIVE_TIMEOUT:-}" ] && [[ ! "$FACELOCK_LIVE_TIMEOUT" =~ ^[0-9]+(\.[0-9]+)?[smhd]?$ ]]; then
+        echo "error: FACELOCK_LIVE_TIMEOUT='$FACELOCK_LIVE_TIMEOUT' is not a timeout(1) duration (e.g. 300s, 5m)" >&2
+        exit 1
+    fi
+    test/loopback/run-loopback-tier.sh "${args[@]}"
+    if [ -n "$(git status --porcelain)" ]; then
+        echo ""
+        echo "Not recorded: the working tree is dirty, so a record would name a commit"
+        echo "that is not what was tested. Commit, then re-run to record for release-preflight."
+        exit 0
+    fi
+    commit="$(git rev-parse HEAD)"
+    printf '%s\n' "$commit" > .loopback-tier-verified
+    echo ""
+    echo "Recorded: loopback tier passed at $commit"
     echo "'just release-preflight' accepts this until HEAD moves."
 
 # Dev shell — interactive Arch container with host models for fast iteration (requires camera)
@@ -1697,35 +1748,19 @@ release-preflight tag='':
     fi
 
     echo ""
-    echo "== Camera-required tier evidence =="
-    # #139: `just test-arch-integration` and `just test-arch-oneshot` are the
-    # only automated evidence that face authentication works end to end, and
-    # they need a camera and a person in frame — so preflight cannot run them.
-    # It can refuse to pass while nobody has. `just test-arch-camera-required`
-    # runs both and records the commit they passed at; the omission used to be
-    # invisible, which is how three of their assertions rotted.
+    echo "== End-to-end tier evidence =="
+    # #139: the two camera E2E tiers are the only automated evidence that
+    # face authentication works end to end, and preflight cannot run them.
+    # It refuses to pass until one of two records names HEAD: the
+    # real-camera run (`just test-arch-camera-required`, a person in frame,
+    # the only one that proves real-sensor recognition) or the synthetic
+    # camera run (`just test-arch-loopback`, no person, proves the pipeline).
+    # The gate, its acknowledgement envs and its report live in
+    # test/e2e-tier-evidence.sh so its accept/refuse cases are tested.
     HEAD_SHA="$(git rev-parse HEAD)"
-    RECORDED=""
-    if [ -f .hardware-tiers-verified ]; then
-        RECORDED="$(head -1 .hardware-tiers-verified)"
-    fi
-    ACK="${FACELOCK_HARDWARE_TIERS_ACK:-}"
-    if [ "$RECORDED" = "$HEAD_SHA" ]; then
-        echo "OK: camera-required tiers recorded green at $HEAD_SHA"
-    elif [ "${#ACK}" -ge 7 ] && [ "${HEAD_SHA#"$ACK"}" != "$HEAD_SHA" ]; then
-        # The acknowledgement has to name this commit, so it cannot be a habit
-        # the way a bare =1 would become.
-        echo "OK: camera-required tiers acknowledged by hand at $HEAD_SHA"
+    if bash test/e2e-tier-evidence.sh "$HEAD_SHA"; then
+        :
     else
-        if [ -z "$RECORDED" ]; then
-            echo "MISSING: no camera-required tier run recorded for any commit"
-        else
-            echo "STALE: camera-required tiers recorded at $RECORDED, HEAD is $HEAD_SHA"
-        fi
-        echo "  Run both tiers against this commit, with someone in front of the camera:"
-        echo "    just test-arch-camera-required"
-        echo "  If they were already run by hand at this exact commit, say so:"
-        echo "    FACELOCK_HARDWARE_TIERS_ACK=$HEAD_SHA just release-preflight"
         failed=1
     fi
 

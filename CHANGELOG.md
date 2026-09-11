@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A synthetic camera for the camera-required test tiers** (#139): `just test-arch-loopback`
+  feeds a v4l2loopback node with a procedurally rendered face sequence (nobody's face, see
+  `test/loopback/NOTICE.md`) and runs the daemon and one-shot E2E suites against it with
+  `require_ir` and `require_frame_variance` on, so they no longer need a camera or a person in
+  frame. `just release-preflight` accepts its record at HEAD in place of the real-camera record
+  (either satisfies the gate; only the real-camera run proves real-sensor recognition), and CI
+  runs it on every pull request (`loopback-e2e`). A model-backed contract test pins the
+  fixture inside the detector, IR-texture, quality, recognition and frame-variance bands.
+
 ## [0.2.1] - 2026-09-07
 
 ### Changed

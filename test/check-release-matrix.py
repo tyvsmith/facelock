@@ -1156,6 +1156,17 @@ require(
     ),
     "release-preflight does not run test/packaging-evidence.py ci-run and validate as its own commands",
 )
+# The end-to-end tier gate (#139): either the real-camera or the loopback
+# record at HEAD. It lives in its own script so its accept and refuse cases
+# are tested; preflight has to invoke it with HEAD, as its own command.
+require(
+    recipe_runs(preflight_commands, 'bash test/e2e-tier-evidence.sh "$HEAD_SHA"'),
+    "release-preflight does not run test/e2e-tier-evidence.sh with HEAD as its own command",
+)
+require(
+    (ROOT / "test/e2e-tier-evidence.sh").is_file(),
+    "test/e2e-tier-evidence.sh is missing",
+)
 matrix_commands = recipe_commands(just_recipe_body(justfile, "test-packaging-matrix"))
 require(
     recipe_runs(matrix_commands, 'python3 test/packaging-evidence.py aggregate --commit "$commit" --tree-clean'),

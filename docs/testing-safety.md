@@ -52,6 +52,74 @@ They default to a 90-second live-step timeout. A longer timeout uses
 FACELOCK_LIVE_TIMEOUT=5m just test-arch-integration
 ```
 
+### Synthetic camera
+
+The same two scripts run against a synthetic camera, with no real device
+passed through and nobody in frame:
+
+```bash
+just test-arch-loopback
+```
+
+The camera is a v4l2loopback node fed by `ffmpeg` with a procedurally
+rendered face sequence (`test/loopback/NOTICE.md`: drawn from arithmetic,
+nobody's face). While it is fed, the node enumerates `GREY` only, so
+facelock classifies it as IR by format evidence — the residual
+[Security](security.md) describes — and the run keeps `require_ir` and
+`require_frame_variance` at their product defaults, because the sequence
+drifts frame to frame the way a person does. A second node fed `YUYV` is the
+non-IR camera the `require_ir` refusal assertions need; without it they
+report `SKIP`.
+
+The tier needs two idle loopback nodes the calling user can write. Loading
+the module needs root; the recipe does not do it and exits 2 with this when
+the nodes are missing:
+
+```bash
+sudo modprobe v4l2loopback devices=2 video_nr=20,21 \
+    card_label=facelock-synth-mono,facelock-synth-color exclusive_caps=1,1
+sudo udevadm settle && sudo chmod a+rw /dev/video20 /dev/video21
+```
+
+The `settle` matters: udev applies its own `0660 root:video` mode when it
+processes the add event, which can land after a `chmod` issued right behind
+the `modprobe`.
+
+If v4l2loopback is already loaded for something else, add nodes without
+unloading it (`v4l2loopback-utils`, module 0.13 or later):
+
+```bash
+sudo v4l2loopback-ctl add -x 1 -n facelock-synth-mono /dev/video20
+sudo v4l2loopback-ctl add -x 1 -n facelock-synth-color /dev/video21
+```
+
+While the tier feeds them, the nodes are visible to the host too. An idle
+`exclusive_caps=1` node enumerates no formats and auto-detection ignores it,
+but a fed `facelock-synth-mono` node enumerates `GREY` only and classifies
+as IR by format evidence, exactly as a real IR camera without a quirk entry
+does; whichever of the two enumerates first wins a host auto-detect, so a
+host face-auth attempt during the run (a `sudo` prompt, a lock screen) can
+be judged against the synthetic face and fall through to the password. A
+camera the quirks database knows still ranks above it. The labels carry no
+`ir` token on purpose: auto-detection prefers a format-classified node whose
+name says `ir`, and a synthetic node should never beat a real sensor on its
+name (`has_ir_name_token` in `crates/facelock-camera/src/device.rs`). The
+tier itself never reads the label. Pin `device.path` on the host or wait out
+the run, which takes about two minutes.
+
+`FACELOCK_LOOPBACK_IR` and `FACELOCK_LOOPBACK_RGB` pick other nodes
+(`FACELOCK_LOOPBACK_RGB=none` runs without the twin). The script refuses a
+node that has a parent device in sysfs — a real camera — or that another
+process is already feeding, so it cannot open the host's webcam by mistake.
+Only the loopback nodes are passed into the container.
+
+It records the commit it passed at to `.loopback-tier-verified`, which
+satisfies `just release-preflight` on its own, as the real-camera record
+does. It is cheaper evidence, not the same evidence: it proves capture, IR
+classification, the liveness gates, enrollment, the daemon and one-shot
+paths and PAM end to end on a device the product treats as an IR sensor, and
+it cannot prove that a real sensor's frames match a real face.
+
 Container coverage is not proof that a booted package, display manager, or
 real login stack is safe. Use the evidence walkthrough in an explicitly marked
 disposable guest for those cases; its runner refuses ordinary hosts and does

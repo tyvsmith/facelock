@@ -1,6 +1,6 @@
 # Auxiliary Commands
 
-The workspace builds two executables outside the unified `facelock` command
+The workspace builds three executables outside the unified `facelock` command
 tree. They do not inherit `facelock`'s global flags, privilege dispatcher, or
 output contracts.
 
@@ -109,3 +109,21 @@ not deploy it as a universal replacement. The internal
 For per-action policy and the fallback limitation, see
 [`contracts.md`](contracts.md#polkit-agent-semantics). For build, test and maintenance
 commands, see [`developer-commands.md`](developer-commands.md).
+
+## `facelock-synth-face`
+
+`facelock-synth-face` is a test fixture writer, built from
+`facelock-test-support`. No package installs it. It takes one argument, an
+output directory, and writes the loopback tier's synthetic face sequence as
+raw video: `ir.y8` (640x480 GREY, 24 frames back to back), `rgb.yuyv` (the
+same frames as YUYV 4:2:2 with neutral chroma) and `frame-00.pgm` (the first
+frame, for a look). The output is deterministic: the same bytes on every host.
+
+```bash
+cargo run -p facelock-test-support --bin facelock-synth-face -- /tmp/synth
+```
+
+The face is drawn procedurally and is nobody's (`test/loopback/NOTICE.md`).
+`test/loopback/run-loopback-tier.sh` runs the binary itself; the only reason
+to run it by hand is to inspect a frame. Exit 2 means the argument is
+missing, exit 1 that the directory could not be written.
