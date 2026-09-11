@@ -71,9 +71,14 @@ drifts frame to frame the way a person does. A second node fed `YUYV` is the
 non-IR camera the `require_ir` refusal assertions need; without it they
 report `SKIP`.
 
-The tier needs two idle loopback nodes the calling user can write. Loading
-the module needs root; the recipe does not do it and exits 2 with this when
-the nodes are missing:
+The tier needs two idle loopback nodes the calling user can write. Adding
+them needs root; the tier never elevates itself and exits 2 with the setup
+hint when they are missing. `just loopback-up` adds them and
+`just loopback-down` removes them, each printing the privileged commands it
+runs and prompting for `sudo` once. Run both as yourself, not under
+`sudo just`, so podman, cargo, and the record file stay owned by you.
+`loopback-down` matches nodes by the `facelock-synth-*` label, so a module
+loaded for something else is left alone. By hand, the same thing is:
 
 ```bash
 sudo modprobe v4l2loopback devices=2 video_nr=20,21 \

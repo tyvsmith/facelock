@@ -37,8 +37,9 @@ FPS=15
 
 setup_hint() {
     cat >&2 <<EOF
-       The tier needs two v4l2loopback nodes nothing else is feeding. On a
-       host where the module is not loaded:
+       The tier needs two v4l2loopback nodes nothing else is feeding.
+         just loopback-up        # adds them (one sudo prompt); loopback-down removes them
+       By hand, on a host where the module is not loaded:
          sudo modprobe v4l2loopback devices=2 video_nr=20,21 \\
              card_label=facelock-synth-mono,facelock-synth-color exclusive_caps=1,1
        If v4l2loopback is already loaded for something else, add nodes

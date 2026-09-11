@@ -10976,29 +10976,29 @@
         {
           "path": "docs/testing-safety.md",
           "anchor": "synthetic-camera",
-          "ordinal": 3,
-          "line": 79,
+          "ordinal": 6,
+          "line": 84,
           "sha256": "ee4c4711e86275d056aa8a3367270deebb196ba003cdeeac35b31914de4eb811"
         },
         {
           "path": "docs/testing-safety.md",
           "anchor": "synthetic-camera",
-          "ordinal": 4,
-          "line": 81,
+          "ordinal": 7,
+          "line": 86,
           "sha256": "4eaab8587af0fc025bd63fe38538cf9a750b022c8fbf973323286639d39f9993"
         },
         {
           "path": "docs/testing-safety.md",
           "anchor": "synthetic-camera",
-          "ordinal": 5,
-          "line": 92,
+          "ordinal": 8,
+          "line": 97,
           "sha256": "65279a5840a2659ca2c35f024f554d1956e8eb67486aafde734e7f6543784560"
         },
         {
           "path": "docs/testing-safety.md",
           "anchor": "synthetic-camera",
-          "ordinal": 6,
-          "line": 93,
+          "ordinal": 9,
+          "line": 98,
           "sha256": "c4d9234892d190495cc5159579fc727ffad6c1166fe4c5bc3accafcdf331639e"
         }
       ],
@@ -11107,35 +11107,35 @@
           "path": "docs/testing-safety.md",
           "anchor": "development-configuration",
           "ordinal": 1,
-          "line": 136,
+          "line": 141,
           "sha256": "48d6b8aecaf932ce9c5e7f8943e9e680f516bd62a91a97583bbdf775c9f4c911"
         },
         {
           "path": "docs/testing-safety.md",
           "anchor": "development-configuration",
           "ordinal": 2,
-          "line": 137,
+          "line": 142,
           "sha256": "fad0225732307d9b8666dc48f93369322752b5acd641d744cde3a6d1c99155de"
         },
         {
           "path": "docs/testing-safety.md",
           "anchor": "development-configuration",
           "ordinal": 3,
-          "line": 138,
+          "line": 143,
           "sha256": "21df8681af24fdd4a24c8e7533d7c69725728fedd70374ac46b437b03686b526"
         },
         {
           "path": "docs/testing-safety.md",
           "anchor": "development-configuration",
           "ordinal": 4,
-          "line": 139,
+          "line": 144,
           "sha256": "e1a93dce67650786cc6126129be6427d1a8a96c0560e61b310b30e44e61bde57"
         },
         {
           "path": "docs/testing-safety.md",
           "anchor": "development-configuration",
           "ordinal": 5,
-          "line": 140,
+          "line": 145,
           "sha256": "db33444f34d115dce2f155297f23c717c86dd22e1e95cd0e44bf71ad6bec9fcf"
         }
       ],
@@ -11241,21 +11241,21 @@
           "path": "docs/testing-safety.md",
           "anchor": "logging",
           "ordinal": 1,
-          "line": 192,
+          "line": 197,
           "sha256": "b71e3793c76c15f20acfcf32c73851f60e7859007bb736c45ef44512afe49f3c"
         },
         {
           "path": "docs/testing-safety.md",
           "anchor": "logging",
           "ordinal": 2,
-          "line": 193,
+          "line": 198,
           "sha256": "487f16174412556ab1080aea37045dc303ee6fe34b356029315dfd4c9e000d41"
         },
         {
           "path": "docs/testing-safety.md",
           "anchor": "logging",
           "ordinal": 3,
-          "line": 200,
+          "line": 205,
           "sha256": "01dd0a825d0876d8fe17a64f6cd934f852338f8ee393c1a85646ba116ffcaacd"
         }
       ],
