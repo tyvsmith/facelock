@@ -292,9 +292,7 @@ fn dynamic_strings(
     let mut rpath = Vec::new();
     let mut runpath = Vec::new();
     for entry in dynamic {
-        let Some(tag) = entry.tag32(endian) else {
-            continue;
-        };
+        let tag = entry.tag(endian);
         if !matches!(
             tag,
             object::elf::DT_SONAME | object::elf::DT_RPATH | object::elf::DT_RUNPATH

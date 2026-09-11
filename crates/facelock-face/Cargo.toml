@@ -15,4 +15,4 @@ serde = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
 libc = "0.2"
-object = { version = "0.37.3", default-features = false, features = ["elf", "read_core", "std"] }
+object = { version = "0.40.0", default-features = false, features = ["elf", "read_core", "std"] }
