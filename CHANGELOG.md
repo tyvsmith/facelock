@@ -34,9 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answers is fixed by the path; neither falls back to the other.
 - **Posture change: an unresolvable lid now refuses, where it used to count as open.** This
   applies only to daemon `Authenticate` with `abort_if_lid_closed` enabled (the default).
-  If logind cannot be reached, the property read times out, or the request is cancelled
-  mid-read, the attempt is refused with a new `lid state unavailable` rejection class —
-  kept distinct from `lid closed` so the audit trail records which of the two fired. The
+  If logind cannot be reached or the property read misses its deadline, the attempt is
+  refused with a new `lid state unavailable` rejection class — kept distinct from
+  `lid closed` so the audit trail records which of the two fired. The
   refusal is in band (`model_id == -2`, exit 2, `PAM_IGNORE`), so a `sufficient` stack
   continues to the password exactly as a closed lid does; nothing locks out. In-process
   callers keep the old direction: a lid they cannot read still counts as open, because

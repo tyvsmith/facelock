@@ -1420,11 +1420,13 @@ not access.
 
 **Failing direction differs by source, deliberately.** In process, a lid that
 cannot be read counts as open — absence there is a real answer. Over D-Bus it
-does not: if `abort_if_lid_closed` is enabled and logind cannot be reached,
-times out, or the request is cancelled mid-read, the daemon refuses with
-`lid state unavailable` rather than proceeding. The refusal is in band
-(`model_id == -2`), so a `sufficient` PAM stack still continues to the
-password; nothing locks out. Two operational consequences: a daemon running
+does not: if `abort_if_lid_closed` is enabled and logind cannot be reached or
+the property read misses its deadline, the daemon refuses with
+`lid state unavailable` rather than proceeding. A read the daemon cancels is
+neither answer, and returns the frozen `cancelled` result instead. The
+refusal is in band (`model_id == -2`), so a `sufficient` PAM stack still
+continues to the password; nothing locks out. Two operational consequences: a
+daemon running
 on a host with no logind at all (a container, a non-systemd init) must set
 `abort_if_lid_closed = false` to serve D-Bus authentications, and the gate is
 enforced for root callers too, since `sudo`, `login`, `su` and root-run
