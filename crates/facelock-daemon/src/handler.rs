@@ -1271,7 +1271,7 @@ mod tests {
         assert!(!real.skip_ssh_gate);
         assert!(!real.skip_lid_gate);
 
-        let daemon = PreCheckContext::daemon_authenticate();
+        let daemon = PreCheckContext::daemon_authenticate(crate::auth::LidSource::Resolved(false));
         assert!(daemon.skip_ssh_gate);
         assert!(!daemon.skip_lid_gate);
 

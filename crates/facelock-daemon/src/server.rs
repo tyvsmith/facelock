@@ -28,7 +28,7 @@ use nix::unistd::{Uid, User};
 use tracing::{error, info, warn};
 use zbus::{fdo, interface, object_server::SignalEmitter};
 
-use crate::auth::{ErrorKind, PreCheckContext};
+use crate::auth::{ErrorKind, LidSource, PreCheckContext};
 use crate::cancel::CancelToken;
 use crate::handler::{AuthIntent, CAMERA_POLL_INTERVAL, DaemonRequest, DaemonResponse, Handler};
 
@@ -64,12 +64,96 @@ const PROCESS_PROVENANCE_TIMEOUT: Duration = Duration::from_secs(4);
 /// poll it cheaply while an async D-Bus provenance request is outstanding.
 const PROCESS_PROVENANCE_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
-type SessionCheckFuture = Pin<Box<dyn Future<Output = Result<bool, String>> + Send>>;
-type SessionCheck = Box<dyn FnOnce() -> SessionCheckFuture + Send>;
+/// Deadline for the logind lid read, deliberately shorter than
+/// [`PROCESS_PROVENANCE_TIMEOUT`].
+///
+/// The lid gate applies to root, so it is additive to the request budget of
+/// a PAM `sudo` attempt, which previously paid no pre-flight D-Bus cost at
+/// all. The PAM client's method deadline is `recognition.timeout_secs + 5`,
+/// and exceeding it is `PAM_AUTH_ERR` rather than the `PAM_IGNORE` this
+/// gate's own refusal produces — so a slow logind must cost a fast in-band
+/// refusal, never the client's whole budget. One local property read on the
+/// system bus does not need seconds.
+const LID_STATE_TIMEOUT: Duration = Duration::from_secs(1);
 
-struct SessionProvenance {
-    check: SessionCheck,
+/// What a transport that wired up no session check reports. The SSH gate
+/// reads it as "unverifiable" and denies.
+const SESSION_CHECK_UNSUPPLIED: &str = "D-Bus caller process provenance was not supplied";
+
+/// What a transport that wired up no lid check reports. The lid gate reads
+/// it as [`LidSource::Unavailable`] and refuses.
+const LID_CHECK_UNSUPPLIED: &str = "D-Bus caller lid state was not supplied";
+
+/// systemd-logind's bus address. The daemon reaches it for three unrelated
+/// facts: a caller's session (`GetSessionByPID`), suspend/resume
+/// (`PrepareForSleep`), and the lid (`LidClosed`).
+const LOGIND_SERVICE: &str = "org.freedesktop.login1";
+const LOGIND_MANAGER_PATH: &str = "/org/freedesktop/login1";
+const LOGIND_MANAGER_INTERFACE: &str = "org.freedesktop.login1.Manager";
+const LOGIND_SESSION_INTERFACE: &str = "org.freedesktop.login1.Session";
+
+/// The lid property behind `security.abort_if_lid_closed` on the daemon
+/// path. Boolean, change-emitting, readable by root without any bus-policy
+/// change.
+const LOGIND_LID_PROPERTY: &str = "LidClosed";
+
+type BoolCheckFuture = Pin<Box<dyn Future<Output = Result<bool, String>> + Send>>;
+type BoolCheck = Box<dyn FnOnce() -> BoolCheckFuture + Send>;
+
+/// One out-of-band fact an `Authenticate` needs that the synchronous handler
+/// cannot establish for itself, plus the deadline it must answer within.
+///
+/// Both facts are D-Bus reads — the caller's logind session, and (since
+/// issue #385) logind's lid state — so both are resolved *outside* the
+/// handler mutex and consumed inside it.
+struct BoundedCheck {
+    check: BoolCheck,
     timeout: Duration,
+}
+
+impl BoundedCheck {
+    /// A check whose answer the caller supplies as a plain future.
+    fn new<F, Fut>(check: F, timeout: Duration) -> Self
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<bool, String>> + Send + 'static,
+    {
+        Self {
+            check: Box::new(move || Box::pin(check())),
+            timeout,
+        }
+    }
+
+    /// A check the transport did not wire up. Every consumer treats the
+    /// error as "unresolved", which fails its gate closed. The deadline is
+    /// never reached: the future is already `Ready`.
+    fn unsupplied(reason: &'static str) -> Self {
+        Self::new(
+            move || async move { Err(reason.to_string()) },
+            PROCESS_PROVENANCE_TIMEOUT,
+        )
+    }
+}
+
+/// Everything one `Authenticate` must learn from the system bus before it may
+/// take the handler mutex.
+struct AuthenticateChecks {
+    /// Is the caller's logind session remote? Consumed by `abort_if_ssh`.
+    session_is_remote: BoundedCheck,
+    /// Does logind report the lid closed? Consumed by
+    /// `abort_if_lid_closed`, which the daemon cannot answer from `/proc`
+    /// (issue #385).
+    lid_is_closed: BoundedCheck,
+}
+
+impl AuthenticateChecks {
+    /// Neither fact wired up: both gates, if installed, refuse.
+    fn unsupplied(session_reason: &'static str, lid_reason: &'static str) -> Self {
+        Self {
+            session_is_remote: BoundedCheck::unsupplied(session_reason),
+            lid_is_closed: BoundedCheck::unsupplied(lid_reason),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -174,9 +258,9 @@ where
 async fn logind_session_is_remote(connection: &zbus::Connection, pid: u32) -> Result<bool, String> {
     let manager = zbus::Proxy::new(
         connection,
-        "org.freedesktop.login1",
-        "/org/freedesktop/login1",
-        "org.freedesktop.login1.Manager",
+        LOGIND_SERVICE,
+        LOGIND_MANAGER_PATH,
+        LOGIND_MANAGER_INTERFACE,
     )
     .await
     .map_err(|error| format!("create logind manager proxy: {error}"))?;
@@ -186,9 +270,9 @@ async fn logind_session_is_remote(connection: &zbus::Connection, pid: u32) -> Re
         .map_err(|error| format!("logind GetSessionByPID({pid}) failed: {error}"))?;
     let session = zbus::Proxy::new(
         connection,
-        "org.freedesktop.login1",
+        LOGIND_SERVICE,
         session_path,
-        "org.freedesktop.login1.Session",
+        LOGIND_SESSION_INTERFACE,
     )
     .await
     .map_err(|error| format!("create logind session proxy: {error}"))?;
@@ -196,6 +280,41 @@ async fn logind_session_is_remote(connection: &zbus::Connection, pid: u32) -> Re
         .get_property("Remote")
         .await
         .map_err(|error| format!("read logind session Remote property: {error}"))
+}
+
+/// Read the lid from logind rather than from `/proc/acpi/button/lid`.
+///
+/// The packaged unit sets `ProcSubset=pid`, so `/proc/acpi` is not in the
+/// daemon's mount namespace and the shared procfs resolver reports "no lid
+/// device" on every laptop — `abort_if_lid_closed` never fired for a D-Bus
+/// caller (issue #385). `org.freedesktop.login1.Manager.LidClosed` survives
+/// that sandbox: it is an ordinary property read on the system bus, which
+/// the daemon already uses for `GetSessionByPID` and `PrepareForSleep`, so
+/// no unit and no bus-policy change is involved. A machine with no lid
+/// reports `false`, the same reading the procfs resolver gives a desktop.
+async fn logind_lid_is_closed(connection: &zbus::Connection) -> Result<bool, String> {
+    // `CacheProperties::No` is load-bearing, not tidiness. zbus defaults a
+    // proxy to `Lazily`, where the first `get_property` adds a
+    // `PropertiesChanged` match rule and issues a full `GetAll` on the
+    // interface, and never falls back to the narrow `Get` if that fails. On
+    // a per-request proxy that is match-rule churn on every authentication,
+    // and it widens the failure surface of the gate from "LidClosed is
+    // unreadable" to "any property on logind's Manager is unreadable".
+    let manager = zbus::proxy::Builder::<zbus::Proxy>::new(connection)
+        .destination(LOGIND_SERVICE)
+        .map_err(|error| format!("logind destination: {error}"))?
+        .path(LOGIND_MANAGER_PATH)
+        .map_err(|error| format!("logind manager path: {error}"))?
+        .interface(LOGIND_MANAGER_INTERFACE)
+        .map_err(|error| format!("logind manager interface: {error}"))?
+        .cache_properties(zbus::proxy::CacheProperties::No)
+        .build()
+        .await
+        .map_err(|error| format!("create logind manager proxy: {error}"))?;
+    manager
+        .get_property(LOGIND_LID_PROPERTY)
+        .await
+        .map_err(|error| format!("read logind LidClosed property: {error}"))
 }
 
 async fn caller_session_is_remote(
@@ -575,24 +694,77 @@ async fn wait_for_provenance_cancellation(
     }
 }
 
-async fn run_bounded_session_check(
-    session_check: SessionCheck,
+/// Why a [`BoundedCheck`] produced no answer.
+///
+/// The two are not interchangeable. `Unresolved` is a fault in the thing
+/// being asked, which each gate turns into its own refusal. `Cancelled`
+/// means nobody is waiting for this request any more (suspend,
+/// `ReleaseCamera`, shutdown, caller departure) and says nothing about the
+/// lid or the caller's session, so it must not be recorded as if it did.
+#[derive(Debug)]
+enum CheckFailure {
+    Cancelled,
+    Unresolved(String),
+}
+
+impl std::fmt::Display for CheckFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CheckFailure::Cancelled => f.write_str("cancelled"),
+            CheckFailure::Unresolved(reason) => f.write_str(reason),
+        }
+    }
+}
+
+async fn run_bounded_check(
+    what: &str,
+    bounded: BoundedCheck,
     cancel: CancelToken,
     current: CurrentRequest,
     cancellation_checkpoint: u64,
-    timeout: Duration,
-) -> Result<bool, String> {
+) -> Result<bool, CheckFailure> {
+    let BoundedCheck { check, timeout } = bounded;
     tokio::select! {
         biased;
         _ = wait_for_provenance_cancellation(cancel, current, cancellation_checkpoint) => {
-            Err("caller session provenance cancelled".to_owned())
+            Err(CheckFailure::Cancelled)
         }
-        result = tokio::time::timeout(timeout, session_check()) => {
-            result.unwrap_or_else(|_| {
-                Err(format!("caller session provenance exceeded its {timeout:?} deadline"))
-            })
+        result = tokio::time::timeout(timeout, check()) => {
+            match result {
+                Ok(Ok(answer)) => Ok(answer),
+                Ok(Err(reason)) => Err(CheckFailure::Unresolved(reason)),
+                Err(_) => Err(CheckFailure::Unresolved(format!(
+                    "{what} exceeded its {timeout:?} deadline"
+                ))),
+            }
         }
     }
+}
+
+/// [`run_bounded_check`] when `required`, otherwise `None` with the check
+/// dropped unrun — a gate the installed configuration disabled must cost no
+/// D-Bus round trip at all.
+async fn maybe_check(
+    required: bool,
+    what: &str,
+    bounded: BoundedCheck,
+    cancel: &CancelToken,
+    current: &CurrentRequest,
+    cancellation_checkpoint: u64,
+) -> Option<Result<bool, CheckFailure>> {
+    if !required {
+        return None;
+    }
+    Some(
+        run_bounded_check(
+            what,
+            bounded,
+            cancel.clone(),
+            current.clone(),
+            cancellation_checkpoint,
+        )
+        .await,
+    )
 }
 
 /// Clears the [`CurrentRequest`] slot when its request ends — but only if the
@@ -1173,9 +1345,14 @@ where
         user: &str,
         cancel: CancelToken,
     ) -> fdo::Result<AuthResult> {
-        self.authenticate_as_with_session_check(caller, user, cancel, || async {
-            Err("D-Bus caller process provenance was not supplied".to_string())
-        })
+        self.run_authentication(
+            caller,
+            user,
+            Method::Authenticate,
+            AuthIntent::Authenticate,
+            cancel,
+            AuthenticateChecks::unsupplied(SESSION_CHECK_UNSUPPLIED, LID_CHECK_UNSUPPLIED),
+        )
         .await
     }
 
@@ -1193,39 +1370,67 @@ where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = Result<bool, String>> + Send + 'static,
     {
-        self.authenticate_as_with_session_check_timeout(
+        self.authenticate_as_with_checks(caller, user, cancel, session_check, || async {
+            Err(LID_CHECK_UNSUPPLIED.to_string())
+        })
+        .await
+    }
+
+    /// `Authenticate` with both out-of-band checks supplied: the caller's
+    /// logind session (for `abort_if_ssh`) and the lid (for
+    /// `abort_if_lid_closed`). Each is invoked only when the installed
+    /// configuration enables its gate, and neither runs under the handler
+    /// mutex. This is what the `#[interface]` glue calls.
+    pub async fn authenticate_as_with_checks<F, Fut, L, LFut>(
+        &self,
+        caller: CallerIdentity,
+        user: &str,
+        cancel: CancelToken,
+        session_check: F,
+        lid_check: L,
+    ) -> fdo::Result<AuthResult>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = Result<bool, String>> + Send + 'static,
+        L: FnOnce() -> LFut + Send + 'static,
+        LFut: Future<Output = Result<bool, String>> + Send + 'static,
+    {
+        self.authenticate_as_with_checks_timeout(
             caller,
             user,
             cancel,
             PROCESS_PROVENANCE_TIMEOUT,
             session_check,
+            lid_check,
         )
         .await
     }
 
-    async fn authenticate_as_with_session_check_timeout<F, Fut>(
+    async fn authenticate_as_with_checks_timeout<F, Fut, L, LFut>(
         &self,
         caller: CallerIdentity,
         user: &str,
         cancel: CancelToken,
-        session_timeout: Duration,
+        check_timeout: Duration,
         session_check: F,
+        lid_check: L,
     ) -> fdo::Result<AuthResult>
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = Result<bool, String>> + Send + 'static,
+        L: FnOnce() -> LFut + Send + 'static,
+        LFut: Future<Output = Result<bool, String>> + Send + 'static,
     {
-        let session_provenance = SessionProvenance {
-            check: Box::new(move || Box::pin(session_check())),
-            timeout: session_timeout,
-        };
         self.run_authentication(
             caller,
             user,
             Method::Authenticate,
             AuthIntent::Authenticate,
             cancel,
-            session_provenance,
+            AuthenticateChecks {
+                session_is_remote: BoundedCheck::new(session_check, check_timeout),
+                lid_is_closed: BoundedCheck::new(lid_check, LID_STATE_TIMEOUT),
+            },
         )
         .await
     }
@@ -1252,17 +1457,10 @@ where
             Method::TestAuthenticate,
             AuthIntent::Test,
             cancel,
-            SessionProvenance {
-                check: Box::new(|| {
-                    Box::pin(async {
-                        Err(
-                            "TestAuthenticate does not resolve caller session provenance"
-                                .to_string(),
-                        )
-                    })
-                }),
-                timeout: PROCESS_PROVENANCE_TIMEOUT,
-            },
+            AuthenticateChecks::unsupplied(
+                "TestAuthenticate does not resolve caller session provenance",
+                "TestAuthenticate does not resolve the lid",
+            ),
         )
         .await
     }
@@ -1281,7 +1479,7 @@ where
         method: Method,
         intent: AuthIntent,
         cancel: CancelToken,
-        session_provenance: SessionProvenance,
+        checks: AuthenticateChecks,
     ) -> fdo::Result<AuthResult> {
         authorize_method(&caller, method, Some(user))?;
         if method == Method::Authenticate
@@ -1304,21 +1502,17 @@ where
         self.maybe_reload_handler();
         let caller_uid = caller.uid;
         let caller_is_root = caller.uid == 0;
-        let pre_check_context = if method == Method::Authenticate {
-            PreCheckContext::daemon_authenticate()
-        } else {
-            intent.pre_check_context()
-        };
         let handler = self.handler.clone();
         let capture_slot = Arc::clone(&self.capture_slot);
         let current = self.current.clone();
         let operation = method.name();
 
-        // Snapshot only the installed SSH-gate policy under the handler
-        // mutex. Credentials and login1 are asynchronous D-Bus operations;
-        // awaiting either while retaining this guard would let a stalled
-        // system-bus peer pin all later handler operations and shutdown.
-        let provenance_required = if method == Method::Authenticate && !caller_is_root {
+        // Snapshot only the installed environment-gate policy under the
+        // handler mutex. Credentials, login1 sessions and the login1 lid are
+        // asynchronous D-Bus operations; awaiting any of them while retaining
+        // this guard would let a stalled system-bus peer pin all later
+        // handler operations and shutdown.
+        let (provenance_required, lid_required) = if method == Method::Authenticate {
             let handler = Arc::clone(&handler);
             let capture_slot = Arc::clone(&capture_slot);
             tokio::task::spawn_blocking(move || {
@@ -1326,27 +1520,61 @@ where
                     &handler,
                     Some((capture_slot.as_ref(), operation)),
                 )?;
-                Ok::<bool, fdo::Error>(handler.config.security.abort_if_ssh)
+                Ok::<(bool, bool), fdo::Error>((
+                    !caller_is_root && handler.config.security.abort_if_ssh,
+                    handler.config.security.abort_if_lid_closed,
+                ))
             })
             .await
             .map_err(|error| fdo::Error::Failed(format!("task join error: {error}")))??
         } else {
-            false
+            (false, false)
         };
 
-        let provenance = if provenance_required {
-            Some(
-                run_bounded_session_check(
-                    session_provenance.check,
-                    cancel.clone(),
-                    current.clone(),
-                    cancellation_checkpoint,
-                    session_provenance.timeout,
-                )
-                .await,
-            )
+        // Independent reads against the same bus: overlap them so enabling
+        // both gates costs one deadline, not two.
+        let (provenance, lid) = tokio::join!(
+            maybe_check(
+                provenance_required,
+                "caller session provenance",
+                checks.session_is_remote,
+                &cancel,
+                &current,
+                cancellation_checkpoint,
+            ),
+            maybe_check(
+                lid_required,
+                "lid state",
+                checks.lid_is_closed,
+                &cancel,
+                &current,
+                cancellation_checkpoint,
+            ),
+        );
+
+        // A cancelled lid read is not a lid fault: nobody is waiting for this
+        // request any more. Answer with the frozen `cancelled` class rather
+        // than charging the gate for a system event, the same reply the
+        // handler gives when capture is cancelled.
+        let lid_cancelled = matches!(lid, Some(Err(CheckFailure::Cancelled)));
+
+        let pre_check_context = if method == Method::Authenticate {
+            // An `Err` here is a lid the daemon could not establish, and a
+            // `None` is a gate that was off when the policy was snapshotted
+            // and may have been switched on since. `pre_check` refuses on
+            // either — but only if `abort_if_lid_closed` is still installed
+            // when it runs, under the guard below.
+            let lid_source = match &lid {
+                Some(Ok(closed)) => LidSource::Resolved(*closed),
+                Some(Err(CheckFailure::Unresolved(reason))) => {
+                    warn!(caller_uid, user, reason, "lid state unavailable");
+                    LidSource::Unavailable
+                }
+                Some(Err(CheckFailure::Cancelled)) | None => LidSource::Unavailable,
+            };
+            PreCheckContext::daemon_authenticate(lid_source)
         } else {
-            None
+            intent.pre_check_context()
         };
 
         let notifier_factory = self.notifier_factory.clone();
@@ -1376,7 +1604,9 @@ where
                     Some(Err(reason)) => {
                         warn!(
                             caller_uid,
-                            user, reason, "caller session provenance unavailable"
+                            user,
+                            reason = %reason,
+                            "caller session provenance unavailable"
                         );
                         return Err(fdo::Error::AccessDenied(
                             PROCESS_PROVENANCE_DENIED_MESSAGE.to_string(),
@@ -1398,6 +1628,15 @@ where
                         ));
                     }
                 }
+            }
+            // After the session gate, so a remote caller still gets the
+            // uniform provenance denial rather than learning that its
+            // request happened to be cancelled.
+            if lid_cancelled && handler.config.security.abort_if_lid_closed {
+                info!(caller_uid, user, "lid read cancelled, abandoning request");
+                return Ok(recoverable_auth_error(
+                    crate::auth::CANCELLED_MESSAGE.to_string(),
+                ));
             }
             let response = if let Some(response) =
                 handler.preflight_authenticate_with_context(&user, intent, pre_check_context)
@@ -1764,6 +2003,7 @@ impl FacelockService<Camera<'static>, FaceEngine> {
         let caller = resolve_caller_identity(&hdr, connection).await?;
         let sender = hdr.sender().map(|sender| sender.to_owned().into());
         let session_connection = connection.clone();
+        let lid_connection = connection.clone();
         // One token for this call and nothing else. zbus dispatches each
         // method in its own task, so anything shared between calls is shared
         // between *concurrent* calls: a token owned by the service could be
@@ -1775,9 +2015,13 @@ impl FacelockService<Camera<'static>, FaceEngine> {
         let cancel = CancelToken::new();
         let _watch = watch_caller_departure(connection, hdr.sender(), cancel.clone()).await;
         let result = self
-            .authenticate_as_with_session_check(caller, user, cancel, move || async move {
-                caller_session_is_remote(&session_connection, sender).await
-            })
+            .authenticate_as_with_checks(
+                caller,
+                user,
+                cancel,
+                move || async move { caller_session_is_remote(&session_connection, sender).await },
+                move || async move { logind_lid_is_closed(&lid_connection).await },
+            )
             .await;
 
         // Emit auth_attempted signal (best-effort, don't fail auth if signal
@@ -2393,9 +2637,9 @@ async fn watch_sleep_signals(
     let connection = zbus::Connection::system().await?;
     let proxy = zbus::Proxy::new(
         &connection,
-        "org.freedesktop.login1",
-        "/org/freedesktop/login1",
-        "org.freedesktop.login1.Manager",
+        LOGIND_SERVICE,
+        LOGIND_MANAGER_PATH,
+        LOGIND_MANAGER_INTERFACE,
     )
     .await?;
 
@@ -2692,7 +2936,7 @@ enabled = false
 
         let auth = tokio::spawn(async move {
             authenticating
-                .authenticate_as_with_session_check_timeout(
+                .authenticate_as_with_checks_timeout(
                     caller(1000, Some("alice")),
                     "alice",
                     CancelToken::new(),
@@ -2701,6 +2945,9 @@ enabled = false
                         check_started.store(true, Ordering::SeqCst);
                         std::future::pending::<Result<bool, String>>().await
                     },
+                    // The lid gate is off in this fixture, so this is
+                    // dropped unrun; only the session check stalls.
+                    || async { Ok(false) },
                 )
                 .await
         });
@@ -2734,7 +2981,7 @@ enabled = false
 
         let auth = tokio::spawn(async move {
             authenticating
-                .authenticate_as_with_session_check_timeout(
+                .authenticate_as_with_checks_timeout(
                     caller(1000, Some("alice")),
                     "alice",
                     CancelToken::new(),
@@ -2743,6 +2990,9 @@ enabled = false
                         check_started.store(true, Ordering::SeqCst);
                         std::future::pending::<Result<bool, String>>().await
                     },
+                    // The lid gate is off in this fixture, so this is
+                    // dropped unrun; only the session check stalls.
+                    || async { Ok(false) },
                 )
                 .await
         });
@@ -2778,7 +3028,7 @@ enabled = false
 
         let auth = tokio::spawn(async move {
             authenticating
-                .authenticate_as_with_session_check_timeout(
+                .authenticate_as_with_checks_timeout(
                     caller(1000, Some("alice")),
                     "alice",
                     request_cancel,
@@ -2787,6 +3037,9 @@ enabled = false
                         check_started.store(true, Ordering::SeqCst);
                         std::future::pending::<Result<bool, String>>().await
                     },
+                    // The lid gate is off in this fixture, so this is
+                    // dropped unrun; only the session check stalls.
+                    || async { Ok(false) },
                 )
                 .await
         });
@@ -3130,6 +3383,83 @@ enabled = false
     fn bus_name_constants() {
         assert_eq!(BUS_NAME, "org.facelock.Daemon");
         assert_eq!(OBJECT_PATH, "/org/facelock/Daemon");
+    }
+
+    /// The one line that connects the logind resolver to the wire lives in
+    /// the `#[interface]` block, which is implemented only for the
+    /// production `Camera`/`FaceEngine` handler — no test can drive it, and
+    /// every lid test injects its answer instead. Swap that argument for a
+    /// constant and the whole suite stays green while `abort_if_lid_closed`
+    /// goes inert again, exactly as in issue #385. Parsing the source is how
+    /// the repo pins structural facts a type cannot (same idiom as
+    /// [`interface_methods_and_the_authz_matrix_are_the_same_set`]).
+    #[test]
+    fn the_wire_authenticate_passes_the_logind_lid_reader_to_the_gate() {
+        let source = include_str!("server.rs");
+        // Split needles so this test's own text is not what it finds.
+        let header = concat!("async fn ", "authenticate(");
+        assert_eq!(
+            source.matches(header).count(),
+            1,
+            "the wire `authenticate` signature must be locatable exactly once"
+        );
+        let body = source
+            .split_once(header)
+            .map(|(_, after)| after)
+            .and_then(|after| after.split_once("\n    /// "))
+            .map(|(body, _)| body)
+            .expect("the wire `authenticate` body, up to the next method's doc comment");
+        assert!(
+            body.contains(concat!("logind_lid", "_is_closed")),
+            "wire Authenticate must hand the gate the logind lid reader, not a constant"
+        );
+        assert!(
+            body.contains(concat!("authenticate_as", "_with_checks")),
+            "wire Authenticate must go through the entry point that takes both checks"
+        );
+    }
+
+    /// `run_authentication` keys the lid lookup on `Method::Authenticate`.
+    /// A second method carrying `AuthIntent::Authenticate` would fall
+    /// through to `intent.pre_check_context()`, whose `LidSource` is the
+    /// in-process resolver the daemon's namespace cannot read: a real
+    /// authentication with an inert lid gate and no compile error.
+    #[test]
+    fn only_the_authenticate_method_carries_the_real_authentication_intent() {
+        let real: Vec<Method> = Method::ALL
+            .iter()
+            .copied()
+            .filter(|method| matches!(intent_for_test(*method), Some(AuthIntent::Authenticate)))
+            .collect();
+        assert_eq!(
+            real,
+            vec![Method::Authenticate],
+            "a new Authenticate-intent method must also be given the lid lookup in run_authentication"
+        );
+    }
+
+    /// The (method, intent) pairs `FacelockService` actually passes to
+    /// `run_authentication`. Kept beside the assertion above so adding a
+    /// third authentication entry point forces a decision here.
+    fn intent_for_test(method: Method) -> Option<AuthIntent> {
+        match method {
+            Method::Authenticate => Some(AuthIntent::Authenticate),
+            Method::TestAuthenticate => Some(AuthIntent::Test),
+            _ => None,
+        }
+    }
+
+    /// The logind address is the whole contract with the lid, the way
+    /// `/proc/acpi/button/lid` is for the in-process resolver: a typo here
+    /// silently disables `abort_if_lid_closed` on every machine and nothing
+    /// else notices — which is how issue #385 stayed invisible. Pinned as
+    /// literals, not derived from the constants they check.
+    #[test]
+    fn the_daemon_reads_the_lid_from_logind_manager_lidclosed() {
+        assert_eq!(LOGIND_SERVICE, "org.freedesktop.login1");
+        assert_eq!(LOGIND_MANAGER_PATH, "/org/freedesktop/login1");
+        assert_eq!(LOGIND_MANAGER_INTERFACE, "org.freedesktop.login1.Manager");
+        assert_eq!(LOGIND_LID_PROPERTY, "LidClosed");
     }
 
     #[test]

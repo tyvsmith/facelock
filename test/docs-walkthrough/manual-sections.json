@@ -3540,21 +3540,21 @@
           "path": "config/facelock.toml",
           "anchor": "configuration-comments",
           "ordinal": 2,
-          "line": 348,
+          "line": 353,
           "sha256": "913896039eb1dca965a8c6a5e027de65b67adc885a02a9a942cda7e022107188"
         },
         {
           "path": "config/facelock.toml",
           "anchor": "configuration-comments",
           "ordinal": 3,
-          "line": 349,
+          "line": 354,
           "sha256": "390e7eaae8157fb444e3d7a23a5ab3ac7dcabe92e9d0cef91bce5f5668120f9b"
         },
         {
           "path": "config/facelock.toml",
           "anchor": "configuration-comments",
           "ordinal": 4,
-          "line": 350,
+          "line": 355,
           "sha256": "6b25d943787a107878794eea277f92b9e400fe26aaa8f33dc0bf8a2e9d2023ef"
         }
       ],

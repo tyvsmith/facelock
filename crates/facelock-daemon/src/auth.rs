@@ -46,6 +46,13 @@ pub enum ErrorKind {
     SshSession,
     /// `security.abort_if_lid_closed` and the lid is closed.
     LidClosed,
+    /// `security.abort_if_lid_closed` and the lid state could not be
+    /// established. Daemon-only (issue #385): an in-process caller reads
+    /// `/proc/acpi/button/lid` and always gets an answer, while the daemon
+    /// asks logind and can be told nothing. Kept distinct from
+    /// [`LidClosed`](ErrorKind::LidClosed) so the audit trail records which
+    /// of the two refused — the PAM consequence is the same for both.
+    LidUnavailable,
     /// The face store could not be read. Carries the underlying error.
     Storage,
     /// The user has exhausted their face-auth budget. **Frozen wire string.**
@@ -76,6 +83,7 @@ impl ErrorKind {
         ErrorKind::Disabled,
         ErrorKind::SshSession,
         ErrorKind::LidClosed,
+        ErrorKind::LidUnavailable,
         ErrorKind::Storage,
         ErrorKind::RateLimited,
         ErrorKind::RateLimitCheckFailed,
@@ -97,6 +105,7 @@ impl ErrorKind {
             ErrorKind::Disabled => "facelock is disabled".to_string(),
             ErrorKind::SshSession => "SSH session detected".to_string(),
             ErrorKind::LidClosed => "lid closed".to_string(),
+            ErrorKind::LidUnavailable => "lid state unavailable".to_string(),
             ErrorKind::Storage => format!("storage error: {detail}"),
             ErrorKind::RateLimited => "rate limited".to_string(),
             ErrorKind::RateLimitCheckFailed => format!("rate limit check failed: {detail}"),
@@ -118,6 +127,7 @@ impl ErrorKind {
             ErrorKind::Disabled
             | ErrorKind::SshSession
             | ErrorKind::LidClosed
+            | ErrorKind::LidUnavailable
             | ErrorKind::Storage
             | ErrorKind::RateLimitCheckFailed
             | ErrorKind::IrRequired
@@ -216,6 +226,38 @@ impl AuthOutcome {
     }
 }
 
+/// Where [`pre_check`] gets the lid state for `security.abort_if_lid_closed`.
+///
+/// Two resolvers exist because the two auth paths live in different mount
+/// namespaces, and the precedence between them is by path, not by preference
+/// — neither ever substitutes for the other:
+///
+/// - **In process** ([`LocalProcfs`](LidSource::LocalProcfs)): `pam_facelock.so`,
+///   one-shot `facelock auth` and direct-mode callers enumerate
+///   `/proc/acpi/button/lid/*/state` themselves. They run inside the calling
+///   program, which sees an unrestricted `/proc`.
+/// - **Resolved by the transport** ([`Resolved`](LidSource::Resolved)): the
+///   daemon's D-Bus `Authenticate` reads
+///   `org.freedesktop.login1.Manager.LidClosed` and passes the answer down.
+///   The packaged unit sets `ProcSubset=pid`, so `/proc/acpi` is absent from
+///   the daemon's namespace and the procfs resolver would report "no lid
+///   device" on every laptop — the whole of issue #385.
+///
+/// [`Unavailable`](LidSource::Unavailable) is the daemon's third answer, and
+/// it refuses: a gate that was asked for but cannot be evaluated must not
+/// quietly pass. Only `LocalProcfs` keeps the "no lid device means open"
+/// reading, because there absence is a real answer (a desktop has no lid).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LidSource {
+    /// Read `/proc/acpi/button/lid` in this process.
+    #[default]
+    LocalProcfs,
+    /// The transport already resolved it; `true` means closed.
+    Resolved(bool),
+    /// The transport's lid source could not answer.
+    Unavailable,
+}
+
 /// Which of [`pre_check`]'s environment gates a caller may skip.
 ///
 /// D-Bus `Authenticate` skips only the daemon process's irrelevant SSH
@@ -229,6 +271,9 @@ impl AuthOutcome {
 pub struct PreCheckContext {
     pub skip_ssh_gate: bool,
     pub skip_lid_gate: bool,
+    /// Where the lid gate reads the lid, when it runs at all. Orthogonal to
+    /// `skip_lid_gate`, which decides *whether* it runs. See [`LidSource`].
+    pub lid_source: LidSource,
 }
 
 impl PreCheckContext {
@@ -241,11 +286,13 @@ impl PreCheckContext {
 
     /// Daemon `Authenticate` after the D-Bus caller's remote-session
     /// provenance has been checked: ignore only the daemon's own SSH
-    /// environment and keep the lid gate enforced.
-    pub fn daemon_authenticate() -> Self {
+    /// environment and keep the lid gate enforced, on the lid the transport
+    /// resolved for it (the daemon's own `/proc` cannot answer — issue #385).
+    pub fn daemon_authenticate(lid_source: LidSource) -> Self {
         Self {
             skip_ssh_gate: true,
             skip_lid_gate: false,
+            lid_source,
         }
     }
 
@@ -255,6 +302,7 @@ impl PreCheckContext {
         Self {
             skip_ssh_gate: true,
             skip_lid_gate: true,
+            lid_source: LidSource::LocalProcfs,
         }
     }
 }
@@ -303,9 +351,26 @@ pub fn pre_check_with_context(
         return Some(AuthOutcome::error(ErrorKind::SshSession));
     }
 
-    if !ctx.skip_lid_gate && config.security.abort_if_lid_closed && lid::is_lid_closed() {
-        info!(user, "lid closed, aborting");
-        return Some(AuthOutcome::error(ErrorKind::LidClosed));
+    if !ctx.skip_lid_gate && config.security.abort_if_lid_closed {
+        match ctx.lid_source {
+            LidSource::LocalProcfs if lid::is_lid_closed() => {
+                info!(user, "lid closed, aborting");
+                return Some(AuthOutcome::error(ErrorKind::LidClosed));
+            }
+            LidSource::LocalProcfs => {}
+            LidSource::Resolved(true) => {
+                info!(user, "lid closed, aborting");
+                return Some(AuthOutcome::error(ErrorKind::LidClosed));
+            }
+            LidSource::Resolved(false) => {}
+            LidSource::Unavailable => {
+                warn!(
+                    user,
+                    "lid state unavailable, aborting (abort_if_lid_closed is enabled)"
+                );
+                return Some(AuthOutcome::error(ErrorKind::LidUnavailable));
+            }
+        }
     }
 
     let has_models = match store.has_models(user) {
@@ -1585,7 +1650,7 @@ enabled = false
 
     #[test]
     fn daemon_authenticate_context_skips_only_daemon_environment_ssh() {
-        let ctx = PreCheckContext::daemon_authenticate();
+        let ctx = PreCheckContext::daemon_authenticate(LidSource::Resolved(false));
         assert!(ctx.skip_ssh_gate);
         assert!(!ctx.skip_lid_gate);
     }
@@ -1696,5 +1761,119 @@ enabled = false
             matches!(resp, Some(AuthOutcome::Error { kind, .. }) if kind == ErrorKind::SshSession),
             "pre_check() must stay fully enforced, got: {resp:?}"
         );
+    }
+
+    // ----------------------------------------------------------------
+    // Where the lid gate gets its answer (issue #385).
+    // ----------------------------------------------------------------
+
+    /// A config whose only active environment gate is the lid.
+    fn lid_gate_config(abort_if_lid_closed: bool) -> Config {
+        let mut config = test_pre_check_config();
+        config.security.abort_if_ssh = false;
+        config.security.abort_if_lid_closed = abort_if_lid_closed;
+        config
+    }
+
+    /// Run `pre_check` for an enrolled user whose only open question is the
+    /// lid, so `None` here means "the lid gate let this through".
+    fn lid_gate_outcome(config: &Config, ctx: PreCheckContext) -> Option<AuthOutcome> {
+        let store = store_with_enrolled_user("alice");
+        let rate_limiter = RateLimiter::new(
+            config.security.rate_limit.max_attempts,
+            config.security.rate_limit.window_secs,
+        );
+        pre_check_with_context(config, &store, "alice", &rate_limiter, &ir_caps(), ctx)
+    }
+
+    #[test]
+    fn pre_check_refuses_a_transport_resolved_closed_lid() {
+        let outcome = lid_gate_outcome(
+            &lid_gate_config(true),
+            PreCheckContext::daemon_authenticate(LidSource::Resolved(true)),
+        );
+        assert!(
+            matches!(outcome, Some(AuthOutcome::Error { kind, .. }) if kind == ErrorKind::LidClosed),
+            "a lid the transport resolved as closed must refuse, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn pre_check_admits_a_transport_resolved_open_lid() {
+        let outcome = lid_gate_outcome(
+            &lid_gate_config(true),
+            PreCheckContext::daemon_authenticate(LidSource::Resolved(false)),
+        );
+        assert!(
+            outcome.is_none(),
+            "a lid the transport resolved as open must proceed, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn pre_check_refuses_when_the_transport_cannot_resolve_the_lid() {
+        let outcome = lid_gate_outcome(
+            &lid_gate_config(true),
+            PreCheckContext::daemon_authenticate(LidSource::Unavailable),
+        );
+        assert!(
+            matches!(
+                outcome,
+                Some(AuthOutcome::Error { kind, ref message })
+                    if kind == ErrorKind::LidUnavailable && message == "lid state unavailable"
+            ),
+            "an unresolvable lid must fail the gate closed under its own class, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn disabled_lid_gate_ignores_an_unresolvable_lid() {
+        let outcome = lid_gate_outcome(
+            &lid_gate_config(false),
+            PreCheckContext::daemon_authenticate(LidSource::Unavailable),
+        );
+        assert!(
+            outcome.is_none(),
+            "abort_if_lid_closed = false must not refuse on an unresolvable lid, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn test_context_ignores_a_transport_resolved_closed_lid() {
+        let outcome = lid_gate_outcome(
+            &lid_gate_config(true),
+            PreCheckContext {
+                lid_source: LidSource::Resolved(true),
+                ..PreCheckContext::test()
+            },
+        );
+        assert!(
+            outcome.is_none(),
+            "the root-only diagnostic context skips the lid gate, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn daemon_authenticate_context_carries_the_resolved_lid() {
+        let ctx = PreCheckContext::daemon_authenticate(LidSource::Resolved(true));
+        assert!(ctx.skip_ssh_gate);
+        assert!(!ctx.skip_lid_gate);
+        assert_eq!(ctx.lid_source, LidSource::Resolved(true));
+    }
+
+    /// Every in-process caller (one-shot `facelock auth`, direct mode, the
+    /// handler's own default) keeps reading `/proc/acpi/button/lid`. Only the
+    /// D-Bus transport, whose namespace hides it, supplies a resolved value.
+    #[test]
+    fn enforced_and_default_contexts_read_the_lid_from_procfs() {
+        assert_eq!(
+            PreCheckContext::enforced().lid_source,
+            LidSource::LocalProcfs
+        );
+        assert_eq!(
+            PreCheckContext::default().lid_source,
+            LidSource::LocalProcfs
+        );
+        assert_eq!(PreCheckContext::test().lid_source, LidSource::LocalProcfs);
     }
 }
