@@ -200,7 +200,19 @@ pub(crate) fn seal_existing_keyfile(config: &Config) -> Result<()> {
             .with_context(|| format!("failed to read key file {}", key_path.display()))?,
     );
     if key_data.len() != 32 {
-        anyhow::bail!("key file must be exactly 32 bytes, got {}", key_data.len());
+        // Actionable, because `facelock setup` now reaches this refusal on a
+        // path that used to mint instead (#358): the automatic policy seals
+        // an existing keyfile, and a file that is not an AES-256 key stops
+        // setup before it secures paths or writes its marker. Saying only
+        // "got 13" leaves the operator with a half-applied run and no move.
+        anyhow::bail!(
+            "key file {} must be exactly 32 bytes, got {}: it is not an AES-256 key \
+             facelock can seal. Restore the real key, or remove it and re-run to have \
+             a new key generated (any embeddings the original sealed become \
+             unreadable, so clear them with `facelock clear` if you take that route).",
+            key_path.display(),
+            key_data.len()
+        );
     }
     let mut key = [0u8; 32];
     key.copy_from_slice(&key_data);

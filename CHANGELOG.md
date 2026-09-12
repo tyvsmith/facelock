@@ -28,6 +28,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PAM line's placement above distribution skip guards and `abort_if_lid_closed = false` as
   the opt-out for a docked laptop with an external camera.
 
+- **`facelock setup --encryption auto` no longer mints a second key beside an existing one**
+  (#358): the automatic policy, which the non-interactive base also runs when no
+  `--encryption` flag is given, now makes the same key-carrying decision as the explicit
+  flags (#354). With a usable TPM an existing `encryption.key` is sealed into
+  `encryption.key.sealed` rather than shadowed by a fresh random key; without one, an
+  existing sealed key is left in place while the keyfile is minted, with a notice. The
+  orphaned-models guard on `--encryption auto` runs exactly when a key is minted, and a
+  minted sealed key now goes through the same shared key gate as a minted keyfile, so a
+  flagless `facelock setup` refuses to seal a new key over rows the missing one wrote.
+  One input changes outcome rather than key identity: an `encryption.key` that is not a
+  32-byte AES key used to be ignored, with a fresh sealed key minted beside it, and is now
+  a refusal, because sealing is what the auto path does with an existing keyfile. The
+  refusal names the file, its size and the remedy (restore the real key, or remove it and
+  re-run), since it stops setup before it secures paths and writes its marker.
+
 ### Added
 
 - **A synthetic camera for the camera-required test tiers** (#139): `just test-arch-loopback`
@@ -48,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-deb`, `-rpm`, `-contract` and `-pins` (was `just test-upgrade-v014*`). v0.1.4 stays pinned for
   the retired-authselect fixture, and the COPR served-EVR gap record retires with the pin it excused.
 
+||||||| parent of 26777442 (fix(setup): Seal an existing keyfile on the automatic encryption path)
 ## [0.2.1] - 2026-09-07
 
 ### Changed
