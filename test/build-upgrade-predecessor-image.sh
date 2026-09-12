@@ -2,8 +2,8 @@
 # Build one released-predecessor upgrade lane image (#231, Track K).
 #
 # Usage:
-#   build-upgrade-v014-image.sh deb <image> <candidate-deb-output>
-#   build-upgrade-v014-image.sh rpm <image>
+#   build-upgrade-predecessor-image.sh deb <image> <candidate-deb-output>
+#   build-upgrade-predecessor-image.sh rpm <image>
 #
 # The Debian half reuses test/build-deb-package-image.sh, so the candidate is
 # the same artifact the Debian lifecycle gate proves; the Fedora half derives
@@ -24,17 +24,17 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # splicing strings here.
 # shellcheck source=/dev/null
 source "$repo_root/scripts/release-versions.sh"
-family="${1:?usage: build-upgrade-v014-image.sh <deb|rpm> <image> [candidate-output]}"
-image="${2:?usage: build-upgrade-v014-image.sh <deb|rpm> <image> [candidate-output]}"
+family="${1:?usage: build-upgrade-predecessor-image.sh <deb|rpm> <image> [candidate-output]}"
+image="${2:?usage: build-upgrade-predecessor-image.sh <deb|rpm> <image> [candidate-output]}"
 
-candidate_version="$(bash "$repo_root/test/upgrade-v014-candidate-version.sh" version)"
+candidate_version="$(bash "$repo_root/test/upgrade-predecessor-candidate-version.sh" version)"
 workspace_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_root/Cargo.toml" | head -1)"
-predecessor_version="$(bash "$repo_root/test/upgrade-v014-predecessor.sh" \
+predecessor_version="$(bash "$repo_root/test/upgrade-predecessor-pin.sh" \
     "$([ "$family" = deb ] && echo deb-trixie || echo rpm-fedora)" upstream_version)"
 
 # Always say which version the candidate is built as and why. A lane that
 # silently re-versions is a lane whose result nobody can interpret later.
-if [ "$(bash "$repo_root/test/upgrade-v014-candidate-version.sh" restamped)" = true ]; then
+if [ "$(bash "$repo_root/test/upgrade-predecessor-candidate-version.sh" restamped)" = true ]; then
     cat >&2 <<EOF
 NOTE: candidate version $candidate_version (re-versioned).
       The workspace is at $workspace_version, which does not sort above the
@@ -61,18 +61,18 @@ predecessor_build_args() {
     local lane="$1" line
     while IFS= read -r line; do
         printf '%s\n--build-arg\n' "$line" | tac
-    done < <(bash "$repo_root/test/upgrade-v014-predecessor.sh" "$lane" --build-args)
+    done < <(bash "$repo_root/test/upgrade-predecessor-pin.sh" "$lane" --build-args)
 }
 
 case "$family" in
     deb)
-        candidate_output="${3:?usage: build-upgrade-v014-image.sh deb <image> <candidate-deb-output>}"
+        candidate_output="${3:?usage: build-upgrade-predecessor-image.sh deb <image> <candidate-deb-output>}"
         [ "$#" -eq 3 ] || {
-            echo "usage: build-upgrade-v014-image.sh deb <image> <candidate-deb-output>" >&2
+            echo "usage: build-upgrade-predecessor-image.sh deb <image> <candidate-deb-output>" >&2
             exit 2
         }
         base_image="$image-base"
-        raw_candidate="$(mktemp -d "${TMPDIR:-/tmp}/facelock-upgrade-v014-deb.XXXXXX")"
+        raw_candidate="$(mktemp -d "${TMPDIR:-/tmp}/facelock-upgrade-predecessor-deb.XXXXXX")"
         trap 'rm -rf -- "$raw_candidate"' EXIT
         "$repo_root/test/build-deb-package-image.sh" trixie "$base_image" \
             "$raw_candidate/facelock.deb"
@@ -120,13 +120,13 @@ case "$family" in
             --build-arg "BASE_IMAGE=$base_image" \
             --build-arg "FACELOCK_CANDIDATE_VERSION=$lane_version" \
             "${pin_args[@]}" \
-            -t "$image" -f "$repo_root/test/Containerfile.upgrade-v014-deb" "$repo_root"
+            -t "$image" -f "$repo_root/test/Containerfile.upgrade-predecessor-deb" "$repo_root"
 
         install -m 0444 -- "$raw_candidate/candidate.deb" "$candidate_output"
         ;;
     rpm)
         [ "$#" -eq 2 ] || {
-            echo "usage: build-upgrade-v014-image.sh rpm <image>" >&2
+            echo "usage: build-upgrade-predecessor-image.sh rpm <image>" >&2
             exit 2
         }
         # The Fedora lane packages host-built binaries rather than compiling in
@@ -163,7 +163,7 @@ EOF
             done
         fi
 
-        release="$(bash "$repo_root/test/upgrade-v014-predecessor.sh" rpm-fedora release)"
+        release="$(bash "$repo_root/test/upgrade-predecessor-pin.sh" rpm-fedora release)"
         base_fedora="$(bash "$repo_root/test/fedora-lane-image.sh" "$release")"
         ort_version="$(
             for ort in /usr/lib/libonnxruntime.so /usr/lib64/libonnxruntime.so; do
@@ -190,7 +190,7 @@ EOF
             --build-arg "FACELOCK_CANDIDATE_RPM_VERSION=$rpm_version" \
             --build-arg "FACELOCK_CANDIDATE_RPM_RELEASE=$rpm_release" \
             "${pin_args[@]}" \
-            -t "$image" -f "$repo_root/test/Containerfile.upgrade-v014-rpm" "$repo_root"
+            -t "$image" -f "$repo_root/test/Containerfile.upgrade-predecessor-rpm" "$repo_root"
         ;;
     *)
         echo "unsupported upgrade lane family: $family" >&2

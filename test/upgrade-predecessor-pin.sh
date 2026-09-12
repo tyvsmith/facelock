@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Resolve one pinned released predecessor from dist/release-matrix.json.
+# Resolve the current pinned released predecessor from dist/release-matrix.json.
 #
 # The upgrade lanes (#231) install a real published artifact, so the pin has to
 # be strong enough that a re-uploaded or substituted asset fails the lane rather
@@ -8,10 +8,16 @@
 # reader. Lane Containerfiles take the fields as build args and never carry a
 # digest of their own; test/check-release-matrix.py enforces that.
 #
+# Which predecessor: `predecessors.current` names it (#367). The matrix may pin
+# more than one release -- v0.1.4 stays for the retired-authselect fixture --
+# but the lanes prove the upgrade users will actually perform, which is from
+# the newest release, and test/check-release-matrix.py holds `current` to that.
+# Nothing here spells a tag.
+#
 # Usage:
-#   upgrade-v014-predecessor.sh <deb-trixie|rpm-fedora> <field>
-#   upgrade-v014-predecessor.sh <lane> --build-args     # podman --build-arg list
-#   upgrade-v014-predecessor.sh <lane> --verify-live    # re-resolve against the API
+#   upgrade-predecessor-pin.sh <deb-trixie|rpm-fedora> <field>
+#   upgrade-predecessor-pin.sh <lane> --build-args     # podman --build-arg list
+#   upgrade-predecessor-pin.sh <lane> --verify-live    # re-resolve against the API
 #
 # --verify-live needs `gh` and network. It never downloads the asset: it asks
 # the release API what the pinned asset id is now and rejects a name, size or
@@ -22,10 +28,10 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-lane="${1:?usage: upgrade-v014-predecessor.sh <deb-trixie|rpm-fedora> <field|--build-args|--verify-live>}"
-field="${2:?usage: upgrade-v014-predecessor.sh <deb-trixie|rpm-fedora> <field|--build-args|--verify-live>}"
+lane="${1:?usage: upgrade-predecessor-pin.sh <deb-trixie|rpm-fedora> <field|--build-args|--verify-live>}"
+field="${2:?usage: upgrade-predecessor-pin.sh <deb-trixie|rpm-fedora> <field|--build-args|--verify-live>}"
 [ "$#" -eq 2 ] || {
-    echo "usage: upgrade-v014-predecessor.sh <lane> <field|--build-args|--verify-live>" >&2
+    echo "usage: upgrade-predecessor-pin.sh <lane> <field|--build-args|--verify-live>" >&2
     exit 2
 }
 
@@ -46,7 +52,11 @@ matrix_path, lane, field = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(matrix_path, encoding="utf-8") as handle:
     matrix = json.load(handle)
 
-release = matrix["predecessors"]["v0.1.4"]
+predecessors = matrix["predecessors"]
+current = predecessors.get("current")
+if not isinstance(current, str) or current not in predecessors:
+    raise SystemExit(f"release matrix predecessors.current does not name a pinned release: {current!r}")
+release = predecessors[current]
 row = release["lanes"][lane]
 if field == "tag":
     print(release["tag"])
@@ -70,7 +80,8 @@ case "$field" in
             "FACELOCK_PREDECESSOR_SHA256=$(read_lane sha256)" \
             "FACELOCK_PREDECESSOR_SIZE=$(read_lane size)" \
             "FACELOCK_PREDECESSOR_NAME=$(read_lane name)" \
-            "FACELOCK_PREDECESSOR_VERSION=$(read_lane package_version)"
+            "FACELOCK_PREDECESSOR_VERSION=$(read_lane package_version)" \
+            "FACELOCK_PREDECESSOR_UPSTREAM=$(read_lane upstream_version)"
         ;;
     --verify-live)
         command -v gh >/dev/null 2>&1 || {

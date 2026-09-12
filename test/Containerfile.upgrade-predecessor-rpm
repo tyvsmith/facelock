@@ -1,4 +1,4 @@
-# Fedora upgrade lane (#231, Track K): the released v0.1.4 fc44 RPM baked in
+# Fedora upgrade lane (#231, Track K): the released predecessor fc44 RPM baked in
 # beside a candidate built here from the same host binaries and the production
 # spec.
 #
@@ -55,6 +55,7 @@ ARG FACELOCK_PREDECESSOR_URL
 ARG FACELOCK_PREDECESSOR_SHA256
 ARG FACELOCK_PREDECESSOR_SIZE
 ARG FACELOCK_PREDECESSOR_VERSION
+ARG FACELOCK_PREDECESSOR_UPSTREAM
 
 RUN curl --proto '=https' --tlsv1.2 --output /artifacts/facelock-predecessor.rpm \
         -fsSL "$FACELOCK_PREDECESSOR_URL" && \
@@ -64,9 +65,10 @@ RUN curl --proto '=https' --tlsv1.2 --output /artifacts/facelock-predecessor.rpm
     test "$(rpm -qp --qf '%{VERSION}-%{RELEASE}' /artifacts/facelock-predecessor.rpm)" \
         = "$FACELOCK_PREDECESSOR_VERSION" && \
     printf '%s\n' "$FACELOCK_PREDECESSOR_SHA256" > /artifacts/predecessor.sha256 && \
-    printf '%s\n' "$FACELOCK_PREDECESSOR_VERSION" > /artifacts/predecessor.version
+    printf '%s\n' "$FACELOCK_PREDECESSOR_VERSION" > /artifacts/predecessor.version && \
+    printf '%s\n' "$FACELOCK_PREDECESSOR_UPSTREAM" > /artifacts/predecessor.upstream
 
-COPY test/upgrade-v014-lane.sh /upgrade-v014-lane.sh
-RUN chmod +x /upgrade-v014-lane.sh
+COPY test/upgrade-predecessor-lane.sh /upgrade-predecessor-lane.sh
+RUN chmod +x /upgrade-predecessor-lane.sh
 
 CMD ["/usr/lib/systemd/systemd"]

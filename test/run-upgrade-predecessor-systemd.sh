@@ -2,8 +2,8 @@
 # Boot one released-predecessor upgrade lane under systemd and run its harness.
 #
 # Usage:
-#   run-upgrade-v014-systemd.sh deb <image> <candidate.deb>
-#   run-upgrade-v014-systemd.sh rpm <image>
+#   run-upgrade-predecessor-systemd.sh deb <image> <candidate.deb>
+#   run-upgrade-predecessor-systemd.sh rpm <image>
 #
 # systemd is not optional here. The lane starts and stops the packaged daemon,
 # and the rollback proof turns on the candidate daemon having actually opened
@@ -12,15 +12,15 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-family="${1:?usage: run-upgrade-v014-systemd.sh <deb|rpm> <image> [candidate.deb]}"
-image="${2:?usage: run-upgrade-v014-systemd.sh <deb|rpm> <image> [candidate.deb]}"
+family="${1:?usage: run-upgrade-predecessor-systemd.sh <deb|rpm> <image> [candidate.deb]}"
+image="${2:?usage: run-upgrade-predecessor-systemd.sh <deb|rpm> <image> [candidate.deb]}"
 
 mounts=()
 case "$family" in
     deb)
-        candidate="${3:?usage: run-upgrade-v014-systemd.sh deb <image> <candidate.deb>}"
+        candidate="${3:?usage: run-upgrade-predecessor-systemd.sh deb <image> <candidate.deb>}"
         [ "$#" -eq 3 ] || {
-            echo "usage: run-upgrade-v014-systemd.sh deb <image> <candidate.deb>" >&2
+            echo "usage: run-upgrade-predecessor-systemd.sh deb <image> <candidate.deb>" >&2
             exit 2
         }
         [ -f "$candidate" ] && [ ! -L "$candidate" ] || {
@@ -32,7 +32,7 @@ case "$family" in
         ;;
     rpm)
         [ "$#" -eq 2 ] || {
-            echo "usage: run-upgrade-v014-systemd.sh rpm <image>" >&2
+            echo "usage: run-upgrade-predecessor-systemd.sh rpm <image>" >&2
             exit 2
         }
         ;;
@@ -91,4 +91,4 @@ done
     exit 1
 }
 
-podman exec "$cid" /upgrade-v014-lane.sh "$family"
+podman exec "$cid" /upgrade-predecessor-lane.sh "$family"

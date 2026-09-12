@@ -371,12 +371,14 @@ cp "$repo_root/test/Containerfile.fedora" "$matrix_root/test/"
 cp "$repo_root/.dockerignore" "$matrix_root/"
 cp "$repo_root/test/fedora-lane-image.sh" "$matrix_root/test/"
 # The released-predecessor upgrade lanes (#231). check-release-matrix.py holds
-# the v0.1.4 RPM digest equal across the authselect fixture and the matrix, and
-# refuses a lane Containerfile that grew a digest of its own, so all three have
-# to be staged or the checker dies before asserting either.
+# the v0.1.4 RPM digest equal across the authselect fixture and the matrix,
+# refuses a lane Containerfile that grew a digest of its own, and requires the
+# pin resolver to read `predecessors.current` rather than a tag (#367), so all
+# four have to be staged or the checker dies before asserting any of them.
 cp "$repo_root/test/build-rpm-authselect-fixtures.sh" "$matrix_root/test/"
-cp "$repo_root/test/Containerfile.upgrade-v014-deb" "$matrix_root/test/"
-cp "$repo_root/test/Containerfile.upgrade-v014-rpm" "$matrix_root/test/"
+cp "$repo_root/test/Containerfile.upgrade-predecessor-deb" "$matrix_root/test/"
+cp "$repo_root/test/Containerfile.upgrade-predecessor-rpm" "$matrix_root/test/"
+cp "$repo_root/test/upgrade-predecessor-pin.sh" "$matrix_root/test/"
 cp "$repo_root/.github/workflows/packaging.yml" "$matrix_root/.github/workflows/"
 cp "$repo_root/test/copr-build.sh" "$matrix_root/test/"
 cp "$repo_root/test/packit-config-validate.sh" "$matrix_root/test/"
@@ -1055,6 +1057,34 @@ assert_matrix_mutation_rejected \
     "Packit release target Fedora 45 to Rawhide" \
     ".packit.yaml" \
     's/"fedora-45-x86_64"/"fedora-rawhide-x86_64"/'
+
+# Which release the upgrade lanes and the preflight served-EVR gate ask about
+# (#367). The matrix may pin several, so `current` names one, and it has to be
+# the newest pinned release: a `current` left behind is exactly the state that
+# proved 0.1.4-to-candidate for the two releases after it. The sed matches
+# whatever tag is current and repoints it at the oldest pin the matrix keeps.
+assert_matrix_mutation_rejected \
+    "current predecessor left behind a newer pinned release" \
+    "dist/release-matrix.json" \
+    's/"current": "v[0-9][0-9.]*"/"current": "v0.1.4"/' \
+    "the upgrade lanes must prove the newest released predecessor"
+assert_matrix_mutation_rejected \
+    "predecessors naming no current release" \
+    "dist/release-matrix.json" \
+    '/^    "current": /d' \
+    "predecessors.current must name a pinned release"
+assert_matrix_mutation_rejected \
+    "current predecessor naming a release nothing pins" \
+    "dist/release-matrix.json" \
+    's/"current": "v[0-9][0-9.]*"/"current": "v9.9.9"/' \
+    "predecessors.current must name a pinned release"
+# The retired-authselect fixture is the reason more than one release stays
+# pinned, and it reads the v0.1.4 RPM digest out of this block.
+assert_matrix_mutation_rejected \
+    "v0.1.4 unpinned while the authselect fixture still reads its digest" \
+    "dist/release-matrix.json" \
+    's/^    "v0\.1\.4": {$/    "v0.1.4-retired": {/' \
+    "while the retired-authselect fixture reads its digest"
 
 # The APT signing key fingerprint is pinned so a rotation cannot silently
 # leave the published docs quoting a key that is no longer in the keyring:
@@ -1990,6 +2020,66 @@ if [ -n "$served_gap_expected" ]; then
 else
     echo "release channel case: no served EVR gap recorded, nothing to excuse"
 fi
+
+# `--expect-predecessor` asks about the release `predecessors.current` names,
+# never about whichever pinned tag happens to sort first. Reading "the single
+# pinned tag" is how preflight kept asking production COPR for 0.1.4-1 while
+# 0.2.1 was the release people were upgrading from (#367). Both halves are
+# here: the real matrix resolves the current pin, and a copy whose `current`
+# points at the older pin resolves that one instead.
+predecessor_pin_field() {
+    python3 -c 'import json,sys
+matrix = json.load(open(sys.argv[1], encoding="utf-8"))
+predecessors = matrix["predecessors"]
+tag = predecessors["current"] if sys.argv[2] == "current" else sys.argv[2]
+print(tag if sys.argv[3] == "tag" else predecessors[tag]["rpm_evr"])' "$1" "$2" "$3"
+}
+
+current_predecessor_tag="$(predecessor_pin_field "$repo_root/dist/release-matrix.json" current tag)"
+current_predecessor_evr="$(predecessor_pin_field "$repo_root/dist/release-matrix.json" current evr)"
+served_predecessor_case "predecessor EVR resolved from predecessors.current" \
+    "$tmp_root/served-ok.json" 2 \
+    "does not serve facelock-$current_predecessor_evr (pinned predecessor $current_predecessor_tag)"
+
+# The same question against a matrix whose `current` names the older pin. A
+# checker that ignored the field would ask for the same EVR both times.
+predecessor_current_root="$tmp_root/live-channel-predecessor-current"
+rm -rf "$predecessor_current_root"
+mkdir -p "$predecessor_current_root/dist" "$predecessor_current_root/test"
+cp "$repo_root/test/check-live-release-channels.py" "$predecessor_current_root/test/"
+older_predecessor_tag="$(python3 - "$repo_root/dist/release-matrix.json" \
+    "$predecessor_current_root/dist/release-matrix.json" <<'PY'
+import json
+import sys
+
+matrix = json.loads(open(sys.argv[1], encoding="utf-8").read())
+predecessors = matrix["predecessors"]
+tags = [tag for tag in predecessors if tag.startswith("v")]
+oldest = min(tags, key=lambda tag: tuple(int(part) for part in tag[1:].split(".")[:3]))
+if oldest == predecessors["current"]:
+    raise SystemExit("the matrix pins one predecessor; this case needs the older one too")
+predecessors["current"] = oldest
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    json.dump(matrix, handle, indent=2)
+print(oldest)
+PY
+)" || fail "could not stage a matrix whose current predecessor is the older pin"
+older_predecessor_evr="$(predecessor_pin_field "$predecessor_current_root/dist/release-matrix.json" \
+    current evr)"
+[ "$older_predecessor_evr" != "$current_predecessor_evr" ] ||
+    fail "the older predecessor pin carries the same EVR as the current one; the case proves nothing"
+predecessor_current_status=0
+predecessor_current_output=$(python3 \
+    "$predecessor_current_root/test/check-live-release-channels.py" --expect-predecessor \
+    --response-file "$live_copr_supported_with_rawhide" \
+    --package-response-file "$tmp_root/served-ok.json" 2>&1) || predecessor_current_status=$?
+[ "$predecessor_current_status" = 2 ] ||
+    fail "repointed predecessor case exited $predecessor_current_status, expected 2: $predecessor_current_output"
+case "$predecessor_current_output" in
+    *"does not serve facelock-$older_predecessor_evr (pinned predecessor $older_predecessor_tag)"*) ;;
+    *) fail "the live checker did not follow predecessors.current: $predecessor_current_output" ;;
+esac
+echo "release channel case: predecessor EVR follows predecessors.current"
 
 served_no_expectation_status=0
 served_no_expectation_output=$(python3 "$repo_root/test/check-live-release-channels.py" \

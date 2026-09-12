@@ -108,11 +108,11 @@ index, so substitute real values for metavariables before running a recipe.
 | `just test-rpm-smoke [release=45]` | Branched-release lane — build the package, then boot it for a runtime smoke |
 | `just test-source-install-daemon-lifecycle` | Preserve the daemon's pre-install runtime state across source file replacement. |
 | `just test-source-install-daemon-lifecycle-systemd` | Exercise the source-install barrier against a real systemd and system bus. |
-| `just test-upgrade-v014` | Both released-predecessor upgrade lanes — the stable entrypoint for #231 |
-| `just test-upgrade-v014-contract` | Released-predecessor upgrade lanes (#231) — container-free half, runs anywhere |
-| `just test-upgrade-v014-deb` | Debian half: install the real v0.1.4 .deb, upgrade to the candidate, roll back |
-| `just test-upgrade-v014-pins` | Confirm the pinned v0.1.4 assets are still the assets GitHub serves (needs gh) |
-| `just test-upgrade-v014-rpm` | Fedora half: same proof against the released fc44 RPM |
+| `just test-upgrade-predecessor` | Both released-predecessor upgrade lanes — the stable entrypoint for #231 |
+| `just test-upgrade-predecessor-contract` | Released-predecessor upgrade lanes (#231) — container-free half, runs anywhere |
+| `just test-upgrade-predecessor-deb` | Debian half: install the real released .deb, upgrade to the candidate, roll back |
+| `just test-upgrade-predecessor-pins` | Confirm the pinned predecessor assets are still the assets GitHub serves (needs gh) |
+| `just test-upgrade-predecessor-rpm` | Fedora half: same proof against the released fc44 RPM |
 | `just uninstall` | Remove source-installed system assets through sudo; retain biometric state and models. |
 | `just uninstall-files` | Uninstall files from system (requires root, called by uninstall) |
 | `just version` | Show current version |

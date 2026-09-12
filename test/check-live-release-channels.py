@@ -247,13 +247,20 @@ if args.expect_predecessor:
     predecessors = matrix.get("predecessors")
     if not isinstance(predecessors, dict):
         fail("release matrix declares no predecessors block")
-    tags = sorted(tag for tag in predecessors if tag.startswith("v"))
-    if len(tags) != 1:
-        fail(f"release matrix must pin exactly one released predecessor, found {tags}")
-    expected_evr = predecessors[tags[0]].get("rpm_evr")
+    # The matrix may pin several releases; `current` names the one a running
+    # system is upgrading from, and that is the only one production COPR is
+    # asked about. Reading "the single pinned tag" instead is what tied this
+    # gate to v0.1.4 long after 0.2.1 shipped (#367).
+    tag = predecessors.get("current")
+    if not isinstance(tag, str) or not tag:
+        fail("release matrix predecessors block names no current predecessor")
+    release = predecessors.get(tag)
+    if not isinstance(release, dict):
+        fail(f"release matrix predecessors.current names {tag}, which is not pinned")
+    expected_evr = release.get("rpm_evr")
     if not isinstance(expected_evr, str) or not expected_evr:
-        fail(f"release matrix predecessor {tags[0]} declares no RPM EVR")
-    expected_for = f" (pinned predecessor {tags[0]})"
+        fail(f"release matrix predecessor {tag} declares no RPM EVR")
+    expected_for = f" (pinned predecessor {tag})"
 else:
     expected_evr = args.expect_evr
     expected_for = ""

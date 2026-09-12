@@ -153,7 +153,7 @@ test-docs-walkthrough scenario identity output:
     python3 test/docs-walkthrough/run.py run --scenario "{{ scenario }}" --identity "{{ identity }}" --output "{{ output }}"
 
 # Run local tests, lint, format, audit, PAM isolation and documentation/install/release contracts; excludes full packaging and hardware lanes.
-check: test lint fmt-check audit check-pam-standalone check-agent-docs check-docs test-source-install-daemon-lifecycle test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test test-legacy-system-assets test-locale-install-contract test-classify-changes test-arch-package-select check-workflow-policy test-upgrade-v014-contract test-release-artifacts
+check: test lint fmt-check audit check-pam-standalone check-agent-docs check-docs test-source-install-daemon-lifecycle test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test test-legacy-system-assets test-locale-install-contract test-classify-changes test-arch-package-select check-workflow-policy test-upgrade-predecessor-contract test-release-artifacts
 
 # The path filter that decides whether the packaging gates run on a pull
 # request. A pattern that stops matching fails nothing: it reports every deb,
@@ -1424,33 +1424,33 @@ test-rpm-smoke release="45": (_fedora-lane-image release) _require-release-binar
 test-rpm-lanes: (test-rpm-pkg "43") (test-rpm-pkg "44") (test-rpm-smoke "45")
 
 # Released-predecessor upgrade lanes (#231) — container-free half, runs anywhere
-test-upgrade-v014-contract:
-    bash test/upgrade-v014-contract.sh
+test-upgrade-predecessor-contract:
+    bash test/upgrade-predecessor-contract.sh
 
-# Confirm the pinned v0.1.4 assets are still the assets GitHub serves (needs gh)
-test-upgrade-v014-pins:
-    bash test/upgrade-v014-predecessor.sh deb-trixie --verify-live
-    bash test/upgrade-v014-predecessor.sh rpm-fedora --verify-live
+# Confirm the pinned predecessor assets are still the assets GitHub serves (needs gh)
+test-upgrade-predecessor-pins:
+    bash test/upgrade-predecessor-pin.sh deb-trixie --verify-live
+    bash test/upgrade-predecessor-pin.sh rpm-fedora --verify-live
 
-# Debian half: install the real v0.1.4 .deb, upgrade to the candidate, roll back
-test-upgrade-v014-deb: test-upgrade-v014-contract _require-models
+# Debian half: install the real released .deb, upgrade to the candidate, roll back
+test-upgrade-predecessor-deb: test-upgrade-predecessor-contract _require-models
     #!/usr/bin/env bash
     set -euo pipefail
-    artifact_dir="$(mktemp -d "${TMPDIR:-/tmp}/facelock-upgrade-v014-deb.XXXXXX")"
+    artifact_dir="$(mktemp -d "${TMPDIR:-/tmp}/facelock-upgrade-predecessor-deb.XXXXXX")"
     trap 'rm -rf -- "$artifact_dir"' EXIT
     candidate="$artifact_dir/facelock-candidate.deb"
-    test/build-upgrade-v014-image.sh deb facelock-upgrade-v014-deb "$candidate"
-    test/run-upgrade-v014-systemd.sh deb facelock-upgrade-v014-deb "$candidate"
+    test/build-upgrade-predecessor-image.sh deb facelock-upgrade-predecessor-deb "$candidate"
+    test/run-upgrade-predecessor-systemd.sh deb facelock-upgrade-predecessor-deb "$candidate"
 
 # Fedora half: same proof against the released fc44 RPM
-test-upgrade-v014-rpm: test-upgrade-v014-contract _require-models _require-release-binaries
+test-upgrade-predecessor-rpm: test-upgrade-predecessor-contract _require-models _require-release-binaries
     #!/usr/bin/env bash
     set -euo pipefail
-    test/build-upgrade-v014-image.sh rpm facelock-upgrade-v014-rpm
-    test/run-upgrade-v014-systemd.sh rpm facelock-upgrade-v014-rpm
+    test/build-upgrade-predecessor-image.sh rpm facelock-upgrade-predecessor-rpm
+    test/run-upgrade-predecessor-systemd.sh rpm facelock-upgrade-predecessor-rpm
 
 # Both released-predecessor upgrade lanes — the stable entrypoint for #231
-test-upgrade-v014: test-upgrade-v014-deb test-upgrade-v014-rpm
+test-upgrade-predecessor: test-upgrade-predecessor-deb test-upgrade-predecessor-rpm
 
 # Packit config schema gate — runs the real `packit` in a digest-pinned Fedora container
 test-packit-config:
@@ -1760,7 +1760,7 @@ release-preflight tag='':
     # Enabled chroots say the project is shaped right; they say nothing about
     # what it serves. The v0.1.4 COPR build never landed and the chroot check
     # passed for three months (#333), so preflight asks production for the EVR
-    # the pinned predecessor should have left behind.
+    # the predecessor `predecessors.current` names should have left behind.
     python3 test/check-live-release-channels.py --expect-predecessor || failed=1
 
     echo ""

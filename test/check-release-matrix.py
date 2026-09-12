@@ -1711,7 +1711,7 @@ print("release matrix contract: OK")
 #
 # Separate block on purpose: everything above reasons about what this release
 # publishes, this one reasons about what an installed system is upgrading FROM.
-# The upgrade lanes (`just test-upgrade-v014`) download real GitHub release
+# The upgrade lanes (`just test-upgrade-predecessor`) download real GitHub release
 # assets, so the pin has to be strong enough that a re-uploaded or substituted
 # asset fails the lane instead of silently changing what was proven. Asset id
 # plus SHA256 plus byte size is that pin: the id survives a rename, the digest
@@ -1736,8 +1736,32 @@ require(
 
 predecessor_tags = sorted(key for key in predecessors if key.startswith("v"))
 require(
-    predecessor_tags == ["v0.1.4"],
-    f"predecessors must pin exactly the v0.1.4 release, got {predecessor_tags}",
+    bool(predecessor_tags),
+    "predecessors must pin at least one released predecessor",
+)
+# More than one release may stay pinned -- v0.1.4 is still the only build of
+# the retired-authselect package that exists -- so which one the upgrade lanes
+# and the preflight served-EVR gate use is named rather than inferred. It is
+# the newest pinned release, because that is the upgrade users actually perform
+# after it ships; a `current` that lags a pinned release is the #367 failure,
+# where the lanes proved 0.1.4-to-candidate while 0.2.1 was what people ran.
+current_predecessor = predecessors.get("current")
+require(
+    isinstance(current_predecessor, str) and current_predecessor in predecessor_tags,
+    f"predecessors.current must name a pinned release, got {current_predecessor!r} "
+    f"(pinned: {predecessor_tags})",
+)
+newest_predecessor = max(predecessor_tags, key=lambda tag: version_triple(tag[1:]))
+require(
+    current_predecessor == newest_predecessor,
+    f"predecessors.current is {current_predecessor}, but {newest_predecessor} is pinned and newer; "
+    "the upgrade lanes must prove the newest released predecessor",
+)
+# v0.1.4 stays pinned for as long as the retired-authselect fixture needs it,
+# and that fixture is held to this pin below.
+require(
+    "v0.1.4" in predecessor_tags,
+    "predecessors must keep pinning v0.1.4 while the retired-authselect fixture reads its digest",
 )
 
 declared_apt_suites = set(matrix["apt_suites"]) - {"compat"}
@@ -1826,11 +1850,12 @@ for tag in predecessor_tags:
 
 # Production COPR never received the v0.1.4 build: Packit's submission failed on
 # every target and nobody noticed for three months (#333). Preflight requires
-# the channel to serve the predecessor, so that unfixed history is recorded as a
-# gap rather than silently tolerated. The record is pinned to both EVRs -- the
-# one owed and the one served -- and to the predecessor above, so it cannot
-# outlive what it excuses: the next predecessor pin makes it fail here, and any
+# the channel to serve the predecessor, so an unfixed history like that is
+# recorded as a gap rather than silently tolerated. The record is pinned to both
+# EVRs -- the one owed and the one served -- and to the current predecessor, so
+# it cannot outlive what it excuses: rolling the pin makes it fail here, and any
 # change to what COPR serves makes it stop matching in the live checker.
+# No gap is recorded now: production COPR serves the EVR the pin owes.
 served_evr_gap = production_copr.get("served_evr_gap")
 if served_evr_gap is not None:
     require(isinstance(served_evr_gap, dict), "production COPR served EVR gap must be an object")
@@ -1839,9 +1864,9 @@ if served_evr_gap is not None:
         f"production COPR served EVR gap fields drifted: {sorted(served_evr_gap)}",
     )
     require(
-        served_evr_gap.get("expected_evr") == predecessors[predecessor_tags[0]]["rpm_evr"],
-        "production COPR served EVR gap must excuse the pinned predecessor, "
-        f"got {served_evr_gap.get('expected_evr')!r}",
+        served_evr_gap.get("expected_evr") == predecessors[current_predecessor]["rpm_evr"],
+        "production COPR served EVR gap must excuse the current pinned predecessor "
+        f"{current_predecessor}, got {served_evr_gap.get('expected_evr')!r}",
     )
     require(
         isinstance(served_evr_gap.get("served_evr"), str)
@@ -1863,10 +1888,23 @@ for relative_path in ("test/Containerfile.rpm-authselect", "test/build-rpm-auths
         f"{relative_path} pins a different v0.1.4 RPM digest than the release matrix",
     )
 
+# The upgrade lane resolver reads whichever release `current` names, so nothing
+# in it may spell a tag. A literal here is how the pin stopped moving (#367).
+predecessor_resolver = (ROOT / "test/upgrade-predecessor-pin.sh").read_text()
+require(
+    'predecessors.get("current")' in predecessor_resolver,
+    "test/upgrade-predecessor-pin.sh must resolve the predecessor through predecessors.current",
+)
+for tag in predecessor_tags:
+    require(
+        f'"{tag}"' not in predecessor_resolver,
+        f"test/upgrade-predecessor-pin.sh names {tag} instead of reading predecessors.current",
+    )
+
 # The upgrade lanes must read the pin from here rather than carry their own.
 for relative_path in (
-    "test/Containerfile.upgrade-v014-deb",
-    "test/Containerfile.upgrade-v014-rpm",
+    "test/Containerfile.upgrade-predecessor-deb",
+    "test/Containerfile.upgrade-predecessor-rpm",
 ):
     lane_source = (ROOT / relative_path).read_text()
     embedded = re.findall(r"\b[0-9a-f]{64}\b", lane_source)

@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runs it on every pull request (`loopback-e2e`). A model-backed contract test pins the
   fixture inside the detector, IR-texture, quality, recognition and frame-variance bands.
 
+### Changed
+
+- **The upgrade lanes now prove the newest released predecessor** (#367): `dist/release-matrix.json`
+  names it as `predecessors.current`, pinned to v0.2.1's published .deb and fc44 .rpm, and the lane
+  scripts, the release-matrix contract, the served-EVR preflight check and the candidate version all
+  read that field instead of a v0.1.4 literal. The recipes are `just test-upgrade-predecessor`,
+  `-deb`, `-rpm`, `-contract` and `-pins` (was `just test-upgrade-v014*`). v0.1.4 stays pinned for
+  the retired-authselect fixture, and the COPR served-EVR gap record retires with the pin it excused.
+
 ## [0.2.1] - 2026-09-07
 
 ### Changed

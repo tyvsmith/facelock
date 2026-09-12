@@ -321,7 +321,7 @@
         "path": "docs/releasing.md",
         "anchor": "release-preflight-recommended",
         "ordinal": 19,
-        "line": 578,
+        "line": 579,
         "sha256": "655d50b2ad3658f69f4548aa1da652750d17bec282f550281f9cc518912ca460"
       }
     ],
@@ -372,7 +372,7 @@
         "path": "docs/releasing.md",
         "anchor": "upgrade-safety",
         "ordinal": 8,
-        "line": 1148,
+        "line": 1159,
         "sha256": "45f087a5c09ff21da36fd7763813fdc1ddbc4627af61d1b795636ab1a3fb3448"
       }
     ],
@@ -444,7 +444,7 @@
         "path": "docs/releasing.md",
         "anchor": "upgrade-safety",
         "ordinal": 7,
-        "line": 1148,
+        "line": 1159,
         "sha256": "4981bfb4bf82b5fffa2693be6c87209a35f34a2496e6f5ecddbc52cde3a0ca0f"
       }
     ],
