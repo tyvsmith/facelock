@@ -86,7 +86,7 @@ Controls how the PAM module reaches the face engine.
 |-----|------|---------|-------------|
 | `disabled` | bool | `false` | Disable face authentication entirely. PAM returns IGNORE, falling through to the next auth method. |
 | `abort_if_ssh` | bool | `true` | Refuse face auth when connected via SSH (no camera available). |
-| `abort_if_lid_closed` | bool | `true` | Refuse face auth when the laptop lid is closed (camera blocked). |
+| `abort_if_lid_closed` | bool | `true` | Refuse face auth when the laptop lid is closed (camera blocked). The daemon reads the lid from logind and refuses when logind cannot answer. |
 | `require_ir` | bool | `true` | Require an IR camera for authentication. RGB cameras are trivially spoofed with a printed photo. Only set to `false` for development/testing. |
 | `require_frame_variance` | bool | `true` | Require multiple frames with different embeddings before accepting. Defends against static photo attacks. |
 | `frame_variance_max_similarity` | f32 | `0.985` | Maximum similarity between consecutive matched frames in the variance window. Passive anti-photo check only; it does not stop video replay. |

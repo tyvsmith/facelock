@@ -1380,29 +1380,46 @@ What each physical-presence gate is worth behind the module is not uniform:
 |---|---|---|
 | `pam_facelock.so` | enforced, from the calling process's environment | enforced, from the calling process's `/proc` |
 | one-shot `facelock auth` | enforced in `pre_check` (PAM forwards `SSH_CONNECTION` / `SSH_TTY` into the child's allow-listed environment) | enforced in `pre_check`: the helper is an ordinary child of the PAM-using process, with no sandbox |
-| daemon `Authenticate` | enforced, by a different mechanism: for a non-root caller the D-Bus server resolves the caller's logind session (ProcessFD, then `GetSessionByPID`) and denies one whose `Remote` property is true. A root caller skips it, and a PAM `sudo` attempt arrives as UID 0 | **inert** |
+| daemon `Authenticate` | enforced, by a different mechanism: for a non-root caller the D-Bus server resolves the caller's logind session (ProcessFD, then `GetSessionByPID`) and denies one whose `Remote` property is true. A root caller skips it, and a PAM `sudo` attempt arrives as UID 0 | enforced, by a different source: the D-Bus server reads `org.freedesktop.login1.Manager.LidClosed` and refuses a closed — or unresolvable — lid. Root is **not** exempt, because a PAM `sudo` attempt arrives as UID 0 |
 
-Two consequences worth stating plainly. The `abort_if_ssh` arm inside
+One consequence worth stating plainly. The `abort_if_ssh` arm inside
 `pre_check` reads the *calling* environment, which is the right environment on
 the one-shot path and never carries `SSH_CONNECTION` inside the long-running
 daemon, so on the daemon path it is the logind check above that does the work.
-And `pre_check`'s lid gate cannot fire in the packaged daemon at all:
-`systemd/facelock-daemon.service` sets `ProcSubset=pid`, so `/proc/acpi` does
-not exist in the daemon's mount namespace and the resolver finds no lid
-device. **A caller that reaches `Authenticate` over D-Bus without going
-through `pam_facelock.so` is therefore not lid-gated.** Closing that needs a
-lid source the namespace keeps (logind's `LidClosed` property, say), not a
-wider `/proc`; this is long-standing behavior, not a property of the
-enumeration rule below, which the module and the one-shot both honor.
 
-**Lid rule.** Both gates resolve the lid the same way, from one shared
-source (`crates/pam-facelock/src/lid.rs`, compiled into the module and
-`include!`d by the daemon): every `/proc/acpi/button/lid/*/state` is read,
-whatever the firmware names the device (`LID0`, `LID`, `LID1`, ...); the lid
-is closed when any of them reports `closed`; a device whose `state` cannot be
-read is skipped; no readable device at all means no lid, which the gate
-treats as open. Only `closed` aborts, so a desktop, a VM or a missing
-`/proc/acpi` never blocks face auth.
+**Lid rule.** Which resolver answers is decided by the path, not by
+preference: neither ever falls back to the other.
+
+*In process* — `pam_facelock.so`, one-shot `facelock auth` and direct-mode
+callers — the lid comes from one shared source
+(`crates/pam-facelock/src/lid.rs`, compiled into the module and `include!`d by
+the daemon): every `/proc/acpi/button/lid/*/state` is read, whatever the
+firmware names the device (`LID0`, `LID`, `LID1`, ...); the lid is closed when
+any of them reports `closed`; a device whose `state` cannot be read is
+skipped; no readable device at all means no lid, which the gate treats as
+open. Only `closed` aborts, so a desktop, a VM or a missing `/proc/acpi` never
+blocks face auth there.
+
+*Over D-Bus* — daemon `Authenticate` — the lid comes from logind's
+`LidClosed` property, read once per request before the handler mutex is
+taken. The procfs resolver is structurally blind here and always was:
+`systemd/facelock-daemon.service` sets `ProcSubset=pid`, so `/proc/acpi` is
+not in the daemon's mount namespace and enumeration finds no device on any
+laptop (issue #385). `LidClosed` survives that sandbox, is change-emitting,
+and needs no unit or bus-policy change. A machine with no lid reports
+`false`, matching the procfs reading of a desktop.
+
+**Failing direction differs by source, deliberately.** In process, a lid that
+cannot be read counts as open — absence there is a real answer. Over D-Bus it
+does not: if `abort_if_lid_closed` is enabled and logind cannot be reached,
+times out, or the request is cancelled mid-read, the daemon refuses with
+`lid state unavailable` rather than proceeding. The refusal is in band
+(`model_id == -2`), so a `sufficient` PAM stack still continues to the
+password; nothing locks out. Two operational consequences: a daemon running
+on a host with no logind at all (a container, a non-systemd init) must set
+`abort_if_lid_closed = false` to serve D-Bus authentications, and the gate is
+enforced for root callers too, since `sudo`, `login`, `su` and root-run
+greeters all reach the daemon as UID 0.
 
 The line is inserted immediately before the first *logical* rule whose first
 ASCII-whitespace-delimited type token is `auth`, matched
@@ -2137,7 +2154,7 @@ maps those codes through its unknown-code arm.
 |------|-------|-----------------------|-------------------------|
 | 0 | Face matched | `PAM_SUCCESS` | `PAM_SUCCESS` |
 | 1 | Scanned, no match | `PAM_AUTH_ERR` | `PAM_AUTH_ERR` |
-| 2 | Error / no opinion: disabled, SSH, lid closed, storage, rate-limit check failed, IR required, unverified Y16, internal, cancelled, not enrolled | `PAM_IGNORE` | `PAM_IGNORE` |
+| 2 | Error / no opinion: disabled, SSH, lid closed, lid state unavailable (daemon-only — the helper resolves the lid itself), storage, rate-limit check failed, IR required, unverified Y16, internal, cancelled, not enrolled | `PAM_IGNORE` | `PAM_IGNORE` |
 | 3 | Rate limited | `PAM_AUTH_ERR` | `PAM_IGNORE` |
 | 4 | Suppressed (no enrolled models + `suppress_unknown`) | `PAM_AUTHINFO_UNAVAIL` | `PAM_IGNORE` |
 | 5 | All frames dark | `PAM_IGNORE` | `PAM_IGNORE` |

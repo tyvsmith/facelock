@@ -601,6 +601,7 @@ fn oneshot_exit_code(kind: ErrorKind) -> i32 {
         ErrorKind::Disabled
         | ErrorKind::SshSession
         | ErrorKind::LidClosed
+        | ErrorKind::LidUnavailable
         | ErrorKind::Storage
         | ErrorKind::RateLimitCheckFailed
         | ErrorKind::IrRequired
@@ -741,6 +742,15 @@ mod tests {
             (ErrorKind::Disabled, "facelock is disabled", "error", 2),
             (ErrorKind::SshSession, "SSH session detected", "error", 2),
             (ErrorKind::LidClosed, "lid closed", "error", 2),
+            // Daemon-only (issue #385): the one-shot helper reads the lid in
+            // its own namespace and can always answer, so this class only
+            // ever comes from the D-Bus transport's logind read failing.
+            (
+                ErrorKind::LidUnavailable,
+                "lid state unavailable",
+                "error",
+                2,
+            ),
             (ErrorKind::Storage, "storage error: boom", "error", 2),
             // Frozen: PAM reads this one as a deliberate lockout
             // (PAM_AUTH_ERR, no oneshot retry) — on the daemon transport via

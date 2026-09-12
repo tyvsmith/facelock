@@ -40,3 +40,13 @@ timeout_secs = 10
 disabled = false
 require_ir = false
 require_frame_variance = false
+
+# The daemon resolves the lid from logind (org.freedesktop.login1.Manager
+# .LidClosed) because ProcSubset=pid hides /proc/acpi from the packaged unit's
+# mount namespace. These containers run a bare dbus-daemon with no logind on
+# it, so the daemon cannot resolve the lid at all — and an unresolvable lid
+# refuses, by design (issue #385). Disabled HERE ON PURPOSE so the D-Bus auth
+# suites exercise the paths they are about instead of every Authenticate
+# returning "lid state unavailable". The booted real-systemd tiers have logind
+# and leave the product default (true) alone.
+abort_if_lid_closed = false

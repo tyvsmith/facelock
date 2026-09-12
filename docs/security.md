@@ -1660,32 +1660,48 @@ That is deliberate: the module self-gates on `security.disabled`,
 daemon. A closed lid returns `PAM_IGNORE` from the module itself, and the
 stack continues to the password.
 
-The module is the gate that fires here, because it runs in the calling
+The module is the gate that fires first here, because it runs in the calling
 process, with that process's environment and an unrestricted `/proc`. Behind
-it the daemon is not a second copy of the same two gates. Its SSH refusal is
-real but differently built: for a non-root `Authenticate` caller the D-Bus
-server resolves the caller's logind session and denies a remote one (a root
-caller skips that check, and a PAM `sudo` attempt arrives as UID 0). Its lid
-gate is **inert under the packaged unit**: `systemd/facelock-daemon.service`
-sets `ProcSubset=pid`, so `/proc/acpi` is absent from the daemon's mount
-namespace and the resolver reports no lid device. A D-Bus caller that does not
-come through `pam_facelock.so` is therefore not lid-gated, and has not been;
-fixing that means finding the lid somewhere the sandbox keeps, such as
-logind's `LidClosed` property, rather than widening `/proc`. The one-shot
-`facelock auth` helper is unaffected: PAM spawns it as an ordinary child, so
-both gates run there.
+it the daemon is not a second copy of the same two gates — it enforces both,
+from sources its own sandbox can see. Its SSH refusal: for a non-root
+`Authenticate` caller the D-Bus server resolves the caller's logind session
+and denies a remote one (a root caller skips that check, and a PAM `sudo`
+attempt arrives as UID 0). Its lid refusal: the server reads
+`org.freedesktop.login1.Manager.LidClosed` once per request and refuses a
+closed lid, for every caller including root. The one-shot `facelock auth`
+helper keeps the in-process resolver: PAM spawns it as an ordinary child, so
+`/proc/acpi` is right there.
 
-The lid is resolved by enumerating every
+That split is not a preference, it is a namespace constraint.
+`systemd/facelock-daemon.service` sets `ProcSubset=pid`, so `/proc/acpi` is
+absent from the daemon's mount namespace and the procfs resolver reports no
+lid device on any laptop. Until this was fixed (issue #385) a D-Bus caller
+that did not come through `pam_facelock.so` was not lid-gated at all. Neither
+source ever falls back to the other: widening `/proc` is not the fix, and a
+resolver that is structurally blind is not a fallback.
+
+In process, the lid is resolved by enumerating every
 `/proc/acpi/button/lid/*/state` (`LID0`, `LID`, `LID1`, whatever the firmware
-names it) from one source shared by the module and the daemon; the lid is
-closed when any device reports `closed`, and no lid device at all counts as
-open. `abort_if_lid_closed = false` is the opt-out for a docked laptop using an
-external camera with the lid shut. Failing direction: a lid the resolver
-cannot read counts as open, so the attempt runs the normal camera
+names it) from one source shared by the module and the one-shot helper; the
+lid is closed when any device reports `closed`, and no lid device at all
+counts as open. `abort_if_lid_closed = false` is the opt-out for a docked
+laptop using an external camera with the lid shut.
+
+**Failing direction, and it differs by source.** In process, a lid the
+resolver cannot read counts as open: the attempt runs the normal camera
 authentication and its result decides the outcome. On a machine with no lid
 that reading is correct; on a laptop whose closed lid went undetected the
 blocked camera sees no face and the attempt ends at the timeout, with the
-stack continuing to the password.
+stack continuing to the password. Over D-Bus the daemon does the opposite: a
+lid it cannot resolve — logind unreachable, the property read timing out, the
+request cancelled mid-read — refuses with `lid state unavailable`, a class
+of its own so the audit trail never records it as a closed lid. A gate the
+operator asked for must not pass silently because its source went away, and
+the cost of refusing is bounded: the refusal is in band (`model_id == -2`),
+so a `sufficient` stack continues to the password exactly as a closed lid
+would. The corollary is an operational one — a daemon on a host with no
+logind (a container, a non-systemd init) must set
+`abort_if_lid_closed = false` before it can serve D-Bus authentications.
 
 Operators who want face auth for only some actions under the PAM model should
 control it at the PAM layer (which service files include `pam_facelock.so`), not
