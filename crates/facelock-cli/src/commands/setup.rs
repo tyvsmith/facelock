@@ -6609,6 +6609,74 @@ mod choice_tests {
         assert!(!key_path.exists(), "the tpm target must not mint a keyfile");
     }
 
+    /// The gate on the sealing mint, driven through `setup_encryption_auto`
+    /// rather than called directly: a host whose key artifacts are both gone
+    /// but whose database still holds encrypted rows must be refused, not
+    /// handed a new sealed key that leaves those rows dead.
+    #[cfg(feature = "tpm")]
+    #[test]
+    fn auto_policy_refuses_to_seal_a_new_key_over_encrypted_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("facelock.db");
+        let key_path = dir.path().join("facelock.key"); // absent
+        let sealed_path = dir.path().join("sealed.key"); // absent
+        {
+            let store = facelock_store::FaceStore::create(&db_path).unwrap();
+            let sealed = facelock_tpm::SoftwareSealer::from_key([0x11u8; 32])
+                .seal_embedding(&[0.5f32; 512])
+                .unwrap();
+            store
+                .add_model_raw("alice", "front", &sealed, true, "embedder")
+                .unwrap();
+        }
+
+        let mut config = config_for_auto(dir.path(), &key_path, &sealed_path);
+        config.storage.db_path = db_path.to_string_lossy().into_owned();
+
+        let err = setup_encryption_auto(&config, Some(true))
+            .expect_err("a sealing mint over encrypted rows must be refused");
+        let chain = format!("{err:#}");
+        assert!(
+            chain.contains("refusing to write an encryption key"),
+            "the refusal must name the decision: {chain}"
+        );
+        assert!(
+            chain.contains("software-encrypted"),
+            "the refusal must name the rows at risk: {chain}"
+        );
+        assert!(!sealed_path.exists(), "no sealed key may be written");
+        assert!(!key_path.exists(), "no keyfile may be written either");
+    }
+
+    /// A keyfile that is not a 32-byte AES key cannot be sealed, and #358
+    /// routed that input from "mint a sealed key beside it" to a refusal.
+    /// The refusal has to say what to do about it: setup aborts before
+    /// `secure_setup_paths` and the setup marker, so an operator who cannot
+    /// act on the message is left with a half-applied run.
+    #[cfg(feature = "tpm")]
+    #[test]
+    fn auto_policy_refusal_over_a_malformed_keyfile_names_the_remedy() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("facelock.key");
+        let sealed_path = dir.path().join("sealed.key"); // absent
+        std::fs::write(&key_path, b"far too short").unwrap();
+
+        let config = config_for_auto(dir.path(), &key_path, &sealed_path);
+        let err = setup_encryption_auto(&config, Some(true))
+            .expect_err("a keyfile that is not a key cannot be sealed");
+        let chain = format!("{err:#}");
+        assert!(chain.contains("32 bytes"), "{chain}");
+        assert!(
+            chain.contains(&key_path.display().to_string()),
+            "the refusal must name the file: {chain}"
+        );
+        assert!(
+            chain.contains("remove it"),
+            "the refusal must name the remedy: {chain}"
+        );
+        assert!(!sealed_path.exists(), "no sealed key may be written");
+    }
+
     /// The mirror of #358: keyfile absent, sealed key present, TPM unusable.
     /// Nothing can unseal it, so a keyfile is minted — and the sealed
     /// artifact stays on disk, as `--encryption keyfile` leaves it.
@@ -6697,7 +6765,8 @@ mod choice_tests {
 
         // With a usable TPM that keyfile is sealed, not shadowed by a fresh
         // sealed key (#358) — so no key is minted and the guard is skipped.
-        #[cfg(feature = "tpm")]
+        // True in either build: without the tpm feature the plan targets the
+        // keyfile, which already exists.
         assert!(!auto_encryption_needs_keygen(&config, true));
 
         // A sealed key nothing can unseal does not spare the keyfile target a

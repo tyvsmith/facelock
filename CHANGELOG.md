@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   orphaned-models guard on `--encryption auto` runs exactly when a key is minted, and a
   minted sealed key now goes through the same shared key gate as a minted keyfile, so a
   flagless `facelock setup` refuses to seal a new key over rows the missing one wrote.
+  One input changes outcome rather than key identity: an `encryption.key` that is not a
+  32-byte AES key used to be ignored, with a fresh sealed key minted beside it, and is now
+  a refusal, because sealing is what the auto path does with an existing keyfile. The
+  refusal names the file, its size and the remedy (restore the real key, or remove it and
+  re-run), since it stops setup before it secures paths and writes its marker.
 
 ### Added
 
