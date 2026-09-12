@@ -38,11 +38,12 @@ index, so substitute real values for metavariables before running a recipe.
 | `just build` | Build in debug mode (development) |
 | `just build-release` | Build in release mode (for install) |
 | `just build-smoke-binaries` | Build only the release `facelock` (tpm) and PAM module the CI smoke tiers consume. |
-| `just check` | Run local tests, lint, format, audit, PAM isolation and documentation/install/release contracts; excludes full packaging and hardware lanes. |
+| `just check` | Run local tests, lint (default and `tpm`), format, audit, PAM isolation and documentation/install/release contracts; excludes full packaging and hardware lanes. |
 | `just check-agent-docs [base=]` | Check repository instructions and lifecycle contracts; optional base ref adds a coupling check. |
 | `just check-docs` | Verify instructional coverage, references and parser acceptance (no example execution). |
 | `just check-package-names-live` | Resolve documented dependency names against live upstream repositories (network required). |
 | `just check-pam-standalone` | Build PAM independently and reject forbidden async-io backend dependencies. |
+| `just check-tpm` | Lint and test the workspace with `tpm`; catches gate regressions, not real TPM behaviour. |
 | `just check-workflow-policy` | Pin the trust boundary of the comment-triggered Claude workflow (docs/security.md, CI Trust Boundary). |
 | `just clean` | Clean build artifacts |
 | `just docs-inventory` | Report the tracked documentation, public recipes and Cargo executables as JSON. |
@@ -108,6 +109,7 @@ index, so substitute real values for metavariables before running a recipe.
 | `just test-rpm-smoke [release=45]` | Branched-release lane — build the package, then boot it for a runtime smoke |
 | `just test-source-install-daemon-lifecycle` | Preserve the daemon's pre-install runtime state across source file replacement. |
 | `just test-source-install-daemon-lifecycle-systemd` | Exercise the source-install barrier against a real systemd and system bus. |
+| `just test-tpm` | Run all unit tests with the `tpm` feature enabled (matches CI's swtpm job). |
 | `just test-upgrade-predecessor` | Both released-predecessor upgrade lanes — the stable entrypoint for #231 |
 | `just test-upgrade-predecessor-contract` | Released-predecessor upgrade lanes (#231) — container-free half, runs anywhere |
 | `just test-upgrade-predecessor-deb` | Debian half: install the real released .deb, upgrade to the candidate, roll back |

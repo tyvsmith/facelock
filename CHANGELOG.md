@@ -54,6 +54,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runs it on every pull request (`loopback-e2e`). A model-backed contract test pins the
   fixture inside the detector, IR-texture, quality, recognition and frame-variance bands.
 
+- **A local gate for the `tpm` feature** (#386): `just check-tpm` runs `lint-tpm` and the new
+  `just test-tpm`, and `just check` now calls it, so the 80 `feature = "tpm"` cfg sites across
+  the cli, daemon and tpm crates are compiled and exercised locally instead of only in CI. It is deliberately outside `just test`, which is the inner loop and would pay a
+  second full compile of the workspace. A developer machine has no TPM the test process can
+  open, so the gate catches feature-gate and decision regressions, not sealing behaviour: the
+  swtpm-backed `tpm-tests` job stays the only place a sealed round trip executes, and it now
+  runs `just test-tpm` rather than its own copy of the command.
+
 ### Changed
 
 - **The upgrade lanes now prove the newest released predecessor** (#367): `dist/release-matrix.json`
