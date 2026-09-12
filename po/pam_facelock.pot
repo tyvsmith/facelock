@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: pam_facelock\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-23 13:44-0700\n"
+"POT-Creation-Date: 2026-09-11 16:39-0700\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,11 +17,11 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: crates/pam-facelock/src/lib.rs:1175
+#: crates/pam-facelock/src/lib.rs:1164
 msgid "Identifying face..."
 msgstr ""
 
-#: crates/pam-facelock/src/lib.rs:1185 crates/pam-facelock/src/lib.rs:1199
-#: crates/pam-facelock/src/lib.rs:1241
+#: crates/pam-facelock/src/lib.rs:1174 crates/pam-facelock/src/lib.rs:1188
+#: crates/pam-facelock/src/lib.rs:1230
 msgid "Face recognized."
 msgstr ""
