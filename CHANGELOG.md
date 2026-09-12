@@ -63,7 +63,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-deb`, `-rpm`, `-contract` and `-pins` (was `just test-upgrade-v014*`). v0.1.4 stays pinned for
   the retired-authselect fixture, and the COPR served-EVR gap record retires with the pin it excused.
 
-||||||| parent of 26777442 (fix(setup): Seal an existing keyfile on the automatic encryption path)
 ## [0.2.1] - 2026-09-07
 
 ### Changed
