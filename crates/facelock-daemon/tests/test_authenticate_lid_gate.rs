@@ -163,6 +163,27 @@ async fn an_unresolvable_lid_refuses_rather_than_counting_as_open() {
     }
 }
 
+/// Suspend, `ReleaseCamera`, shutdown and caller departure all cancel a
+/// pending lid read. That is not a lid fault, and the audit trail must not
+/// record it as one: `cancelled` is the frozen class for it, and the whole
+/// reason `lid state unavailable` exists is so the log says which thing
+/// actually happened.
+#[tokio::test]
+async fn a_cancelled_lid_read_reports_cancellation_not_a_lid_fault() {
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    let refused = service(true)
+        .authenticate_as_with_checks(
+            caller(1000, "alice"),
+            "alice",
+            cancel,
+            unused_session_check,
+            std::future::pending::<Result<bool, String>>,
+        )
+        .await;
+    assert_refused_in_band(refused, "cancelled");
+}
+
 #[tokio::test]
 async fn a_disabled_lid_gate_performs_no_lid_lookup() {
     let calls = Arc::new(AtomicUsize::new(0));

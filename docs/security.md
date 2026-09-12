@@ -1693,15 +1693,21 @@ authentication and its result decides the outcome. On a machine with no lid
 that reading is correct; on a laptop whose closed lid went undetected the
 blocked camera sees no face and the attempt ends at the timeout, with the
 stack continuing to the password. Over D-Bus the daemon does the opposite: a
-lid it cannot resolve — logind unreachable, the property read timing out, the
-request cancelled mid-read — refuses with `lid state unavailable`, a class
-of its own so the audit trail never records it as a closed lid. A gate the
+lid it cannot resolve, whether logind is unreachable or the property read
+misses its one-second deadline, refuses with `lid state unavailable`, a class
+of its own so the audit trail never records it as a closed lid. A read the
+daemon cancels instead (suspend, `ReleaseCamera`, shutdown, caller departure)
+answers with the frozen `cancelled` message, because a cancelled request says
+nothing about the lid either way. A gate the
 operator asked for must not pass silently because its source went away, and
 the cost of refusing is bounded: the refusal is in band (`model_id == -2`),
 so a `sufficient` stack continues to the password exactly as a closed lid
-would. The corollary is an operational one — a daemon on a host with no
-logind (a container, a non-systemd init) must set
-`abort_if_lid_closed = false` before it can serve D-Bus authentications.
+would. The corollary is an operational one: a daemon on a host with no logind
+(a container, a non-systemd init) must set `abort_if_lid_closed = false`
+before it can serve D-Bus authentications. Diagnose it from the daemon
+journal, which logs the underlying D-Bus error beside the refusal; PAM's own
+syslog line carries only the abstention, as it does for every class it does
+not match by name.
 
 Operators who want face auth for only some actions under the PAM model should
 control it at the PAM layer (which service files include `pam_facelock.so`), not

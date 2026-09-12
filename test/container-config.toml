@@ -47,6 +47,11 @@ require_frame_variance = false
 # it, so the daemon cannot resolve the lid at all — and an unresolvable lid
 # refuses, by design (issue #385). Disabled HERE ON PURPOSE so the D-Bus auth
 # suites exercise the paths they are about instead of every Authenticate
-# returning "lid state unavailable". The booted real-systemd tiers have logind
-# and leave the product default (true) alone.
+# returning "lid state unavailable".
+#
+# This costs no coverage: there is no /proc/acpi in the container either, so
+# the gate was already inert here before the logind read existed. Nothing in
+# test/ asserts a daemon-backed authentication that the gate would change, on
+# this tier or the booted real-systemd ones; a tier that watches a genuinely
+# closed lid needs hardware.
 abort_if_lid_closed = false
