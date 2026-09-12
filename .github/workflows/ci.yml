@@ -170,7 +170,8 @@ jobs:
             pam \
             tpm2-tss \
             swtpm \
-            python
+            python \
+            just
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -191,10 +192,14 @@ jobs:
       - name: Trust the workspace checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      # The recipe, not the command, so this job and `just check-tpm` cannot
+      # drift on what the feature test run is. The TCTI is what separates them:
+      # here it points at the swtpm above, so sealed round trips execute; a
+      # local run has no TPM and proves only the feature gates and decisions.
       - name: Run TPM tests
         env:
           TCTI: swtpm:host=localhost,port=2321
-        run: cargo test --workspace --features tpm
+        run: just test-tpm
 
   agent-docs:
     name: Agent Docs Consistency
