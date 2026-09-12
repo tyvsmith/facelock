@@ -1665,9 +1665,12 @@ password. The lid is resolved by enumerating every
 names it) from one source shared by the module and the daemon; the lid is
 closed when any device reports `closed`, and no lid device at all counts as
 open. `abort_if_lid_closed = false` is the opt-out for a docked laptop using an
-external camera with the lid shut. Failing direction: if the lid cannot be
-read, the attempt proceeds to the camera and times out to the password, the
-same fallback as every other unavailable-face case.
+external camera with the lid shut. Failing direction: a lid the resolver
+cannot read counts as open, so the attempt runs the normal camera
+authentication and its result decides the outcome. On a machine with no lid
+that reading is correct; on a laptop whose closed lid went undetected the
+blocked camera sees no face and the attempt ends at the timeout, with the
+stack continuing to the password.
 
 Operators who want face auth for only some actions under the PAM model should
 control it at the PAM layer (which service files include `pam_facelock.so`), not
