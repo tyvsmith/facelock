@@ -450,7 +450,9 @@ downgrading to keyfile. `--encryption auto`, and the non-interactive base with
 no flag, make the same decision once the target is picked from TPM usability:
 a usable TPM seals an existing keyfile rather than minting beside it, and with
 no usable TPM an existing sealed key is left in place while a keyfile is
-minted (#358).
+minted (#358). Both mints consult the shared key gate below; the sealing one
+asks its predicate only, so the TPM path never leaves a plaintext keyfile
+behind.
 
 ### facelock pam Semantics
 

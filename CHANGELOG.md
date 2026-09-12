@@ -34,7 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flags (#354). With a usable TPM an existing `encryption.key` is sealed into
   `encryption.key.sealed` rather than shadowed by a fresh random key; without one, an
   existing sealed key is left in place while the keyfile is minted, with a notice. The
-  orphaned-models guard on `--encryption auto` runs exactly when a key is minted.
+  orphaned-models guard on `--encryption auto` runs exactly when a key is minted, and a
+  minted sealed key now goes through the same shared key gate as a minted keyfile, so a
+  flagless `facelock setup` refuses to seal a new key over rows the missing one wrote.
 
 ### Added
 

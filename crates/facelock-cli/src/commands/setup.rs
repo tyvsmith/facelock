@@ -1667,6 +1667,7 @@ fn handle_orphan_models_before_keygen(
 #[cfg(test)]
 mod orphan_guard_tests {
     use super::*;
+    use facelock_core::config::EncryptionMethod::{Keyfile, Tpm};
     use std::path::Path;
 
     fn config_with_db(db_path: &Path) -> Config {
@@ -1800,7 +1801,7 @@ mod orphan_guard_tests {
                 .unwrap();
         }
 
-        let refusal = keygen_refusal(&config_with_key(&db_path, &key_path))
+        let refusal = keygen_refusal(&config_with_key(&db_path, &key_path), Keyfile)
             .unwrap()
             .expect("the auto policy must refuse over encrypted rows");
         assert!(
@@ -1823,7 +1824,7 @@ mod orphan_guard_tests {
         }
 
         assert!(
-            keygen_refusal(&config_with_key(&db_path, &key_path))
+            keygen_refusal(&config_with_key(&db_path, &key_path), Keyfile)
                 .unwrap()
                 .is_none()
         );
@@ -1844,7 +1845,7 @@ mod orphan_guard_tests {
         let mut config = config_with_key(&db_path, &key_path);
         config.encryption.method = EncryptionMethod::None;
 
-        assert!(keygen_refusal(&config).unwrap().is_none());
+        assert!(keygen_refusal(&config, Keyfile).unwrap().is_none());
         assert_eq!(std::fs::metadata(&key_path).unwrap().len(), 32);
     }
 
@@ -1857,12 +1858,58 @@ mod orphan_guard_tests {
         let key_path = dir.path().join("encryption.key");
 
         assert!(
-            keygen_refusal(&config_with_key(&db_path, &key_path))
+            keygen_refusal(&config_with_key(&db_path, &key_path), Keyfile)
                 .unwrap()
                 .is_none()
         );
         assert_eq!(std::fs::metadata(&key_path).unwrap().len(), 32);
         assert!(!db_path.exists(), "the key gate must not create a database");
+    }
+
+    /// The TPM target asks the same question and must answer it without
+    /// writing the keyfile the keyfile target creates (#358): the sealing
+    /// path leaves no plaintext key behind, and it refuses over rows a key
+    /// nothing can reproduce would orphan.
+    #[test]
+    fn the_auto_policy_refuses_a_sealed_mint_over_encrypted_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("facelock.db");
+        let key_path = dir.path().join("encryption.key");
+        {
+            let store = facelock_store::FaceStore::create(&db_path).unwrap();
+            let sealed = facelock_tpm::SoftwareSealer::from_key([0x11u8; 32])
+                .seal_embedding(&[0.5f32; 512])
+                .unwrap();
+            store
+                .add_model_raw("alice", "front", &sealed, true, "embedder")
+                .unwrap();
+        }
+
+        let refusal = keygen_refusal(&config_with_key(&db_path, &key_path), Tpm)
+            .unwrap()
+            .expect("a sealed mint must refuse over encrypted rows");
+        assert!(refusal.contains("software-encrypted"), "{refusal}");
+        assert!(!key_path.exists(), "the tpm gate must not write a keyfile");
+    }
+
+    #[test]
+    fn the_auto_policy_allows_a_sealed_mint_on_a_plaintext_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("facelock.db");
+        let key_path = dir.path().join("encryption.key");
+        {
+            let store = facelock_store::FaceStore::create(&db_path).unwrap();
+            store
+                .add_model("alice", "front", &[0.5f32; 512], "embedder")
+                .unwrap();
+        }
+
+        assert!(
+            keygen_refusal(&config_with_key(&db_path, &key_path), Tpm)
+                .unwrap()
+                .is_none()
+        );
+        assert!(!key_path.exists(), "the tpm gate must not write a keyfile");
     }
 
     #[test]
@@ -1872,7 +1919,7 @@ mod orphan_guard_tests {
         let key_path = dir.path().join("encryption.key");
         std::fs::write(&db_path, b"not a sqlite database").unwrap();
 
-        let err = keygen_refusal(&config_with_key(&db_path, &key_path)).unwrap_err();
+        let err = keygen_refusal(&config_with_key(&db_path, &key_path), Keyfile).unwrap_err();
         let chain = format!("{err:#}");
         assert!(chain.contains("could not be read"), "{chain}");
         assert!(!key_path.exists());
@@ -3240,13 +3287,22 @@ fn run_non_interactive(plan: &SetupPlan) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Run the shared key gate for a setup path that is about to mint the
-/// encrypt-by-default key file, returning the refusal if there is one.
+/// Run the shared key gate for a setup path that is about to mint a key for
+/// `target`, returning the refusal if there is one.
 ///
 /// `open_existing`, never `create`: a database that is not there yet holds no
 /// templates to orphan, and the probe must not create one to prove it. Every
 /// other failure class means facelock cannot tell, which is a refusal.
-fn keygen_refusal(config: &Config) -> anyhow::Result<Option<String>> {
+///
+/// A `Keyfile` target runs the gate that also *writes* the key, because
+/// encrypt-by-default means the keyfile setup path's job is to create it. A
+/// `Tpm` target runs the pure predicate instead: the writing gate only ever
+/// writes a keyfile, and the sealing path must not leave a live plaintext key
+/// on disk on its way to the TPM.
+fn keygen_refusal(
+    config: &Config,
+    target: facelock_core::config::EncryptionMethod,
+) -> anyhow::Result<Option<String>> {
     // An absent database holds no template to orphan, and the probe must not
     // create one to prove it — but the rest of the gate (the symlink check,
     // the exclusive create) still has to run, and an empty store is exactly
@@ -3267,17 +3323,19 @@ fn keygen_refusal(config: &Config) -> anyhow::Result<Option<String>> {
             config.storage.db_path
         ),
     };
-    // The gate mints only for `method = "keyfile"`, and the caller reaches
-    // here precisely because the method is still `none` — it is about to
-    // write `keyfile` a few lines later. Ask the gate the question it will be
-    // answering, not the one the config still says.
-    let mut as_keyfile = config.clone();
-    as_keyfile.encryption.method = facelock_core::config::EncryptionMethod::Keyfile;
-    Ok(
-        facelock_daemon::key_policy::ensure_encrypt_by_default_key(&store, &as_keyfile)
-            .refusal()
-            .map(str::to_string),
-    )
+    // The caller reaches here precisely because the method is still `none` —
+    // it is about to write `target` a few lines later. Ask the gate the
+    // question it will be answering, not the one the config still says.
+    let mut as_target = config.clone();
+    as_target.encryption.method = target.clone();
+    Ok(match target {
+        facelock_core::config::EncryptionMethod::Keyfile => {
+            facelock_daemon::key_policy::ensure_encrypt_by_default_key(&store, &as_target)
+                .refusal()
+                .map(str::to_string)
+        }
+        _ => facelock_daemon::key_policy::key_creation_refusal(&store, &as_target),
+    })
 }
 
 /// Auto-configure encryption in non-interactive mode.
@@ -3337,6 +3395,15 @@ fn setup_encryption_auto(config: &Config, tpm_available: Option<bool>) -> anyhow
                     });
                 }
                 KeyAction::Mint => {
+                    // The same gate the keyfile branch below runs, asked of
+                    // the sealed key this is about to write: a key nothing on
+                    // disk can reproduce must not be minted over rows the
+                    // missing one sealed. `run_non_interactive` reaches this
+                    // branch with no `--encryption` flag and so never ran
+                    // `handle_orphan_models_before_keygen`.
+                    if let Some(refusal) = keygen_refusal(config, EncryptionMethod::Tpm)? {
+                        bail!("{refusal}");
+                    }
                     let pcr = if config.tpm.pcr_binding {
                         Some(config.tpm.pcr_indices.as_slice())
                     } else {
@@ -3376,7 +3443,7 @@ fn setup_encryption_auto(config: &Config, tpm_available: Option<bool>) -> anyhow
     // an offer to clear); this is the backstop for the automatic policy, which
     // `run_non_interactive` reaches with no flag at all — the command
     // `debian/postinst` tells operators to run.
-    if let Some(refusal) = keygen_refusal(config)? {
+    if let Some(refusal) = keygen_refusal(config, EncryptionMethod::Keyfile)? {
         bail!("{refusal}");
     }
     match action {
