@@ -564,7 +564,8 @@ authority: Fedora 43/44/45 are required and Rawhide is the only optional
 experimental chroot. Rawhide may be present or absent; a missing required
 chroot or any unknown extra is release-blocking drift. Preflight goes one step
 further than CI and asks what production COPR actually serves: the EVR of the
-predecessor pinned in `dist/release-matrix.json`. The checker never modifies the
+release `dist/release-matrix.json` names as `predecessors.current`, which is the
+newest release pinned there. The checker never modifies the
 project. Preflight always runs
 `packit config validate --offline` against `.packit.yaml`, in the digest-pinned
 Fedora container built from
@@ -809,12 +810,22 @@ canonical EVR, not to ask for it somewhere that breaks the other channel.
 
 `just release-preflight` asks the same question about the previous release:
 `test/check-live-release-channels.py --expect-predecessor` requires production
-COPR to serve the EVR pinned in `predecessors`. The v0.1.4 build was never
-backfilled — 0.2.0 supersedes it — so that gap is recorded in
-`copr_channels.production.served_evr_gap` and reported rather than failed. The
-record names both EVRs and issue #333, and it retires itself: once the
-predecessor pin moves past v0.1.4 the release matrix contract fails until the
-record is deleted.
+COPR to serve the EVR of the release `predecessors.current` names.
+
+**Record the gap when a release never reached COPR.** The v0.1.4 build was never
+backfilled — 0.2.0 supersedes it — and while v0.1.4 was the pin, preflight would
+have failed on a channel nobody was going to fix, so the gap lived in
+`copr_channels.production.served_evr_gap`: the EVR owed, the EVR served, and the
+issue that owns it. A record like that is reported rather than failed, and only
+by `--expect-predecessor`.
+
+No gap is recorded now. Rolling the pin to v0.2.1 retired the last one, exactly
+as designed: the record must excuse the *current* predecessor's EVR, so
+`test/check-release-matrix.py` fails the moment `predecessors.current` moves
+past the release it names, and the fix is to delete the record (or, if the new
+predecessor genuinely never reached COPR, to re-record it against that EVR with
+its own issue). Write one only for a release that shipped without reaching COPR
+and that nobody is going to backfill.
 
 A recovery after a failed submission is a hand-submitted build from a checkout
 of the tag. Packit reacts only to *new* release events, so re-publishing is not
@@ -1152,50 +1163,85 @@ Since facelock is a PAM module, broken releases can lock users out. Every releas
 
 ### Upgrading from the last release
 
-`just test-upgrade-v014` proves that state written by v0.1.4 survives an upgrade
-to the candidate and a rollback back to v0.1.4. Two lanes, Debian trixie and
-Fedora 44, each install the real published artifact rather than a synthesized
-older build of the candidate.
+`just test-upgrade-predecessor` proves that state written by the last release
+survives an upgrade to the candidate and a rollback back to it. Two lanes,
+Debian trixie and Fedora 44, each install the real published artifact rather
+than a synthesized older build of the candidate.
 
-**What the lanes pin.** `dist/release-matrix.json` carries a `predecessors` block
-holding the GitHub release id, the asset id, the SHA256 and the byte size of
-each predecessor artifact. The lane Containerfiles take those as build args and
-carry no digest of their own, so one review changes the pin everywhere.
-`just test-upgrade-v014-pins` asks the release API whether those assets are still
-the assets it serves, which is how a re-uploaded or substituted predecessor gets
-caught before a lane silently proves something about a different file.
+**Which release the lanes prove.** `dist/release-matrix.json` names it:
+`predecessors.current`. The block may pin more than one release — v0.1.4 stays
+because the retired-authselect fixture is built from its RPM and no other build
+of that package exists — and `current` is required to be the newest of them, so
+the lanes prove the upgrade users are actually performing. Roll it as part of
+the release that follows a published one (below); before #367 it sat at v0.1.4
+through two releases, so the 0.2.0-to-0.2.1 upgrade — the one everybody
+performed — was never exercised.
+
+**Rolling the pin.** Resolve the new release with
+`gh api repos/tyvsmith/facelock/releases/tags/vX.Y.Z`, add a block beside the
+existing ones carrying the release id, publication timestamp, upstream version,
+`rpm_evr`, and for each lane the asset id, node id, name, URL, SHA256 and byte
+size; point `current` at it; bump `reviewed_on`. Then
+`python3 test/check-release-matrix.py`, `just test-upgrade-predecessor-pins` and
+`just test-upgrade-predecessor`. A recorded `served_evr_gap` must be deleted or
+re-recorded in the same change — see "Record the gap" above.
+
+**What the lanes pin.** The `predecessors` block holds the GitHub release id,
+the asset id, the SHA256 and the byte size of each predecessor artifact. The
+lane Containerfiles take those as build args and carry no digest of their own,
+so one review changes the pin everywhere.
+`just test-upgrade-predecessor-pins` asks the release API whether those assets
+are still the assets it serves, which is how a re-uploaded or substituted
+predecessor gets caught before a lane silently proves something about a
+different file.
 
 **What the lane images carry.** Each image installs the runtime libraries the
-released binary needs before the predecessor goes on. v0.1.4 wrote its Debian
-control file by hand and never declared libxkbcommon0, which its own binary
-links, so that release cannot start on a minimal Debian 13 at all. The candidate
-is built from `debian/control` and derives the list with `${shlibs:Depends}`.
-Nothing is masked by supplying it: candidate dependency resolution belongs to
+released binary needs before the predecessor goes on, and only where that
+release needs them. v0.1.4 wrote its Debian control file by hand and never
+declared libxkbcommon0, which its own binary links, so that release cannot start
+on a minimal Debian 13 at all; every release from 0.2.0 on is built from
+`debian/control` and derives the list with `${shlibs:Depends}`, so the image
+supplies the library only when the pinned predecessor predates 0.2.0. Nothing is
+masked by supplying it: candidate dependency resolution belongs to
 `test/deb-dependency-closure.sh` on a pristine suite base.
 
-**What the lanes build.** Predecessor state comes from the released v0.1.4
+**What the lanes build.** Predecessor state comes from the released
 binary, never from the candidate: plaintext rows, keyfile-encrypted rows, mixed
 rows, and two swtpm-sealed shapes, one PCR-bound and one not. Each shape also
-carries a modified config, the reviewed models, an enrollment marker, an audit
-log and a hand-wired PAM service, because v0.1.4 has no `facelock pam`
-subcommand and that is the shape a real upgrade finds.
+carries a modified config, the reviewed models, a stale enrollment marker, an
+audit log and a hand-wired PAM service, which is the shape a real upgrade finds
+— and the only shape available at all from a release before 0.2.0, which has no
+`facelock pam` subcommand.
 
-**What each lane proves after the upgrade.** The V5 database reaches V6 with
-legacy rows at `device_id = NULL`. A known embedding still decrypts to the exact
-plaintext it was enrolled as, which a file hash cannot show: a preserved key and
-a preserved ciphertext nobody can open any more hash identically. No key
-artifact is replaced and none appears that was not there before. Modes converge
-to ADR 010 without content changing. The enrollment marker keeps its owner and
-mode and its content is reconciled against the database rather than preserved
-byte for byte — the one piece of state the upgrade is supposed to rewrite
-(#137). The administrator's PAM service is byte-identical, a correct password
-still authenticates, and a wrong one still fails.
+**What each lane proves after the upgrade.** The database ends at V7 with every
+row the predecessor wrote intact: a row from an older schema gains
+`device_id = NULL` and `key_id = NULL` rather than an invented coupling, and a
+row a V7 predecessor wrote keeps the `key_id` its release recorded. A known
+embedding still decrypts to the exact plaintext it was enrolled as, which a file
+hash cannot show: a preserved key and a preserved ciphertext nobody can open any
+more hash identically. No key artifact is replaced and none appears that was not
+there before. Modes end at ADR 010 without content changing — tightened from a
+release that predates the layout, untouched from one that already has it. The
+enrollment marker keeps its owner and mode and its content is reconciled against
+the database rather than preserved byte for byte — the one piece of state the
+upgrade is supposed to rewrite (#137). The administrator's PAM service is
+byte-identical, a correct password still authenticates, and a wrong one still
+fails.
+
+**Nothing in the lane spells a release.** The upgrade lane scripts read the pin
+and the predecessor's own database: which schema it wrote, whether its CLI
+groups `encrypt` under `tpm` (ADR 009, 0.2.0), and whether its scriptlets
+already leave the ADR 010 layout. `just test-upgrade-predecessor-contract`
+fails on a tag literal reappearing in any of them, which is how the pin stops
+rotting again.
 
 **Version ordering on a development tree.** Until `just release` bumps the
-workspace, the candidate .deb built from the tree is `0.1.4-1~deb13u1`, which
-sorts *below* the published `0.1.4-1`. The lanes build the same payload as an
-upgrade-test version instead, and every run prints the version it chose and why.
-Once the workspace version sorts above 0.1.4 the re-versioning stops and
+workspace, the candidate .deb built from the tree carries the same version as
+the published predecessor, which does not sort *above* it. The lanes build the
+same payload as an upgrade-test version instead — the predecessor's patch
+version plus one, so the default rolls with the pin — and every run prints the
+version it chose and why. Once the workspace version sorts above the
+predecessor the re-versioning stops and
 `FACELOCK_UPGRADE_TEST_VERSION` becomes a no-op: the lane installs the shipped
 version exactly. The native comparator inside the container decides either way,
 so a lane can never quietly become a downgrade test. Whatever version it lands
@@ -1211,17 +1257,18 @@ a previously published prerelease.
 release's `pam-auth-update` profile shipped `Default: yes`, so installing it
 switched Facelock on in `common-auth`. The packaged profile is `Default: no`
 now, which applies to fresh installs; an upgrade leaves the global stack exactly
-as it found it, and the lane fails if it is edited in either direction. Removing
-an enabled profile would take face authentication away from someone using it, so
-the lane treats that as the more dangerous direction, not a clean result.
+as it found it whichever release it comes from, and the lane fails if it is
+edited in either direction. Removing an enabled profile would take face
+authentication away from someone using it, so the lane treats that as the more
+dangerous direction, not a clean result.
 
 **Where it runs.** Locally, by design: a cached run is about twenty minutes and
 a cold one considerably more, so `packaging.yml` does not carry it and a
 nightly-only job is the follow-up. `just check` runs the container-free contract
-(`just test-upgrade-v014-contract`), so a broken lane definition still fails
-every pull request.
+(`just test-upgrade-predecessor-contract`), so a broken lane definition still
+fails every pull request.
 
-**Rollback.** The candidate daemon starts and migrates the database before the
-downgrade, so the predecessor is handed the file production would hand it. V6
-has no down-migration and the schema stays at 6 after the package rolls back.
+**Rollback.** The candidate daemon starts and opens the database before the
+downgrade, so the predecessor is handed the file production would hand it. V7
+has no down-migration and the schema stays at 7 after the package rolls back.
 See `docs/contracts.md` for what that does and does not guarantee.

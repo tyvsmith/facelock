@@ -2244,12 +2244,14 @@ distinguishes them, and every other caller treats both as failure. The release
 workflow's `verify-copr` job polls it after publication, because Packit submits
 the COPR build off the published release event and no job in the release run can
 observe that submission. `just release-preflight` runs `--expect-predecessor`,
-which resolves the EVR from the pinned predecessor's `rpm_evr`.
+which resolves the EVR from the `rpm_evr` of the release `predecessors.current`
+names. The matrix may pin more than one release; `current` is the newest, and
+`test/check-release-matrix.py` fails if it is not.
 
 A release that production COPR never received may be recorded as
 `copr_channels.production.served_evr_gap`, naming the EVR owed, the EVR served,
-and the issue that owns it. The record is pinned at both ends: it must excuse
-exactly the pinned predecessor's EVR, and it stops matching the moment the
+and the issue that owns it. No gap is recorded now. The record is pinned at both
+ends: it must excuse exactly the current predecessor's EVR, and it stops matching the moment the
 channel serves anything other than the EVR it names. Both ends are read under
 the channel's own `served_evr_exact`, so on production a suffixed rebuild of the
 EVR the record names no longer matches it.
@@ -2258,8 +2260,8 @@ Only `--expect-predecessor` consults the record. A gap describes a release that
 already shipped without reaching COPR, which is preflight's question;
 `verify-copr` asks `--expect-evr` about the release it is publishing, and a
 record that could answer that would silence the job on the failure it exists to
-report. The record excuses no other release, and the next predecessor pin fails
-the matrix contract until it is updated or deleted.
+report. The record excuses no other release, and rolling `predecessors.current`
+fails the matrix contract until the record is updated or deleted.
 
 A pre-tag attestation binds the candidate commit to the EVRs each channel
 serves, the artifact and repository digests, the signing key fingerprints, and
@@ -3691,8 +3693,12 @@ newer release carry data the older one understands: a `key_id` recorded after
 the upgrade is invisible to an older release, so a template enrolled on the newer version and then
 rolled back decrypts under the single key that older release loads if that key is the one that sealed it.
 
-`just test-upgrade-v014` is the gate for all of the above. It runs both halves
-against the real published v0.1.4 artifacts; see `docs/releasing.md`.
+`just test-upgrade-predecessor` is the gate for all of the above. It runs both
+halves against the real published artifacts of the release
+`dist/release-matrix.json` pins as `predecessors.current`, which is the newest
+one; see `docs/releasing.md`. So the lane proves the round trip to and from that
+release. Support further back rests on the additive, forward-only argument
+above, not on a lane that exercises it.
 
 ## IPC Protocol
 

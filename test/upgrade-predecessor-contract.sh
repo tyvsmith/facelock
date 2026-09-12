@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Container-free contract for the released-predecessor upgrade lanes (#231).
 #
-# `just test-upgrade-v014` boots two containers, builds a package in each, and
-# takes the better part of an hour. Everything that can rot without a container
-# is checked here instead, so the failure arrives in seconds:
+# `just test-upgrade-predecessor` boots two containers, builds a package in
+# each, and takes the better part of an hour. Everything that can rot without a
+# container is checked here instead, so the failure arrives in seconds:
 #
 #   * a declared state shape or fault case with no implementation behind it
 #   * a proof function that exists but nothing calls — the rot mode
@@ -11,13 +11,15 @@
 #   * the known-embedding digest drifting apart from the Debian lifecycle gate's
 #     copy of the same fixture
 #   * a lane Containerfile growing its own predecessor pin
+#   * a lane file spelling a release tag instead of reading the pinned
+#     predecessor the matrix names (#367)
 #   * a candidate version that does not sort above the predecessor
 #
 # It is wired into `just check` through the lane recipes and can be run alone.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-lane="$repo_root/test/upgrade-v014-lane.sh"
+lane="$repo_root/test/upgrade-predecessor-lane.sh"
 failures=0
 
 fail() {
@@ -32,23 +34,23 @@ require_file() {
 # --- the lane files exist and parse ---------------------------------------
 
 for path in \
-    "$repo_root/test/upgrade-v014-lane.sh" \
-    "$repo_root/test/upgrade-v014-predecessor.sh" \
-    "$repo_root/test/upgrade-v014-candidate-version.sh" \
-    "$repo_root/test/build-upgrade-v014-image.sh" \
-    "$repo_root/test/run-upgrade-v014-systemd.sh" \
-    "$repo_root/test/Containerfile.upgrade-v014-deb" \
-    "$repo_root/test/Containerfile.upgrade-v014-rpm"; do
+    "$repo_root/test/upgrade-predecessor-lane.sh" \
+    "$repo_root/test/upgrade-predecessor-pin.sh" \
+    "$repo_root/test/upgrade-predecessor-candidate-version.sh" \
+    "$repo_root/test/build-upgrade-predecessor-image.sh" \
+    "$repo_root/test/run-upgrade-predecessor-systemd.sh" \
+    "$repo_root/test/Containerfile.upgrade-predecessor-deb" \
+    "$repo_root/test/Containerfile.upgrade-predecessor-rpm"; do
     require_file "$path"
 done
 [ "$failures" -eq 0 ] || exit 1
 
 for script in \
-    "$repo_root/test/upgrade-v014-lane.sh" \
-    "$repo_root/test/upgrade-v014-predecessor.sh" \
-    "$repo_root/test/upgrade-v014-candidate-version.sh" \
-    "$repo_root/test/build-upgrade-v014-image.sh" \
-    "$repo_root/test/run-upgrade-v014-systemd.sh"; do
+    "$repo_root/test/upgrade-predecessor-lane.sh" \
+    "$repo_root/test/upgrade-predecessor-pin.sh" \
+    "$repo_root/test/upgrade-predecessor-candidate-version.sh" \
+    "$repo_root/test/build-upgrade-predecessor-image.sh" \
+    "$repo_root/test/run-upgrade-predecessor-systemd.sh"; do
     bash -n "$script" || fail "${script#"$repo_root"/} does not parse"
     [ -x "$script" ] || fail "${script#"$repo_root"/} is not executable"
 done
@@ -150,7 +152,7 @@ fi
 # The Fedora lane packages host-built binaries, so it can test code that is not
 # this checkout. The freshness guard in the image builder is the only thing that
 # notices, and a green run without it means nothing.
-grep -q 'is older than the workspace source' "$repo_root/test/build-upgrade-v014-image.sh" ||
+grep -q 'is older than the workspace source' "$repo_root/test/build-upgrade-predecessor-image.sh" ||
     fail "the Fedora lane no longer refuses release binaries older than the source"
 
 # The concurrent-key case has to separate O_EXCL from O_TRUNC. One key file on
@@ -192,13 +194,18 @@ done
 # --- the lane Containerfiles take the pin, never carry one ----------------
 
 for containerfile in \
-    "$repo_root/test/Containerfile.upgrade-v014-deb" \
-    "$repo_root/test/Containerfile.upgrade-v014-rpm"; do
+    "$repo_root/test/Containerfile.upgrade-predecessor-deb" \
+    "$repo_root/test/Containerfile.upgrade-predecessor-rpm"; do
     for arg in FACELOCK_PREDECESSOR_URL FACELOCK_PREDECESSOR_SHA256 \
-        FACELOCK_PREDECESSOR_SIZE FACELOCK_PREDECESSOR_VERSION; do
+        FACELOCK_PREDECESSOR_SIZE FACELOCK_PREDECESSOR_VERSION \
+        FACELOCK_PREDECESSOR_UPSTREAM; do
         grep -Eq "^ARG $arg\$" "$containerfile" ||
             fail "${containerfile#"$repo_root"/} does not take $arg as a build arg"
     done
+    # The upstream version has to reach the lane, not just the image build:
+    # every release-specific branch inside the lane reads it from there.
+    grep -Fq '/artifacts/predecessor.upstream' "$containerfile" ||
+        fail "${containerfile#"$repo_root"/} does not write the pinned upstream version into the image"
     if grep -qE '\b[0-9a-f]{64}\b' "$containerfile"; then
         fail "${containerfile#"$repo_root"/} carries its own digest instead of the matrix pin"
     fi
@@ -208,13 +215,78 @@ done
 
 for pair in "deb-trixie:deb" "rpm-fedora:rpm"; do
     lane_name="${pair%%:*}"
-    resolved="$(bash "$repo_root/test/upgrade-v014-predecessor.sh" "$lane_name" --build-args)" ||
+    resolved="$(bash "$repo_root/test/upgrade-predecessor-pin.sh" "$lane_name" --build-args)" ||
         fail "predecessor lane $lane_name does not resolve"
-    for key in URL SHA256 SIZE NAME VERSION; do
+    for key in URL SHA256 SIZE NAME VERSION UPSTREAM; do
         printf '%s\n' "$resolved" | grep -q "^FACELOCK_PREDECESSOR_$key=." ||
             fail "predecessor lane $lane_name resolved no $key"
     done
 done
+
+# --- nothing here spells a release; the matrix names it -------------------
+#
+# #367: the lanes proved 0.1.4-to-candidate long after 0.2.0 and 0.2.1 shipped,
+# because the tag was a literal in the resolver and every accommodation was a
+# literal in the lane. The pin now names the release it is rolled to
+# (`predecessors.current`), and each of these files must read it rather than
+# grow a tag of its own again.
+grep -Fq 'predecessors.get("current")' "$repo_root/test/upgrade-predecessor-pin.sh" ||
+    fail "test/upgrade-predecessor-pin.sh no longer resolves the predecessor through predecessors.current"
+grep -Fq 'predecessors["current"]' "$repo_root/test/upgrade-predecessor-candidate-version.sh" ||
+    fail "test/upgrade-predecessor-candidate-version.sh no longer reads the predecessor through predecessors.current"
+# shellcheck disable=SC2016 # the lane's own assignment is the literal sought
+grep -Fq 'PREDECESSOR_UPSTREAM="$(cat "$PREDECESSOR_UPSTREAM_FILE")"' "$lane" ||
+    fail "the lane no longer reads the pinned predecessor's upstream version from the image"
+grep -Eq '^predecessor_before\(\)' "$lane" ||
+    fail "the lane defines no predecessor_before, so nothing can key off the pinned version"
+for layout in legacy adr010; do
+    grep -Eq "^[[:space:]]+$layout\)" "$lane" ||
+        fail "the lane no longer dispatches the $layout predecessor layout"
+done
+for path in test/upgrade-predecessor-pin.sh test/upgrade-predecessor-candidate-version.sh \
+    test/upgrade-predecessor-lane.sh; do
+    if grep -nE '^[^#]*"v[0-9]+\.[0-9]+\.[0-9]+"' "$repo_root/$path" >/dev/null; then
+        fail "$path pins a release tag in code; the pin is dist/release-matrix.json's predecessors.current"
+    fi
+done
+# The one Debian accommodation a modern predecessor must not get: v0.1.4's
+# hand-written control file missed libxkbcommon0, and supplying it for a
+# release that declares its own dependencies would mask a real packaging bug.
+grep -Fq 'dpkg --compare-versions "$FACELOCK_PREDECESSOR_UPSTREAM" lt 0.2.0' \
+    "$repo_root/test/Containerfile.upgrade-predecessor-deb" ||
+    fail "the Debian lane image no longer gates its pre-0.2.0 dependency accommodation on the pinned predecessor"
+# The store is created by the released binary, whichever release that is: an
+# `encrypt` that creates one before 0.2.0, the daemon's own startup after,
+# because from 0.2.1 on that verb refuses a database that is not there.
+grep -Eq '^create_database_with_released_binary\(\)' "$lane" ||
+    fail "the lane defines no create_database_with_released_binary"
+sed -n '/^seed_released_database() {/,/^}/p' "$lane" |
+    grep -q create_database_with_released_binary ||
+    fail "seed_released_database no longer creates the store with the released binary"
+
+# And the stale marker is planted after that, never before. Running the
+# released daemon reconciles markers at startup, so a marker planted first
+# comes back fresh and `assert_enrollment_marker_reconciled` then proves only
+# that some daemon rewrote it, not that the upgrade did.
+seed_shape_body="$(sed -n '/^seed_shape() {/,/^}/p' "$lane")"
+seed_database_line="$(printf '%s\n' "$seed_shape_body" | grep -n 'seed_released_database' |
+    head -1 | cut -d: -f1)"
+marker_line="$(printf '%s\n' "$seed_shape_body" | grep -n 'plant_stale_enrollment_marker' |
+    head -1 | cut -d: -f1)"
+if [ -z "$seed_database_line" ] || [ -z "$marker_line" ]; then
+    fail "seed_shape no longer both seeds the released database and plants the stale marker"
+elif [ "$marker_line" -le "$seed_database_line" ]; then
+    fail "seed_shape plants the stale enrollment marker before the released binary creates its store"
+fi
+
+# The predecessor's schema is whatever the pinned release writes, recorded when
+# it creates its first database. A literal here is the #367 failure in another
+# spelling: 0.2.1 writes V7, so "the predecessor wrote V5" is only ever true of
+# a pin nobody rolled.
+# shellcheck disable=SC2016 # the retired assertion is the literal sought
+if grep -Fq 'assert_eq 5 "$(schema_version)"' "$lane"; then
+    fail "the lane asserts the predecessor wrote V5 instead of recording what it wrote"
+fi
 
 # --- --verify-live judges a live asset the way the pin means it -----------
 #
@@ -232,16 +304,16 @@ verify_live_stub() {
 printf '%s\n' "$answer"
 STUB
     chmod +x "$stub_dir/gh"
-    PATH="$stub_dir:$PATH" bash "$repo_root/test/upgrade-v014-predecessor.sh" \
+    PATH="$stub_dir:$PATH" bash "$repo_root/test/upgrade-predecessor-pin.sh" \
         deb-trixie --verify-live >"$stub_dir/out" 2>&1 || status=$?
     printf '%s\n' "$status"
     cat "$stub_dir/out"
     rm -rf "$stub_dir"
 }
 
-pinned_name="$(bash "$repo_root/test/upgrade-v014-predecessor.sh" deb-trixie name)"
-pinned_size="$(bash "$repo_root/test/upgrade-v014-predecessor.sh" deb-trixie size)"
-pinned_sha="$(bash "$repo_root/test/upgrade-v014-predecessor.sh" deb-trixie sha256)"
+pinned_name="$(bash "$repo_root/test/upgrade-predecessor-pin.sh" deb-trixie name)"
+pinned_size="$(bash "$repo_root/test/upgrade-predecessor-pin.sh" deb-trixie size)"
+pinned_sha="$(bash "$repo_root/test/upgrade-predecessor-pin.sh" deb-trixie sha256)"
 tab="$(printf '\t')"
 
 assert_verify_live() {
@@ -263,12 +335,12 @@ assert_verify_live "a digest that moved" \
     "serves a different digest"
 assert_verify_live "a size that moved" \
     "$pinned_name$tab$((pinned_size + 1))${tab}sha256:$pinned_sha" 1 \
-    "pinned asset $(bash "$repo_root/test/upgrade-v014-predecessor.sh" deb-trixie asset_id) changed"
+    "pinned asset $(bash "$repo_root/test/upgrade-predecessor-pin.sh" deb-trixie asset_id) changed"
 assert_verify_live "a deleted asset" "" 1 "no longer serves asset id"
 
 # --- the candidate sorts above the predecessor ----------------------------
 
-candidate_version="$(bash "$repo_root/test/upgrade-v014-candidate-version.sh" version)" ||
+candidate_version="$(bash "$repo_root/test/upgrade-predecessor-candidate-version.sh" version)" ||
     fail "the candidate version does not resolve"
 [ -n "$candidate_version" ] || fail "the candidate version is empty"
 
@@ -283,7 +355,7 @@ candidate_version="$(bash "$repo_root/test/upgrade-v014-candidate-version.sh" ve
 # it sorts *above* the real release, so the lane's own upgrade guard stays
 # quiet while it proves the wrong thing.
 
-builder="$repo_root/test/build-upgrade-v014-image.sh"
+builder="$repo_root/test/build-upgrade-predecessor-image.sh"
 # shellcheck disable=SC2016 # the builder's own source line is the literal sought
 grep -Fq 'source "$repo_root/scripts/release-versions.sh"' "$builder" ||
     fail "the image builder no longer derives packaging versions from scripts/release-versions.sh"
@@ -295,8 +367,8 @@ if grep -Fq '${target#*-}' "$builder"; then
     fail "the image builder still cuts the Debian revision at the first hyphen"
 fi
 for arg in FACELOCK_CANDIDATE_RPM_VERSION FACELOCK_CANDIDATE_RPM_RELEASE; do
-    grep -Eq "^ARG $arg\$" "$repo_root/test/Containerfile.upgrade-v014-rpm" ||
-        fail "test/Containerfile.upgrade-v014-rpm does not take $arg as a build arg"
+    grep -Eq "^ARG $arg\$" "$repo_root/test/Containerfile.upgrade-predecessor-rpm" ||
+        fail "test/Containerfile.upgrade-predecessor-rpm does not take $arg as a build arg"
 done
 # shellcheck disable=SC2016 # the helper's own default is the literal sought
 grep -Fq 'RPM_RELEASE="${3:-1}"' "$repo_root/test/build-rpm-prebuilt.sh" ||
@@ -305,8 +377,8 @@ grep -Fq 'RPM_RELEASE="${3:-1}"' "$repo_root/test/build-rpm-prebuilt.sh" ||
 # shellcheck source=/dev/null
 source "$repo_root/scripts/release-versions.sh"
 
-predecessor_deb="$(bash "$repo_root/test/upgrade-v014-predecessor.sh" deb-trixie package_version)"
-predecessor_rpm="$(bash "$repo_root/test/upgrade-v014-predecessor.sh" rpm-fedora package_version)"
+predecessor_deb="$(bash "$repo_root/test/upgrade-predecessor-pin.sh" deb-trixie package_version)"
+predecessor_rpm="$(bash "$repo_root/test/upgrade-predecessor-pin.sh" rpm-fedora package_version)"
 
 assert_version() {
     local expected="$1" actual="$2" context="$3"
@@ -352,18 +424,18 @@ done
 # --- the entrypoints stay wired -------------------------------------------
 
 justfile="$repo_root/justfile"
-for recipe in test-upgrade-v014 test-upgrade-v014-deb test-upgrade-v014-rpm \
-    test-upgrade-v014-contract test-upgrade-v014-pins; do
+for recipe in test-upgrade-predecessor test-upgrade-predecessor-deb test-upgrade-predecessor-rpm \
+    test-upgrade-predecessor-contract test-upgrade-predecessor-pins; do
     grep -Eq "^$recipe([ :])" "$justfile" || fail "justfile has no $recipe recipe"
 done
-grep -q "test/build-upgrade-v014-image.sh deb" "$justfile" ||
-    fail "test-upgrade-v014-deb does not build its lane image"
-grep -q "test/build-upgrade-v014-image.sh rpm" "$justfile" ||
-    fail "test-upgrade-v014-rpm does not build its lane image"
+grep -q "test/build-upgrade-predecessor-image.sh deb" "$justfile" ||
+    fail "test-upgrade-predecessor-deb does not build its lane image"
+grep -q "test/build-upgrade-predecessor-image.sh rpm" "$justfile" ||
+    fail "test-upgrade-predecessor-rpm does not build its lane image"
 
 skill="$repo_root/.claude/skills/packaging-test/SKILL.md"
-grep -q 'just test-upgrade-v014' "$skill" ||
-    fail "the packaging-test skill does not route anything to just test-upgrade-v014"
+grep -q 'just test-upgrade-predecessor' "$skill" ||
+    fail "the packaging-test skill does not route anything to just test-upgrade-predecessor"
 
 if [ "$failures" -ne 0 ]; then
     echo "FAIL: $failures upgrade-lane contract violation(s)" >&2

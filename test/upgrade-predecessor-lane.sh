@@ -3,32 +3,44 @@
 #
 # Runs inside a booted container that already holds two artifacts:
 #
-#   /artifacts/facelock-predecessor.<ext>  the real published v0.1.4 asset,
-#                                          pinned by asset id + SHA256 in
-#                                          dist/release-matrix.json
+#   /artifacts/facelock-predecessor.<ext>  the real published asset of the
+#                                          predecessor dist/release-matrix.json
+#                                          names as `current`, pinned there by
+#                                          asset id + SHA256
 #   /artifacts/facelock-candidate.<ext>    the locally built candidate
 #
 # Predecessor state is built with the **released** binary, not with this
-# checkout's: the question is whether what v0.1.4 actually wrote survives, and
-# a fixture written by the candidate would only prove the candidate agrees with
-# itself. Every encrypted shape is encrypted by the 0.1.4 binary under a key
-# 0.1.4 generated (or sealed, against a software TPM).
+# checkout's: the question is whether what the predecessor actually wrote
+# survives, and a fixture written by the candidate would only prove the
+# candidate agrees with itself. Every encrypted shape is encrypted by the
+# released binary under a key it generated (or sealed, against a software TPM).
+#
+# The lane spells no release. What the predecessor wrote -- its schema version,
+# the CLI that writes it, the layout its scriptlets leave -- is read off the
+# pinned upstream version and the database itself, so rolling the pin (#367)
+# changes what is proven without editing this file. Where a release before
+# 0.2.0 differs (V5 schema, top-level `encrypt`, the pre-ADR 010 layout and
+# the retired `facelock` group) the branch says so, and it is the only place
+# such a release is accommodated.
 #
 # What each shape proves after a native package-manager upgrade:
-#   * the V5 database migrated to V7 and legacy rows carry device_id = NULL
-#     and key_id = NULL
+#   * the database reaches V7 and every row the predecessor wrote is intact:
+#     a pre-V7 row gains device_id = NULL and key_id = NULL rather than an
+#     invented coupling, a V7 row keeps the key_id its release recorded
 #   * a **known embedding still decrypts** — the plaintext bytes are compared,
 #     not the file hash, because a file hash cannot tell a preserved key from a
 #     preserved ciphertext nobody can open any more
 #   * no key artifact was replaced, and none appeared that did not exist before
-#   * modes converged to ADR 010 without touching content
+#   * modes converged to ADR 010 without touching content -- tightened from a
+#     release that predates it, left exactly alone from one that already has it
 #   * the pre-existing PAM path is byte-identical and still authenticates, with
 #     a real correct password succeeding and a real wrong password failing
 #
-# Then the candidate is downgraded back to v0.1.4 — after the candidate daemon
-# has opened and migrated the database — and the released binary has to still
-# read its own encrypted rows. V7 has no down-migration, so this is the only
-# thing that says whether shipping the alpha strands a rollback.
+# Then the candidate is downgraded back to the predecessor — after the
+# candidate daemon has opened and migrated the database — and the released
+# binary has to still read its own encrypted rows. V7 has no down-migration, so
+# this is the only thing that says whether shipping the candidate strands a
+# rollback.
 set -euo pipefail
 
 FAMILY="${1:-}"
@@ -36,7 +48,7 @@ case "$FAMILY" in
     deb) EXT=deb ;;
     rpm) EXT=rpm ;;
     *)
-        echo "usage: upgrade-v014-lane.sh <deb|rpm>" >&2
+        echo "usage: upgrade-predecessor-lane.sh <deb|rpm>" >&2
         exit 2
         ;;
 esac
@@ -45,11 +57,56 @@ PREDECESSOR="/artifacts/facelock-predecessor.$EXT"
 CANDIDATE="/artifacts/facelock-candidate.$EXT"
 PREDECESSOR_SHA256_FILE=/artifacts/predecessor.sha256
 PREDECESSOR_VERSION_FILE=/artifacts/predecessor.version
+PREDECESSOR_UPSTREAM_FILE=/artifacts/predecessor.upstream
 CANDIDATE_VERSION_FILE=/artifacts/candidate.version
 
-STATE_ROOT=/run/facelock-upgrade-v014
-LOG=/tmp/facelock-upgrade-v014.log
-PAM_SERVICE=facelock-upgrade-v014
+# The pinned predecessor's upstream version, written by the lane image from
+# the same matrix row that pinned the asset. Everything release-specific below
+# keys off it or off what the released binary is observed to write.
+[ -s "$PREDECESSOR_UPSTREAM_FILE" ] || {
+    echo "FAIL: $PREDECESSOR_UPSTREAM_FILE is missing or empty; rebuild the lane image" >&2
+    exit 1
+}
+PREDECESSOR_UPSTREAM="$(cat "$PREDECESSOR_UPSTREAM_FILE")"
+
+# Is the pinned predecessor older than the given upstream version? Numeric
+# triples, so 0.2.10 sorts above 0.2.9; a version that does not parse fails
+# rather than sorting somewhere.
+predecessor_before() {
+    python3 - "$PREDECESSOR_UPSTREAM" "$1" <<'PY'
+import re
+import sys
+
+
+def triple(version):
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+    if not match:
+        raise SystemExit(f"unparseable version: {version!r}")
+    return tuple(int(part) for part in match.groups())
+
+
+raise SystemExit(0 if triple(sys.argv[1]) < triple(sys.argv[2]) else 1)
+PY
+}
+
+# The two things about a predecessor that its version decides rather than its
+# database: ADR 010 landed in 0.2.0 (the 0711/0700 layout, the `facelock`
+# group retired, `facelock pam` added) and so did the ADR 009 CLI regrouping
+# that moved `encrypt`/`decrypt` under `tpm`. A release before that is
+# "legacy" here; one from 0.2.0 on already has the layout the candidate
+# expects, so the upgrade must leave it exactly alone.
+if predecessor_before 0.2.0; then
+    PREDECESSOR_LAYOUT=legacy
+else
+    PREDECESSOR_LAYOUT=adr010
+fi
+# The schema version the released binary writes, observed when it creates its
+# first database (seed_released_database) rather than assumed from the version.
+PREDECESSOR_SCHEMA=
+
+STATE_ROOT=/run/facelock-upgrade-predecessor
+LOG=/tmp/facelock-upgrade-predecessor.log
+PAM_SERVICE=facelock-upgrade-predecessor
 PAM_PATH="/etc/pam.d/$PAM_SERVICE"
 # The stack a distribution actually authenticates through, as opposed to the
 # lane's own service. An upgrade must not edit it in either direction.
@@ -69,7 +126,7 @@ KNOWN_EMBEDDING_SHA256=82a0081de4c338fc91c362ed4d2ab615bca1dd45152aaa713322b5482
 
 # Every state shape this lane builds with the released binary. A shape added
 # here without a `seed_shape_*` function fails immediately rather than being
-# skipped, and test/upgrade-v014-contract.sh holds this list against the
+# skipped, and test/upgrade-predecessor-contract.sh holds this list against the
 # functions that implement it.
 SHAPES=(plaintext keyfile mixed tpm-pcr-unbound tpm-pcr-bound)
 
@@ -119,8 +176,8 @@ case "$FAMILY" in
         # It is needed here and not in the synthesized-predecessor lane because
         # that lane rebuilds the candidate's own payload as the older package,
         # so its packaged config.toml is byte-identical across the upgrade and
-        # dpkg never asks. A real v0.1.4 ships a different config.toml, so the
-        # modified file this lane plants does provoke the prompt -- and an
+        # dpkg never asks. A real released .deb ships its own config.toml, so
+        # the modified file this lane plants does provoke the prompt -- and an
         # unanswered prompt is `end of file on stdin at conffile prompt`, not a
         # preserved config.
         apt_transaction() {
@@ -186,9 +243,10 @@ ensure_system_bus() {
 # org.facelock.Daemon and exits non-zero -- which reads exactly like the daemon
 # refusing to serve, and is not.
 # The candidate refuses to be uninstalled while a PAM service still references
-# pam_facelock.so, so the reference goes first. The predecessor has no such
-# guard, which is why the Debian half never needed this: after a rollback it is
-# always v0.1.4 that gets removed.
+# pam_facelock.so, so the reference goes first. A predecessor from 0.2.0 on
+# carries the same guard; one before it does not, which is why the Debian half
+# never needed this while a pre-0.2.0 release was the pin (after a rollback it
+# is always the predecessor that gets removed).
 remove_installed_package() {
     rm -f "$PAM_PATH"
     pkg_remove
@@ -220,6 +278,12 @@ assert_pinned_artifacts() {
     expected_version="$(cat "$PREDECESSOR_VERSION_FILE")"
     assert_eq "$expected_version" "$(pkg_file_version "$PREDECESSOR")" \
         "pinned predecessor package version"
+    # The upstream version every release-specific branch below keys off has to
+    # be the version of the package actually installed, not a stale build arg.
+    case "$expected_version" in
+        "$PREDECESSOR_UPSTREAM"-*) ;;
+        *) fail "pinned predecessor upstream $PREDECESSOR_UPSTREAM is not the package version $expected_version" ;;
+    esac
     assert_eq "$(cat "$CANDIDATE_VERSION_FILE")" "$(pkg_file_version "$CANDIDATE")" \
         "candidate package version"
 
@@ -325,8 +389,8 @@ config_pcr_binding() {
 
 # Three embeddings per model, matching what a real enrollment writes since the
 # store floor landed. The first is the known fixture whose plaintext this lane
-# compares after the upgrade; the other two exist so the row count is what a
-# 0.1.4 enrollment would actually have left behind.
+# compares after the upgrade; the other two exist so the row count is what an
+# enrollment on the predecessor would actually have left behind.
 insert_plaintext_rows() {
     local label="$1"
     python3 - "$label" <<'PY'
@@ -364,6 +428,29 @@ released_facelock() {
     facelock "$@"
 }
 
+# The released binary's key-material verbs. ADR 009 (0.2.0) moved `encrypt`
+# and `decrypt` under the `tpm` group; before that they were top-level. The
+# group prefix is resolved once here so every seed and rollback step spells the
+# verb, never the release it belongs to.
+if [ "$PREDECESSOR_LAYOUT" = legacy ]; then
+    RELEASED_KEY_GROUP=()
+else
+    RELEASED_KEY_GROUP=(tpm)
+fi
+
+released_encrypt() {
+    released_facelock "${RELEASED_KEY_GROUP[@]}" encrypt
+}
+
+released_encrypt_generate_key() {
+    released_facelock "${RELEASED_KEY_GROUP[@]}" encrypt --generate-key
+}
+
+# `--config` is a global option: it precedes the verb group, not the verb.
+released_decrypt_with_config() {
+    released_facelock --config "$1" "${RELEASED_KEY_GROUP[@]}" decrypt
+}
+
 # The daemon loads models at startup, so the shape phases need the real ones.
 # The lane runner stages them read-only at /facelock-test-models; a lane without
 # them cannot open the database with the candidate daemon and says so rather
@@ -379,12 +466,12 @@ stage_models() {
         fail "no reviewed ONNX models staged at /facelock-test-models"
 }
 
-# The layout v0.1.4 leaves behind. Its postinst runs systemd-sysusers and
-# systemd-tmpfiles and then chowns the state directories to root:facelock 0750
-# (models to root:root 0755); ADR 010 retired that group and tightened those
-# modes. Seeding the new modes here, as this lane first did, meant the upgrade
-# had nothing to tighten and every mode assertion passed on state the lane had
-# already put in the right shape.
+# The layout a release before 0.2.0 leaves behind. Its postinst runs
+# systemd-sysusers and systemd-tmpfiles and then chowns the state directories
+# to root:facelock 0750 (models to root:root 0755); ADR 010 retired that group
+# and tightened those modes. Seeding the new modes here, as this lane first
+# did, meant the upgrade had nothing to tighten and every mode assertion passed
+# on state the lane had already put in the right shape.
 #
 # `pam-backups` is deliberately absent: it is new-layout, and the candidate's
 # postinst has to create it.
@@ -405,8 +492,24 @@ seed_legacy_layout() {
     install -d -m0750 /var/lib/facelock/enrolled
 }
 
+# The layout a release from 0.2.0 on leaves behind: exactly ADR 010, created
+# by its own postinst and repeated here only so a directory that postinst
+# leaves to first use exists before the fixtures go in. Nothing is loosened,
+# because nothing is supposed to move: assert_adr010_modes requires the upgrade
+# to change no mode at all when the predecessor already has the layout.
+seed_adr010_layout() {
+    install -d -o root -g root -m0711 /var/lib/facelock /var/lib/facelock/enrolled
+    install -d -o root -g root -m0755 /var/lib/facelock/models
+    install -d -o root -g root -m0700 /var/lib/facelock/pam-backups \
+        /var/log/facelock /var/log/facelock/snapshots
+}
+
 seed_common_state() {
-    seed_legacy_layout
+    case "$PREDECESSOR_LAYOUT" in
+        legacy) seed_legacy_layout ;;
+        adr010) seed_adr010_layout ;;
+        *) fail "unknown predecessor layout: $PREDECESSOR_LAYOUT" ;;
+    esac
 
     # The reviewed models the candidate daemon has to load, plus a payload of
     # this lane's own: an upgrade has no business touching either, and both
@@ -415,14 +518,6 @@ seed_common_state() {
     stage_models
     printf '%s\n' upgrade-lane-payload >/var/lib/facelock/models/upgrade-lane.payload
     chmod 0644 /var/lib/facelock/models/upgrade-lane.payload
-    # Deliberately stale: v0.1.4 shipped no enrollment markers, so an upgraded
-    # system's marker either does not exist or describes a database it has since
-    # diverged from. The candidate daemon reconciles it at startup (#137), and
-    # `assert_enrollment_marker_reconciled` is what proves it did.
-    printf '%s\n' '{"models":0,"updated":"2020-01-01T00:00:00Z"}' \
-        >/var/lib/facelock/enrolled/testuser
-    chown testuser:testuser /var/lib/facelock/enrolled/testuser
-    chmod 0600 /var/lib/facelock/enrolled/testuser
     printf '%s\n' complete >/var/lib/facelock/setup.complete
     chmod 0600 /var/lib/facelock/setup.complete
     printf '%s\n' '{"event":"auth","user":"testuser"}' >/var/log/facelock/audit.jsonl
@@ -430,9 +525,10 @@ seed_common_state() {
     printf '%s\n' snapshot >/var/log/facelock/snapshots/upgrade-lane.jpg
     chmod 0600 /var/log/facelock/snapshots/upgrade-lane.jpg
 
-    # The PAM path an 0.1.4 administrator would have wired by hand: v0.1.4 has
-    # no `facelock pam` subcommand, so this is the shape the upgrade actually
-    # finds on a real system.
+    # A PAM service wired by hand. Before 0.2.0 there was no `facelock pam`
+    # subcommand, so this is the only shape an upgrade from such a release
+    # finds; an administrator on a later release can still write one, and the
+    # upgrade must leave it byte-identical either way.
     install -Dm0644 /dev/stdin "$PAM_PATH" <<EOF
 #%PAM-1.0
 auth      sufficient pam_facelock.so
@@ -441,22 +537,79 @@ account   required   pam_unix.so
 EOF
 }
 
-# The released binary creates and migrates its own database. Nothing here uses
-# a candidate command: `facelock` on PATH is v0.1.4 for the whole seed phase.
-#
-# v0.1.4 has exactly one subcommand that opens the store read-write and runs
-# migrations without a camera: `facelock encrypt`. `list` is a D-Bus call to the
-# daemon and `tpm status` opens read-only, so neither creates a schema. Every
-# shape therefore bootstraps its database through the keyfile path and then
+# The enrollment marker an upgrade has to reconcile, planted after the released
+# binary has created its database so that nothing in the seed phase can quietly
+# reconcile it first. A release before 0.2.0 shipped no markers at all, so an
+# upgraded system's marker either does not exist or describes a database it has
+# since diverged from; a later release writes one, and the rows this lane adds
+# by hand leave it just as stale. The candidate daemon reconciles it at startup
+# (#137), and `assert_enrollment_marker_reconciled` is what proves it did.
+plant_stale_enrollment_marker() {
+    printf '%s\n' '{"models":0,"updated":"2020-01-01T00:00:00Z"}' \
+        >/var/lib/facelock/enrolled/testuser
+    chown testuser:testuser /var/lib/facelock/enrolled/testuser
+    chmod 0600 /var/lib/facelock/enrolled/testuser
+}
+
+# How the released binary brings its own store into existence. Before 0.2.0
+# `encrypt` created and migrated it on first use. From 0.2.1 on that verb
+# refuses a database that is not there ("no database at ..."), and what creates
+# one on a real system is the daemon's own startup -- so that is what runs, the
+# released daemon, bounded and then stopped. Nothing here is a candidate
+# command: `facelock` on PATH is the predecessor for the whole seed phase.
+create_database_with_released_binary() {
+    if [ "$PREDECESSOR_LAYOUT" = legacy ]; then
+        released_encrypt >>"$LOG" 2>&1
+        return
+    fi
+    local output=/tmp/facelock-released-daemon.log pid created=
+    stop_packaged_daemon
+    RUST_LOG=warn facelock daemon >"$output" 2>&1 &
+    pid=$!
+    for _ in $(seq 1 120); do
+        if [ -f /var/lib/facelock/facelock.db ] &&
+            [ -n "$(schema_version 2>/dev/null || true)" ]; then
+            created=1
+            break
+        fi
+        sleep 0.5
+    done
+    kill -TERM "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    [ -n "$created" ] || {
+        echo "--- released daemon output ---" >&2
+        tail -20 "$output" >&2 || true
+        return 1
+    }
+}
+
+# The released binary creates and migrates its own database. `list` is a D-Bus
+# call to the daemon and `tpm status` opens read-only, so neither creates a
+# schema; every shape bootstraps through the keyfile path above and then
 # becomes whatever shape it is.
+#
+# The schema version it writes is recorded, not asserted to a literal: it is
+# what the post-upgrade proofs compare against, and a release from 0.2.1 on
+# already writes V7, so "migrated from V5" is only one of the things this lane
+# can be proving. Anything outside the V5..V7 range is a binary this lane does
+# not understand and fails here rather than in an assertion that assumed it.
 seed_released_database() {
-    released_facelock encrypt --generate-key >>"$LOG" 2>&1 ||
+    released_encrypt_generate_key >>"$LOG" 2>&1 ||
         fail "the released binary could not generate its encryption key"
-    released_facelock encrypt >>"$LOG" 2>&1 ||
+    create_database_with_released_binary ||
         fail "the released binary could not create and migrate its database"
     [ -f /var/lib/facelock/facelock.db ] ||
         fail "the released binary did not create its database"
-    assert_eq 5 "$(schema_version)" "schema version written by the released binary"
+    local written
+    written="$(schema_version)"
+    case "$written" in
+        5 | 6 | 7) ;;
+        *) fail "the released binary wrote schema version $written, outside the V5..V7 range this lane knows" ;;
+    esac
+    if [ -n "$PREDECESSOR_SCHEMA" ] && [ "$PREDECESSOR_SCHEMA" != "$written" ]; then
+        fail "the released binary wrote schema version $written after writing $PREDECESSOR_SCHEMA for an earlier shape"
+    fi
+    PREDECESSOR_SCHEMA="$written"
 }
 
 seed_shape_plaintext() {
@@ -470,14 +623,14 @@ seed_shape_plaintext() {
 
 seed_shape_keyfile() {
     insert_plaintext_rows keyfile
-    released_facelock encrypt >>"$LOG" 2>&1 ||
+    released_encrypt >>"$LOG" 2>&1 ||
         fail "the released binary could not encrypt its rows"
     assert_eq "3|0" "$(sealed_counts)" "keyfile shape row encryption"
 }
 
 seed_shape_mixed() {
     insert_plaintext_rows encrypted-half
-    released_facelock encrypt >>"$LOG" 2>&1 ||
+    released_encrypt >>"$LOG" 2>&1 ||
         fail "the released binary could not encrypt its rows"
     # A second enrollment that never went through `encrypt`: the mixed database
     # a user gets by enrolling again after turning encryption on.
@@ -495,7 +648,7 @@ seed_shape_tpm_common() {
     grep -Eq '^[[:space:]]*method[[:space:]]*=[[:space:]]*"tpm"' /etc/facelock/config.toml ||
         fail "sealing did not move the configured encryption method to tpm"
     insert_plaintext_rows tpm
-    released_facelock encrypt >>"$LOG" 2>&1 ||
+    released_encrypt >>"$LOG" 2>&1 ||
         fail "the released binary could not encrypt rows under the sealed key"
     assert_eq "3|0" "$(sealed_counts)" "TPM shape row encryption"
 }
@@ -505,13 +658,14 @@ seed_shape_tpm_pcr_bound() { seed_shape_tpm_common; }
 
 seed_shape() {
     local shape="$1"
-    # Bootstrap on the keyfile path whatever the shape, because that is the only
-    # released code path that will create the schema. `write_config` keeps the
+    # Bootstrap on the keyfile path whatever the shape, because that is the
+    # released path that creates the schema. `write_config` keeps the
     # shape's own PCR selection from the first byte, so a bound shape seals
     # under the PCRs it is meant to.
     write_config "$shape" keyfile
     seed_common_state
     seed_released_database
+    plant_stale_enrollment_marker
     case "$shape" in
         plaintext) seed_shape_plaintext ;;
         keyfile) seed_shape_keyfile ;;
@@ -620,25 +774,37 @@ snapshot_model_files() {
 # Row identity by content, not by file digest: the database file legitimately
 # changes across a migration, so comparing it byte for byte would either fail
 # always or be relaxed into proving nothing.
+#
+# The V6 and V7 columns are part of a row's identity only when the predecessor
+# wrote them: for an older schema they do not exist before the upgrade and are
+# what the migration adds, so assert_schema_v7_with_null_columns owns them
+# instead. For a V7 predecessor the key_id it recorded is state the upgrade has
+# to preserve, and this is where a rewritten one is caught.
 snapshot_rows() {
-    python3 - <<'PY'
+    FACELOCK_PREDECESSOR_SCHEMA="$PREDECESSOR_SCHEMA" python3 - <<'PY'
 import hashlib
+import os
 import sqlite3
 
+schema = int(os.environ["FACELOCK_PREDECESSOR_SCHEMA"])
+columns = ["fm.user", "fm.label", "fm.created_at", "fm.embedder_model"]
+if schema >= 6:
+    columns.append("fm.device_id")
+if schema >= 7:
+    columns.append("fm.key_id")
+columns += ["fe.embedding", "fe.sealed"]
 connection = sqlite3.connect("file:/var/lib/facelock/facelock.db?mode=ro", uri=True)
 rows = connection.execute(
-    "SELECT fm.user, fm.label, fm.created_at, fm.embedder_model, fe.embedding, fe.sealed "
+    f"SELECT {', '.join(columns)} "
     "FROM face_models AS fm JOIN face_embeddings AS fe ON fe.model_id = fm.id "
     "ORDER BY fm.label, fe.id"
 ).fetchall()
 connection.close()
 if not rows:
     raise SystemExit("snapshot found no enrollment rows")
-for user, label, created_at, embedder, blob, sealed in rows:
-    print(
-        f"row|{user}|{label}|{created_at}|{embedder}|{sealed}|"
-        f"{len(blob)}|{hashlib.sha256(blob).hexdigest()}"
-    )
+for *identity, blob, sealed in rows:
+    fields = "|".join(str(value) for value in identity)
+    print(f"row|{fields}|{sealed}|{len(blob)}|{hashlib.sha256(blob).hexdigest()}")
 PY
 }
 
@@ -665,14 +831,21 @@ PY
         *,key_id,*) ;;
         *) fail "V7 migration did not add face_models.key_id (columns: $columns)" ;;
     esac
-    # Legacy rows must stay uncoupled. A migration that invented a device id
-    # or a key id would bind every existing template to whatever camera
-    # happened to be plugged in during the upgrade, or to a key it was never
-    # sealed under.
+    # Rows the predecessor wrote must stay uncoupled. A migration that invented
+    # a device id would bind every existing template to whatever camera
+    # happened to be plugged in during the upgrade; no shape enrolls through a
+    # camera, so a non-NULL device_id can only have been invented, whatever
+    # schema the predecessor wrote.
     assert_eq 0 "$(sqlite_query 'SELECT COUNT(*) FROM face_models WHERE device_id IS NOT NULL')" \
-        "legacy rows left with a non-NULL device_id"
-    assert_eq 0 "$(sqlite_query 'SELECT COUNT(*) FROM face_models WHERE key_id IS NOT NULL')" \
-        "legacy rows left with a non-NULL key_id"
+        "predecessor rows left with a non-NULL device_id"
+    # key_id is decided by which schema wrote the rows. Before V7 there was no
+    # such column, so the migration must not bind a row to a key it was never
+    # sealed under; from V7 on the predecessor's `encrypt` records the key id
+    # itself, and snapshot_rows holds it byte-identical across the upgrade.
+    if [ "$PREDECESSOR_SCHEMA" -lt 7 ]; then
+        assert_eq 0 "$(sqlite_query 'SELECT COUNT(*) FROM face_models WHERE key_id IS NOT NULL')" \
+            "pre-V7 rows left with a non-NULL key_id"
+    fi
 }
 
 # Which model's first embedding is the known fixture for a given shape. The
@@ -769,9 +942,10 @@ assert_known_embedding_decrypts() {
 }
 
 # The enrollment marker is the one piece of state an upgrade is *supposed* to
-# rewrite. `facelock is-enrolled` reads it, v0.1.4 never wrote one, and a marker
-# left describing a database it has diverged from answers "not enrolled" for a
-# user whose face authentication works (#137). So the contract is not byte
+# rewrite. `facelock is-enrolled` reads it, releases before 0.2.0 never wrote
+# one, and a marker left describing a database it has diverged from answers
+# "not enrolled" for a user whose face authentication works (#137). So the
+# contract is not byte
 # identity, which would happily preserve a marker that lies. It is that the
 # marker still exists, is still the user's own private file, and now agrees with
 # the database.
@@ -969,11 +1143,12 @@ record_adr010_modes() {
 
 # ADR 010 modes. The packaged scriptlets tighten these on an upgrade from a
 # release that predates the layout; content must be untouched while they do.
+# From a release that already has the layout they must change nothing.
 #
 # Every path is required to exist afterwards. A `continue` on a missing path
 # made all of this optional, and `pam-backups` in particular only exists
-# because the candidate's postinst creates it -- so its absence is the failure
-# this is here to catch, not a case to skip.
+# because a postinst creates it -- so its absence is the failure this is here
+# to catch, not a case to skip.
 assert_adr010_modes() {
     local shape="$1" expected path actual before tightened=0
     while read -r expected path; do
@@ -987,15 +1162,29 @@ assert_adr010_modes() {
         fi
     done < <(adr010_expectations)
 
-    # At least one path has to have actually moved. If the predecessor already
-    # left everything at the ADR 010 values, this lane is asserting nothing
-    # about the upgrade and the legacy seeding above has silently stopped
-    # working.
-    [ "$tightened" -gt 0 ] ||
-        fail "no ADR 010 path changed across the upgrade: nothing was tightened"
+    case "$PREDECESSOR_LAYOUT" in
+        legacy)
+            # At least one path has to have actually moved. If the predecessor
+            # already left everything at the ADR 010 values, this lane is
+            # asserting nothing about the upgrade and the legacy seeding above
+            # has silently stopped working.
+            [ "$tightened" -gt 0 ] ||
+                fail "no ADR 010 path changed across the upgrade: nothing was tightened"
+            ;;
+        adr010)
+            # The predecessor already had the layout, so the only correct
+            # upgrade is one that touched no mode. A path that was "tightened"
+            # here was loosened by the seed or by the predecessor's own
+            # scriptlets, and either is a bug this lane must not paper over.
+            [ "$tightened" -eq 0 ] ||
+                fail "$tightened ADR 010 path(s) changed across an upgrade from a release that already had the layout"
+            ;;
+        *) fail "unknown predecessor layout: $PREDECESSOR_LAYOUT" ;;
+    esac
 
     # ADR 010 retired the group outright; an upgrade from a release that had
-    # one must remove it rather than leave a group owning nothing.
+    # one must remove it rather than leave a group owning nothing, and no
+    # later release may bring it back.
     ! getent group facelock >/dev/null 2>&1 ||
         fail "the retired facelock group survived the upgrade"
 }
@@ -1064,11 +1253,12 @@ assert_real_password_behavior() {
 
 # --- the candidate daemon actually opens the database ----------------------
 #
-# The rollback question is not "does v0.1.4 read a V7 file" in the abstract, it
-# is "does it read the file the alpha daemon has already opened, migrated and
-# written to". So the daemon runs for real before the downgrade.
+# The rollback question is not "does the predecessor read a V7 file" in the
+# abstract, it is "does it read the file the candidate daemon has already
+# opened, migrated and written to". So the daemon runs for real before the
+# downgrade.
 open_database_with_candidate_daemon() {
-    local output=/tmp/facelock-candidate-daemon.log pid
+    local output=/tmp/facelock-candidate-daemon.log pid opened=
     stop_packaged_daemon
     RUST_LOG=warn facelock daemon >"$output" 2>&1 &
     pid=$!
@@ -1081,16 +1271,23 @@ open_database_with_candidate_daemon() {
     for _ in $(seq 1 120); do
         if [ "$(schema_version)" = 7 ] &&
             [ "$(marker_model_count)" = "$(database_model_count)" ]; then
+            opened=1
             break
         fi
         sleep 0.5
     done
     kill -TERM "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
-    if [ "$(marker_model_count)" != "$(database_model_count)" ]; then
+    # Timing out is fatal, not a note. Against a predecessor that already wrote
+    # V7 the schema assertion below holds whether or not the daemon ever ran,
+    # so the reconciled marker is the only thing left that says it opened the
+    # store -- and the seeded marker disagrees with the database on purpose, so
+    # it can only agree here because the daemon rewrote it.
+    [ -n "$opened" ] || {
         echo "--- candidate daemon output ---" >&2
         tail -20 "$output" >&2 || true
-    fi
+        fail "the candidate daemon did not open the database and reconcile the marker within 60s"
+    }
     assert_eq 7 "$(schema_version)" "schema version after the candidate daemon ran"
 }
 
@@ -1128,8 +1325,8 @@ assert_downgrade_usable() {
 
     # V7 has no down-migration. The predecessor must still open the database the
     # candidate migrated and read its enrollment state. `tpm status` is the
-    # readback rather than `list`, which in v0.1.4 is a D-Bus call to a daemon
-    # this phase deliberately does not run.
+    # readback rather than `list`, which is a D-Bus call to a daemon this phase
+    # deliberately does not run.
     released_facelock tpm status >>"$LOG" 2>&1 ||
         fail "the released binary could not open the V7 database after rollback"
     assert_eq 7 "$(schema_version)" "schema version is not rolled back by a package downgrade"
@@ -1140,7 +1337,7 @@ assert_downgrade_usable() {
     label="$(shape_probe_label "$shape")"
     stage_probe "$probe"
     if [ "$shape" != plaintext ]; then
-        released_facelock --config "$probe/config.toml" decrypt >>"$LOG" 2>&1 ||
+        released_decrypt_with_config "$probe/config.toml" >>"$LOG" 2>&1 ||
             fail "the released binary could not decrypt its own rows after rollback"
     fi
     digest="$(probe_known_embedding_digest "$probe/probe.db" "$label")" ||
@@ -1218,7 +1415,7 @@ run_shape() {
 # name it never gets to claim here. Each case runs it against its own config,
 # so nothing here can reach the system database.
 
-FAULT_ROOT=/run/facelock-upgrade-v014/fault
+FAULT_ROOT=/run/facelock-upgrade-predecessor/fault
 # Filled to capacity for the disk-full case. /dev/shm is a real filesystem with
 # a real, small size limit, so the ENOSPC is the kernel's rather than a
 # simulation, and it needs no privilege this lane does not already have.
@@ -1622,4 +1819,4 @@ fi
 run_faults
 
 echo
-echo "OK: $FAMILY v0.1.4 upgrade, rollback and fault matrix"
+echo "OK: $FAMILY $PREDECESSOR_UPSTREAM upgrade, rollback and fault matrix (predecessor schema V$PREDECESSOR_SCHEMA, $PREDECESSOR_LAYOUT layout)"
