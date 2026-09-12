@@ -17,6 +17,10 @@ use serde::Deserialize;
 // against the binary's emission table (see the file header).
 mod oneshot_exit;
 
+// The lid resolver behind `abort_if_lid_closed`, dependency-free so
+// `facelock-daemon` can `include!` the same source (see the file header).
+mod lid;
+
 // ---------------------------------------------------------------------------
 // PAM constants
 // ---------------------------------------------------------------------------
@@ -434,21 +438,6 @@ fn is_ssh_session() -> bool {
                 .any(|var| var.starts_with(b"SSH_CONNECTION=") || var.starts_with(b"SSH_TTY="))
         })
         .unwrap_or(false)
-}
-
-/// Check if the laptop lid is closed
-fn is_lid_closed() -> bool {
-    // Try multiple lid paths (different ACPI implementations)
-    for lid_path in &[
-        "/proc/acpi/button/lid/LID0/state",
-        "/proc/acpi/button/lid/LID/state",
-        "/proc/acpi/button/lid/LID1/state",
-    ] {
-        if let Ok(contents) = std::fs::read_to_string(lid_path) {
-            return contents.contains("closed");
-        }
-    }
-    false
 }
 
 // ---------------------------------------------------------------------------
@@ -1140,7 +1129,7 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
         return PAM_IGNORE;
     }
 
-    if config.security.abort_if_lid_closed && is_lid_closed() {
+    if config.security.abort_if_lid_closed && lid::is_lid_closed() {
         log_auth(&service, "lid_closed", "?", LOG_INFO);
         return PAM_IGNORE;
     }
