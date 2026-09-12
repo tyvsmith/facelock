@@ -1657,10 +1657,25 @@ pam_facelock.so` line goes above any distribution-owned skip guard (Omarchy's
 `omarchy-hw-laptop-closed`, an SSH or no-camera check) rather than behind one.
 That is deliberate: the module self-gates on `security.disabled`,
 `abort_if_ssh` and `abort_if_lid_closed` before it touches a camera or the
-daemon, and the daemon repeats the SSH and lid gates in its own pre-flight,
-ahead of enrollment, the rate limiter and `require_ir`. A closed lid therefore
-returns `PAM_IGNORE` from the module itself, and the stack continues to the
-password. The lid is resolved by enumerating every
+daemon. A closed lid returns `PAM_IGNORE` from the module itself, and the
+stack continues to the password.
+
+The module is the gate that fires here, because it runs in the calling
+process, with that process's environment and an unrestricted `/proc`. Behind
+it the daemon is not a second copy of the same two gates. Its SSH refusal is
+real but differently built: for a non-root `Authenticate` caller the D-Bus
+server resolves the caller's logind session and denies a remote one (a root
+caller skips that check, and a PAM `sudo` attempt arrives as UID 0). Its lid
+gate is **inert under the packaged unit**: `systemd/facelock-daemon.service`
+sets `ProcSubset=pid`, so `/proc/acpi` is absent from the daemon's mount
+namespace and the resolver reports no lid device. A D-Bus caller that does not
+come through `pam_facelock.so` is therefore not lid-gated, and has not been;
+fixing that means finding the lid somewhere the sandbox keeps, such as
+logind's `LidClosed` property, rather than widening `/proc`. The one-shot
+`facelock auth` helper is unaffected: PAM spawns it as an ordinary child, so
+both gates run there.
+
+The lid is resolved by enumerating every
 `/proc/acpi/button/lid/*/state` (`LID0`, `LID`, `LID1`, whatever the firmware
 names it) from one source shared by the module and the daemon; the lid is
 closed when any device reports `closed`, and no lid device at all counts as

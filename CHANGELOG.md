@@ -9,14 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`abort_if_lid_closed` now sees every ACPI lid device** (#365): the daemon read only
-  `/proc/acpi/button/lid/LID0/state`, so a laptop whose firmware names the device `LID`,
-  `LID1` or anything else got no lid gate from the daemon, while the PAM module checked a
-  different fixed list. Both now enumerate `/proc/acpi/button/lid/*/state` from one shared
-  resolver: the lid is closed when any device reports `closed`, and no lid device counts as
-  open. `docs/contracts.md` and `docs/security.md` now say why the PAM line sits above
-  distribution skip guards (the module and daemon self-gate on SSH and lid) and that
-  `abort_if_lid_closed = false` is the opt-out for a docked laptop with an external camera.
+- **`abort_if_lid_closed` now sees every ACPI lid device** (#365): the PAM module checked a
+  fixed `LID0`/`LID`/`LID1` list and the daemon read only
+  `/proc/acpi/button/lid/LID0/state`, so a laptop whose firmware names the device anything
+  else was not lid-gated. Both call sites now enumerate `/proc/acpi/button/lid/*/state` from
+  one shared resolver: the lid is closed when any device reports `closed`, and no lid device
+  counts as open. Two behavior details come with that. The state file is matched by whole
+  word (`closed` as a field, not as a substring anywhere in the file), so a device whose
+  state merely contains the letters no longer reads as closed. And the resolver needs
+  **read permission on the lid directory**, where the old code needed only to open a known
+  file path; a caller whose namespace hides `/proc/acpi` now reports no lid device rather
+  than a failed read of one.
+- **Documented which lid gate actually fires**: the PAM module's, because it runs in the
+  calling process. The daemon's own lid gate is inert under the packaged unit, whose
+  `ProcSubset=pid` keeps `/proc/acpi` out of its mount namespace, so a D-Bus caller that
+  does not go through `pam_facelock.so` is not lid-gated. That is long-standing behavior,
+  not new here, and `docs/contracts.md` and `docs/security.md` now state it alongside the
+  PAM line's placement above distribution skip guards and `abort_if_lid_closed = false` as
+  the opt-out for a docked laptop with an external camera.
 
 ### Added
 

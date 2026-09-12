@@ -1360,13 +1360,34 @@ The line sits **above** any distribution skip guard (Omarchy's
 `omarchy-hw-laptop-closed` / SSH / no-camera checks, or their equivalents)
 on purpose, and the writer does not add one. `pam_facelock.so` self-gates
 before it opens a camera or contacts the daemon: `security.disabled`,
-`abort_if_ssh` and `abort_if_lid_closed` each return `PAM_IGNORE`, and the
-daemon repeats the SSH and lid physical-presence gates in its own pre-flight
-(`pre_check`, before enrollment, the rate-limit check and `require_ir`), so a
-stack that reaches the line with the lid closed falls through to the next
-rule without a camera being opened. `abort_if_lid_closed = false` is the
-opt-out for a docked laptop that authenticates through an external camera
-with the lid shut; nothing in the stack needs to move for that.
+`abort_if_ssh` and `abort_if_lid_closed` each return `PAM_IGNORE`, so a stack
+that reaches the line with the lid closed falls through to the next rule with
+no camera opened. **The module is the gate that fires**, because it runs
+inside the calling process and reads that process's environment and an
+unrestricted `/proc`. `abort_if_lid_closed = false` is the opt-out for a
+docked laptop that authenticates through an external camera with the lid
+shut; nothing in the stack needs to move for that.
+
+What each physical-presence gate is worth behind the module is not uniform:
+
+| Path | `abort_if_ssh` | `abort_if_lid_closed` |
+|---|---|---|
+| `pam_facelock.so` | enforced, from the calling process's environment | enforced, from the calling process's `/proc` |
+| one-shot `facelock auth` | enforced in `pre_check` (PAM forwards `SSH_CONNECTION` / `SSH_TTY` into the child's allow-listed environment) | enforced in `pre_check`: the helper is an ordinary child of the PAM-using process, with no sandbox |
+| daemon `Authenticate` | enforced, by a different mechanism: for a non-root caller the D-Bus server resolves the caller's logind session (ProcessFD, then `GetSessionByPID`) and denies one whose `Remote` property is true. A root caller skips it, and a PAM `sudo` attempt arrives as UID 0 | **inert** |
+
+Two consequences worth stating plainly. The `abort_if_ssh` arm inside
+`pre_check` reads the *calling* environment, which is the right environment on
+the one-shot path and never carries `SSH_CONNECTION` inside the long-running
+daemon, so on the daemon path it is the logind check above that does the work.
+And `pre_check`'s lid gate cannot fire in the packaged daemon at all:
+`systemd/facelock-daemon.service` sets `ProcSubset=pid`, so `/proc/acpi` does
+not exist in the daemon's mount namespace and the resolver finds no lid
+device. **A caller that reaches `Authenticate` over D-Bus without going
+through `pam_facelock.so` is therefore not lid-gated.** Closing that needs a
+lid source the namespace keeps (logind's `LidClosed` property, say), not a
+wider `/proc`; this is long-standing behavior, not a property of the
+enumeration rule below, which the module and the one-shot both honor.
 
 **Lid rule.** Both gates resolve the lid the same way, from one shared
 source (`crates/pam-facelock/src/lid.rs`, compiled into the module and
