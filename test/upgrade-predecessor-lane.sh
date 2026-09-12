@@ -518,17 +518,6 @@ seed_common_state() {
     stage_models
     printf '%s\n' upgrade-lane-payload >/var/lib/facelock/models/upgrade-lane.payload
     chmod 0644 /var/lib/facelock/models/upgrade-lane.payload
-    # Deliberately stale. A release before 0.2.0 shipped no enrollment markers,
-    # so an upgraded system's marker either does not exist or describes a
-    # database it has since diverged from; a later release writes one, but
-    # nothing in this seed phase enrolls through it, so its marker is just as
-    # stale by the time the upgrade lands. The candidate daemon reconciles it
-    # at startup (#137), and `assert_enrollment_marker_reconciled` is what
-    # proves it did.
-    printf '%s\n' '{"models":0,"updated":"2020-01-01T00:00:00Z"}' \
-        >/var/lib/facelock/enrolled/testuser
-    chown testuser:testuser /var/lib/facelock/enrolled/testuser
-    chmod 0600 /var/lib/facelock/enrolled/testuser
     printf '%s\n' complete >/var/lib/facelock/setup.complete
     chmod 0600 /var/lib/facelock/setup.complete
     printf '%s\n' '{"event":"auth","user":"testuser"}' >/var/log/facelock/audit.jsonl
@@ -548,15 +537,56 @@ account   required   pam_unix.so
 EOF
 }
 
-# The released binary creates and migrates its own database. Nothing here uses
-# a candidate command: `facelock` on PATH is the predecessor for the whole seed
-# phase.
-#
-# `encrypt` is the one subcommand that opens the store read-write and runs
-# migrations without a camera. `list` is a D-Bus call to the daemon and
-# `tpm status` opens read-only, so neither creates a schema. Every shape
-# therefore bootstraps its database through the keyfile path and then becomes
-# whatever shape it is.
+# The enrollment marker an upgrade has to reconcile, planted after the released
+# binary has created its database so that nothing in the seed phase can quietly
+# reconcile it first. A release before 0.2.0 shipped no markers at all, so an
+# upgraded system's marker either does not exist or describes a database it has
+# since diverged from; a later release writes one, and the rows this lane adds
+# by hand leave it just as stale. The candidate daemon reconciles it at startup
+# (#137), and `assert_enrollment_marker_reconciled` is what proves it did.
+plant_stale_enrollment_marker() {
+    printf '%s\n' '{"models":0,"updated":"2020-01-01T00:00:00Z"}' \
+        >/var/lib/facelock/enrolled/testuser
+    chown testuser:testuser /var/lib/facelock/enrolled/testuser
+    chmod 0600 /var/lib/facelock/enrolled/testuser
+}
+
+# How the released binary brings its own store into existence. Before 0.2.0
+# `encrypt` created and migrated it on first use. From 0.2.1 on that verb
+# refuses a database that is not there ("no database at ..."), and what creates
+# one on a real system is the daemon's own startup -- so that is what runs, the
+# released daemon, bounded and then stopped. Nothing here is a candidate
+# command: `facelock` on PATH is the predecessor for the whole seed phase.
+create_database_with_released_binary() {
+    if [ "$PREDECESSOR_LAYOUT" = legacy ]; then
+        released_encrypt >>"$LOG" 2>&1
+        return
+    fi
+    local output=/tmp/facelock-released-daemon.log pid created=
+    stop_packaged_daemon
+    RUST_LOG=warn facelock daemon >"$output" 2>&1 &
+    pid=$!
+    for _ in $(seq 1 120); do
+        if [ -f /var/lib/facelock/facelock.db ] &&
+            [ -n "$(schema_version 2>/dev/null || true)" ]; then
+            created=1
+            break
+        fi
+        sleep 0.5
+    done
+    kill -TERM "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    [ -n "$created" ] || {
+        echo "--- released daemon output ---" >&2
+        tail -20 "$output" >&2 || true
+        return 1
+    }
+}
+
+# The released binary creates and migrates its own database. `list` is a D-Bus
+# call to the daemon and `tpm status` opens read-only, so neither creates a
+# schema; every shape bootstraps through the keyfile path above and then
+# becomes whatever shape it is.
 #
 # The schema version it writes is recorded, not asserted to a literal: it is
 # what the post-upgrade proofs compare against, and a release from 0.2.1 on
@@ -566,7 +596,7 @@ EOF
 seed_released_database() {
     released_encrypt_generate_key >>"$LOG" 2>&1 ||
         fail "the released binary could not generate its encryption key"
-    released_encrypt >>"$LOG" 2>&1 ||
+    create_database_with_released_binary ||
         fail "the released binary could not create and migrate its database"
     [ -f /var/lib/facelock/facelock.db ] ||
         fail "the released binary did not create its database"
@@ -628,13 +658,14 @@ seed_shape_tpm_pcr_bound() { seed_shape_tpm_common; }
 
 seed_shape() {
     local shape="$1"
-    # Bootstrap on the keyfile path whatever the shape, because that is the only
-    # released code path that will create the schema. `write_config` keeps the
+    # Bootstrap on the keyfile path whatever the shape, because that is the
+    # released path that creates the schema. `write_config` keeps the
     # shape's own PCR selection from the first byte, so a bound shape seals
     # under the PCRs it is meant to.
     write_config "$shape" keyfile
     seed_common_state
     seed_released_database
+    plant_stale_enrollment_marker
     case "$shape" in
         plaintext) seed_shape_plaintext ;;
         keyfile) seed_shape_keyfile ;;

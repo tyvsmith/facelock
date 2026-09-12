@@ -255,6 +255,30 @@ done
 grep -Fq 'dpkg --compare-versions "$FACELOCK_PREDECESSOR_UPSTREAM" lt 0.2.0' \
     "$repo_root/test/Containerfile.upgrade-predecessor-deb" ||
     fail "the Debian lane image no longer gates its pre-0.2.0 dependency accommodation on the pinned predecessor"
+# The store is created by the released binary, whichever release that is: an
+# `encrypt` that creates one before 0.2.0, the daemon's own startup after,
+# because from 0.2.1 on that verb refuses a database that is not there.
+grep -Eq '^create_database_with_released_binary\(\)' "$lane" ||
+    fail "the lane defines no create_database_with_released_binary"
+sed -n '/^seed_released_database() {/,/^}/p' "$lane" |
+    grep -q create_database_with_released_binary ||
+    fail "seed_released_database no longer creates the store with the released binary"
+
+# And the stale marker is planted after that, never before. Running the
+# released daemon reconciles markers at startup, so a marker planted first
+# comes back fresh and `assert_enrollment_marker_reconciled` then proves only
+# that some daemon rewrote it, not that the upgrade did.
+seed_shape_body="$(sed -n '/^seed_shape() {/,/^}/p' "$lane")"
+seed_database_line="$(printf '%s\n' "$seed_shape_body" | grep -n 'seed_released_database' |
+    head -1 | cut -d: -f1)"
+marker_line="$(printf '%s\n' "$seed_shape_body" | grep -n 'plant_stale_enrollment_marker' |
+    head -1 | cut -d: -f1)"
+if [ -z "$seed_database_line" ] || [ -z "$marker_line" ]; then
+    fail "seed_shape no longer both seeds the released database and plants the stale marker"
+elif [ "$marker_line" -le "$seed_database_line" ]; then
+    fail "seed_shape plants the stale enrollment marker before the released binary creates its store"
+fi
+
 # The predecessor's schema is whatever the pinned release writes, recorded when
 # it creates its first database. A literal here is the #367 failure in another
 # spelling: 0.2.1 writes V7, so "the predecessor wrote V5" is only ever true of
