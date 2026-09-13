@@ -197,6 +197,13 @@
 
 # Refuse face auth when the laptop lid is closed (camera blocked).
 # Only relevant on laptops — desktops without a lid sensor are unaffected.
+#
+# The PAM module and the one-shot helper read /proc/acpi/button/lid in the
+# calling process. The daemon cannot under systemd, whose unit hides /proc
+# from it, so it reads logind's LidClosed property instead. If that read
+# fails it falls back to /proc/acpi, which answers on the init systems that
+# apply no proc sandboxing (OpenRC, runit, s6) and is blind under the systemd
+# unit. Set this to false only on a host where neither can answer.
 # Default: true
 # abort_if_lid_closed = true
 

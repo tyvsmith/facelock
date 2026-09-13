@@ -1660,32 +1660,72 @@ That is deliberate: the module self-gates on `security.disabled`,
 daemon. A closed lid returns `PAM_IGNORE` from the module itself, and the
 stack continues to the password.
 
-The module is the gate that fires here, because it runs in the calling
+The module is the gate that fires first here, because it runs in the calling
 process, with that process's environment and an unrestricted `/proc`. Behind
-it the daemon is not a second copy of the same two gates. Its SSH refusal is
-real but differently built: for a non-root `Authenticate` caller the D-Bus
-server resolves the caller's logind session and denies a remote one (a root
-caller skips that check, and a PAM `sudo` attempt arrives as UID 0). Its lid
-gate is **inert under the packaged unit**: `systemd/facelock-daemon.service`
-sets `ProcSubset=pid`, so `/proc/acpi` is absent from the daemon's mount
-namespace and the resolver reports no lid device. A D-Bus caller that does not
-come through `pam_facelock.so` is therefore not lid-gated, and has not been;
-fixing that means finding the lid somewhere the sandbox keeps, such as
-logind's `LidClosed` property, rather than widening `/proc`. The one-shot
-`facelock auth` helper is unaffected: PAM spawns it as an ordinary child, so
-both gates run there.
+it the daemon is not a second copy of the same two gates — it enforces both,
+from sources its own sandbox can see. Its SSH refusal: for a non-root
+`Authenticate` caller the D-Bus server resolves the caller's logind session
+and denies a remote one (a root caller skips that check, and a PAM `sudo`
+attempt arrives as UID 0). Its lid refusal: the server reads
+`org.freedesktop.login1.Manager.LidClosed` once per request, falling back to
+procfs only where procfs can see, and refuses a closed lid for every caller
+including root. The one-shot `facelock auth`
+helper keeps the in-process resolver: PAM spawns it as an ordinary child, so
+`/proc/acpi` is right there.
 
-The lid is resolved by enumerating every
+That split is not a preference, it is a namespace constraint.
+`systemd/facelock-daemon.service` sets `ProcSubset=pid`, so `/proc/acpi` is
+absent from the daemon's mount namespace and the procfs resolver reports no
+lid device on any laptop. Until this was fixed (issue #385) a D-Bus caller
+that did not come through `pam_facelock.so` was not lid-gated at all. Widening
+`/proc` is not the fix.
+
+The daemon does fall back to procfs when the logind read fails, but only where
+that resolver can see the lid directory — a reading of `closed` or `open`, not
+"no device". Under the packaged unit it is blind by the same `ProcSubset=pid`
+that motivated the logind read, so a transient logind failure keeps refusing
+and cannot silently reinstate #385. The `dist/openrc`, `dist/runit` and
+`dist/s6` templates apply no proc sandboxing, so on the hosts that have no
+logind to ask — no systemd, and elogind not installed — procfs sees the real
+lid and answers it. A host that hides `/proc/acpi` is by construction a host
+that has logind, so the two cases never overlap. The fallback is there because
+the daemon's lid gate covers root callers, who never ran the logind-dependent
+remote-session check: without it, `pam_facelock.so` inside `sudo` on a
+logind-less host would go from working to abstaining on every attempt.
+
+In process, the lid is resolved by enumerating every
 `/proc/acpi/button/lid/*/state` (`LID0`, `LID`, `LID1`, whatever the firmware
-names it) from one source shared by the module and the daemon; the lid is
-closed when any device reports `closed`, and no lid device at all counts as
-open. `abort_if_lid_closed = false` is the opt-out for a docked laptop using an
-external camera with the lid shut. Failing direction: a lid the resolver
-cannot read counts as open, so the attempt runs the normal camera
+names it) from one source shared by the module and the one-shot helper; the
+lid is closed when any device reports `closed`, and no lid device at all
+counts as open. `abort_if_lid_closed = false` is the opt-out for a docked
+laptop using an external camera with the lid shut.
+
+**Failing direction, and it differs by source.** In process, a lid the
+resolver cannot read counts as open: the attempt runs the normal camera
 authentication and its result decides the outcome. On a machine with no lid
 that reading is correct; on a laptop whose closed lid went undetected the
 blocked camera sees no face and the attempt ends at the timeout, with the
-stack continuing to the password.
+stack continuing to the password. Over D-Bus the daemon does the opposite: a
+lid that *neither* source can resolve — logind unreachable or past its
+one-second deadline, and the procfs fallback blind — refuses with
+`lid state unavailable`, a class of its own so the audit trail never records
+it as a closed lid. A read the daemon cancels instead (suspend,
+`ReleaseCamera`, shutdown, caller departure) answers with the frozen
+`cancelled` message, because a cancelled request says nothing about the lid
+either way. A gate the operator asked for must not pass silently because its
+source went away, and the cost of refusing is bounded: the refusal is in band
+(`model_id == -2`), so a `sufficient` stack continues to the password exactly
+as a closed lid would. The corollary is an operational one: a daemon that can
+reach neither source, such as a container with no logind and no `/proc/acpi`,
+must set `abort_if_lid_closed = false` before it can serve D-Bus
+authentications. Diagnose it from the daemon journal, which logs the
+underlying D-Bus error beside the refusal; PAM's own syslog line carries only
+the abstention, as it does for every class it does not match by name.
+
+The fallback adds no class of its own. A lid it reads as closed refuses as
+`lid closed`, identically to a logind-resolved closed lid, so the audit trail
+still distinguishes only "the lid was shut" from "nothing could tell me" and
+never records which source answered.
 
 Operators who want face auth for only some actions under the PAM model should
 control it at the PAM layer (which service files include `pam_facelock.so`), not

@@ -1368,9 +1368,10 @@ on purpose, and the writer does not add one. `pam_facelock.so` self-gates
 before it opens a camera or contacts the daemon: `security.disabled`,
 `abort_if_ssh` and `abort_if_lid_closed` each return `PAM_IGNORE`, so a stack
 that reaches the line with the lid closed falls through to the next rule with
-no camera opened. **The module is the gate that fires**, because it runs
+no camera opened. **The module is the gate that fires first**, because it runs
 inside the calling process and reads that process's environment and an
-unrestricted `/proc`. `abort_if_lid_closed = false` is the opt-out for a
+unrestricted `/proc`; the daemon behind it gates too, from sources its own
+sandbox can see. `abort_if_lid_closed = false` is the opt-out for a
 docked laptop that authenticates through an external camera with the lid
 shut; nothing in the stack needs to move for that.
 
@@ -1380,29 +1381,82 @@ What each physical-presence gate is worth behind the module is not uniform:
 |---|---|---|
 | `pam_facelock.so` | enforced, from the calling process's environment | enforced, from the calling process's `/proc` |
 | one-shot `facelock auth` | enforced in `pre_check` (PAM forwards `SSH_CONNECTION` / `SSH_TTY` into the child's allow-listed environment) | enforced in `pre_check`: the helper is an ordinary child of the PAM-using process, with no sandbox |
-| daemon `Authenticate` | enforced, by a different mechanism: for a non-root caller the D-Bus server resolves the caller's logind session (ProcessFD, then `GetSessionByPID`) and denies one whose `Remote` property is true. A root caller skips it, and a PAM `sudo` attempt arrives as UID 0 | **inert** |
+| daemon `Authenticate` | enforced, by a different mechanism: for a non-root caller the D-Bus server resolves the caller's logind session (ProcessFD, then `GetSessionByPID`) and denies one whose `Remote` property is true. A root caller skips it, and a PAM `sudo` attempt arrives as UID 0 | enforced, by a different source: the D-Bus server reads `org.freedesktop.login1.Manager.LidClosed` and refuses a closed — or unresolvable — lid. Root is **not** exempt, because a PAM `sudo` attempt arrives as UID 0 |
 
-Two consequences worth stating plainly. The `abort_if_ssh` arm inside
+One consequence worth stating plainly. The `abort_if_ssh` arm inside
 `pre_check` reads the *calling* environment, which is the right environment on
 the one-shot path and never carries `SSH_CONNECTION` inside the long-running
 daemon, so on the daemon path it is the logind check above that does the work.
-And `pre_check`'s lid gate cannot fire in the packaged daemon at all:
-`systemd/facelock-daemon.service` sets `ProcSubset=pid`, so `/proc/acpi` does
-not exist in the daemon's mount namespace and the resolver finds no lid
-device. **A caller that reaches `Authenticate` over D-Bus without going
-through `pam_facelock.so` is therefore not lid-gated.** Closing that needs a
-lid source the namespace keeps (logind's `LidClosed` property, say), not a
-wider `/proc`; this is long-standing behavior, not a property of the
-enumeration rule below, which the module and the one-shot both honor.
 
-**Lid rule.** Both gates resolve the lid the same way, from one shared
-source (`crates/pam-facelock/src/lid.rs`, compiled into the module and
-`include!`d by the daemon): every `/proc/acpi/button/lid/*/state` is read,
-whatever the firmware names the device (`LID0`, `LID`, `LID1`, ...); the lid
-is closed when any of them reports `closed`; a device whose `state` cannot be
-read is skipped; no readable device at all means no lid, which the gate
-treats as open. Only `closed` aborts, so a desktop, a VM or a missing
-`/proc/acpi` never blocks face auth.
+**Lid rule.** Which resolver answers is decided by the path, not by
+preference: neither ever falls back to the other.
+
+*In process* — `pam_facelock.so`, one-shot `facelock auth` and direct-mode
+callers — the lid comes from one shared source
+(`crates/pam-facelock/src/lid.rs`, compiled into the module and `include!`d by
+the daemon): every `/proc/acpi/button/lid/*/state` is read, whatever the
+firmware names the device (`LID0`, `LID`, `LID1`, ...); the lid is closed when
+any of them reports `closed`; a device whose `state` cannot be read is
+skipped; no readable device at all means no lid, which the gate treats as
+open. Only `closed` aborts, so a desktop, a VM or a missing `/proc/acpi` never
+blocks face auth there.
+
+*Over D-Bus* — daemon `Authenticate` — the lid comes from logind's
+`LidClosed` property, read once per request before the handler mutex is
+taken. Under the packaged unit the procfs resolver is structurally blind and
+always was: `systemd/facelock-daemon.service` sets `ProcSubset=pid`, so
+`/proc/acpi` is not in the daemon's mount namespace and enumeration finds no
+device on any laptop (issue #385). `LidClosed` survives that sandbox, is
+change-emitting, and needs no unit or bus-policy change. A machine with no
+lid reports `false`, matching the procfs reading of a desktop.
+
+**Fallback, and the one place it applies.** When the logind read fails, the
+daemon consults the shared procfs resolver and uses its answer *only* when it
+can actually see the lid directory — `closed` or `open`. `absent` keeps the
+refusal below. Which of those happens is decided by the host, not by
+preference, and the two cases cannot overlap:
+
+| Host | logind | procfs fallback | Result |
+|---|---|---|---|
+| systemd, packaged unit | answers | not consulted | that answer |
+| systemd, logind read fails | fails | blind (`ProcSubset=pid`) | refuse, `lid state unavailable` |
+| OpenRC / runit / s6, elogind installed | answers | not consulted | that answer |
+| OpenRC / runit / s6, no elogind | fails | sees the real lid | that answer |
+
+The `dist/openrc`, `dist/runit` and `dist/s6` templates apply no proc
+sandboxing, which is why the last row can answer at all; a host that hides
+`/proc/acpi` is by construction a host that has logind to ask. This is
+load-bearing because the lid gate covers root callers, who never ran the
+logind-dependent remote-session check: without the fallback,
+`pam_facelock.so` inside `sudo` on a logind-less host would go from working
+to abstaining on every attempt.
+
+The two sources are not the same sensor: logind follows the evdev `SW_LID`
+switch, the in-process resolver reads the ACPI button driver. On a machine
+where they disagree, the PAM module and the daemon can reach opposite
+answers on the same lid. No hardware in `docs/compatibility.md` has been
+checked for that, and the daemon does not reconcile them; the gate is
+`sufficient`-stacked either way, so a disagreement costs a password prompt,
+not access.
+
+**Failing direction differs by source, deliberately.** In process, a lid that
+cannot be read counts as open — absence there is a real answer. Over D-Bus it
+does not: if `abort_if_lid_closed` is enabled, logind cannot be reached or the
+property read misses its deadline, *and* the procfs fallback is blind too, the
+daemon refuses with `lid state unavailable` rather than proceeding. A read the
+daemon cancels is neither answer, and returns the frozen `cancelled` result
+instead. The refusal is in band (`model_id == -2`), so a `sufficient` PAM
+stack still continues to the password; nothing locks out. Two operational
+consequences: a daemon that can reach neither source — a container with no
+logind and no `/proc/acpi` — must set `abort_if_lid_closed = false` to serve
+D-Bus authentications, and the gate is enforced for root callers too, since
+`sudo`, `login`, `su` and root-run greeters all reach the daemon as UID 0.
+
+The fallback adds no rejection class: a lid it reads as closed refuses as
+`lid closed`, exactly as a logind-resolved closed lid does, and only the case
+where neither source can answer produces `lid state unavailable`. The audit
+trail therefore distinguishes "the lid was shut" from "nothing could tell me",
+and never records which source supplied the answer.
 
 The line is inserted immediately before the first *logical* rule whose first
 ASCII-whitespace-delimited type token is `auth`, matched
@@ -2137,7 +2191,7 @@ maps those codes through its unknown-code arm.
 |------|-------|-----------------------|-------------------------|
 | 0 | Face matched | `PAM_SUCCESS` | `PAM_SUCCESS` |
 | 1 | Scanned, no match | `PAM_AUTH_ERR` | `PAM_AUTH_ERR` |
-| 2 | Error / no opinion: disabled, SSH, lid closed, storage, rate-limit check failed, IR required, unverified Y16, internal, cancelled, not enrolled | `PAM_IGNORE` | `PAM_IGNORE` |
+| 2 | Error / no opinion: disabled, SSH, lid closed, lid state unavailable (daemon-only — the helper resolves the lid itself), storage, rate-limit check failed, IR required, unverified Y16, internal, cancelled, not enrolled | `PAM_IGNORE` | `PAM_IGNORE` |
 | 3 | Rate limited | `PAM_AUTH_ERR` | `PAM_IGNORE` |
 | 4 | Suppressed (no enrolled models + `suppress_unknown`) | `PAM_AUTHINFO_UNAVAIL` | `PAM_IGNORE` |
 | 5 | All frames dark | `PAM_IGNORE` | `PAM_IGNORE` |
@@ -3834,9 +3888,36 @@ bypasses only this remote-session provenance check: ordinary authorization and
 the persistent
 biometric-guess limiter remain unchanged. `TestAuthenticate` remains its
 separate root-only diagnostic method. When `abort_if_ssh = false`, the daemon
-performs no ProcessFD, PID, logind, or session lookup at all. The one-shot
+performs no ProcessFD, PID, or `GetSessionByPID` lookup at all. The one-shot
 transport continues to enforce SSH provenance from the PAM-sanitized
 `SSH_CONNECTION` / `SSH_TTY` environment instead of D-Bus.
+
+The lid gate rides the same pre-lock boundary, and is otherwise unlike the
+remote-session gate. For an authorized `Authenticate` with
+`security.abort_if_lid_closed = true` — the default, and **including UID 0**,
+since a PAM `sudo` attempt arrives as root — the daemon reads
+`org.freedesktop.login1.Manager.LidClosed` with property caching disabled, so
+it is one narrow `Get` and no match rule. The read runs concurrently with the
+session lookup above under the same cancellation sources, and under its own
+one-second deadline rather than the four-second provenance deadline: the lid
+gate is additive to a root request that previously paid no pre-flight D-Bus
+cost, and must not spend the PAM client's method budget. It happens after the
+remote-session decision, so a remote caller still sees only the uniform
+provenance denial.
+
+Three outcomes. A closed lid refuses **in band** with `lid closed`
+(`model_id` `-2`, `PAM_IGNORE`), not out of band like the session gate. A
+failed logind read — unreachable, the property unreadable, the deadline
+expired, or the configuration enabling the gate while the read was outside the
+handler mutex — falls back to the shared procfs resolver and takes its answer
+when it sees a lid; only when that resolver is blind too does the request
+refuse in band with `lid state unavailable`, a distinct class so the audit
+trail records which of the two fired. Cancellation is neither: suspend,
+`ReleaseCamera`, shutdown or caller departure during the read answer with the
+frozen `cancelled` message, because a cancelled request says nothing about the
+lid. When `abort_if_lid_closed = false` the daemon performs no lid lookup at
+all. See "Lid rule" above for which hosts the fallback can answer on, and why
+those are exactly the hosts that have no logind.
 
 Ingress buckets are process-local, are discarded after enough idle monotonic
 time to refill the full burst, and are capped at 1024 UID entries with
