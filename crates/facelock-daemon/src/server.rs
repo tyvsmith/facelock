@@ -3393,6 +3393,35 @@ enabled = false
     /// goes inert again, exactly as in issue #385. Parsing the source is how
     /// the repo pins structural facts a type cannot (same idiom as
     /// [`interface_methods_and_the_authz_matrix_are_the_same_set`]).
+    /// The one part of the lid gate that a mocked answer cannot check: that
+    /// the four logind constants name something real and that `LidClosed`
+    /// really is a boolean. Every other lid test injects the answer, so a
+    /// typo in a constant or a wrong property type would reach production
+    /// as `lid state unavailable` on every authentication.
+    ///
+    /// Ignored because it needs a live system bus with logind on it; CI's
+    /// containers have neither. Run it on any machine that has them, laptop
+    /// or desktop, with:
+    ///
+    /// ```text
+    /// cargo test -p facelock-daemon --lib logind_lid -- --ignored --nocapture
+    /// ```
+    ///
+    /// A desktop answers `false`, which is the same reading the procfs
+    /// resolver gives when it finds no lid device. Only the `true` case
+    /// needs a lid to shut.
+    #[tokio::test]
+    #[ignore = "needs a live system bus with logind"]
+    async fn the_logind_lid_property_reads_on_a_real_bus() {
+        let connection = zbus::Connection::system()
+            .await
+            .expect("connect to the system bus");
+        let closed = logind_lid_is_closed(&connection)
+            .await
+            .expect("read LidClosed from logind");
+        eprintln!("logind LidClosed = {closed}");
+    }
+
     #[test]
     fn the_wire_authenticate_passes_the_logind_lid_reader_to_the_gate() {
         let source = include_str!("server.rs");
