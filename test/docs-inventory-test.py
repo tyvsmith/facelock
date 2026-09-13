@@ -24,7 +24,7 @@ class InventoryTest(unittest.TestCase):
     def test_container_workspace_tests_trust_only_the_checkout(self):
         workflow = (MODULE.ROOT / '.github/workflows/ci.yml').read_text()
         trust = '\n        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"'
-        for job, tests in (('build-and-test', 'run: just test'), ('tpm-tests', 'run: cargo test --workspace')):
+        for job, tests in (('build-and-test', 'run: just test'), ('tpm-tests', 'run: just test-tpm')):
             with self.subTest(job=job):
                 body = re.search(r'(?ms)^  ' + job + r':\n(.*?)(?=^  \S|\Z)', workflow)[1]
                 self.assertIn(trust, body)

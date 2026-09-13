@@ -50,6 +50,35 @@ lint:
 lint-tpm:
     cargo clippy --workspace --all-targets --features tpm -- -D warnings
 
+# CI's `tpm-tests` job runs this recipe against swtpm, so the feature test run
+# has one definition instead of two. What a run without a TPM does and does not
+# prove is documented on `check-tpm` below.
+
+# Run all unit tests with the `tpm` feature enabled (matches CI's swtpm job).
+test-tpm:
+    cargo test --workspace --features tpm
+
+# What this proves: the 80 `feature = "tpm"` cfg sites across the cli, daemon
+# and tpm crates — 41 positive gates plus the `not(...)` arms they pair with —
+# compile, lint clean, and that the decisions inside them still hold. `test` and `lint` build the default feature set only, so a
+# regression in a tpm-gated branch — a deleted guard in an `unreachable!()`
+# arm, a stale call signature, a dead match arm — passes every other local gate
+# (#386).
+#
+# What it does NOT prove: real TPM behaviour. A developer run has no TPM the
+# test process can open (`/dev/tpmrm0` is root:tss), so a sealed round trip
+# fails to build a context rather than executing, and the tests that need a
+# real device are written to assert that failure or are gated off. Sealing,
+# unsealing, PCR binding and key migration are proven only by CI's `tpm-tests`
+# job, which runs `just test-tpm` against swtpm. A green `check-tpm` is a
+# feature-gate and decision gate, not evidence that sealing works.
+#
+# In `check` and deliberately not in `test`: the feature set is a second full
+# compile of the workspace, and `test` is the inner loop.
+
+# Lint and test the workspace with `tpm`; catches gate regressions, not real TPM behaviour.
+check-tpm: lint-tpm test-tpm
+
 # Format check
 fmt-check:
     cargo fmt --all -- --check
@@ -152,8 +181,8 @@ docs-site-check:
 test-docs-walkthrough scenario identity output:
     python3 test/docs-walkthrough/run.py run --scenario "{{ scenario }}" --identity "{{ identity }}" --output "{{ output }}"
 
-# Run local tests, lint, format, audit, PAM isolation and documentation/install/release contracts; excludes full packaging and hardware lanes.
-check: test lint fmt-check audit check-pam-standalone check-agent-docs check-docs test-source-install-daemon-lifecycle test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test test-legacy-system-assets test-locale-install-contract test-classify-changes test-arch-package-select check-workflow-policy test-upgrade-predecessor-contract test-release-artifacts
+# Run local tests, lint (default and `tpm`), format, audit, PAM isolation and documentation/install/release contracts; excludes full packaging and hardware lanes.
+check: test lint check-tpm fmt-check audit check-pam-standalone check-agent-docs check-docs test-source-install-daemon-lifecycle test-cargo-vendor-contract test-deb-source-contract test-deb-package-contract-test test-legacy-system-assets test-locale-install-contract test-classify-changes test-arch-package-select check-workflow-policy test-upgrade-predecessor-contract test-release-artifacts
 
 # The path filter that decides whether the packaging gates run on a pull
 # request. A pattern that stops matching fails nothing: it reports every deb,

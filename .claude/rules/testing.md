@@ -12,6 +12,7 @@ paths:
 | Tier | What | How |
 |------|------|-----|
 | 1 | Unit tests | `cargo test --workspace` |
+| 1a | Lint and tests with the `tpm` feature, no TPM present | `just check-tpm` |
 | 2 | Hardware tests | `cargo test --workspace -- --ignored` |
 | 3 | Arch container PAM smoke | `just test-arch-pam` |
 | 3b | Arch container E2E (daemon) | `just test-arch-integration` |
@@ -28,6 +29,17 @@ paths:
 | 5 | Host PAM | After tiers 3-4, with root shell backup |
 
 **Never** install `pam_facelock.so` or edit `/etc/pam.d/*` on the host until container tests pass.
+
+Tier 1a is the feature half of tier 1. `cargo test --workspace` and `just lint`
+build the default feature set, so the `#[cfg(feature = "tpm")]` sites across
+the cli, daemon and tpm crates are never compiled and a regression inside one
+passes every other local gate (#386). `just check-tpm` runs `lint-tpm` and
+`test-tpm`, and `just check` runs it; `just test` does not, because the feature
+set is a second full compile and that is the inner loop. It proves the gated
+code compiles, lints and still makes the decisions its tests pin. It does not
+prove TPM behaviour: a developer machine has no TPM the test process can open,
+so sealed round trips fail to build a context rather than executing. Sealing,
+unsealing and PCR binding are proven by CI's `tpm-tests` job alone.
 
 Tier 3f is not a duplicate of 3e. 3e builds the direct `.rpm` from host
 binaries with a bundled ONNX Runtime; 3f rebuilds the package from source in a
@@ -52,7 +64,9 @@ module). The `build-and-test` job is a sequence of justfile recipes
 `check-pam-standalone`, `build-smoke-binaries`), so what CI checks is what the
 recipe says; there is no separate `cargo build` step because clippy
 `--all-targets` type-checks every target and `test` builds the workspace.
-`tpm-tests` is the only job that runs `cargo test --features tpm`.
+`tpm-tests` is the only job that runs the tests with the feature, and it runs
+`just test-tpm` — the same recipe `just check-tpm` calls — with `TCTI` pointed
+at swtpm, so it is the only place a sealed round trip actually executes.
 
 `.github/workflows/packaging.yml` gates the packaged artifacts: tiers 3d and 3e,
 both Debian suite lanes, and the native version-ordering matrix. It runs on three
