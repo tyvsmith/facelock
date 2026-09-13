@@ -1403,12 +1403,33 @@ blocks face auth there.
 
 *Over D-Bus* — daemon `Authenticate` — the lid comes from logind's
 `LidClosed` property, read once per request before the handler mutex is
-taken. The procfs resolver is structurally blind here and always was:
-`systemd/facelock-daemon.service` sets `ProcSubset=pid`, so `/proc/acpi` is
-not in the daemon's mount namespace and enumeration finds no device on any
-laptop (issue #385). `LidClosed` survives that sandbox, is change-emitting,
-and needs no unit or bus-policy change. A machine with no lid reports
-`false`, matching the procfs reading of a desktop.
+taken. Under the packaged unit the procfs resolver is structurally blind and
+always was: `systemd/facelock-daemon.service` sets `ProcSubset=pid`, so
+`/proc/acpi` is not in the daemon's mount namespace and enumeration finds no
+device on any laptop (issue #385). `LidClosed` survives that sandbox, is
+change-emitting, and needs no unit or bus-policy change. A machine with no
+lid reports `false`, matching the procfs reading of a desktop.
+
+**Fallback, and the one place it applies.** When the logind read fails, the
+daemon consults the shared procfs resolver and uses its answer *only* when it
+can actually see the lid directory — `closed` or `open`. `absent` keeps the
+refusal below. Which of those happens is decided by the host, not by
+preference, and the two cases cannot overlap:
+
+| Host | logind | procfs fallback | Result |
+|---|---|---|---|
+| systemd, packaged unit | answers | not consulted | that answer |
+| systemd, logind read fails | fails | blind (`ProcSubset=pid`) | refuse, `lid state unavailable` |
+| OpenRC / runit / s6, elogind installed | answers | not consulted | that answer |
+| OpenRC / runit / s6, no elogind | fails | sees the real lid | that answer |
+
+The `dist/openrc`, `dist/runit` and `dist/s6` templates apply no proc
+sandboxing, which is why the last row can answer at all; a host that hides
+`/proc/acpi` is by construction a host that has logind to ask. This is
+load-bearing because the lid gate covers root callers, who never ran the
+logind-dependent remote-session check: without the fallback,
+`pam_facelock.so` inside `sudo` on a logind-less host would go from working
+to abstaining on every attempt.
 
 The two sources are not the same sensor: logind follows the evdev `SW_LID`
 switch, the in-process resolver reads the ACPI button driver. On a machine
@@ -1420,17 +1441,22 @@ not access.
 
 **Failing direction differs by source, deliberately.** In process, a lid that
 cannot be read counts as open — absence there is a real answer. Over D-Bus it
-does not: if `abort_if_lid_closed` is enabled and logind cannot be reached or
-the property read misses its deadline, the daemon refuses with
-`lid state unavailable` rather than proceeding. A read the daemon cancels is
-neither answer, and returns the frozen `cancelled` result instead. The
-refusal is in band (`model_id == -2`), so a `sufficient` PAM stack still
-continues to the password; nothing locks out. Two operational consequences: a
-daemon running
-on a host with no logind at all (a container, a non-systemd init) must set
-`abort_if_lid_closed = false` to serve D-Bus authentications, and the gate is
-enforced for root callers too, since `sudo`, `login`, `su` and root-run
-greeters all reach the daemon as UID 0.
+does not: if `abort_if_lid_closed` is enabled, logind cannot be reached or the
+property read misses its deadline, *and* the procfs fallback is blind too, the
+daemon refuses with `lid state unavailable` rather than proceeding. A read the
+daemon cancels is neither answer, and returns the frozen `cancelled` result
+instead. The refusal is in band (`model_id == -2`), so a `sufficient` PAM
+stack still continues to the password; nothing locks out. Two operational
+consequences: a daemon that can reach neither source — a container with no
+logind and no `/proc/acpi` — must set `abort_if_lid_closed = false` to serve
+D-Bus authentications, and the gate is enforced for root callers too, since
+`sudo`, `login`, `su` and root-run greeters all reach the daemon as UID 0.
+
+The fallback adds no rejection class: a lid it reads as closed refuses as
+`lid closed`, exactly as a logind-resolved closed lid does, and only the case
+where neither source can answer produces `lid state unavailable`. The audit
+trail therefore distinguishes "the lid was shut" from "nothing could tell me",
+and never records which source supplied the answer.
 
 The line is inserted immediately before the first *logical* rule whose first
 ASCII-whitespace-delimited type token is `auth`, matched
@@ -3880,15 +3906,18 @@ remote-session decision, so a remote caller still sees only the uniform
 provenance denial.
 
 Three outcomes. A closed lid refuses **in band** with `lid closed`
-(`model_id` `-2`, `PAM_IGNORE`), not out of band like the session gate. A lid
-that cannot be established — logind unreachable, the property unreadable, the
-deadline expired, or the configuration enabling the gate while the read was
-outside the handler mutex — refuses in band with `lid state unavailable`, a
-distinct class so the audit trail records which of the two fired. Cancellation
-is neither: suspend, `ReleaseCamera`, shutdown or caller departure during the
-read answer with the frozen `cancelled` message, because a cancelled request
-says nothing about the lid. When `abort_if_lid_closed = false` the daemon
-performs no lid lookup at all.
+(`model_id` `-2`, `PAM_IGNORE`), not out of band like the session gate. A
+failed logind read — unreachable, the property unreadable, the deadline
+expired, or the configuration enabling the gate while the read was outside the
+handler mutex — falls back to the shared procfs resolver and takes its answer
+when it sees a lid; only when that resolver is blind too does the request
+refuse in band with `lid state unavailable`, a distinct class so the audit
+trail records which of the two fired. Cancellation is neither: suspend,
+`ReleaseCamera`, shutdown or caller departure during the read answer with the
+frozen `cancelled` message, because a cancelled request says nothing about the
+lid. When `abort_if_lid_closed = false` the daemon performs no lid lookup at
+all. See "Lid rule" above for which hosts the fallback can answer on, and why
+those are exactly the hosts that have no logind.
 
 Ingress buckets are process-local, are discarded after enough idle monotonic
 time to refill the full burst, and are capped at 1024 UID entries with

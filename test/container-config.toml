@@ -44,10 +44,11 @@ require_frame_variance = false
 # The daemon resolves the lid from logind (org.freedesktop.login1.Manager
 # .LidClosed) because ProcSubset=pid hides /proc/acpi from the packaged unit's
 # mount namespace. These containers run a bare dbus-daemon with no logind on
-# it, so the daemon cannot resolve the lid at all — and an unresolvable lid
-# refuses, by design (issue #385). Disabled HERE ON PURPOSE so the D-Bus auth
-# suites exercise the paths they are about instead of every Authenticate
-# returning "lid state unavailable".
+# it, and no /proc/acpi to fall back to, so the daemon cannot resolve the lid
+# from either source — and a lid neither source can resolve refuses, by design
+# (issue #385). Disabled HERE ON PURPOSE so the D-Bus auth suites exercise the
+# paths they are about instead of every Authenticate returning "lid state
+# unavailable".
 #
 # This costs no coverage: there is no /proc/acpi in the container either, so
 # the gate was already inert here before the logind read existed. Nothing in

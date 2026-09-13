@@ -229,13 +229,14 @@ impl AuthOutcome {
 /// Where [`pre_check`] gets the lid state for `security.abort_if_lid_closed`.
 ///
 /// Two resolvers exist because the two auth paths live in different mount
-/// namespaces, and the precedence between them is by path, not by preference
-/// — neither ever substitutes for the other:
+/// namespaces. Which one a caller starts from is fixed by the path it came
+/// in on:
 ///
 /// - **In process** ([`LocalProcfs`](LidSource::LocalProcfs)): `pam_facelock.so`,
 ///   one-shot `facelock auth` and direct-mode callers enumerate
 ///   `/proc/acpi/button/lid/*/state` themselves. They run inside the calling
-///   program, which sees an unrestricted `/proc`.
+///   program, which sees an unrestricted `/proc`, and they have no second
+///   source: "no lid device" is a real answer there and reads as open.
 /// - **Resolved by the transport** ([`Resolved`](LidSource::Resolved)): the
 ///   daemon's D-Bus `Authenticate` reads
 ///   `org.freedesktop.login1.Manager.LidClosed` and passes the answer down.
@@ -243,10 +244,10 @@ impl AuthOutcome {
 ///   the daemon's namespace and the procfs resolver would report "no lid
 ///   device" on every laptop — the whole of issue #385.
 ///
-/// [`Unavailable`](LidSource::Unavailable) is the daemon's third answer, and
-/// it refuses: a gate that was asked for but cannot be evaluated must not
-/// quietly pass. Only `LocalProcfs` keeps the "no lid device means open"
-/// reading, because there absence is a real answer (a desktop has no lid).
+/// [`Unavailable`](LidSource::Unavailable) is the daemon saying its read
+/// failed. It is not itself a refusal: [`lid_refusal`] falls back to the
+/// in-process resolver and refuses only if that one is blind too. See there
+/// for why that fallback cannot re-open the hole #385 was.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LidSource {
     /// Read `/proc/acpi/button/lid` in this process.
@@ -254,7 +255,7 @@ pub enum LidSource {
     LocalProcfs,
     /// The transport already resolved it; `true` means closed.
     Resolved(bool),
-    /// The transport's lid source could not answer.
+    /// The transport tried and could not answer. Falls back to procfs.
     Unavailable,
 }
 
@@ -307,6 +308,55 @@ impl PreCheckContext {
     }
 }
 
+/// Decide the lid gate from the transport's reading, falling back to the
+/// in-process resolver only where that resolver can actually see a lid.
+/// `None` means the gate lets the attempt through.
+///
+/// `procfs` is a thunk, not a value: a transport that already answered must
+/// cost no filesystem walk, and the fallback must not run when it cannot
+/// change the outcome.
+///
+/// **Why a fallback at all, and why this shape.** The daemon's own reading is
+/// logind's, because `ProcSubset=pid` in the packaged unit hides `/proc/acpi`
+/// from its namespace (issue #385). When that read fails the question is what
+/// "the daemon cannot see the lid" means, and the answer differs by host:
+///
+/// - Under systemd the fallback is blind by construction — the same
+///   `ProcSubset=pid` that motivated the logind read — so it reports
+///   [`Absent`](lid::LidState::Absent) and the refusal stands. A transient
+///   logind failure therefore cannot silently reinstate #385.
+/// - The OpenRC, runit and s6 service templates apply no proc sandboxing.
+///   On exactly the hosts that have no logind to ask (no systemd, and no
+///   elogind installed), procfs sees the real lid and answers it.
+///
+/// The two cases do not overlap, which is what makes the fallback safe: a
+/// host that hides `/proc/acpi` is a host that has logind. It matters
+/// because the lid gate covers root callers, who never ran the
+/// logind-dependent provenance check — without this, `pam_facelock.so`
+/// inside `sudo` on a logind-less host would go from working to abstaining.
+///
+/// [`LocalProcfs`](LidSource::LocalProcfs) is not a fallback and has no
+/// second source: for a caller running in its own namespace, "no lid device"
+/// is a real answer (a desktop has no lid), and it reads as open.
+fn lid_refusal<F>(lid_source: LidSource, procfs: F) -> Option<ErrorKind>
+where
+    F: FnOnce() -> lid::LidState,
+{
+    match lid_source {
+        LidSource::Resolved(true) => Some(ErrorKind::LidClosed),
+        LidSource::Resolved(false) => None,
+        LidSource::LocalProcfs => match procfs() {
+            lid::LidState::Closed => Some(ErrorKind::LidClosed),
+            lid::LidState::Open | lid::LidState::Absent => None,
+        },
+        LidSource::Unavailable => match procfs() {
+            lid::LidState::Closed => Some(ErrorKind::LidClosed),
+            lid::LidState::Open => None,
+            lid::LidState::Absent => Some(ErrorKind::LidUnavailable),
+        },
+    }
+}
+
 /// Run pre-flight checks that don't need the camera, fully enforced.
 /// Returns Some(response) to short-circuit, or None to proceed with auth.
 ///
@@ -351,26 +401,23 @@ pub fn pre_check_with_context(
         return Some(AuthOutcome::error(ErrorKind::SshSession));
     }
 
-    if !ctx.skip_lid_gate && config.security.abort_if_lid_closed {
-        match ctx.lid_source {
-            LidSource::LocalProcfs if lid::is_lid_closed() => {
-                info!(user, "lid closed, aborting");
-                return Some(AuthOutcome::error(ErrorKind::LidClosed));
-            }
-            LidSource::LocalProcfs => {}
-            LidSource::Resolved(true) => {
-                info!(user, "lid closed, aborting");
-                return Some(AuthOutcome::error(ErrorKind::LidClosed));
-            }
-            LidSource::Resolved(false) => {}
-            LidSource::Unavailable => {
-                warn!(
-                    user,
-                    "lid state unavailable, aborting (abort_if_lid_closed is enabled)"
-                );
-                return Some(AuthOutcome::error(ErrorKind::LidUnavailable));
-            }
+    let lid_gate_runs = !ctx.skip_lid_gate && config.security.abort_if_lid_closed;
+    if let Some(kind) = lid_gate_runs
+        .then(|| {
+            lid_refusal(ctx.lid_source, || {
+                lid::lid_state_under(std::path::Path::new(lid::LID_ROOT))
+            })
+        })
+        .flatten()
+    {
+        match kind {
+            ErrorKind::LidClosed => info!(user, "lid closed, aborting"),
+            _ => warn!(
+                user,
+                "lid state unavailable, aborting (abort_if_lid_closed is enabled)"
+            ),
         }
+        return Some(AuthOutcome::error(kind));
     }
 
     let has_models = match store.has_models(user) {
@@ -1810,20 +1857,121 @@ enabled = false
         );
     }
 
+    /// A resolver the test drives, plus a record of whether it was asked at
+    /// all. `lid_refusal` must not touch `/proc` when the transport already
+    /// answered.
+    fn refusal_with(lid_source: LidSource, procfs: lid::LidState) -> (Option<ErrorKind>, bool) {
+        let asked = std::cell::Cell::new(false);
+        let kind = lid_refusal(lid_source, || {
+            asked.set(true);
+            procfs
+        });
+        (kind, asked.get())
+    }
+
+    /// The whole fallback matrix, decided without a filesystem so the answer
+    /// cannot depend on whether the machine running the tests has a lid.
     #[test]
-    fn pre_check_refuses_when_the_transport_cannot_resolve_the_lid() {
+    fn lid_refusal_matches_the_documented_precedence() {
+        use lid::LidState::{Absent, Closed, Open};
+        // (transport reading, what procfs would say, refusal, procfs asked)
+        let table: &[(LidSource, lid::LidState, Option<ErrorKind>, bool)] = &[
+            // A transport answer is the whole answer.
+            (
+                LidSource::Resolved(true),
+                Absent,
+                Some(ErrorKind::LidClosed),
+                false,
+            ),
+            (LidSource::Resolved(false), Closed, None, false),
+            // No transport answer: fall back, but only where procfs can see.
+            (
+                LidSource::Unavailable,
+                Closed,
+                Some(ErrorKind::LidClosed),
+                true,
+            ),
+            (LidSource::Unavailable, Open, None, true),
+            (
+                LidSource::Unavailable,
+                Absent,
+                Some(ErrorKind::LidUnavailable),
+                true,
+            ),
+            // In process, absence is a real answer: this machine has no lid.
+            (
+                LidSource::LocalProcfs,
+                Closed,
+                Some(ErrorKind::LidClosed),
+                true,
+            ),
+            (LidSource::LocalProcfs, Open, None, true),
+            (LidSource::LocalProcfs, Absent, None, true),
+        ];
+        for (lid_source, procfs, expected, expect_asked) in table {
+            let (kind, asked) = refusal_with(*lid_source, *procfs);
+            assert_eq!(
+                kind, *expected,
+                "{lid_source:?} with procfs {procfs:?} must refuse with {expected:?}"
+            );
+            assert_eq!(
+                asked,
+                *expect_asked,
+                "{lid_source:?} must{} consult procfs",
+                if *expect_asked { "" } else { " not" }
+            );
+        }
+    }
+
+    /// The case the fallback exists for, spelled out: a host with no logind
+    /// still gets a real lid answer, because nothing there hides `/proc`.
+    #[test]
+    fn a_failed_logind_read_defers_to_a_procfs_lid_it_can_see() {
+        assert_eq!(
+            refusal_with(LidSource::Unavailable, lid::LidState::Closed).0,
+            Some(ErrorKind::LidClosed),
+            "a closed lid the daemon can read must refuse as closed, not as unresolvable"
+        );
+        assert_eq!(
+            refusal_with(LidSource::Unavailable, lid::LidState::Open).0,
+            None,
+            "an open lid the daemon can read must let the attempt proceed"
+        );
+    }
+
+    /// And the case it must not swallow: under `ProcSubset=pid` the fallback
+    /// is blind, so a transient logind failure keeps refusing rather than
+    /// silently reinstating issue #385.
+    #[test]
+    fn a_failed_logind_read_still_refuses_where_procfs_cannot_see() {
+        assert_eq!(
+            refusal_with(LidSource::Unavailable, lid::LidState::Absent).0,
+            Some(ErrorKind::LidUnavailable),
+        );
+    }
+
+    #[test]
+    fn pre_check_refuses_when_neither_lid_source_can_answer() {
+        // This host's `/proc/acpi/button/lid` decides only whether the
+        // fallback can see; the assertion is on the class the gate picks for
+        // whichever answer it gets, so it holds on a laptop and a container
+        // alike.
+        let config = lid_gate_config(true);
         let outcome = lid_gate_outcome(
-            &lid_gate_config(true),
+            &config,
             PreCheckContext::daemon_authenticate(LidSource::Unavailable),
         );
-        assert!(
-            matches!(
-                outcome,
-                Some(AuthOutcome::Error { kind, ref message })
-                    if kind == ErrorKind::LidUnavailable && message == "lid state unavailable"
-            ),
-            "an unresolvable lid must fail the gate closed under its own class, got: {outcome:?}"
-        );
+        let expected = lid_refusal(LidSource::Unavailable, || {
+            lid::lid_state_under(std::path::Path::new(lid::LID_ROOT))
+        });
+        match (outcome, expected) {
+            (Some(AuthOutcome::Error { kind, message }), Some(want)) => {
+                assert_eq!(kind, want);
+                assert_eq!(message, want.render(""));
+            }
+            (None, None) => {}
+            (got, want) => panic!("pre_check must follow lid_refusal: got {got:?}, want {want:?}"),
+        }
     }
 
     #[test]

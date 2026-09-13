@@ -1667,8 +1667,9 @@ from sources its own sandbox can see. Its SSH refusal: for a non-root
 `Authenticate` caller the D-Bus server resolves the caller's logind session
 and denies a remote one (a root caller skips that check, and a PAM `sudo`
 attempt arrives as UID 0). Its lid refusal: the server reads
-`org.freedesktop.login1.Manager.LidClosed` once per request and refuses a
-closed lid, for every caller including root. The one-shot `facelock auth`
+`org.freedesktop.login1.Manager.LidClosed` once per request, falling back to
+procfs only where procfs can see, and refuses a closed lid for every caller
+including root. The one-shot `facelock auth`
 helper keeps the in-process resolver: PAM spawns it as an ordinary child, so
 `/proc/acpi` is right there.
 
@@ -1676,9 +1677,21 @@ That split is not a preference, it is a namespace constraint.
 `systemd/facelock-daemon.service` sets `ProcSubset=pid`, so `/proc/acpi` is
 absent from the daemon's mount namespace and the procfs resolver reports no
 lid device on any laptop. Until this was fixed (issue #385) a D-Bus caller
-that did not come through `pam_facelock.so` was not lid-gated at all. Neither
-source ever falls back to the other: widening `/proc` is not the fix, and a
-resolver that is structurally blind is not a fallback.
+that did not come through `pam_facelock.so` was not lid-gated at all. Widening
+`/proc` is not the fix.
+
+The daemon does fall back to procfs when the logind read fails, but only where
+that resolver can see the lid directory — a reading of `closed` or `open`, not
+"no device". Under the packaged unit it is blind by the same `ProcSubset=pid`
+that motivated the logind read, so a transient logind failure keeps refusing
+and cannot silently reinstate #385. The `dist/openrc`, `dist/runit` and
+`dist/s6` templates apply no proc sandboxing, so on the hosts that have no
+logind to ask — no systemd, and elogind not installed — procfs sees the real
+lid and answers it. A host that hides `/proc/acpi` is by construction a host
+that has logind, so the two cases never overlap. The fallback is there because
+the daemon's lid gate covers root callers, who never ran the logind-dependent
+remote-session check: without it, `pam_facelock.so` inside `sudo` on a
+logind-less host would go from working to abstaining on every attempt.
 
 In process, the lid is resolved by enumerating every
 `/proc/acpi/button/lid/*/state` (`LID0`, `LID`, `LID1`, whatever the firmware
@@ -1693,21 +1706,26 @@ authentication and its result decides the outcome. On a machine with no lid
 that reading is correct; on a laptop whose closed lid went undetected the
 blocked camera sees no face and the attempt ends at the timeout, with the
 stack continuing to the password. Over D-Bus the daemon does the opposite: a
-lid it cannot resolve, whether logind is unreachable or the property read
-misses its one-second deadline, refuses with `lid state unavailable`, a class
-of its own so the audit trail never records it as a closed lid. A read the
-daemon cancels instead (suspend, `ReleaseCamera`, shutdown, caller departure)
-answers with the frozen `cancelled` message, because a cancelled request says
-nothing about the lid either way. A gate the
-operator asked for must not pass silently because its source went away, and
-the cost of refusing is bounded: the refusal is in band (`model_id == -2`),
-so a `sufficient` stack continues to the password exactly as a closed lid
-would. The corollary is an operational one: a daemon on a host with no logind
-(a container, a non-systemd init) must set `abort_if_lid_closed = false`
-before it can serve D-Bus authentications. Diagnose it from the daemon
-journal, which logs the underlying D-Bus error beside the refusal; PAM's own
-syslog line carries only the abstention, as it does for every class it does
-not match by name.
+lid that *neither* source can resolve — logind unreachable or past its
+one-second deadline, and the procfs fallback blind — refuses with
+`lid state unavailable`, a class of its own so the audit trail never records
+it as a closed lid. A read the daemon cancels instead (suspend,
+`ReleaseCamera`, shutdown, caller departure) answers with the frozen
+`cancelled` message, because a cancelled request says nothing about the lid
+either way. A gate the operator asked for must not pass silently because its
+source went away, and the cost of refusing is bounded: the refusal is in band
+(`model_id == -2`), so a `sufficient` stack continues to the password exactly
+as a closed lid would. The corollary is an operational one: a daemon that can
+reach neither source, such as a container with no logind and no `/proc/acpi`,
+must set `abort_if_lid_closed = false` before it can serve D-Bus
+authentications. Diagnose it from the daemon journal, which logs the
+underlying D-Bus error beside the refusal; PAM's own syslog line carries only
+the abstention, as it does for every class it does not match by name.
+
+The fallback adds no class of its own. A lid it reads as closed refuses as
+`lid closed`, identically to a logind-resolved closed lid, so the audit trail
+still distinguishes only "the lid was shut" from "nothing could tell me" and
+never records which source answered.
 
 Operators who want face auth for only some actions under the PAM model should
 control it at the PAM layer (which service files include `pam_facelock.so`), not

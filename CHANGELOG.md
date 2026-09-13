@@ -30,21 +30,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   UID 0, so exempting root would have left the gate inert on the primary PAM target. No
   unit, D-Bus policy or dependency change is involved; the daemon already talks to logind.
   The PAM module and the one-shot helper are unchanged: they run in the calling process,
-  where `/proc/acpi` is visible, and keep the shared enumerating resolver. Which resolver
-  answers is fixed by the path; neither falls back to the other.
+  where `/proc/acpi` is visible, and keep the shared enumerating resolver as their only
+  source. Only the daemon consults two, in the order below.
 - **Posture change: an unresolvable lid now refuses, where it used to count as open.** This
   applies only to daemon `Authenticate` with `abort_if_lid_closed` enabled (the default).
-  If logind cannot be reached or the property read misses its deadline, the attempt is
-  refused with a new `lid state unavailable` rejection class — kept distinct from
-  `lid closed` so the audit trail records which of the two fired. The
+  A failed logind read first falls back to the shared `/proc/acpi/button/lid` resolver
+  and takes its answer where it can see a lid; only when that resolver is blind too is
+  the attempt refused, with a new `lid state unavailable` rejection class — kept distinct
+  from `lid closed` so the audit trail records which of the two fired. The fallback adds
+  no class: a lid it reads as closed refuses as `lid closed`, like any other. Which case
+  applies is decided by the host and the two cannot overlap: `ProcSubset=pid` keeps the
+  fallback blind under the systemd unit, so a transient logind failure still refuses,
+  while the OpenRC, runit and s6 templates apply no proc sandboxing, so the hosts with no
+  logind to ask are exactly the hosts where procfs answers. That matters because the gate
+  now covers root callers, who never ran the logind-dependent remote-session check — a
+  `sudo` on a logind-less host would otherwise go from working to abstaining. The
   refusal is in band (`model_id == -2`, exit 2, `PAM_IGNORE`), so a `sufficient` stack
   continues to the password exactly as a closed lid does; nothing locks out. In-process
   callers keep the old direction: a lid they cannot read still counts as open, because
   there absence is a real answer (a desktop has no lid). A cancelled read (suspend,
   `ReleaseCamera`, shutdown, caller departure) answers with the existing `cancelled`
-  message rather than either lid class. **A daemon on a host with no logind at all — a
-  container, a non-systemd init — must now set `abort_if_lid_closed = false` to serve
-  D-Bus authentications.** The other newly-affected case is a docked laptop with the lid
+  message rather than either lid class. **A daemon that can reach neither source — a
+  container with no logind and no `/proc/acpi` — must now set
+  `abort_if_lid_closed = false` to serve D-Bus authentications.** The other newly-affected case is a docked laptop with the lid
   shut whose face auth does not go through `pam_facelock.so` (the polkit agent, a direct
   D-Bus `Authenticate`): those worked only because the daemon's gate was inert, and now
   need the same `abort_if_lid_closed = false` the module's gate always needed.

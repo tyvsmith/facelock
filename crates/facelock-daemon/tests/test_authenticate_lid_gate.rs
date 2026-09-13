@@ -25,6 +25,20 @@ use facelock_store::FaceStore;
 use facelock_test_support::fixtures;
 use facelock_test_support::{MockCamera, MockFaceEngine};
 
+/// The lid resolver the daemon falls back to, compiled from the same source
+/// the module and the daemon share (`crates/pam-facelock/src/lid.rs`) rather
+/// than restating its rule here — a test that reimplemented "can this host
+/// see a lid" could agree with itself while disagreeing with the gate. Its
+/// own `#[cfg(test)]` fixtures come along and run in this binary too, which
+/// is the documented consequence of sharing the file.
+mod lid {
+    #![allow(dead_code)]
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../pam-facelock/src/lid.rs"
+    ));
+}
+
 /// The camera factory `Handler::new` takes. Named because the spelled-out
 /// type trips `clippy::type_complexity`, which the `--all-targets` lint gate
 /// makes a hard failure. Each integration test file is its own crate, so this
@@ -142,15 +156,22 @@ async fn an_open_lid_reaches_recognition() {
 }
 
 /// The posture choice this fix makes explicit: with the gate enabled, a lid
-/// the daemon cannot resolve refuses rather than counting as open. The
-/// refusal is in band, so a PAM stack still falls through to the password.
+/// the daemon cannot resolve anywhere refuses rather than counting as open,
+/// and the refusal is in band so a PAM stack still falls through to the
+/// password.
+///
+/// A failed logind read first defers to the in-process resolver, which
+/// answers on a host with no proc sandboxing and is blind on one with it —
+/// so what this asserts depends on the machine, and the expectation is taken
+/// from the same resolver the daemon consults rather than assumed. Precedence
+/// itself is pinned without a filesystem by `lid_refusal_matches_the_documented_precedence`.
 #[tokio::test]
-async fn an_unresolvable_lid_refuses_rather_than_counting_as_open() {
+async fn an_unresolvable_lid_refuses_unless_procfs_can_answer() {
     for reason in [
         "logind is not on the system bus",
         "read logind LidClosed property: timed out",
     ] {
-        let refused = service(true)
+        let result = service(true)
             .authenticate_as_with_checks(
                 caller(1000, "alice"),
                 "alice",
@@ -159,7 +180,16 @@ async fn an_unresolvable_lid_refuses_rather_than_counting_as_open() {
                 move || async move { Err(reason.to_string()) },
             )
             .await;
-        assert_refused_in_band(refused, "lid state unavailable");
+        match lid::lid_state_under(std::path::Path::new(lid::LID_ROOT)) {
+            // No second source either: the gate refuses under its own class.
+            lid::LidState::Absent => assert_refused_in_band(result, "lid state unavailable"),
+            // This host hides no `/proc`, so the fallback saw the real lid.
+            lid::LidState::Closed => assert_refused_in_band(result, "lid closed"),
+            lid::LidState::Open => assert!(
+                result.expect("an open lid reaches recognition").matched,
+                "a lid the fallback read as open must not refuse"
+            ),
+        }
     }
 }
 

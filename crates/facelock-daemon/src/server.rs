@@ -81,7 +81,8 @@ const LID_STATE_TIMEOUT: Duration = Duration::from_secs(1);
 const SESSION_CHECK_UNSUPPLIED: &str = "D-Bus caller process provenance was not supplied";
 
 /// What a transport that wired up no lid check reports. The lid gate reads
-/// it as [`LidSource::Unavailable`] and refuses.
+/// it as [`LidSource::Unavailable`], which falls back to procfs and refuses
+/// only if that is blind too.
 const LID_CHECK_UNSUPPLIED: &str = "D-Bus caller lid state was not supplied";
 
 /// systemd-logind's bus address. The daemon reaches it for three unrelated
@@ -125,8 +126,9 @@ impl BoundedCheck {
     }
 
     /// A check the transport did not wire up. Every consumer treats the
-    /// error as "unresolved", which fails its gate closed. The deadline is
-    /// never reached: the future is already `Ready`.
+    /// error as "unresolved", which is the fail-closed reading for the
+    /// session gate and sends the lid gate to its procfs fallback. The
+    /// deadline is never reached: the future is already `Ready`.
     fn unsupplied(reason: &'static str) -> Self {
         Self::new(
             move || async move { Err(reason.to_string()) },
@@ -3385,14 +3387,6 @@ enabled = false
         assert_eq!(OBJECT_PATH, "/org/facelock/Daemon");
     }
 
-    /// The one line that connects the logind resolver to the wire lives in
-    /// the `#[interface]` block, which is implemented only for the
-    /// production `Camera`/`FaceEngine` handler — no test can drive it, and
-    /// every lid test injects its answer instead. Swap that argument for a
-    /// constant and the whole suite stays green while `abort_if_lid_closed`
-    /// goes inert again, exactly as in issue #385. Parsing the source is how
-    /// the repo pins structural facts a type cannot (same idiom as
-    /// [`interface_methods_and_the_authz_matrix_are_the_same_set`]).
     /// The one part of the lid gate that a mocked answer cannot check: that
     /// the four logind constants name something real and that `LidClosed`
     /// really is a boolean. Every other lid test injects the answer, so a
@@ -3422,6 +3416,14 @@ enabled = false
         eprintln!("logind LidClosed = {closed}");
     }
 
+    /// The one line that connects the logind resolver to the wire lives in
+    /// the `#[interface]` block, which is implemented only for the
+    /// production `Camera`/`FaceEngine` handler — no test can drive it, and
+    /// every lid test injects its answer instead. Swap that argument for a
+    /// constant and the whole suite stays green while `abort_if_lid_closed`
+    /// loses its only real lid source, exactly as in issue #385. Parsing the
+    /// source is how the repo pins structural facts a type cannot (same
+    /// idiom as [`interface_methods_and_the_authz_matrix_are_the_same_set`]).
     #[test]
     fn the_wire_authenticate_passes_the_logind_lid_reader_to_the_gate() {
         let source = include_str!("server.rs");
