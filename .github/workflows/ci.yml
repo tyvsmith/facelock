@@ -16,7 +16,7 @@ jobs:
   build-and-test:
     name: Build, Test, Lint
     runs-on: ubuntu-latest
-    container: docker.io/library/archlinux:base-devel@sha256:61f7de2dd88cc4ba1fe36c24cfe1a503c3936984492d6405eeab013ce6ac68c5
+    container: docker.io/library/archlinux:base-devel@sha256:8745817f349ed24373341ddb92776209eeec3f0364ea48f7f645ac5800d30a50
     steps:
       - name: Install system dependencies
         run: |
@@ -122,7 +122,7 @@ jobs:
   cargo-audit:
     name: Supply-chain Audit (cargo-audit)
     runs-on: ubuntu-latest
-    container: docker.io/library/archlinux:base-devel@sha256:61f7de2dd88cc4ba1fe36c24cfe1a503c3936984492d6405eeab013ce6ac68c5
+    container: docker.io/library/archlinux:base-devel@sha256:8745817f349ed24373341ddb92776209eeec3f0364ea48f7f645ac5800d30a50
     # Override the workflow-level -Dwarnings: this job compiles cargo-audit's
     # own third-party dependency tree, which we don't control. A future
     # warning upstream shouldn't fail this job for reasons unrelated to the
@@ -154,7 +154,7 @@ jobs:
   tpm-tests:
     name: TPM Tests (swtpm)
     runs-on: ubuntu-latest
-    container: docker.io/library/archlinux:base-devel@sha256:61f7de2dd88cc4ba1fe36c24cfe1a503c3936984492d6405eeab013ce6ac68c5
+    container: docker.io/library/archlinux:base-devel@sha256:8745817f349ed24373341ddb92776209eeec3f0364ea48f7f645ac5800d30a50
     needs: build-and-test
     steps:
       - name: Install dependencies
@@ -204,7 +204,7 @@ jobs:
   agent-docs:
     name: Agent Docs Consistency
     runs-on: ubuntu-latest
-    container: docker.io/library/archlinux:base-devel@sha256:61f7de2dd88cc4ba1fe36c24cfe1a503c3936984492d6405eeab013ce6ac68c5
+    container: docker.io/library/archlinux:base-devel@sha256:8745817f349ed24373341ddb92776209eeec3f0364ea48f7f645ac5800d30a50
     permissions:
       contents: read
     steps:
@@ -263,7 +263,7 @@ jobs:
   catalog-check:
     name: Translation Catalog Freshness
     runs-on: ubuntu-latest
-    container: docker.io/library/archlinux:base-devel@sha256:61f7de2dd88cc4ba1fe36c24cfe1a503c3936984492d6405eeab013ce6ac68c5
+    container: docker.io/library/archlinux:base-devel@sha256:8745817f349ed24373341ddb92776209eeec3f0364ea48f7f645ac5800d30a50
     steps:
       - name: Install system dependencies
         run: |
