@@ -131,7 +131,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.release_binaries == 'true'
     timeout-minutes: 60
-    container: docker.io/library/archlinux:base-devel@sha256:61f7de2dd88cc4ba1fe36c24cfe1a503c3936984492d6405eeab013ce6ac68c5
+    container: docker.io/library/archlinux:base-devel@sha256:51dd3d24f7fba779e7c471caeee7804c50e8c134ad948e19685a1c83a42facc3
     steps:
       - name: Install system dependencies
         run: |
