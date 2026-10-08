@@ -50,6 +50,12 @@
 # Default: false
 # ir_emitter = false
 
+# IR illuminator exposed as an LED class device, lit while the camera is
+# open. For media-controller pipelines whose illuminator is a separate LED
+# rather than a UVC extension unit. Must be /sys/class/leds/<name>.
+# Default: unset
+# ir_led = "/sys/class/leds/ir:flash"
+
 # Daemon only. Seconds to keep the camera streaming after a FAILED
 # authentication so an immediate retry skips the reopen cost. Cancellation
 # and errors always release the camera at once — the interaction is over,

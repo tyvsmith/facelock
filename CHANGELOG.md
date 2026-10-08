@@ -98,6 +98,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   644-pixel rows in a 656-byte stride) are now cut to the width and decoded instead of
   rejected at open; every other stride mismatch is still rejected.
 
+- **LED class IR illuminators**: `[device] ir_led = "/sys/class/leds/<name>"` lights an
+  illuminator that is a separate LED device rather than a UVC extension unit (for example the
+  Surface Pro 11's PMIC flash LED, `ir:flash`) at full brightness while the camera is open,
+  and switches it off first when the camera is released. Validation accepts only
+  `/sys/class/leds/<name>`, since the daemon writes it as root.
+
 ### Changed
 
 - **The upgrade lanes now prove the newest released predecessor** (#367): `dist/release-matrix.json`

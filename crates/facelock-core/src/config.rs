@@ -71,6 +71,13 @@ pub struct DeviceConfig {
     /// only if your camera requires explicit control.
     #[serde(default)]
     pub ir_emitter: bool,
+    /// IR illuminator exposed as an LED class device, as
+    /// `/sys/class/leds/<name>`. Lit at full brightness while the camera is
+    /// open and switched off when it closes. For media-controller pipelines
+    /// whose illuminator is a separate LED (e.g. a PMIC flash LED in torch
+    /// mode) rather than a UVC extension unit. Default: unset.
+    #[serde(default)]
+    pub ir_led: Option<String>,
     /// Use the capture node's current format instead of negotiating one.
     /// For media-controller pipelines (e.g. Intel IPU6/IPU7 ISYS, Qualcomm CAMSS) where the
     /// graph is configured ahead of time and only that size streams; the
@@ -105,6 +112,14 @@ pub struct DeviceConfig {
     pub camera_release_after_success_secs: u32,
 }
 
+/// The LED name in a `/sys/class/leds/<name>` path, or `None` for anything
+/// else. `device.ir_led` is written by the root daemon, so it may only name a
+/// direct child of the LED class directory.
+pub fn led_class_name(spec: &str) -> Option<&str> {
+    let name = spec.strip_prefix("/sys/class/leds/")?;
+    (!name.is_empty() && !name.contains('/') && name != "." && name != "..").then_some(name)
+}
+
 impl Default for DeviceConfig {
     fn default() -> Self {
         Self {
@@ -115,6 +130,7 @@ impl Default for DeviceConfig {
             dark_threshold: default_dark_threshold(),
             dark_pixel_value: default_dark_pixel_value(),
             ir_emitter: false,
+            ir_led: None,
             keep_format: false,
             camera_release_secs: default_camera_release_secs(),
             // No `default_*` function: this key's default is the type's, so
@@ -1017,6 +1033,13 @@ impl Config {
                 "device.path must not be empty when specified".into(),
             ));
         }
+        if let Some(ref led) = self.device.ir_led
+            && led_class_name(led).is_none()
+        {
+            return Err(ConfigError::Validation(format!(
+                "device.ir_led must be a /sys/class/leds/<name> path, got {led}"
+            )));
+        }
         if !(0.0..=1.0).contains(&self.device.dark_threshold) {
             return Err(ConfigError::Validation(format!(
                 "device.dark_threshold must be between 0.0 and 1.0, got {}",
@@ -1138,6 +1161,40 @@ path = "/dev/video0"
             Config::parse("").expect("an empty config document must always parse"),
             Config::default()
         );
+    }
+
+    #[test]
+    fn ir_led_accepts_an_led_class_device() {
+        let config = Config::parse("[device]\nir_led = \"/sys/class/leds/ir:flash\"\n").unwrap();
+        assert_eq!(
+            config.device.ir_led.as_deref(),
+            Some("/sys/class/leds/ir:flash")
+        );
+        assert_eq!(led_class_name("/sys/class/leds/ir:flash"), Some("ir:flash"));
+    }
+
+    /// The daemon writes `brightness` under this path as root, so a config
+    /// must not be able to point it anywhere but an LED class device.
+    #[test]
+    fn ir_led_rejects_paths_outside_the_led_class() {
+        for led in [
+            "",
+            "ir:flash",
+            "/sys/class/leds",
+            "/sys/class/leds/",
+            "/sys/class/leds/.",
+            "/sys/class/leds/..",
+            "/sys/class/leds/../../../etc",
+            "/sys/class/leds/a/b",
+            "/etc/shadow",
+        ] {
+            assert_eq!(led_class_name(led), None, "{led:?}");
+            let toml = format!("[device]\nir_led = {led:?}\n");
+            assert!(
+                matches!(Config::parse(&toml), Err(ConfigError::Validation(_))),
+                "{led:?} must fail validation"
+            );
+        }
     }
 
     #[test]

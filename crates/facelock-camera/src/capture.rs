@@ -279,6 +279,7 @@ fn grey_to_rgb(buf: &[u8], width: usize, height: usize, stride: usize) -> Result
 
 use crate::ir_emitter;
 use crate::ir_emitter::EmitterXuInfo;
+use crate::ir_led::IrLed;
 use crate::preprocess;
 use crate::quirks::{Quirk, QuirksDb};
 use facelock_core::types::CameraCaps;
@@ -299,6 +300,9 @@ pub struct Camera<'a> {
     ir_emitter_active: bool,
     /// Emitter XU info, stored for disable on drop when the quirk ref is gone.
     emitter_xu_info: Option<EmitterXuInfo>,
+    /// LED class illuminator lit while the camera is open (`device.ir_led`);
+    /// switched off on drop.
+    ir_led: Option<IrLed>,
     /// Capabilities computed at construction — see `crate::caps` (gap D8).
     caps: CameraCaps,
     /// Y16 -> 8-bit shift. A verified quirk pins it at open; an unverified Y16
@@ -474,6 +478,20 @@ impl<'a> Camera<'a> {
             false
         };
 
+        let ir_led = config
+            .ir_led
+            .as_deref()
+            .and_then(|spec| match IrLed::on(spec) {
+                Ok(led) => {
+                    tracing::info!("IR LED {} lit for {device_path}", led.path().display());
+                    Some(led)
+                }
+                Err(e) => {
+                    tracing::warn!("failed to light IR LED for {device_path}: {e}");
+                    None
+                }
+            });
+
         // Pin verified Y16 scale at open. An unverified stream stays
         // uncalibrated until a non-auth caller asks for a frame: auth can then
         // reject negotiated-format drift without capturing calibration data.
@@ -514,6 +532,7 @@ impl<'a> Camera<'a> {
             device_path,
             ir_emitter_active,
             emitter_xu_info,
+            ir_led,
             caps,
             y16_shift,
             y16_calibration_frames,
@@ -695,6 +714,8 @@ pub fn is_dark_with_config(frame: &Frame, threshold: f32, dark_value: u8) -> boo
 
 impl Drop for Camera<'_> {
     fn drop(&mut self) {
+        // Out first, ahead of the stream and the other fields.
+        drop(self.ir_led.take());
         if self.ir_emitter_active
             && let Some(ref xu_info) = self.emitter_xu_info
         {
@@ -1004,6 +1025,7 @@ mod tests {
             dark_threshold: 0.6,
             dark_pixel_value: 10,
             ir_emitter: false,
+            ir_led: None,
             camera_release_secs: 5,
             camera_release_after_success_secs: 0,
             keep_format: false,
