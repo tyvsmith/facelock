@@ -3446,7 +3446,7 @@ TOML format. All keys optional — camera auto-detected, sensible defaults for e
 
 | Section | Key fields |
 |---------|-----------|
-| `[device]` | `path` (Option), `max_height`, `rotation`, `warmup_frames`, `dark_threshold`, `dark_pixel_value`, `ir_emitter`, `camera_release_secs`, `camera_release_after_success_secs` |
+| `[device]` | `path` (Option), `max_height`, `rotation`, `warmup_frames`, `dark_threshold`, `dark_pixel_value`, `ir_emitter`, `keep_format`, `camera_release_secs`, `camera_release_after_success_secs` |
 | `[recognition]` | `threshold`, `timeout_secs`, `no_face_timeout_secs`, `detector_model`, `detector_sha256`, `embedder_model`, `embedder_sha256`, `threads`, `execution_provider` |
 | `[daemon]` | `mode` (DaemonMode enum), `model_dir`, `idle_timeout_secs` |
 | `[storage]` | `db_path` |
@@ -3692,8 +3692,16 @@ enforcement.
 
 Open also **rejects a padded stride**: for GREY/NV12 (`bytesperline == width`)
 and Y16/YUYV (`bytesperline == 2 * width`), a device reporting anything else
-errors at open instead of decoding sheared frames. Compressed formats (MJPG)
-are exempt — their `bytesperline` is not a row size.
+errors at open instead of decoding sheared frames. The one exception is GREY
+with `bytesperline > width`, as delivered by ISP capture nodes that pad rows
+(Qualcomm CAMSS, Intel IPU6/IPU7): each row is cut to `width` bytes before
+decoding, and a frame shorter than `bytesperline * (height - 1) + width` is a
+capture error. Compressed formats (MJPG) are exempt — their `bytesperline` is
+not a row size.
+
+With `device.keep_format = true`, open skips format negotiation and uses the
+node's current format, which must be one of the decodable formats above;
+otherwise open fails naming the format. The stride rules still apply.
 
 **FourCC normalization.** V4L2 pads FourCCs to four characters with trailing
 spaces (`"Y16 "`). Facelock strips that padding at every ingest point — device

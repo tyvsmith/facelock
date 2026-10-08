@@ -91,6 +91,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   swtpm-backed `tpm-tests` job stays the only place a sealed round trip executes, and it now
   runs `just test-tpm` rather than its own copy of the command.
 
+- **Media-controller capture nodes keep their configured format**: `[device] keep_format = true`
+  makes open use the node's current format instead of negotiating one, for Intel IPU6/IPU7
+  ISYS and Qualcomm CAMSS nodes that only stream what the pipeline (usually `media-ctl`) was
+  set up for. GREY frames whose rows are padded past the image width (CAMSS delivers
+  644-pixel rows in a 656-byte stride) are now cut to the width and decoded instead of
+  rejected at open; every other stride mismatch is still rejected.
+
 ### Changed
 
 - **The upgrade lanes now prove the newest released predecessor** (#367): `dist/release-matrix.json`

@@ -39,6 +39,12 @@
 # dark_threshold = 0.6
 # dark_pixel_value = 10
 
+# Use the format already configured on the device instead of negotiating
+# one. Needed for media-controller capture nodes (Intel IPU6/IPU7,
+# Qualcomm CAMSS) whose format is set up with the pipeline.
+# Default: false
+# keep_format = false
+
 # Attempt to enable a controllable IR emitter when the camera opens.
 # Only needed for hardware that does not auto-enable its IR LED.
 # Default: false

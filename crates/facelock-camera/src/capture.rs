@@ -251,6 +251,32 @@ fn expected_stride(format: &str, width: u32) -> Option<u32> {
     }
 }
 
+/// Expand a GREY frame to packed RGB, dropping the row padding an ISP node
+/// may add past `width` (`stride` is the delivered bytesperline).
+fn grey_to_rgb(buf: &[u8], width: usize, height: usize, stride: usize) -> Result<Vec<u8>> {
+    let needed = match height {
+        0 => Some(0),
+        h => stride.checked_mul(h - 1).and_then(|n| n.checked_add(width)),
+    };
+    let short = || {
+        FacelockError::Camera(format!(
+            "GREY frame too short: {} bytes for {width}x{height} (stride {stride})",
+            buf.len()
+        ))
+    };
+    if stride < width || needed.is_none_or(|n| buf.len() < n) {
+        return Err(short());
+    }
+    let mut rgb = Vec::with_capacity(width * height * 3);
+    for row in buf.chunks(stride.max(1)).take(height) {
+        let row = row.get(..width).ok_or_else(short)?;
+        for &p in row {
+            rgb.extend_from_slice(&[p, p, p]);
+        }
+    }
+    Ok(rgb)
+}
+
 use crate::ir_emitter;
 use crate::ir_emitter::EmitterXuInfo;
 use crate::preprocess;
@@ -263,6 +289,9 @@ pub struct Camera<'a> {
     width: u32,
     height: u32,
     format: String,
+    /// Bytes per row as delivered; larger than the packed row size on ISP
+    /// nodes that pad lines (GREY only).
+    stride: u32,
     rotation: u16,
     /// Device path, stored for IR emitter cleanup on drop.
     device_path: String,
@@ -368,12 +397,23 @@ impl<'a> Camera<'a> {
         let mut fmt = dev
             .format()
             .map_err(|e| FacelockError::Camera(format!("failed to get format: {e}")))?;
-        fmt.fourcc = selected_fourcc;
-        fmt.width = max_w;
-        fmt.height = max_h;
-        let fmt = dev
-            .set_format(&fmt)
-            .map_err(|e| FacelockError::Camera(format!("failed to set format: {e}")))?;
+        let fmt = if config.keep_format {
+            // The pipeline is configured externally; use it as it stands.
+            if !DECODABLE_FORMATS.contains(&normalize_fourcc(fmt.fourcc).as_str()) {
+                return Err(FacelockError::Camera(format!(
+                    "{device_path}: keep_format is set but the current format {} is not \
+                     decodable",
+                    normalize_fourcc(fmt.fourcc)
+                )));
+            }
+            fmt
+        } else {
+            fmt.fourcc = selected_fourcc;
+            fmt.width = max_w;
+            fmt.height = max_h;
+            dev.set_format(&fmt)
+                .map_err(|e| FacelockError::Camera(format!("failed to set format: {e}")))?
+        };
 
         let width = fmt.width;
         let height = fmt.height;
@@ -395,6 +435,8 @@ impl<'a> Camera<'a> {
         // bytesperline, which would shear every decoded frame silently.
         if let Some(expected) = expected_stride(&format_str, width)
             && fmt.stride != expected
+            // Padded GREY rows are repacked in capture_rgb.
+            && !(format_str == "GREY" && fmt.stride > expected)
         {
             return Err(FacelockError::Camera(format!(
                 "{device_path}: {format_str} bytesperline is {} but facelock expects {expected} \
@@ -467,6 +509,7 @@ impl<'a> Camera<'a> {
             width,
             height,
             format: format_str,
+            stride: fmt.stride,
             rotation,
             device_path,
             ir_emitter_active,
@@ -539,16 +582,12 @@ impl<'a> Camera<'a> {
             .map_err(|e| FacelockError::Camera(format!("capture failed: {e}")))?;
 
         let rgb: Vec<u8> = match self.format.as_str() {
-            "GREY" => {
-                // Replicate single channel 3x
-                let mut rgb = Vec::with_capacity(buf.len() * 3);
-                for &p in buf {
-                    rgb.push(p);
-                    rgb.push(p);
-                    rgb.push(p);
-                }
-                rgb
-            }
+            "GREY" => grey_to_rgb(
+                buf,
+                self.width as usize,
+                self.height as usize,
+                self.stride as usize,
+            )?,
             "Y16" => {
                 // 16-bit grayscale -> 8-bit at the session-fixed scale, replicated 3x
                 let shift = self.y16_shift.ok_or_else(|| {
@@ -721,6 +760,27 @@ mod tests {
         // Changing this order changes the documented negotiation contract —
         // update docs/contracts.md with it.
         assert_eq!(DECODABLE_FORMATS, &["GREY", "Y16", "YUYV", "NV12", "MJPG"]);
+    }
+
+    #[test]
+    fn grey_to_rgb_replicates_a_packed_frame() {
+        let rgb = grey_to_rgb(&[1, 2, 3, 4], 2, 2, 2).unwrap();
+        assert_eq!(rgb, [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]);
+    }
+
+    #[test]
+    fn grey_to_rgb_drops_row_padding() {
+        // 2x2 frame delivered with a 4-byte stride (Qualcomm CAMSS pads rows);
+        // the last row may stop at the image width.
+        let buf = [1, 2, 0xee, 0xee, 3, 4];
+        let rgb = grey_to_rgb(&buf, 2, 2, 4).unwrap();
+        assert_eq!(rgb, [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]);
+    }
+
+    #[test]
+    fn grey_to_rgb_rejects_a_short_frame() {
+        assert!(grey_to_rgb(&[1, 2, 0, 0, 3], 2, 2, 4).is_err());
+        assert!(grey_to_rgb(&[1, 2, 3, 4], 4, 1, 2).is_err());
     }
 
     #[test]
@@ -946,6 +1006,7 @@ mod tests {
             ir_emitter: false,
             camera_release_secs: 5,
             camera_release_after_success_secs: 0,
+            keep_format: false,
         };
         let mut cam = Camera::open(&config, &QuirksDb::load()).expect("failed to open camera");
         let frame = cam.capture().expect("failed to capture frame");

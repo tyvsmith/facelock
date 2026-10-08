@@ -71,6 +71,12 @@ pub struct DeviceConfig {
     /// only if your camera requires explicit control.
     #[serde(default)]
     pub ir_emitter: bool,
+    /// Use the capture node's current format instead of negotiating one.
+    /// For media-controller pipelines (e.g. Intel IPU6/IPU7 ISYS, Qualcomm CAMSS) where the
+    /// graph is configured ahead of time and only that size streams; the
+    /// format must still be decodable. Default: false.
+    #[serde(default)]
+    pub keep_format: bool,
     /// Daemon only. Seconds to keep the camera streaming after a **failed**
     /// authentication, so the retry a failure invites skips the reopen cost.
     /// Success, cancellation and errors always release immediately — the
@@ -109,6 +115,7 @@ impl Default for DeviceConfig {
             dark_threshold: default_dark_threshold(),
             dark_pixel_value: default_dark_pixel_value(),
             ir_emitter: false,
+            keep_format: false,
             camera_release_secs: default_camera_release_secs(),
             // No `default_*` function: this key's default is the type's, so
             // `#[serde(default)]` and this line cannot drift apart.
