@@ -3,6 +3,7 @@ pub mod capture;
 pub mod device;
 pub mod ir_emitter;
 pub mod ir_led;
+pub mod mplane;
 pub mod preprocess;
 pub mod quirks;
 

@@ -3631,7 +3631,8 @@ session and replays `PolicyPCR` — so a changed bound PCR makes unseal **fail**
 
 When `device.path` is omitted:
 1. Enumerate `/dev/video0` through `/dev/video63`
-2. Filter to VIDEO_CAPTURE devices
+2. Filter to VIDEO_CAPTURE devices (single-planar, or multi-planar nodes that
+   offer no single-planar capture, such as Qualcomm CAMSS)
 3. Classify every node's IR provenance from queried evidence: a quirks
    `force_ir` match (authoritative by USB vendor:product ID; a name-only match
    only when corroborated by a real USB identity or the node's own mono-format

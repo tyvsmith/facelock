@@ -3540,21 +3540,21 @@
           "path": "config/facelock.toml",
           "anchor": "configuration-comments",
           "ordinal": 2,
-          "line": 355,
+          "line": 367,
           "sha256": "913896039eb1dca965a8c6a5e027de65b67adc885a02a9a942cda7e022107188"
         },
         {
           "path": "config/facelock.toml",
           "anchor": "configuration-comments",
           "ordinal": 3,
-          "line": 356,
+          "line": 368,
           "sha256": "390e7eaae8157fb444e3d7a23a5ab3ac7dcabe92e9d0cef91bce5f5668120f9b"
         },
         {
           "path": "config/facelock.toml",
           "anchor": "configuration-comments",
           "ordinal": 4,
-          "line": 357,
+          "line": 369,
           "sha256": "6b25d943787a107878794eea277f92b9e400fe26aaa8f33dc0bf8a2e9d2023ef"
         }
       ],
@@ -6953,7 +6953,7 @@
           "path": "docs/compatibility.md",
           "anchor": "systemd-recommended",
           "ordinal": 1,
-          "line": 186,
+          "line": 203,
           "sha256": "e75d40fad8fc39564478eb4a79fc737f644f9b056e395a761231e9d5ba87526a"
         }
       ],

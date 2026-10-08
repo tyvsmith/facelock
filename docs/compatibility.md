@@ -177,6 +177,23 @@ support from a kernel version alone. Facelock capture-node format and IR
 classification work for `hm1092` is tracked in issue #101; treat this path as
 experimental until the complete Facelock capture path is established.
 
+### Multi-planar capture nodes (e.g. Qualcomm CAMSS)
+
+Some SoC camera subsystems expose capture nodes only through the V4L2
+multi-planar API (`V4L2_CAP_VIDEO_CAPTURE_MPLANE`), for example Qualcomm
+CAMSS on Snapdragon X laptops. Facelock opens these directly; it supports
+single-plane formats only, which covers every format it decodes, and rejects
+a node whose negotiated format has more than one plane.
+
+Such nodes usually sit behind a media-controller pipeline and advertise every
+format the hardware path supports, so set the pipeline up ahead of time (for
+an IR sensor: GREY end to end), point `device.path` at it, and set
+`keep_format = true`. Because the advertised format table is static, IR
+classification needs a name-matched `force_ir` quirk with
+`format_preference = "GREY"`, as for IPU6/IPU7 nodes. If the illuminator is a
+separate LED class device rather than a UVC emitter, name it in
+`device.ir_led`.
+
 ## Init System Support
 
 ### systemd (recommended)

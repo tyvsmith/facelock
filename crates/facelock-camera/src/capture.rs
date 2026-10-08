@@ -172,14 +172,18 @@ fn y16_calibration_frames(quirk: Option<&Quirk>) -> usize {
 /// Tolerating errors would therefore trade a hard failure carrying the real
 /// message for a `Camera` that returns "Invalid argument" from every capture,
 /// having reported a successfully pinned scale on the way out.
-fn calibrate_y16_shift(stream: &mut Stream<'_>, device_path: &str, target: usize) -> Result<u8> {
+fn calibrate_y16_shift(
+    stream: &mut FrameStream<'_>,
+    device_path: &str,
+    target: usize,
+) -> Result<u8> {
     let start = Instant::now();
     let mut peak = 0u16;
     let mut frames = 0usize;
 
     while frames < target && start.elapsed() < Y16_CALIBRATION_BUDGET {
         match stream.next() {
-            Ok((buf, _meta)) => {
+            Ok(buf) => {
                 peak = peak.max(preprocess::y16_peak(buf));
                 frames += 1;
             }
@@ -241,6 +245,24 @@ fn calibrate_y16_shift(stream: &mut Stream<'_>, device_path: &str, target: usize
     Ok(shift)
 }
 
+/// A capture stream on either V4L2 API, behind one frame-reading interface.
+/// Most cameras are single-planar (the `v4l` crate's stream); some SoC camera
+/// subsystems expose only multi-planar nodes ([`mplane`]).
+enum FrameStream<'a> {
+    Single(Stream<'a>),
+    Multi(mplane::Stream),
+}
+
+impl FrameStream<'_> {
+    /// The next frame's bytes, waiting up to `CAPTURE_TIMEOUT`.
+    fn next(&mut self) -> std::io::Result<&[u8]> {
+        match self {
+            FrameStream::Single(s) => s.next().map(|(buf, _meta)| buf),
+            FrameStream::Multi(s) => s.next_frame(),
+        }
+    }
+}
+
 /// Bytes per row facelock's converters assume for an uncompressed format.
 /// `None` for compressed formats, whose `bytesperline` is not a row size.
 fn expected_stride(format: &str, width: u32) -> Option<u32> {
@@ -280,13 +302,14 @@ fn grey_to_rgb(buf: &[u8], width: usize, height: usize, stride: usize) -> Result
 use crate::ir_emitter;
 use crate::ir_emitter::EmitterXuInfo;
 use crate::ir_led::IrLed;
+use crate::mplane;
 use crate::preprocess;
 use crate::quirks::{Quirk, QuirksDb};
 use facelock_core::types::CameraCaps;
 
 /// A V4L2 camera for frame capture.
 pub struct Camera<'a> {
-    stream: Stream<'a>,
+    stream: FrameStream<'a>,
     width: u32,
     height: u32,
     format: String,
@@ -363,9 +386,11 @@ impl<'a> Camera<'a> {
         let v4l_caps = dev.query_caps().map_err(|e| {
             FacelockError::Camera(format!("failed to query caps for {device_path}: {e}"))
         })?;
-        if !v4l_caps
-            .capabilities
-            .contains(v4l::capability::Flags::VIDEO_CAPTURE)
+        let mplane_only = mplane::is_mplane_only(&v4l_caps);
+        if !mplane_only
+            && !v4l_caps
+                .capabilities
+                .contains(v4l::capability::Flags::VIDEO_CAPTURE)
         {
             return Err(FacelockError::Camera(format!(
                 "{device_path}: not a video capture device",
@@ -376,13 +401,17 @@ impl<'a> Camera<'a> {
         // format_preference, prepend it to the priority list. A device that
         // advertises no decodable format (e.g. a raw Bayer sensor node) fails
         // here with an actionable error.
-        let formats = dev
-            .enum_formats()
-            .map_err(|e| FacelockError::Camera(format!("failed to enum formats: {e}")))?;
+        let formats: Vec<v4l::FourCC> = if mplane_only {
+            mplane::enum_formats(&dev).map(|list| list.into_iter().map(|f| f.fourcc).collect())
+        } else {
+            dev.enum_formats()
+                .map(|list| list.into_iter().map(|f| f.fourcc).collect())
+        }
+        .map_err(|e| FacelockError::Camera(format!("failed to enum formats: {e}")))?;
 
-        let available: Vec<String> = formats.iter().map(|f| normalize_fourcc(f.fourcc)).collect();
+        let available: Vec<String> = formats.iter().map(|&f| normalize_fourcc(f)).collect();
         let selected_fourcc = select_format_for_quirk(quirk, &available)
-            .map(|idx| formats[idx].fourcc)
+            .map(|idx| formats[idx])
             .ok_or_else(|| {
                 FacelockError::Camera(format!(
                     "{device_path}: no decodable pixel format — device advertises [{}] but \
@@ -398,9 +427,18 @@ impl<'a> Camera<'a> {
         let max_h = config.max_height.min(480);
         let max_w = 640u32;
 
-        let mut fmt = dev
-            .format()
-            .map_err(|e| FacelockError::Camera(format!("failed to get format: {e}")))?;
+        let current = if mplane_only {
+            mplane::get_format(&dev)
+        } else {
+            dev.format().map(|f| mplane::Format {
+                width: f.width,
+                height: f.height,
+                fourcc: f.fourcc,
+                stride: f.stride,
+            })
+        };
+        let mut fmt =
+            current.map_err(|e| FacelockError::Camera(format!("failed to get format: {e}")))?;
         let fmt = if config.keep_format {
             // The pipeline is configured externally; use it as it stands.
             if !DECODABLE_FORMATS.contains(&normalize_fourcc(fmt.fourcc).as_str()) {
@@ -411,12 +449,24 @@ impl<'a> Camera<'a> {
                 )));
             }
             fmt
-        } else {
-            fmt.fourcc = selected_fourcc;
-            fmt.width = max_w;
-            fmt.height = max_h;
-            dev.set_format(&fmt)
+        } else if mplane_only {
+            mplane::set_format(&dev, selected_fourcc, max_w, max_h)
                 .map_err(|e| FacelockError::Camera(format!("failed to set format: {e}")))?
+        } else {
+            let mut want = dev
+                .format()
+                .map_err(|e| FacelockError::Camera(format!("failed to get format: {e}")))?;
+            want.fourcc = selected_fourcc;
+            want.width = max_w;
+            want.height = max_h;
+            let set = dev
+                .set_format(&want)
+                .map_err(|e| FacelockError::Camera(format!("failed to set format: {e}")))?;
+            fmt.width = set.width;
+            fmt.height = set.height;
+            fmt.fourcc = set.fourcc;
+            fmt.stride = set.stride;
+            fmt
         };
 
         let width = fmt.width;
@@ -450,9 +500,17 @@ impl<'a> Camera<'a> {
         }
 
         // Create MMAP stream with `MMAP_BUFFERS` buffers and a capture timeout
-        let mut stream = Stream::with_buffers(&dev, Type::VideoCapture, MMAP_BUFFERS)
-            .map_err(|e| FacelockError::Camera(format!("failed to create stream: {e}")))?;
-        stream.set_timeout(CAPTURE_TIMEOUT);
+        let stream = if mplane_only {
+            FrameStream::Multi(
+                mplane::Stream::with_buffers(&dev, MMAP_BUFFERS, CAPTURE_TIMEOUT)
+                    .map_err(|e| FacelockError::Camera(format!("failed to create stream: {e}")))?,
+            )
+        } else {
+            let mut stream = Stream::with_buffers(&dev, Type::VideoCapture, MMAP_BUFFERS)
+                .map_err(|e| FacelockError::Camera(format!("failed to create stream: {e}")))?;
+            stream.set_timeout(CAPTURE_TIMEOUT);
+            FrameStream::Single(stream)
+        };
 
         // Extract emitter XU info from quirk (if available) for use during
         // enable and later in Drop.
@@ -595,7 +653,7 @@ impl<'a> Camera<'a> {
         // stream.next() uses the v4l built-in poll with CAPTURE_TIMEOUT.
         // If the camera stops producing frames, this returns TimedOut error
         // instead of blocking forever.
-        let (buf, _meta) = self
+        let buf = self
             .stream
             .next()
             .map_err(|e| FacelockError::Camera(format!("capture failed: {e}")))?;

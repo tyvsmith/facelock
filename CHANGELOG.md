@@ -104,6 +104,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and switches it off first when the camera is released. Validation accepts only
   `/sys/class/leds/<name>`, since the daemon writes it as root.
 
+- **Multi-planar capture nodes**: cameras whose capture node offers only
+  `V4L2_CAP_VIDEO_CAPTURE_MPLANE`, such as every Qualcomm CAMSS node on Snapdragon X laptops,
+  are now discovered, listed by `facelock devices` and captured from (single-plane formats
+  only). Single-planar cameras take the same path as before.
+
 ### Changed
 
 - **The upgrade lanes now prove the newest released predecessor** (#367): `dist/release-matrix.json`
