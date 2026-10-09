@@ -427,20 +427,22 @@ impl<'a> Camera<'a> {
         let max_h = config.max_height.min(480);
         let max_w = 640u32;
 
-        let current = if mplane_only {
-            mplane::get_format(&dev)
-        } else {
-            dev.format().map(|f| mplane::Format {
-                width: f.width,
-                height: f.height,
-                fourcc: f.fourcc,
-                stride: f.stride,
-            })
-        };
-        let mut fmt =
-            current.map_err(|e| FacelockError::Camera(format!("failed to get format: {e}")))?;
         let fmt = if config.keep_format {
             // The pipeline is configured externally; use it as it stands.
+            // Only this branch reads the current format: a multi-plane format
+            // left behind by another app must not stop negotiation below.
+            let current = if mplane_only {
+                mplane::get_format(&dev)
+            } else {
+                dev.format().map(|f| mplane::Format {
+                    width: f.width,
+                    height: f.height,
+                    fourcc: f.fourcc,
+                    stride: f.stride,
+                })
+            };
+            let fmt =
+                current.map_err(|e| FacelockError::Camera(format!("failed to get format: {e}")))?;
             if !DECODABLE_FORMATS.contains(&normalize_fourcc(fmt.fourcc).as_str()) {
                 return Err(FacelockError::Camera(format!(
                     "{device_path}: keep_format is set but the current format {} is not \
@@ -462,11 +464,12 @@ impl<'a> Camera<'a> {
             let set = dev
                 .set_format(&want)
                 .map_err(|e| FacelockError::Camera(format!("failed to set format: {e}")))?;
-            fmt.width = set.width;
-            fmt.height = set.height;
-            fmt.fourcc = set.fourcc;
-            fmt.stride = set.stride;
-            fmt
+            mplane::Format {
+                width: set.width,
+                height: set.height,
+                fourcc: set.fourcc,
+                stride: set.stride,
+            }
         };
 
         let width = fmt.width;
