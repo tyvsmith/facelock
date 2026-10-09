@@ -91,6 +91,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   swtpm-backed `tpm-tests` job stays the only place a sealed round trip executes, and it now
   runs `just test-tpm` rather than its own copy of the command.
 
+- **Media-controller capture nodes keep their configured format**: `[device] keep_format = true`
+  makes open use the node's current format instead of negotiating one, for Intel IPU6/IPU7
+  ISYS and Qualcomm CAMSS nodes that only stream what the pipeline (usually `media-ctl`) was
+  set up for. GREY frames whose rows are padded past the image width (CAMSS delivers
+  644-pixel rows in a 656-byte stride) are now cut to the width and decoded instead of
+  rejected at open; every other stride mismatch is still rejected.
+
+- **LED class IR illuminators**: `[device] ir_led = "/sys/class/leds/<name>"` lights an
+  illuminator that is a separate LED device rather than a UVC extension unit (for example the
+  Surface Pro 11's PMIC flash LED, `ir:flash`) at full brightness while the camera is open,
+  and switches it off first when the camera is released. Validation accepts only
+  `/sys/class/leds/<name>`, since the daemon writes it as root.
+
+- **Multi-planar capture nodes**: cameras whose capture node offers only
+  `V4L2_CAP_VIDEO_CAPTURE_MPLANE`, such as every Qualcomm CAMSS node on Snapdragon X laptops,
+  are now discovered, listed by `facelock devices` and captured from (single-plane formats
+  only). Single-planar cameras take the same path as before.
+
 ### Changed
 
 - **The upgrade lanes now prove the newest released predecessor** (#367): `dist/release-matrix.json`

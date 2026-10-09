@@ -501,7 +501,8 @@ fn query_device(path: &str) -> Result<DeviceInfo> {
         .query_caps()
         .map_err(|e| FacelockError::Camera(format!("{path}: failed to query caps: {e}")))?;
 
-    if !caps.capabilities.contains(Flags::VIDEO_CAPTURE) {
+    let mplane_only = crate::mplane::is_mplane_only(&caps);
+    if !mplane_only && !caps.capabilities.contains(Flags::VIDEO_CAPTURE) {
         return Err(FacelockError::Camera(format!(
             "{path}: not a video capture device"
         )));
@@ -511,17 +512,32 @@ fn query_device(path: &str) -> Result<DeviceInfo> {
     if caps.capabilities.contains(Flags::VIDEO_CAPTURE) {
         cap_strings.push("VIDEO_CAPTURE".to_string());
     }
+    if mplane_only {
+        cap_strings.push("VIDEO_CAPTURE_MPLANE".to_string());
+    }
     if caps.capabilities.contains(Flags::STREAMING) {
         cap_strings.push("STREAMING".to_string());
     }
 
     let mut formats = Vec::new();
-    if let Ok(fmt_list) = dev.enum_formats() {
-        for fmt in fmt_list {
-            let fourcc = crate::capture::normalize_fourcc(fmt.fourcc);
-            let description = fmt.description.clone();
+    let fmt_list = if mplane_only {
+        crate::mplane::enum_formats(&dev).map(|list| {
+            list.into_iter()
+                .map(|f| (f.fourcc, f.description))
+                .collect()
+        })
+    } else {
+        dev.enum_formats().map(|list| {
+            list.into_iter()
+                .map(|f| (f.fourcc, f.description))
+                .collect::<Vec<_>>()
+        })
+    };
+    if let Ok(fmt_list) = fmt_list {
+        for (raw_fourcc, description) in fmt_list {
+            let fourcc = crate::capture::normalize_fourcc(raw_fourcc);
             let mut sizes = Vec::new();
-            if let Ok(size_list) = dev.enum_framesizes(fmt.fourcc) {
+            if let Ok(size_list) = dev.enum_framesizes(raw_fourcc) {
                 for fs in size_list {
                     match fs.size {
                         FrameSizeEnum::Discrete(d) => {

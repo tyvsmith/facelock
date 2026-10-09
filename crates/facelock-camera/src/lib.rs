@@ -2,6 +2,8 @@ pub mod caps;
 pub mod capture;
 pub mod device;
 pub mod ir_emitter;
+pub mod ir_led;
+pub mod mplane;
 pub mod preprocess;
 pub mod quirks;
 
@@ -14,6 +16,7 @@ pub use device::{
     list_devices, validate_device,
 };
 pub use ir_emitter::EmitterXuInfo;
+pub use ir_led::IrLed;
 pub use preprocess::{
     check_ir_texture, clahe, extract_bbox_region, nv12_to_rgb, rgb_to_gray, y16_to_gray,
     yuyv_to_rgb,

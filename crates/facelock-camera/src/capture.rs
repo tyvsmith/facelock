@@ -172,14 +172,18 @@ fn y16_calibration_frames(quirk: Option<&Quirk>) -> usize {
 /// Tolerating errors would therefore trade a hard failure carrying the real
 /// message for a `Camera` that returns "Invalid argument" from every capture,
 /// having reported a successfully pinned scale on the way out.
-fn calibrate_y16_shift(stream: &mut Stream<'_>, device_path: &str, target: usize) -> Result<u8> {
+fn calibrate_y16_shift(
+    stream: &mut FrameStream<'_>,
+    device_path: &str,
+    target: usize,
+) -> Result<u8> {
     let start = Instant::now();
     let mut peak = 0u16;
     let mut frames = 0usize;
 
     while frames < target && start.elapsed() < Y16_CALIBRATION_BUDGET {
         match stream.next() {
-            Ok((buf, _meta)) => {
+            Ok(buf) => {
                 peak = peak.max(preprocess::y16_peak(buf));
                 frames += 1;
             }
@@ -241,6 +245,24 @@ fn calibrate_y16_shift(stream: &mut Stream<'_>, device_path: &str, target: usize
     Ok(shift)
 }
 
+/// A capture stream on either V4L2 API, behind one frame-reading interface.
+/// Most cameras are single-planar (the `v4l` crate's stream); some SoC camera
+/// subsystems expose only multi-planar nodes ([`mplane`]).
+enum FrameStream<'a> {
+    Single(Stream<'a>),
+    Multi(mplane::Stream),
+}
+
+impl FrameStream<'_> {
+    /// The next frame's bytes, waiting up to `CAPTURE_TIMEOUT`.
+    fn next(&mut self) -> std::io::Result<&[u8]> {
+        match self {
+            FrameStream::Single(s) => s.next().map(|(buf, _meta)| buf),
+            FrameStream::Multi(s) => s.next_frame(),
+        }
+    }
+}
+
 /// Bytes per row facelock's converters assume for an uncompressed format.
 /// `None` for compressed formats, whose `bytesperline` is not a row size.
 fn expected_stride(format: &str, width: u32) -> Option<u32> {
@@ -251,18 +273,49 @@ fn expected_stride(format: &str, width: u32) -> Option<u32> {
     }
 }
 
+/// Expand a GREY frame to packed RGB, dropping the row padding an ISP node
+/// may add past `width` (`stride` is the delivered bytesperline).
+fn grey_to_rgb(buf: &[u8], width: usize, height: usize, stride: usize) -> Result<Vec<u8>> {
+    let needed = match height {
+        0 => Some(0),
+        h => stride.checked_mul(h - 1).and_then(|n| n.checked_add(width)),
+    };
+    let short = || {
+        FacelockError::Camera(format!(
+            "GREY frame too short: {} bytes for {width}x{height} (stride {stride})",
+            buf.len()
+        ))
+    };
+    if stride < width || needed.is_none_or(|n| buf.len() < n) {
+        return Err(short());
+    }
+    let mut rgb = Vec::with_capacity(width * height * 3);
+    for row in buf.chunks(stride.max(1)).take(height) {
+        let row = row.get(..width).ok_or_else(short)?;
+        for &p in row {
+            rgb.extend_from_slice(&[p, p, p]);
+        }
+    }
+    Ok(rgb)
+}
+
 use crate::ir_emitter;
 use crate::ir_emitter::EmitterXuInfo;
+use crate::ir_led::IrLed;
+use crate::mplane;
 use crate::preprocess;
 use crate::quirks::{Quirk, QuirksDb};
 use facelock_core::types::CameraCaps;
 
 /// A V4L2 camera for frame capture.
 pub struct Camera<'a> {
-    stream: Stream<'a>,
+    stream: FrameStream<'a>,
     width: u32,
     height: u32,
     format: String,
+    /// Bytes per row as delivered; larger than the packed row size on ISP
+    /// nodes that pad lines (GREY only).
+    stride: u32,
     rotation: u16,
     /// Device path, stored for IR emitter cleanup on drop.
     device_path: String,
@@ -270,6 +323,9 @@ pub struct Camera<'a> {
     ir_emitter_active: bool,
     /// Emitter XU info, stored for disable on drop when the quirk ref is gone.
     emitter_xu_info: Option<EmitterXuInfo>,
+    /// LED class illuminator lit while the camera is open (`device.ir_led`);
+    /// switched off on drop.
+    ir_led: Option<IrLed>,
     /// Capabilities computed at construction — see `crate::caps` (gap D8).
     caps: CameraCaps,
     /// Y16 -> 8-bit shift. A verified quirk pins it at open; an unverified Y16
@@ -330,9 +386,11 @@ impl<'a> Camera<'a> {
         let v4l_caps = dev.query_caps().map_err(|e| {
             FacelockError::Camera(format!("failed to query caps for {device_path}: {e}"))
         })?;
-        if !v4l_caps
-            .capabilities
-            .contains(v4l::capability::Flags::VIDEO_CAPTURE)
+        let mplane_only = mplane::is_mplane_only(&v4l_caps);
+        if !mplane_only
+            && !v4l_caps
+                .capabilities
+                .contains(v4l::capability::Flags::VIDEO_CAPTURE)
         {
             return Err(FacelockError::Camera(format!(
                 "{device_path}: not a video capture device",
@@ -343,13 +401,17 @@ impl<'a> Camera<'a> {
         // format_preference, prepend it to the priority list. A device that
         // advertises no decodable format (e.g. a raw Bayer sensor node) fails
         // here with an actionable error.
-        let formats = dev
-            .enum_formats()
-            .map_err(|e| FacelockError::Camera(format!("failed to enum formats: {e}")))?;
+        let formats: Vec<v4l::FourCC> = if mplane_only {
+            mplane::enum_formats(&dev).map(|list| list.into_iter().map(|f| f.fourcc).collect())
+        } else {
+            dev.enum_formats()
+                .map(|list| list.into_iter().map(|f| f.fourcc).collect())
+        }
+        .map_err(|e| FacelockError::Camera(format!("failed to enum formats: {e}")))?;
 
-        let available: Vec<String> = formats.iter().map(|f| normalize_fourcc(f.fourcc)).collect();
+        let available: Vec<String> = formats.iter().map(|&f| normalize_fourcc(f)).collect();
         let selected_fourcc = select_format_for_quirk(quirk, &available)
-            .map(|idx| formats[idx].fourcc)
+            .map(|idx| formats[idx])
             .ok_or_else(|| {
                 FacelockError::Camera(format!(
                     "{device_path}: no decodable pixel format — device advertises [{}] but \
@@ -365,15 +427,50 @@ impl<'a> Camera<'a> {
         let max_h = config.max_height.min(480);
         let max_w = 640u32;
 
-        let mut fmt = dev
-            .format()
-            .map_err(|e| FacelockError::Camera(format!("failed to get format: {e}")))?;
-        fmt.fourcc = selected_fourcc;
-        fmt.width = max_w;
-        fmt.height = max_h;
-        let fmt = dev
-            .set_format(&fmt)
-            .map_err(|e| FacelockError::Camera(format!("failed to set format: {e}")))?;
+        let fmt = if config.keep_format {
+            // The pipeline is configured externally; use it as it stands.
+            // Only this branch reads the current format: a multi-plane format
+            // left behind by another app must not stop negotiation below.
+            let current = if mplane_only {
+                mplane::get_format(&dev)
+            } else {
+                dev.format().map(|f| mplane::Format {
+                    width: f.width,
+                    height: f.height,
+                    fourcc: f.fourcc,
+                    stride: f.stride,
+                })
+            };
+            let fmt =
+                current.map_err(|e| FacelockError::Camera(format!("failed to get format: {e}")))?;
+            if !DECODABLE_FORMATS.contains(&normalize_fourcc(fmt.fourcc).as_str()) {
+                return Err(FacelockError::Camera(format!(
+                    "{device_path}: keep_format is set but the current format {} is not \
+                     decodable",
+                    normalize_fourcc(fmt.fourcc)
+                )));
+            }
+            fmt
+        } else if mplane_only {
+            mplane::set_format(&dev, selected_fourcc, max_w, max_h)
+                .map_err(|e| FacelockError::Camera(format!("failed to set format: {e}")))?
+        } else {
+            let mut want = dev
+                .format()
+                .map_err(|e| FacelockError::Camera(format!("failed to get format: {e}")))?;
+            want.fourcc = selected_fourcc;
+            want.width = max_w;
+            want.height = max_h;
+            let set = dev
+                .set_format(&want)
+                .map_err(|e| FacelockError::Camera(format!("failed to set format: {e}")))?;
+            mplane::Format {
+                width: set.width,
+                height: set.height,
+                fourcc: set.fourcc,
+                stride: set.stride,
+            }
+        };
 
         let width = fmt.width;
         let height = fmt.height;
@@ -395,6 +492,8 @@ impl<'a> Camera<'a> {
         // bytesperline, which would shear every decoded frame silently.
         if let Some(expected) = expected_stride(&format_str, width)
             && fmt.stride != expected
+            // Padded GREY rows are repacked in capture_rgb.
+            && !(format_str == "GREY" && fmt.stride > expected)
         {
             return Err(FacelockError::Camera(format!(
                 "{device_path}: {format_str} bytesperline is {} but facelock expects {expected} \
@@ -404,9 +503,17 @@ impl<'a> Camera<'a> {
         }
 
         // Create MMAP stream with `MMAP_BUFFERS` buffers and a capture timeout
-        let mut stream = Stream::with_buffers(&dev, Type::VideoCapture, MMAP_BUFFERS)
-            .map_err(|e| FacelockError::Camera(format!("failed to create stream: {e}")))?;
-        stream.set_timeout(CAPTURE_TIMEOUT);
+        let stream = if mplane_only {
+            FrameStream::Multi(
+                mplane::Stream::with_buffers(&dev, MMAP_BUFFERS, CAPTURE_TIMEOUT)
+                    .map_err(|e| FacelockError::Camera(format!("failed to create stream: {e}")))?,
+            )
+        } else {
+            let mut stream = Stream::with_buffers(&dev, Type::VideoCapture, MMAP_BUFFERS)
+                .map_err(|e| FacelockError::Camera(format!("failed to create stream: {e}")))?;
+            stream.set_timeout(CAPTURE_TIMEOUT);
+            FrameStream::Single(stream)
+        };
 
         // Extract emitter XU info from quirk (if available) for use during
         // enable and later in Drop.
@@ -431,6 +538,20 @@ impl<'a> Camera<'a> {
         } else {
             false
         };
+
+        let ir_led = config
+            .ir_led
+            .as_deref()
+            .and_then(|spec| match IrLed::on(spec) {
+                Ok(led) => {
+                    tracing::info!("IR LED {} lit for {device_path}", led.path().display());
+                    Some(led)
+                }
+                Err(e) => {
+                    tracing::warn!("failed to light IR LED for {device_path}: {e}");
+                    None
+                }
+            });
 
         // Pin verified Y16 scale at open. An unverified stream stays
         // uncalibrated until a non-auth caller asks for a frame: auth can then
@@ -467,10 +588,12 @@ impl<'a> Camera<'a> {
             width,
             height,
             format: format_str,
+            stride: fmt.stride,
             rotation,
             device_path,
             ir_emitter_active,
             emitter_xu_info,
+            ir_led,
             caps,
             y16_shift,
             y16_calibration_frames,
@@ -533,22 +656,18 @@ impl<'a> Camera<'a> {
         // stream.next() uses the v4l built-in poll with CAPTURE_TIMEOUT.
         // If the camera stops producing frames, this returns TimedOut error
         // instead of blocking forever.
-        let (buf, _meta) = self
+        let buf = self
             .stream
             .next()
             .map_err(|e| FacelockError::Camera(format!("capture failed: {e}")))?;
 
         let rgb: Vec<u8> = match self.format.as_str() {
-            "GREY" => {
-                // Replicate single channel 3x
-                let mut rgb = Vec::with_capacity(buf.len() * 3);
-                for &p in buf {
-                    rgb.push(p);
-                    rgb.push(p);
-                    rgb.push(p);
-                }
-                rgb
-            }
+            "GREY" => grey_to_rgb(
+                buf,
+                self.width as usize,
+                self.height as usize,
+                self.stride as usize,
+            )?,
             "Y16" => {
                 // 16-bit grayscale -> 8-bit at the session-fixed scale, replicated 3x
                 let shift = self.y16_shift.ok_or_else(|| {
@@ -656,6 +775,8 @@ pub fn is_dark_with_config(frame: &Frame, threshold: f32, dark_value: u8) -> boo
 
 impl Drop for Camera<'_> {
     fn drop(&mut self) {
+        // Out first, ahead of the stream and the other fields.
+        drop(self.ir_led.take());
         if self.ir_emitter_active
             && let Some(ref xu_info) = self.emitter_xu_info
         {
@@ -721,6 +842,27 @@ mod tests {
         // Changing this order changes the documented negotiation contract —
         // update docs/contracts.md with it.
         assert_eq!(DECODABLE_FORMATS, &["GREY", "Y16", "YUYV", "NV12", "MJPG"]);
+    }
+
+    #[test]
+    fn grey_to_rgb_replicates_a_packed_frame() {
+        let rgb = grey_to_rgb(&[1, 2, 3, 4], 2, 2, 2).unwrap();
+        assert_eq!(rgb, [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]);
+    }
+
+    #[test]
+    fn grey_to_rgb_drops_row_padding() {
+        // 2x2 frame delivered with a 4-byte stride (Qualcomm CAMSS pads rows);
+        // the last row may stop at the image width.
+        let buf = [1, 2, 0xee, 0xee, 3, 4];
+        let rgb = grey_to_rgb(&buf, 2, 2, 4).unwrap();
+        assert_eq!(rgb, [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]);
+    }
+
+    #[test]
+    fn grey_to_rgb_rejects_a_short_frame() {
+        assert!(grey_to_rgb(&[1, 2, 0, 0, 3], 2, 2, 4).is_err());
+        assert!(grey_to_rgb(&[1, 2, 3, 4], 4, 1, 2).is_err());
     }
 
     #[test]
@@ -944,8 +1086,10 @@ mod tests {
             dark_threshold: 0.6,
             dark_pixel_value: 10,
             ir_emitter: false,
+            ir_led: None,
             camera_release_secs: 5,
             camera_release_after_success_secs: 0,
+            keep_format: false,
         };
         let mut cam = Camera::open(&config, &QuirksDb::load()).expect("failed to open camera");
         let frame = cam.capture().expect("failed to capture frame");
