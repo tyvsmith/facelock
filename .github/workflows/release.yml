@@ -125,7 +125,7 @@ jobs:
           cp target/release/facelock-polkit-agent release/facelock-polkit-agent-x86_64-linux-gnu
 
       - name: Upload binary artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-binaries
           path: release/
@@ -135,7 +135,7 @@ jobs:
         run: .github/workflows/scripts/attest-digests.sh build digests --image "$BUILD_IMAGE" release/*
 
       - name: Upload binary digest attestation
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-digests-build
           path: digests/
@@ -167,13 +167,13 @@ jobs:
             --component-archive onnxruntime=onnxruntime-bundle.tar.xz
 
       - name: Upload ORT digest attestation
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-digests-onnxruntime
           path: digests/
 
       - name: Upload ORT artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           path: onnxruntime-bundle.tar.xz
           archive: false
@@ -208,13 +208,13 @@ jobs:
             --component-archive cargo-vendor=cargo-vendor-bundle.tar.xz
 
       - name: Upload Cargo vendor digest attestation
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-digests-cargo-vendor
           path: digests/
 
       - name: Upload Cargo vendor artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           path: cargo-vendor-bundle.tar.xz
           archive: false
@@ -317,7 +317,7 @@ jobs:
           dpkg-checkbuilddeps
 
       - name: Download ORT bundle
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: onnxruntime-bundle.tar.xz
           path: .
@@ -330,7 +330,7 @@ jobs:
         run: scripts/prepare-ort-bundle.sh verify onnxruntime
 
       - name: Download Cargo vendor bundle
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: cargo-vendor-bundle.tar.xz
           path: .
@@ -387,7 +387,7 @@ jobs:
           done < "$manifest"
 
       - name: Upload exact Debian artifact set
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-deb-${{ matrix.suite }}
           path: debian-upload/
@@ -400,7 +400,7 @@ jobs:
             debian-upload/*.deb
 
       - name: Upload Debian digest attestation
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-digests-deb-${{ matrix.suite }}
           path: digests/
@@ -436,7 +436,7 @@ jobs:
             tpm2-tss-devel just
 
       - name: Download ORT bundle
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: onnxruntime-bundle.tar.xz
           path: .
@@ -504,13 +504,13 @@ jobs:
             --image "$BUILD_IMAGE" rpm-upload/*.rpm
 
       - name: Upload RPM digest attestation
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-digests-rpm
           path: digests/
 
       - name: Upload the validated RPM set
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-rpm
           path: rpm-upload/
@@ -584,13 +584,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y reprepro gnupg
 
       - name: Download trixie .deb artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-deb-trixie
           path: debs/trixie
 
       - name: Download resolute .deb artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-deb-resolute
           path: debs/resolute
@@ -635,13 +635,13 @@ jobs:
         run: .github/workflows/scripts/attest-digests.sh publish-apt digests apt-repo.tar.gz
 
       - name: Upload APT digest attestation
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-digests-apt
           path: digests/
 
       - name: Upload the APT repository artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-apt-repo
           path: apt-repo.tar.gz
@@ -682,7 +682,7 @@ jobs:
           echo "commit=$(git rev-parse "${GITHUB_SHA}^{commit}")" >> "$GITHUB_OUTPUT"
 
       - name: Download every builder artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           # The release payloads and their digest attestations; not the ORT or
           # Cargo-vendor source components, which no release asset carries.
