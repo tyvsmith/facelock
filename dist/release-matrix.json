@@ -11,7 +11,7 @@
       "platform": "Debian 13",
       "architecture": "amd64",
       "revision_suffix": "~deb13u1",
-      "image": "docker.io/library/debian:13@sha256:34cd9e9fd437c0a095ec39cb2e73422c9f30821b0d0848ed74fd0d43bae4d958",
+      "image": "docker.io/library/debian:13@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5",
       "image_amd64_digest": "sha256:d8f17b92dc7ff10f9c1fdecab0ad21103d1d24aed823c3a0359e4f50adfab3eb"
     },
     "resolute": {
@@ -188,7 +188,7 @@
       "release_target": true,
       "optional": false,
       "lifecycle_depth": "full",
-      "image": "docker.io/library/debian:13@sha256:34cd9e9fd437c0a095ec39cb2e73422c9f30821b0d0848ed74fd0d43bae4d958",
+      "image": "docker.io/library/debian:13@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5",
       "image_amd64_digest": "sha256:d8f17b92dc7ff10f9c1fdecab0ad21103d1d24aed823c3a0359e4f50adfab3eb"
     },
     {
