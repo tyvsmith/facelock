@@ -955,14 +955,19 @@ impl RuntimeProvider {
 /// 2. A configured GPU provider's trusted system location
 /// 3. Package-manager-owned stable-SONAME paths
 /// 4. Facelock's package-owned CPU bundle
-fn load_ort(provider: RuntimeProvider) -> std::result::Result<(), String> {
+fn load_ort(
+    provider: RuntimeProvider,
+) -> std::result::Result<ort::environment::Environment, String> {
     use std::sync::OnceLock;
 
-    static INIT: OnceLock<std::result::Result<(), String>> = OnceLock::new();
+    static INIT: OnceLock<std::result::Result<ort::environment::Environment, String>> =
+        OnceLock::new();
     INIT.get_or_init(|| initialize_ort(provider)).clone()
 }
 
-fn initialize_ort(provider: RuntimeProvider) -> std::result::Result<(), String> {
+fn initialize_ort(
+    provider: RuntimeProvider,
+) -> std::result::Result<ort::environment::Environment, String> {
     let privilege = PrivilegeContext::current();
     let override_path = if privilege == PrivilegeContext::Unprivileged {
         std::env::var_os("ORT_DYLIB_PATH")
@@ -1015,15 +1020,17 @@ fn initialize_ort(provider: RuntimeProvider) -> std::result::Result<(), String> 
             }
         };
         let mapping_path = opened.mapping_path();
-        match ort::init_from(&mapping_path) {
-            Ok(builder) => {
-                builder.commit();
+        let environment = ort::init_from(&mapping_path)
+            .map_err(|error| error.to_string())
+            .and_then(|builder| builder.build().map_err(|error| error.to_string()));
+        match environment {
+            Ok(environment) => {
                 tracing::info!(
                     "Loaded {:?} ONNX Runtime from {}",
                     candidate.source,
                     opened.display_path.display()
                 );
-                return Ok(());
+                return Ok(environment);
             }
             Err(error) => {
                 tracing::warn!(
@@ -1049,8 +1056,11 @@ fn initialize_ort(provider: RuntimeProvider) -> std::result::Result<(), String> 
 /// Ensure the ONNX Runtime shared library is loaded before any session builders
 /// are created. Some ORT builds can deadlock if session construction re-enters
 /// runtime initialization.
-pub(crate) fn ensure_runtime_loaded(provider: &str) -> std::result::Result<(), String> {
-    with_valid_provider(provider, |kind| load_ort(RuntimeProvider::Configured(kind))).map(|_| ())
+pub(crate) fn ensure_runtime_loaded(
+    provider: &str,
+) -> std::result::Result<ort::environment::Environment, String> {
+    with_valid_provider(provider, |kind| load_ort(RuntimeProvider::Configured(kind)))
+        .map(|(_, environment)| environment)
 }
 
 /// An execution provider facelock knows how to register.
@@ -1126,9 +1136,9 @@ impl ProviderKind {
         // than let it escape into the setup wizard.
         std::panic::catch_unwind(|| match self {
             ProviderKind::Cpu => Ok(true),
-            ProviderKind::Cuda => ort::ep::CUDA::default().is_available(),
-            ProviderKind::Rocm => ort::ep::ROCm::default().is_available(),
-            ProviderKind::OpenVino => ort::ep::OpenVINO::default().is_available(),
+            ProviderKind::Cuda => ort::ep::CUDA::is_available(),
+            ProviderKind::Rocm => ort::ep::ROCm::is_available(),
+            ProviderKind::OpenVino => ort::ep::OpenVINO::is_available(),
         })
         .unwrap_or_else(|_| {
             tracing::warn!(
@@ -1240,7 +1250,7 @@ pub(crate) fn register_execution_provider(
     builder: SessionBuilder,
     provider: &str,
 ) -> std::result::Result<SessionBuilder, String> {
-    let (kind, ()) =
+    let (kind, _environment) =
         with_valid_provider(provider, |kind| load_ort(RuntimeProvider::Configured(kind)))?;
 
     tracing::info!("Using execution provider: {provider}");
@@ -2096,8 +2106,8 @@ mod tests {
             .collect::<String>();
         assert_eq!(digest, MODEL_SHA256);
 
-        ensure_runtime_loaded("cpu").expect("load the packaged ONNX Runtime");
-        let mut builder = ort::session::Session::builder()
+        let environment = ensure_runtime_loaded("cpu").expect("load the packaged ONNX Runtime");
+        let mut builder = ort::session::Session::builder(&environment)
             .expect("create ORT session builder")
             .with_optimization_level(ort::session::builder::GraphOptimizationLevel::All)
             .expect("use an optimization level supported by ORT 1.20");
