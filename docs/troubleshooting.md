@@ -173,6 +173,28 @@ recorded and its contents are reviewed.
 
 The ONNX runtime requires access to `/dev/null`, `/dev/urandom`, and `/proc/sys`. If you have customized the systemd unit with `DevicePolicy=closed`, `ProtectKernelTunables=yes`, or `ProtectProc=invisible`, the daemon may crash before `main()` with no stderr output. Use the default unit file or add restrictions incrementally, testing each one.
 
+### Enrollment refused: "no encryption key could be created at /etc/facelock/encryption.key"
+
+**Symptom**: `facelock enroll` fails, and the daemon's journal shows:
+
+```text
+no encryption key could be created at /etc/facelock/encryption.key: ... /etc/facelock is not writable by this process (Read-only file system); the packaged daemon unit runs with ProtectSystem=strict, which keeps /etc read-only to the daemon by design. Create the key with `sudo facelock setup`, then retry; the daemon picks it up on the next enrollment attempt.
+```
+
+**Cause**: `encryption.method` is `keyfile` (the default) and no key exists at
+`encryption.key_path`. The packaged unit keeps `/etc` read-only to the daemon, so
+it cannot create the key itself.
+
+**Fix**: create the key outside the daemon, then enroll again. No restart is needed.
+
+```bash
+sudo facelock setup --non-interactive
+sudo facelock enroll
+```
+
+Do not add `ReadWritePaths=/etc/facelock` to the unit: that lets the hardened
+daemon rewrite its own key and policy, which the unit is built to prevent.
+
 ## Model download failures
 
 **Symptom**: `facelock setup` fails to download models.

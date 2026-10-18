@@ -452,7 +452,16 @@ a usable TPM seals an existing keyfile rather than minting beside it, and with
 no usable TPM an existing sealed key is left in place while a keyfile is
 minted (#358). Both mints consult the shared key gate below; the sealing one
 asks its predicate only, so the TPM path never leaves a plaintext keyfile
-behind.
+behind. A config whose `encryption.method` is already `keyfile` or `tpm` is
+"already configured" to the automatic policy only while that method's key
+artifact exists. A `keyfile` method with no `key_path` gets its keyfile unsealed
+from an existing sealed key when the TPM is usable, else minted through the
+same gate, and a `tpm` method with no `sealed_key_path` and a usable
+TPM gets its key sealed as above; the method itself is not changed. The shipped
+config leaves `method` at its `keyfile` default, so this is what creates the
+key on a fresh install: the packaged daemon unit cannot write `/etc/facelock`
+(`ProtectSystem=strict`), and a daemon that finds no key refuses enrollment with
+a remedy naming `sudo facelock setup` instead of creating one.
 
 ### facelock pam Semantics
 

@@ -7079,14 +7079,14 @@
           "path": "docs/contracts.md",
           "anchor": "facelock-pam-semantics",
           "ordinal": 13,
-          "line": 1278,
+          "line": 1287,
           "sha256": "63c460d2967465f764a77bec938f1ab6183bba3b9758048020ee3de0d5dc3e82"
         },
         {
           "path": "docs/contracts.md",
           "anchor": "facelock-pam-semantics",
           "ordinal": 14,
-          "line": 1280,
+          "line": 1289,
           "sha256": "9d893de87b927d4a16bf54f82add2a2e2b2a9c56d12e4d04d2a27cbed5ef49c7"
         }
       ],
@@ -10737,7 +10737,7 @@
           "path": "docs/security.md",
           "anchor": "b-systemd-hardening-implemented",
           "ordinal": 3,
-          "line": 1554,
+          "line": 1558,
           "sha256": "8798eab946c173be56a1f11cc506ac362d12ba935d90fa159ae04196d6e6c692"
         }
       ],
@@ -12537,6 +12537,82 @@
       ]
     },
     {
+      "id": "manual-section-a9def5a0e2a3",
+      "target": "section-specific-guest",
+      "channel": "github-alpha",
+      "adapter": "manual",
+      "generated_section": true,
+      "source_role": "ordered-occurrence",
+      "review_status": "candidate",
+      "review_reason": "mechanically grouped commands; a human must review section fixtures, exit expectations and applicability before execution",
+      "title": "docs/troubleshooting.md#enrollment-refused-no-encryption-key-could-be-created-at-etcfacelockencryptionkey",
+      "minimum_level": "physical-hardware",
+      "requirements": [
+        "human-command-review",
+        "section-prerequisites",
+        "fixture-bindings",
+        "observed-postconditions",
+        "ir-camera",
+        "models",
+        "human-pam-recovery"
+      ],
+      "prerequisites": [
+        "restore a pristine disposable guest for this section",
+        "read the enclosing section and earlier prerequisite headings",
+        "bind every user, path, service, device, package and secret placeholder to guest-local fixtures",
+        "record intentionally failing commands with their documented expected outcome"
+      ],
+      "fixtures": {
+        "binding_policy": "explicit reviewer-supplied guest-local bindings; no host paths or credentials"
+      },
+      "restore": "restore the recorded pristine snapshot; retain sanitized evidence outside the guest",
+      "timeout_seconds": 1800,
+      "sources": [
+        {
+          "path": "docs/troubleshooting.md",
+          "anchor": "enrollment-refused-no-encryption-key-could-be-created-at-etcfacelockencryptionkey",
+          "ordinal": 2,
+          "line": 191,
+          "sha256": "73ead935920a6de275d08304b8e946cc944ddee131c8eb176b7709e30e600d60"
+        },
+        {
+          "path": "docs/troubleshooting.md",
+          "anchor": "enrollment-refused-no-encryption-key-could-be-created-at-etcfacelockencryptionkey",
+          "ordinal": 3,
+          "line": 192,
+          "sha256": "32fc64c36926f0b1e04ad7ea2edbc5c24001032a5bcf4f3eaec60cce15bd67da"
+        }
+      ],
+      "steps": [
+        {
+          "id": "example-1",
+          "adapter": "manual",
+          "raw": "sudo facelock setup --non-interactive",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        },
+        {
+          "id": "example-2",
+          "adapter": "manual",
+          "raw": "sudo facelock enroll",
+          "classification": "executable",
+          "expect_exit": 0,
+          "expect_output": "",
+          "expect_state": [
+            "documented-effect-observed"
+          ],
+          "timeout_seconds": 1800,
+          "expectation_review": "confirm the documented outcome and record any expected nonzero exit before execution"
+        }
+      ]
+    },
+    {
       "id": "manual-section-508e77fc9679",
       "target": "section-specific-guest",
       "channel": "github-alpha",
@@ -12570,21 +12646,21 @@
           "path": "docs/troubleshooting.md",
           "anchor": "model-download-failures",
           "ordinal": 3,
-          "line": 191,
+          "line": 213,
           "sha256": "4976da7d89b44443b48b3721bd9f2663947fa7be4d4d8e4063ecbed59ffa13ef"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "model-download-failures",
           "ordinal": 4,
-          "line": 192,
+          "line": 214,
           "sha256": "579f59b46178d7cf251a18b56c8285eadc138497c0ea26d784df2f8213d40b5e"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "model-download-failures",
           "ordinal": 5,
-          "line": 193,
+          "line": 215,
           "sha256": "e22bdff04ee7ccf1fe1fb0b3d772bfc9c9242a65fa2dd4ead5ab2370be5de578"
         }
       ],
@@ -12664,7 +12740,7 @@
           "path": "docs/troubleshooting.md",
           "anchor": "permission-denied--accessdenied-when-running-facelock-commands",
           "ordinal": 10,
-          "line": 223,
+          "line": 245,
           "sha256": "fa349dc03a0c4fd2873ef560d09daf944b4f62232ef2f4f5bdc7be4f0483f893"
         }
       ],
@@ -12718,28 +12794,28 @@
           "path": "docs/troubleshooting.md",
           "anchor": "database-permission-errors",
           "ordinal": 1,
-          "line": 232,
+          "line": 254,
           "sha256": "f8d56a3b21950a0dc5c74ad4ec9fea469422f2d47fc15261bad0a6a9451782d3"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "database-permission-errors",
           "ordinal": 2,
-          "line": 233,
+          "line": 255,
           "sha256": "0e020c759951d67065247aef898de3a9784274b5255200758ee3709549db96b3"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "database-permission-errors",
           "ordinal": 3,
-          "line": 237,
+          "line": 259,
           "sha256": "1e221e69b06a9b5651ffbdc7b5860688bc63bef8c6e352c9601d4344a4cb129f"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "database-permission-errors",
           "ordinal": 4,
-          "line": 238,
+          "line": 260,
           "sha256": "757464bd0e163415662f8f5434fa21277c2caaf0cc53ffa54a86ef26dc504d70"
         }
       ],
@@ -12832,14 +12908,14 @@
           "path": "docs/troubleshooting.md",
           "anchor": "pam-module-cannot-reach-daemon",
           "ordinal": 1,
-          "line": 245,
+          "line": 267,
           "sha256": "bcb6e50ed9e9c90b78938d5b99dfe287442ee0f97a61c24a5cf7e95eebab89e6"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "pam-module-cannot-reach-daemon",
           "ordinal": 2,
-          "line": 246,
+          "line": 268,
           "sha256": "dfbe8b9f008880dcc181e25094d804c07a7c4f6218377764dbfda67ee2b5f58f"
         }
       ],
@@ -12906,14 +12982,14 @@
           "path": "docs/troubleshooting.md",
           "anchor": "turning-up-the-log-level",
           "ordinal": 1,
-          "line": 255,
+          "line": 277,
           "sha256": "b71e3793c76c15f20acfcf32c73851f60e7859007bb736c45ef44512afe49f3c"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "turning-up-the-log-level",
           "ordinal": 2,
-          "line": 256,
+          "line": 278,
           "sha256": "487f16174412556ab1080aea37045dc303ee6fe34b356029315dfd4c9e000d41"
         }
       ],
@@ -12982,21 +13058,21 @@
           "path": "docs/troubleshooting.md",
           "anchor": "debugging-with-rust_log",
           "ordinal": 1,
-          "line": 270,
+          "line": 292,
           "sha256": "5ba0f58f70a59b6813c04793a96cf1b12528739f9fbff2f171cee8b9c8743039"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "debugging-with-rust_log",
           "ordinal": 2,
-          "line": 273,
+          "line": 295,
           "sha256": "01dd0a825d0876d8fe17a64f6cd934f852338f8ee393c1a85646ba116ffcaacd"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "debugging-with-rust_log",
           "ordinal": 3,
-          "line": 276,
+          "line": 298,
           "sha256": "2cd082fdd2040892ab478b7d8c521a80fbd6d4f67847c95da1c07785fd701a06"
         }
       ],
@@ -13078,14 +13154,14 @@
           "path": "docs/troubleshooting.md",
           "anchor": "sudo-strips-environment-variables",
           "ordinal": 1,
-          "line": 284,
+          "line": 306,
           "sha256": "5ba0f58f70a59b6813c04793a96cf1b12528739f9fbff2f171cee8b9c8743039"
         },
         {
           "path": "docs/troubleshooting.md",
           "anchor": "sudo-strips-environment-variables",
           "ordinal": 2,
-          "line": 285,
+          "line": 307,
           "sha256": "7c0e5f57f877b0b286e1f3542493ffb3f81ea4cc71b6d1b4bf387f5d6d659cfc"
         }
       ],
