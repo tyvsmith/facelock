@@ -177,10 +177,145 @@ fn status(config: &Config) -> Result<()> {
     println!("    plaintext: {unsealed_count}");
     println!("    total:     {}", sealed_count + unsealed_count);
 
+    // #359: which key each encrypted model depends on, and whether this host
+    // can load it. The keyring's own non-minting loader decides loadability,
+    // so this reports what the daemon and one-shot path would see.
+    let by_key = store
+        .count_sealed_models_by_key_id()
+        .context("failed to count encrypted models by key id")?;
+    let keys = facelock_daemon::keyring::SealingKeys::load_existing(config);
+    let primary = keys.primary_key_id();
+    let secondary: Vec<&str> = keys.secondary_key_ids().collect();
+    let groups = group_by_key(&by_key, primary.as_deref(), &secondary);
+
+    println!();
+    println!("  Encrypted models by sealing key:");
+    if let Some(reason) = keys.primary_error() {
+        println!("    primary key not loaded: {reason}");
+    }
+    if groups.is_empty() {
+        println!("    (no keys loaded, no encrypted models)");
+    }
+    for group in &groups {
+        println!(
+            "    {:<16}  {:<12}  {} model(s)",
+            group.key_id.unwrap_or("legacy"),
+            group.state.label(),
+            group.models
+        );
+    }
+    println!(
+        "    under a key this host cannot load: {}",
+        unloadable_models(&groups)
+    );
+
     #[cfg(not(feature = "tpm"))]
     println!("\n  Note: compiled without TPM support (feature 'tpm' not enabled)");
 
     Ok(())
+}
+
+/// How `tpm status` classes a key id against the keys this host loaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyState {
+    /// The configured method's key: seals new enrollments.
+    Primary,
+    /// Another artifact's key, loaded only to open rows it sealed.
+    Secondary,
+    /// Rows name this key and no loaded key matches it: loading those
+    /// models fails.
+    NotLoadable,
+    /// Pre-V7 encrypted rows that record no key id; the daemon tries every
+    /// loaded key against them.
+    Legacy,
+}
+
+impl KeyState {
+    fn label(self) -> &'static str {
+        match self {
+            KeyState::Primary => "primary",
+            KeyState::Secondary => "secondary",
+            KeyState::NotLoadable => "not loadable",
+            KeyState::Legacy => "no key id",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct KeyGroup<'a> {
+    /// `None` for the legacy group.
+    key_id: Option<&'a str>,
+    state: KeyState,
+    models: u32,
+}
+
+/// Group encrypted model counts by key: the primary first and each loaded
+/// secondary after it (listed even with no models, so an operator sees what
+/// loaded), then every key rows name but nothing loaded, then the legacy
+/// NULL group when it has models.
+fn group_by_key<'a>(
+    by_key: &'a [(Option<String>, u32)],
+    primary: Option<&'a str>,
+    secondary: &[&'a str],
+) -> Vec<KeyGroup<'a>> {
+    let count_for = |id: &str| {
+        by_key
+            .iter()
+            .find(|(key, _)| key.as_deref() == Some(id))
+            .map_or(0, |(_, n)| *n)
+    };
+    let loaded = |id: &str| primary == Some(id) || secondary.contains(&id);
+
+    let mut groups = Vec::new();
+    if let Some(id) = primary {
+        groups.push(KeyGroup {
+            key_id: Some(id),
+            state: KeyState::Primary,
+            models: count_for(id),
+        });
+    }
+    for &id in secondary {
+        if primary == Some(id) {
+            continue;
+        }
+        groups.push(KeyGroup {
+            key_id: Some(id),
+            state: KeyState::Secondary,
+            models: count_for(id),
+        });
+    }
+    for (key, models) in by_key {
+        if let Some(id) = key.as_deref()
+            && !loaded(id)
+        {
+            groups.push(KeyGroup {
+                key_id: Some(id),
+                state: KeyState::NotLoadable,
+                models: *models,
+            });
+        }
+    }
+    if let Some((_, models)) = by_key.iter().find(|(key, _)| key.is_none())
+        && *models > 0
+    {
+        groups.push(KeyGroup {
+            key_id: None,
+            state: KeyState::Legacy,
+            models: *models,
+        });
+    }
+    groups
+}
+
+/// Models sealed under a key this host cannot load — the state that fails a
+/// user's load. Legacy rows are not counted: they name no key, so only a
+/// trial decrypt could tell.
+fn unloadable_models(groups: &[KeyGroup<'_>]) -> u32 {
+    groups
+        .iter()
+        .filter(|g| g.state == KeyState::NotLoadable)
+        .map(|g| g.models)
+        .sum()
 }
 
 /// Seal the plaintext keyfile at `config.encryption.key_path` to
@@ -506,6 +641,98 @@ fn pcr_baseline(config: &Config) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    const PRIMARY: &str = "aaaaaaaaaaaaaaaa";
+    const SECONDARY: &str = "bbbbbbbbbbbbbbbb";
+    const GONE: &str = "cccccccccccccccc";
+
+    /// #359: rows group by key id, the primary and secondary are marked, a
+    /// key nothing loaded is flagged with its model count, and pre-V7 rows
+    /// group as legacy without counting as unloadable.
+    #[test]
+    fn group_by_key_marks_roles_and_flags_unloadable_keys() {
+        let by_key = vec![
+            (None, 1),
+            (Some(PRIMARY.to_string()), 2),
+            (Some(GONE.to_string()), 3),
+        ];
+        let groups = group_by_key(&by_key, Some(PRIMARY), &[SECONDARY]);
+        assert_eq!(
+            groups,
+            vec![
+                KeyGroup {
+                    key_id: Some(PRIMARY),
+                    state: KeyState::Primary,
+                    models: 2
+                },
+                KeyGroup {
+                    key_id: Some(SECONDARY),
+                    state: KeyState::Secondary,
+                    models: 0
+                },
+                KeyGroup {
+                    key_id: Some(GONE),
+                    state: KeyState::NotLoadable,
+                    models: 3
+                },
+                KeyGroup {
+                    key_id: None,
+                    state: KeyState::Legacy,
+                    models: 1
+                },
+            ]
+        );
+        assert_eq!(unloadable_models(&groups), 3);
+    }
+
+    /// An unloadable primary (missing keyfile, failed unseal) leaves every
+    /// row under it flagged.
+    #[test]
+    fn group_by_key_flags_every_key_when_nothing_loaded() {
+        let by_key = vec![(Some(PRIMARY.to_string()), 2)];
+        let groups = group_by_key(&by_key, None, &[]);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].state, KeyState::NotLoadable);
+        assert_eq!(unloadable_models(&groups), 2);
+    }
+
+    /// The grouping runs off the store's own query: seed rows under two
+    /// keys and a legacy row, load only one key, and the other is flagged.
+    #[test]
+    fn group_by_key_over_store_fixtures() {
+        let store = facelock_store::FaceStore::open_memory().unwrap();
+        let emb = facelock_test_support::fixtures::known_embedding(0);
+        store.add_model("alice", "plain", &emb, "").unwrap();
+        let m1 = store
+            .add_model_raw("alice", "front", &[0x02; 50], true, "")
+            .unwrap();
+        let m2 = store
+            .add_model_raw("bob", "front", &[0x02; 50], true, "")
+            .unwrap();
+        store
+            .add_model_raw("carol", "old", &[0x02; 50], true, "")
+            .unwrap();
+        store.set_model_key_id(m1, Some(PRIMARY)).unwrap();
+        store.set_model_key_id(m2, Some(GONE)).unwrap();
+
+        let by_key = store.count_sealed_models_by_key_id().unwrap();
+        let groups = group_by_key(&by_key, Some(PRIMARY), &[]);
+        let states: Vec<_> = groups
+            .iter()
+            .map(|g| (g.key_id, g.state, g.models))
+            .collect();
+        assert_eq!(
+            states,
+            vec![
+                (Some(PRIMARY), KeyState::Primary, 1),
+                (Some(GONE), KeyState::NotLoadable, 1),
+                (None, KeyState::Legacy, 1),
+            ]
+        );
+        assert_eq!(unloadable_models(&groups), 1);
+    }
+
     #[test]
     fn extract_device_path_from_tcti() {
         let tcti = "device:/dev/tpmrm0";

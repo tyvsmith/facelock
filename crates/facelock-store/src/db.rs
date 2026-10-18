@@ -438,7 +438,7 @@ impl FaceStore {
     pub fn list_models(&self, user: &str) -> Result<Vec<FaceModelInfo>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, user, label, created_at, embedder_model, device_id FROM face_models WHERE user = ?1")
+            .prepare("SELECT id, user, label, created_at, embedder_model, device_id, key_id FROM face_models WHERE user = ?1")
             .map_err(|e| self.err(e))?;
 
         let rows = stmt
@@ -452,6 +452,8 @@ impl FaceStore {
                     embedder_model: row.get(4)?,
                     // Nullable column (V6): NULL → None for legacy rows.
                     device_id: row.get::<_, Option<String>>(5)?,
+                    // Nullable column (V7): NULL for pre-V7 or plaintext rows.
+                    key_id: row.get::<_, Option<String>>(6)?,
                 })
             })
             .map_err(|e| self.err(e))?;
@@ -731,6 +733,37 @@ impl FaceStore {
             });
         }
         Ok(())
+    }
+
+    /// Encrypted models across all users, grouped by the `key_id` that sealed
+    /// them (#359). Returns one `(key_id, model_count)` per distinct key, the
+    /// NULL group (pre-V7 encrypted rows) first, then by key id.
+    ///
+    /// A model counts as encrypted when any of its embeddings carries the
+    /// `sealed` flag; plaintext models are not reported. Reads only the
+    /// metadata columns — no template leaves SQLite.
+    pub fn count_sealed_models_by_key_id(&self) -> Result<Vec<(Option<String>, u32)>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT fm.key_id, COUNT(DISTINCT fm.id)
+                 FROM face_models fm
+                 JOIN face_embeddings fe ON fe.model_id = fm.id
+                 WHERE fe.sealed != 0
+                 GROUP BY fm.key_id
+                 ORDER BY fm.key_id",
+            )
+            .map_err(|e| self.err(e))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, Option<String>>(0)?, row.get::<_, u32>(1)?))
+            })
+            .map_err(|e| self.err(e))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| self.err(e))?);
+        }
+        Ok(results)
     }
 
     /// Count sealed vs unsealed embeddings across all users.
@@ -1394,6 +1427,63 @@ mod tests {
         for row in &rows {
             assert_eq!(row.key_id.as_deref(), Some("abc"), "key_id must round-trip");
         }
+    }
+
+    /// #359: encrypted models group by the key that sealed them, a pre-V7
+    /// encrypted row lands in the NULL group, and plaintext models are left
+    /// out entirely.
+    #[test]
+    fn count_sealed_models_by_key_id_groups_encrypted_models() {
+        let store = FaceStore::open_memory().unwrap();
+        assert!(store.count_sealed_models_by_key_id().unwrap().is_empty());
+
+        let emb = test_embedding();
+        store.add_model("alice", "plain", &emb, "").unwrap();
+        let a1 = store
+            .add_model_raw("alice", "a1", &[0x02; 50], true, "")
+            .unwrap();
+        let a2 = store
+            .add_model_raw("bob", "a2", &[0x02; 50], true, "")
+            .unwrap();
+        let b1 = store
+            .add_model_raw("bob", "b1", &[0x02; 50], true, "")
+            .unwrap();
+        store
+            .add_model_raw("carol", "legacy", &[0x02; 50], true, "")
+            .unwrap();
+        store
+            .set_model_key_id(a1, Some("aaaaaaaaaaaaaaaa"))
+            .unwrap();
+        store
+            .set_model_key_id(a2, Some("aaaaaaaaaaaaaaaa"))
+            .unwrap();
+        store
+            .set_model_key_id(b1, Some("bbbbbbbbbbbbbbbb"))
+            .unwrap();
+
+        assert_eq!(
+            store.count_sealed_models_by_key_id().unwrap(),
+            vec![
+                (None, 1),
+                (Some("aaaaaaaaaaaaaaaa".to_string()), 2),
+                (Some("bbbbbbbbbbbbbbbb".to_string()), 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn list_models_carries_key_id() {
+        let store = FaceStore::open_memory().unwrap();
+        let emb = test_embedding();
+        let id = store.add_model("alice", "front", &emb, "").unwrap();
+        assert_eq!(store.list_models("alice").unwrap()[0].key_id, None);
+        store
+            .set_model_key_id(id, Some("0123456789abcdef"))
+            .unwrap();
+        assert_eq!(
+            store.list_models("alice").unwrap()[0].key_id.as_deref(),
+            Some("0123456789abcdef")
+        );
     }
 
     #[test]

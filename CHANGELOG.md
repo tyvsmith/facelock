@@ -101,6 +101,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Commands now show which key sealed each model** (#359): `facelock list` gains a `Key`
+  column (`legacy` for a row that records none), and each model in `list --json` and
+  `status --json` carries `key_id`, the 16-hex id #357 started recording (`null` in `list
+  --json`, absent in `status --json`, for a pre-V7 or plaintext row). `facelock tpm status`
+  groups encrypted models by key id, marks the primary and each loaded secondary, flags
+  every key this host cannot load, and counts the models under such keys, the state that
+  fails a user's load. Its key loading is read-only and never mints a keyfile. Every
+  existing JSON field is unchanged. The D-Bus `ModelInfo` struct gains a trailing `key_id`
+  field, so restart the daemon after upgrading.
+
 - **A synthetic camera for the camera-required test tiers** (#139): `just test-arch-loopback`
   feeds a v4l2loopback node with a procedurally rendered face sequence (nobody's face, see
   `test/loopback/NOTICE.md`) and runs the daemon and one-shot E2E suites against it with

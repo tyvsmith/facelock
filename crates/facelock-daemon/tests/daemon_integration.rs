@@ -224,6 +224,7 @@ fn device_mismatch_never_reaches_success() {
         created_at: 0,
         embedder_model: String::new(),
         device_id: Some("aaaa:bbbb:".into()),
+        key_id: None,
     }];
 
     // The live camera's identity now rides on its caps — the auth loop asks
@@ -312,6 +313,7 @@ fn legacy_null_device_id_still_authenticates() {
         created_at: 0,
         embedder_model: String::new(),
         device_id: None,
+        key_id: None,
     }];
 
     // Even a fully-identified live camera authenticates a legacy NULL template.
@@ -450,6 +452,7 @@ fn legacy_model(id: u32) -> facelock_core::types::FaceModelInfo {
         created_at: 0,
         embedder_model: String::new(),
         device_id: None,
+        key_id: None,
     }
 }
 
