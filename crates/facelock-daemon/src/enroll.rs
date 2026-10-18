@@ -206,8 +206,10 @@ pub fn enroll<C: CameraSource, E: FaceProcessor>(
         }
 
         let detect_start = Instant::now();
+        // Per-frame embeddings, zeroized when `faces` drops — the accepted
+        // one is copied into `accepted`'s own guard first (#305).
         let faces = match engine.process(&frame) {
-            Ok(f) => f,
+            Ok(f) => facelock_core::types::Wiped::new(f),
             Err(e) => {
                 warn!("face engine error during enroll: {e}");
                 rejections.engine_errors += 1;

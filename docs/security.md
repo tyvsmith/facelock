@@ -629,10 +629,14 @@ operator who has no backup, is `facelock clear` followed by re-enrollment.
   clear); the automatic policy does not, because on a genuine fresh install there is
   nothing to distinguish it from.
 - Under `ProtectSystem=strict` the shipped daemon unit cannot write `/etc/facelock` at all,
-  so it cannot create `/etc/facelock/encryption.key`: on that unit the key is created by
-installation or by a privileged `facelock setup` / `facelock tpm encrypt` run, and the daemon
-  only ever reads it. A daemon that finds no key refuses enrollment as above rather than
-  falling back to plaintext.
+  so it cannot create `/etc/facelock/encryption.key`: on that unit the key is created by a
+  privileged `facelock setup` / `facelock tpm encrypt` run, and the daemon only ever reads
+  it. Setup's automatic policy creates the key the configured method names even when the
+  config already says `keyfile`, which the shipped config does by default. A daemon that
+  finds no key refuses enrollment as above rather than falling back to plaintext, and its
+  refusal names the read-only directory and `sudo facelock setup` as the remedy. The unit is
+  not widened to `/etc/facelock`: the daemon reads its key and policy, it does not write
+  them (ADR 007).
 
 Plaintext storage (`method = "none"`) is an explicit opt-out: enrollment **refuses** to write
 plaintext biometric templates unless `security.allow_plaintext = true`, and warns prominently
@@ -657,10 +661,14 @@ decrypt paths are guarded too (#293): the decrypt loop and the store's plaintext
 accumulate inside the guard, so a row failing mid-load (AAD mismatch, TPM unseal failure,
 corrupt row) zeroizes the rows already collected, and buffer growth wipes the outgrown
 allocation; the compare set is built through the guard at exact capacity; and `facelock tpm
-decrypt` holds each row's unsealed bytes in `zeroize::Zeroizing`. Still unguarded: the
-per-frame embeddings inference returns before they are consumed, the per-row blob buffers
-SQLite hands back while a plaintext store loads, and the raw-row snapshot `facelock tpm
-encrypt` reads before sealing one.
+decrypt` holds each row's unsealed bytes in `zeroize::Zeroizing`. Live captures are guarded
+the same way (#305): the per-frame embeddings inference returns are held in `Wiped` by every
+consumer (authentication, enrollment, daemon and CLI preview, both benchmark paths), and the
+engine accumulates them through the guard, so a face failing to align or embed zeroizes
+the ones already extracted for that frame. And `facelock tpm
+encrypt` holds each plaintext blob of its raw-row snapshot in `zeroize::Zeroizing`, as
+decrypt does, so a seal or store-update failure mid-run wipes the rows it read. Still unguarded: the per-row blob buffers SQLite
+hands back while a plaintext store loads.
 
 **Hard device binding (opt-in, `security.bind_device_aad`).** When enabled, the enrolling
 camera's `device_id` is folded into the AES-GCM Additional Authenticated Data, so a template

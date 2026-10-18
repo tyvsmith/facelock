@@ -33,6 +33,7 @@ fn expected_default() -> Config {
 /// building the "uncomment every example" variant of the template.
 const NOT_DEFAULT_EXAMPLES: &[(&str, &str)] = &[
     ("device", "path"),
+    ("device", "ir_led"),
     ("recognition", "detector_sha256"),
     ("recognition", "embedder_sha256"),
 ];

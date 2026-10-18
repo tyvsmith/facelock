@@ -9,7 +9,7 @@ use std::path::Path;
 use facelock_core::config::RecognitionConfig;
 use facelock_core::error::{FacelockError, Result};
 use facelock_core::traits::FaceProcessor;
-use facelock_core::types::{Detection, FaceEmbedding, Frame};
+use facelock_core::types::{Detection, FaceEmbedding, Frame, Wiped};
 
 pub use align::{AlignedFace, align_face, compute_affine_matrix};
 pub use detector::FaceDetector;
@@ -71,16 +71,25 @@ impl FaceEngine {
     }
 
     /// Run the full pipeline: detect faces, align each, extract embeddings.
+    ///
+    /// Accumulates through [`Wiped`]'s borrowed form: a face failing to align
+    /// or embed (or an unwind) zeroizes the embeddings already extracted for
+    /// this frame (#305). On success the results are handed back live, and
+    /// every caller wraps them in [`Wiped`].
     pub fn process(&mut self, frame: &Frame) -> Result<Vec<(Detection, FaceEmbedding)>> {
         let detections = self.detector.detect(frame)?;
         let mut results = Vec::with_capacity(detections.len());
+        let mut guarded = Wiped::new(&mut results);
 
         for det in detections {
             let aligned = align_face(frame, &det.landmarks)?;
             let embedding = self.embedder.embed(&aligned)?;
-            results.push((det, embedding));
+            guarded.push((det, embedding));
         }
 
+        // Every face embedded: the caller takes the plaintext over. Forgetting
+        // the guard skips its wipe without leaking — it owns only the borrow.
+        std::mem::forget(guarded);
         Ok(results)
     }
 }

@@ -80,7 +80,7 @@ follow it.
 | `facelock daemon restart` | Request restart with `systemctl restart`, falling back to D-Bus `Shutdown` on any failure. Root; fallback failure does not change exit 0, and `--config` does not change the service's configuration |
 | `facelock auth --user X` | One-shot auth (PAM helper). `--user` is required here and only here; `--config` is the global flag, not a per-command one |
 | `facelock hyprlock enable\|disable\|status` | Manage hyprlock lock-screen integration (user, no root); `enable` accepts `--no-icon` to skip the cosmetic face glyph |
-| `facelock tpm status` | TPM status, sealed-key presence and encrypted/plaintext embedding counts. Root, like every `tpm` verb |
+| `facelock tpm status` | TPM status, sealed-key presence, encrypted/plaintext embedding counts, and encrypted models grouped by sealing key id with the primary, each loaded secondary and every key this host cannot load marked. Root, like every `tpm` verb |
 | `facelock tpm encrypt` | Encrypt plaintext embedding rows, not the whole database; refuses active hard device binding. `--generate-key` only creates/replaces key material and refuses encrypted templates |
 | `facelock tpm decrypt` | Decrypt AES embedding rows and legacy TPM blobs into plaintext; does not change configuration or keys and cannot decrypt AAD-bound templates. Conversion is per-row, so failure can leave partial progress |
 | `facelock tpm reseal` | Re-seal the TPM AES key under current PCRs (recovery after a firmware/kernel change) |
@@ -243,7 +243,7 @@ someone states who parses the output.
 |---------|---------|
 | `facelock is-enrolled --json` | one object. See "facelock is-enrolled Exit Codes" |
 | `facelock capabilities --json` | one object. See "facelock capabilities" |
-| `facelock list --json` | array of enrolled models |
+| `facelock list --json` | array of enrolled models: `id`, `label`, `user`, `created_at`, `embedder_model`, `device_id` (`""` when uncoupled), `key_id` (the 16-hex sealing key id, `null` for a pre-V7 or plaintext row; #359) |
 | `facelock devices --json` | array of `IpcDeviceInfo` (`facelock_core::ipc`): `path`, `name`, `driver`, `is_ir`, `formats` (empty whenever the daemon answers, which carries no format detail). Serde-derived, so it is a typed schema rather than a scrape of the human renderer, whose columns and `[IR]` tag are free to change |
 | `facelock preview --json` | one object per line, one per frame |
 | `facelock status --json` | one object, one key per report section, each carrying an `ok`/`problem`/`unknown` verdict. See "facelock status Semantics" |
@@ -452,7 +452,16 @@ a usable TPM seals an existing keyfile rather than minting beside it, and with
 no usable TPM an existing sealed key is left in place while a keyfile is
 minted (#358). Both mints consult the shared key gate below; the sealing one
 asks its predicate only, so the TPM path never leaves a plaintext keyfile
-behind.
+behind. A config whose `encryption.method` is already `keyfile` or `tpm` is
+"already configured" to the automatic policy only while that method's key
+artifact exists. A `keyfile` method with no `key_path` gets its keyfile unsealed
+from an existing sealed key when the TPM is usable, else minted through the
+same gate, and a `tpm` method with no `sealed_key_path` and a usable
+TPM gets its key sealed as above; the method itself is not changed. The shipped
+config leaves `method` at its `keyfile` default, so this is what creates the
+key on a fresh install: the packaged daemon unit cannot write `/etc/facelock`
+(`ProtectSystem=strict`), and a daemon that finds no key refuses enrollment with
+a remedy naming `sudo facelock setup` instead of creating one.
 
 ### facelock pam Semantics
 
@@ -1570,6 +1579,10 @@ means a defaulting read is a bug. `jq '(.enrollment.models // []) | length > 0'`
 answers `false` for a machine whose database could not be opened. Branch on
 `.enrollment.state == "ok"` first, then read `models`.
 
+Each `enrollment.models` entry carries `id`, `label` and, when the row records
+one, `key_id`: the 16-hex id of the key that sealed it (#359). A pre-V7 or
+plaintext row has no key id, so the key is **absent**, never `null`.
+
 `reason` is never catalog output. The document is machine output and does not
 enter the message seam (`message/mod.rs`, "What must NOT come through here"), so
 no `reason` is ever a translated string: the ones facelock authors are C-locale
@@ -1729,7 +1742,7 @@ are tested against:
     "state": "ok",
     "user": "alice",
     "models": [
-      { "id": 1, "label": "front" },
+      { "id": 1, "label": "front", "key_id": "0123456789abcdef" },
       { "id": 2, "label": "side" }
     ],
     "marker": { "state": "ok" }
@@ -3446,7 +3459,7 @@ TOML format. All keys optional — camera auto-detected, sensible defaults for e
 
 | Section | Key fields |
 |---------|-----------|
-| `[device]` | `path` (Option), `max_height`, `rotation`, `warmup_frames`, `dark_threshold`, `dark_pixel_value`, `ir_emitter`, `camera_release_secs`, `camera_release_after_success_secs` |
+| `[device]` | `path` (Option), `max_height`, `rotation`, `warmup_frames`, `dark_threshold`, `dark_pixel_value`, `ir_emitter`, `ir_led` (Option), `keep_format`, `camera_release_secs`, `camera_release_after_success_secs` |
 | `[recognition]` | `threshold`, `timeout_secs`, `no_face_timeout_secs`, `detector_model`, `detector_sha256`, `embedder_model`, `embedder_sha256`, `threads`, `execution_provider` |
 | `[daemon]` | `mode` (DaemonMode enum), `model_dir`, `idle_timeout_secs` |
 | `[storage]` | `db_path` |
@@ -3552,6 +3565,18 @@ enrollments always seal under the primary. `facelock tpm encrypt` sets key id;
 `facelock tpm decrypt` clears it. `tpm seal-key`, `unseal-key`, and `reseal`
 never touch rows.
 
+**Reporting key ids (#359).** `facelock list` (a `Key` column, `legacy` for no
+recorded id), `list --json` and `status --json` carry each model's key id.
+`facelock tpm status` groups encrypted models by key id through the keyring's
+non-minting loader (`SealingKeys::load_existing`): the same artifacts and
+secondaries as the auth path, except a keyfile primary is read, never minted,
+and an unloadable primary is reported rather than fatal. It lists the primary
+and each loaded secondary with their model counts, every key rows name that
+nothing loaded as `not loadable`, pre-V7 encrypted rows as `legacy`, and the
+number of models under a key this host cannot load. Legacy rows are not in
+that number: they name no key, so only a trial decrypt could tell. Only the
+16-hex id is ever printed, never key material.
+
 **Enrollment atomicity (#308).** An enrollment writes to the store exactly once, at the
 end: after every accepted embedding has passed the minimum-capture and angle-diversity
 gates and, with encryption on, been sealed, one transaction removes the previous model
@@ -3631,7 +3656,8 @@ session and replays `PolicyPCR` — so a changed bound PCR makes unseal **fail**
 
 When `device.path` is omitted:
 1. Enumerate `/dev/video0` through `/dev/video63`
-2. Filter to VIDEO_CAPTURE devices
+2. Filter to VIDEO_CAPTURE devices (single-planar, or multi-planar nodes that
+   offer no single-planar capture, such as Qualcomm CAMSS)
 3. Classify every node's IR provenance from queried evidence: a quirks
    `force_ir` match (authoritative by USB vendor:product ID; a name-only match
    only when corroborated by a real USB identity or the node's own mono-format
@@ -3692,8 +3718,16 @@ enforcement.
 
 Open also **rejects a padded stride**: for GREY/NV12 (`bytesperline == width`)
 and Y16/YUYV (`bytesperline == 2 * width`), a device reporting anything else
-errors at open instead of decoding sheared frames. Compressed formats (MJPG)
-are exempt — their `bytesperline` is not a row size.
+errors at open instead of decoding sheared frames. The one exception is GREY
+with `bytesperline > width`, as delivered by ISP capture nodes that pad rows
+(Qualcomm CAMSS, Intel IPU6/IPU7): each row is cut to `width` bytes before
+decoding, and a frame shorter than `bytesperline * (height - 1) + width` is a
+capture error. Compressed formats (MJPG) are exempt — their `bytesperline` is
+not a row size.
+
+With `device.keep_format = true`, open skips format negotiation and uses the
+node's current format, which must be one of the decodable formats above;
+otherwise open fails naming the format. The stride rules still apply.
 
 **FourCC normalization.** V4L2 pads FourCCs to four characters with trailing
 spaces (`"Y16 "`). Facelock strips that padding at every ingest point — device
@@ -3992,7 +4026,7 @@ enum variants are not wire wrappers:
 |--------|--------------|
 | `Authenticate`, `TestAuthenticate` | `AuthResult { matched, model_id, label, similarity }` |
 | `Enroll` | `(model_id: u32, embedding_count: u32)` |
-| `ListModels` | array of `ModelInfo { id, user, label, created_at, embedder_model, device_id }` |
+| `ListModels` | array of `ModelInfo { id, user, label, created_at, embedder_model, device_id, key_id }` |
 | `PreviewFrame` | JPEG byte array |
 | `PreviewDetectFrame` | `(JPEG byte array, array of PreviewFaceInfo { x, y, width, height, confidence, similarity, recognized })` |
 | `ListDevices` | array of `DeviceInfo { path, name, driver, is_ir }` |
@@ -4001,7 +4035,12 @@ enum variants are not wire wrappers:
 
 `ModelInfo.device_id` is the enrolling camera's canonical fingerprint; D-Bus
 has no Option type, so an **empty string is the NULL sentinel** for
-legacy/uncoupled templates. `created_at` is a Unix timestamp in seconds.
+legacy/uncoupled templates. `ModelInfo.key_id` (#359) is the 16-hex id of the
+sealing key, with the same empty-string NULL sentinel for a pre-V7 or plaintext
+row; it is appended last, so the struct signature is `(usstsss)`. A CLI and
+daemon from either side of that change cannot decode each other's
+`ListModels` reply, so restart the daemon after upgrading.
+`created_at` is a Unix timestamp in seconds.
 
 ### Authenticate error encoding
 

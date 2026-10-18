@@ -207,9 +207,19 @@ pub fn run_encrypt(config: &Config, generate_key: bool) -> Result<()> {
 
     let sealer = obtain_sealer(config).context("failed to obtain encryption sealer")?;
 
-    let all = store
+    // Raw-row snapshot of the store: the rows this command seals are
+    // plaintext template bytes, so each blob is zeroized when `all` drops —
+    // the seal and store-update error paths included (#305). `Zeroizing`,
+    // not `Wiped`, as on the decrypt side: raw byte buffers already implement
+    // `Zeroize`.
+    let all: Vec<_> = store
         .get_all_embeddings_raw()
-        .context("failed to read embeddings")?;
+        .context("failed to read embeddings")?
+        .into_iter()
+        .map(|(id, user, blob, sealed, model_id)| {
+            (id, user, zeroize::Zeroizing::new(blob), sealed, model_id)
+        })
+        .collect();
 
     // Filter to unencrypted embeddings only
     let unencrypted: Vec<_> = all

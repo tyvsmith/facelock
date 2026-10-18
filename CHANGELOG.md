@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`facelock setup` now creates the encryption key a default config names**: the shipped
+  config leaves `encryption.method` at its `keyfile` default, and the automatic policy
+  (`--non-interactive`, `--encryption auto`) treated any non-`none` method as already
+  configured, so a fresh install that ran a flagless `facelock setup --non-interactive`
+  finished with no key on disk (an explicit `--encryption keyfile` or `--encryption tpm`
+  already minted one). The daemon then tried to create
+  `/etc/facelock/encryption.key` itself, which the packaged unit's `ProtectSystem=strict`
+  forbids, and the first enrollment failed with a read-only filesystem error. Setup now
+  creates the missing keyfile for a `keyfile` method (unsealing an existing sealed key when the
+  TPM can open it, rather than minting a second key beside it), and seals a key for a `tpm` method that
+  has none when a TPM is usable, without changing the configured method. A daemon that still
+  cannot create its key refuses enrollment with a message naming `sudo facelock setup` as the
+  remedy. No `ReadWritePaths=/etc/facelock` drop-in is needed, and the unit is unchanged.
 - **Y16 calibration burst no longer doubles the cold-open warmup** (#163): on a Y16 camera
   with no `y16_bit_depth` quirk, the first non-auth capture's calibration burst ran on top of
   the caller's `warmup_frames` discard, so the shipped RealSense SR300 entry kept its emitter
@@ -79,8 +92,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a refusal, because sealing is what the auto path does with an existing keyfile. The
   refusal names the file, its size and the remedy (restore the real key, or remove it and
   re-run), since it stops setup before it secures paths and writes its marker.
+- **`just test-release-artifacts` no longer fails mutations at random under CPU load**
+  (#389): its checks piped multi-line text from `printf` into `grep -q` under
+  `set -o pipefail`. Bash's `printf` writes to a pipe one line at a time, so once `grep`
+  matched an early line and exited, the next write raised SIGPIPE and the check failed
+  although the text was present. Load widened that race, and the parallel mutation runs
+  from #380 supplied the load, so a mutant's re-run tripped over an unrelated assertion
+  and was reported as `mutation failed for an unrelated reason`. The checks now read
+  here-strings, so nothing is left writing when `grep` exits. The runs were never sharing
+  state, so `FACELOCK_MUTATION_JOBS` keeps its meaning and default.
+- **Per-frame face embeddings and `facelock tpm encrypt`'s row snapshot are now zeroized**
+  (#305): the embeddings inference returns for each captured frame are held in the same
+  `Wiped` drop guard as the compare sets, on the auth, enroll, preview and benchmark paths,
+  and the engine accumulates them through the guard so a face failing to align or embed
+  wipes the ones already extracted for that frame. `facelock tpm encrypt` holds each
+  plaintext row of its store snapshot in `zeroize::Zeroizing`, as `facelock tpm decrypt`
+  already did for unsealed rows, so a seal or store-update failure mid-run no longer
+  frees plaintext template bytes unwiped.
+- **The `facelock` and `facelock-git` AUR recipes no longer trip shelly's PKGBUILD review**
+  (#361): `prepare()` ran `cargo fetch --locked --target "$(rustc -vV | …)"`, which shelly
+  flags twice at warning severity — `fetch` is on its risky-downloader list wherever it
+  appears, and the command substitution reads as a dynamically built command. `prepare()`
+  now runs `cargo vendor --locked` into `$srcdir/vendor` and writes the source replacement
+  to the tree's `.cargo/config.toml`, so network access stays in `prepare()` and `build()`
+  and `check()` remain `--frozen`. The vendor directory sits beside the source tree, not
+  inside it, because `check()`'s documentation-example scan walks every Markdown file in
+  the tree. The vendor step downloads every platform's crates rather than only the host's,
+  about 70 MB instead of 50 MB. `facelock-bin` is unchanged.
 
 ### Added
+
+- **Commands now show which key sealed each model** (#359): `facelock list` gains a `Key`
+  column (`legacy` for a row that records none), and each model in `list --json` and
+  `status --json` carries `key_id`, the 16-hex id #357 started recording (`null` in `list
+  --json`, absent in `status --json`, for a pre-V7 or plaintext row). `facelock tpm status`
+  groups encrypted models by key id, marks the primary and each loaded secondary, flags
+  every key this host cannot load, and counts the models under such keys, the state that
+  fails a user's load. Its key loading is read-only and never mints a keyfile. Every
+  existing JSON field is unchanged. The D-Bus `ModelInfo` struct gains a trailing `key_id`
+  field, so restart the daemon after upgrading.
 
 - **A synthetic camera for the camera-required test tiers** (#139): `just test-arch-loopback`
   feeds a v4l2loopback node with a procedurally rendered face sequence (nobody's face, see
@@ -99,7 +149,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   swtpm-backed `tpm-tests` job stays the only place a sealed round trip executes, and it now
   runs `just test-tpm` rather than its own copy of the command.
 
+- **Media-controller capture nodes keep their configured format**: `[device] keep_format = true`
+  makes open use the node's current format instead of negotiating one, for Intel IPU6/IPU7
+  ISYS and Qualcomm CAMSS nodes that only stream what the pipeline (usually `media-ctl`) was
+  set up for. GREY frames whose rows are padded past the image width (CAMSS delivers
+  644-pixel rows in a 656-byte stride) are now cut to the width and decoded instead of
+  rejected at open; every other stride mismatch is still rejected.
+
+- **LED class IR illuminators**: `[device] ir_led = "/sys/class/leds/<name>"` lights an
+  illuminator that is a separate LED device rather than a UVC extension unit (for example the
+  Surface Pro 11's PMIC flash LED, `ir:flash`) at full brightness while the camera is open,
+  and switches it off first when the camera is released. Validation accepts only
+  `/sys/class/leds/<name>`, since the daemon writes it as root.
+
+- **Multi-planar capture nodes**: cameras whose capture node offers only
+  `V4L2_CAP_VIDEO_CAPTURE_MPLANE`, such as every Qualcomm CAMSS node on Snapdragon X laptops,
+  are now discovered, listed by `facelock devices` and captured from (single-plane formats
+  only). Single-planar cameras take the same path as before.
+
 ### Changed
+
+- **One `chown` helper for the CLI** (#220): `state_layout` and the enrollment-marker writer each
+  carried their own `libc::chown` wrapper; both now call `facelock_core::fs_security::chown_to`.
+  No behavior change.
 
 - **The upgrade lanes now prove the newest released predecessor** (#367): `dist/release-matrix.json`
   names it as `predecessors.current`, pinned to v0.2.1's published .deb and fc44 .rpm, and the lane
