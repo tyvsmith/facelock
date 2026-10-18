@@ -176,7 +176,7 @@ runuser -u "$BUILDER" -- /run-networkless.sh \
     bash -c "cd '$BUILD' && makepkg --verifysource --nodeps --noconfirm" ||
     fail "source verification reached for the network or rejected the staged tarball"
 
-# prepare() runs `cargo fetch --locked`, so this half is deliberately online;
+# prepare() runs `cargo vendor --locked`, so this half is deliberately online;
 # build() and check() are --frozen and therefore offline regardless.
 echo "==> makepkg: syncdeps, prepare, build, check, package"
 runuser -u "$BUILDER" -- \
