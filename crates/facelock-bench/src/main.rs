@@ -175,7 +175,7 @@ fn cmd_cold_auth() -> Result<()> {
 
     // Capture and match
     let frame = camera.capture().context("Failed to capture frame")?;
-    let faces = engine.process(&frame)?;
+    let faces = Wiped::new(engine.process(&frame)?);
 
     let elapsed = start.elapsed();
     let elapsed_ms = elapsed.as_millis() as u64;
@@ -233,7 +233,7 @@ fn cmd_warm_auth() -> Result<()> {
     for i in 0..WARM_ITERATIONS {
         let start = Instant::now();
         let frame = camera.capture().context("Failed to capture frame")?;
-        let faces = engine.process(&frame)?;
+        let faces = Wiped::new(engine.process(&frame)?);
         let _matched = find_best_match(&faces, &embeddings, config.recognition.threshold);
         let elapsed_ms = start.elapsed().as_millis() as u64;
         times.push(elapsed_ms);
@@ -286,7 +286,7 @@ fn cmd_preview() -> Result<()> {
         let cap_ms = cap_start.elapsed().as_millis() as u64;
 
         let det_start = Instant::now();
-        let _faces = engine.process(&frame)?;
+        let _faces = Wiped::new(engine.process(&frame)?);
         let det_ms = det_start.elapsed().as_millis() as u64;
 
         let total_ms = total_start.elapsed().as_millis() as u64;
@@ -338,7 +338,7 @@ fn cmd_enrollment() -> Result<()> {
 
     for i in 0..ENROLLMENT_SNAPSHOTS {
         let frame = camera.capture().context("Failed to capture frame")?;
-        let faces = engine.process(&frame)?;
+        let faces = Wiped::new(engine.process(&frame)?);
         if faces.is_empty() {
             warn!(snapshot = i + 1, "No face detected in snapshot");
         } else {
@@ -431,8 +431,8 @@ fn cmd_calibrate() -> Result<()> {
         Wiped::with_capacity(num_test_frames as usize);
     for _ in 0..num_test_frames {
         let frame = camera.capture().context("Failed to capture frame")?;
-        let faces = engine.process(&frame)?;
-        for (_, emb) in &faces {
+        let faces = Wiped::new(engine.process(&frame)?);
+        for (_, emb) in faces.iter() {
             live_embeddings.push(*emb);
         }
     }
@@ -523,7 +523,7 @@ fn cmd_calibrate() -> Result<()> {
         sweep_config.detection_confidence = confidence;
 
         match FaceEngine::load(&sweep_config, model_dir(&config)) {
-            Ok(mut sweep_engine) => match sweep_engine.process(&frame) {
+            Ok(mut sweep_engine) => match sweep_engine.process(&frame).map(Wiped::new) {
                 Ok(faces) => {
                     println!("{:<12.2} {:<15}", confidence, faces.len());
                 }
@@ -714,7 +714,7 @@ fn cmd_report() -> Result<()> {
         for _ in 0..WARM_ITERATIONS {
             let start = Instant::now();
             let frame = camera.capture().context("Failed to capture frame")?;
-            let _faces = engine.process(&frame)?;
+            let _faces = Wiped::new(engine.process(&frame)?);
             times.push(start.elapsed().as_millis() as u64);
         }
         percentile(&mut times, 50)
@@ -734,7 +734,7 @@ fn cmd_report() -> Result<()> {
         for _ in 0..WARM_ITERATIONS {
             let start = Instant::now();
             let frame = camera.capture().context("Failed to capture frame")?;
-            let faces = engine.process(&frame)?;
+            let faces = Wiped::new(engine.process(&frame)?);
             let _matched = find_best_match(&faces, &embeddings, config.recognition.threshold);
             times.push(start.elapsed().as_millis() as u64);
         }
@@ -748,7 +748,7 @@ fn cmd_report() -> Result<()> {
         let start = Instant::now();
         let mut cold_engine = load_engine(&config)?;
         let frame = camera.capture().context("Failed to capture frame")?;
-        let faces = cold_engine.process(&frame)?;
+        let faces = Wiped::new(cold_engine.process(&frame)?);
         let _matched = find_best_match(&faces, &embeddings, config.recognition.threshold);
         Some(start.elapsed().as_millis() as u64)
     } else {
@@ -760,7 +760,7 @@ fn cmd_report() -> Result<()> {
         let start = Instant::now();
         for _ in 0..ENROLLMENT_SNAPSHOTS {
             let frame = camera.capture().context("Failed to capture frame")?;
-            let _faces = engine.process(&frame)?;
+            let _faces = Wiped::new(engine.process(&frame)?);
         }
         start.elapsed().as_millis() as u64
     };

@@ -71,6 +71,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a refusal, because sealing is what the auto path does with an existing keyfile. The
   refusal names the file, its size and the remedy (restore the real key, or remove it and
   re-run), since it stops setup before it secures paths and writes its marker.
+- **`just test-release-artifacts` no longer fails mutations at random under CPU load**
+  (#389): its checks piped multi-line text from `printf` into `grep -q` under
+  `set -o pipefail`. Bash's `printf` writes to a pipe one line at a time, so once `grep`
+  matched an early line and exited, the next write raised SIGPIPE and the check failed
+  although the text was present. Load widened that race, and the parallel mutation runs
+  from #380 supplied the load, so a mutant's re-run tripped over an unrelated assertion
+  and was reported as `mutation failed for an unrelated reason`. The checks now read
+  here-strings, so nothing is left writing when `grep` exits. The runs were never sharing
+  state, so `FACELOCK_MUTATION_JOBS` keeps its meaning and default.
+- **Per-frame face embeddings and `facelock tpm encrypt`'s row snapshot are now zeroized**
+  (#305): the embeddings inference returns for each captured frame are held in the same
+  `Wiped` drop guard as the compare sets, on the auth, enroll, preview and benchmark paths,
+  and the engine accumulates them through the guard so a face failing to align or embed
+  wipes the ones already extracted for that frame. `facelock tpm encrypt` holds each
+  plaintext row of its store snapshot in `zeroize::Zeroizing`, as `facelock tpm decrypt`
+  already did for unsealed rows, so a seal or store-update failure mid-run no longer
+  frees plaintext template bytes unwiped.
 - **The `facelock` and `facelock-git` AUR recipes no longer trip shelly's PKGBUILD review**
   (#361): `prepare()` ran `cargo fetch --locked --target "$(rustc -vV | …)"`, which shelly
   flags twice at warning severity — `fetch` is on its risky-downloader list wherever it
@@ -102,6 +119,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runs `just test-tpm` rather than its own copy of the command.
 
 ### Changed
+
+- **One `chown` helper for the CLI** (#220): `state_layout` and the enrollment-marker writer each
+  carried their own `libc::chown` wrapper; both now call `facelock_core::fs_security::chown_to`.
+  No behavior change.
 
 - **The upgrade lanes now prove the newest released predecessor** (#367): `dist/release-matrix.json`
   names it as `predecessors.current`, pinned to v0.2.1's published .deb and fc44 .rpm, and the lane

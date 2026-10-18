@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use facelock_core::Config;
-use facelock_core::fs_security::{ensure_private_dir, write_file};
+use facelock_core::fs_security::{chown_to, ensure_private_dir, write_file};
 
 use crate::state_layout::ENROLLED_DIR_MODE;
 
@@ -173,26 +173,6 @@ fn resolve_owner(user: &str) -> Option<(u32, u32)> {
     }
 }
 
-/// `chown(2)`. Mirrors the helper in `setup.rs`; duplicated rather than shared
-/// because `setup.rs` is owned elsewhere.
-#[cfg(unix)]
-fn chown_path(path: &Path, uid: u32, gid: u32) -> io::Result<()> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
-    let c_path = CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains embedded NUL"))?;
-    if unsafe { libc::chown(c_path.as_ptr(), uid, gid) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn chown_path(_path: &Path, _uid: u32, _gid: u32) -> io::Result<()> {
-    Ok(())
-}
-
 /// Create or overwrite a user's marker under `base`.
 ///
 /// `owner` is applied to the temp file *before* the rename, so the marker never
@@ -218,7 +198,7 @@ pub fn write_marker_in(
     let commit = (|| {
         write_file(&tmp, &body, MARKER_FILE_MODE)?;
         if let Some((uid, gid)) = owner {
-            chown_path(&tmp, uid, gid)?;
+            chown_to(&tmp, uid, gid)?;
         }
         fs::rename(&tmp, &final_path)
     })();

@@ -245,6 +245,28 @@ pub fn sync_parent_dir(path: &Path) -> io::Result<()> {
     File::open(parent)?.sync_all()
 }
 
+/// `chown(2)` `path` to `uid:gid`.
+///
+/// Follows a symlink at `path`, as `chown(2)` does. A no-op off unix.
+pub fn chown_to(path: &Path, uid: u32, gid: u32) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        let c_path = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "path contains embedded NUL")
+        })?;
+        // SAFETY: the pointer is NUL-terminated and lives for the call.
+        if unsafe { libc::chown(c_path.as_ptr(), uid, gid) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, uid, gid);
+        Ok(())
+    }
+}
+
 pub fn open_append_file(path: &Path, mode: u32) -> io::Result<File> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -492,5 +514,27 @@ mod tests {
         fs::write(&path, b"x").unwrap();
         sync_parent_dir(&path).unwrap();
         sync_parent_dir(Path::new("bare-name")).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn chown_to_the_current_owner_succeeds_without_privilege() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("file");
+        fs::write(&path, b"x").unwrap();
+        let meta = fs::metadata(&path).unwrap();
+        chown_to(&path, meta.uid(), meta.gid()).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn chown_to_reports_a_missing_path_and_an_embedded_nul() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = chown_to(&dir.path().join("missing"), 0, 0).unwrap_err();
+        assert_eq!(missing.kind(), io::ErrorKind::NotFound);
+        let nul = chown_to(Path::new("bad\0path"), 0, 0).unwrap_err();
+        assert_eq!(nul.kind(), io::ErrorKind::InvalidInput);
     }
 }
