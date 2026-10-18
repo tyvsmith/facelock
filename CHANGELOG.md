@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Y16 calibration burst no longer doubles the cold-open warmup** (#163): on a Y16 camera
+  with no `y16_bit_depth` quirk, the first non-auth capture's calibration burst ran on top of
+  the caller's `warmup_frames` discard, so the shipped RealSense SR300 entry kept its emitter
+  lit for 10 + 10 frames per cold open. The burst now counts as the warmup in both the daemon
+  and the one-shot path, so a cold open discards the larger of the two. The burst is also
+  sized from the effective warmup, so `device.warmup_frames` is honored when no quirk
+  overrides it; previously only a quirk's value could lengthen it.
 - **`abort_if_lid_closed` now sees every ACPI lid device** (#365): the PAM module checked a
   fixed `LID0`/`LID`/`LID1` list and the daemon read only
   `/proc/acpi/button/lid/LID0/state`, so a laptop whose firmware names the device anything
