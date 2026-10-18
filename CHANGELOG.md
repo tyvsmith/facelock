@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`facelock bench` resolves its user like every other command** (#213): the benchmarks
+  read `SUDO_USER`, then `USER`, then `LOGNAME` themselves. They now go through the shared
+  resolver, so `doas facelock bench ...` benchmarks the invoking user instead of `root`, and
+  with no `USER` set the fallback is a UID lookup rather than `LOGNAME`.
 - **`abort_if_lid_closed` now sees every ACPI lid device** (#365): the PAM module checked a
   fixed `LID0`/`LID`/`LID1` list and the daemon read only
   `/proc/acpi/button/lid/LID0/state`, so a laptop whose firmware names the device anything

@@ -839,12 +839,10 @@ fn find_best_match(
     false
 }
 
-/// Get the current username, preferring SUDO_USER when running under sudo.
+/// Get the current username through the shared resolver, so `sudo facelock
+/// bench` benchmarks against the invoking user's enrollment.
 fn current_user() -> String {
-    std::env::var("SUDO_USER")
-        .or_else(|_| std::env::var("USER"))
-        .or_else(|_| std::env::var("LOGNAME"))
-        .unwrap_or_else(|_| "unknown".to_string())
+    crate::ipc_client::resolve_user(None)
 }
 
 /// Compute a percentile from a mutable slice (sorts in place).
@@ -918,6 +916,46 @@ fn os_release() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #213: bench resolves its user through the shared resolver, not a
+    /// local SUDO_USER > USER > LOGNAME chain, so `sudo facelock bench` and
+    /// `doas facelock bench` benchmark the invoking user like every other
+    /// command. The environment is injected rather than set, as in
+    /// `preview::tests::shared_resolver_honors_sudo_user`.
+    #[test]
+    fn current_user_precedence_is_the_shared_resolvers() {
+        let sudo = |key: &str| match key {
+            "SUDO_USER" => Some("bench-alice".to_string()),
+            "DOAS_USER" => Some("bench-dave".to_string()),
+            "USER" => Some("root".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            crate::ipc_client::resolve_user_from_env(None, sudo),
+            "bench-alice"
+        );
+
+        // SUDO_USER unset: DOAS_USER, which the local chain ignored.
+        let doas = |key: &str| match key {
+            "DOAS_USER" => Some("bench-dave".to_string()),
+            "USER" => Some("root".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            crate::ipc_client::resolve_user_from_env(None, doas),
+            "bench-dave"
+        );
+
+        // Not elevated: $USER.
+        let plain = |key: &str| match key {
+            "USER" => Some("bench-bob".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            crate::ipc_client::resolve_user_from_env(None, plain),
+            "bench-bob"
+        );
+    }
 
     #[test]
     fn test_percentile_empty() {
