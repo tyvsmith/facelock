@@ -220,7 +220,25 @@ not, but it names the capture node, not the sensor: which sensor feeds that
 node is set by the media-graph links. Route the IR sensor to the node the
 quirk names before authenticating (see `docs/security.md` §A). Capturing from
 these nodes is a separate concern from classifying them: the pipeline must be
-configured ahead of time, and CAMSS nodes need multi-planar capture support.
+configured ahead of time, and CAMSS nodes need multi-planar capture support
+(next section).
+
+### Multi-planar capture nodes (e.g. Qualcomm CAMSS)
+
+Some SoC camera subsystems expose capture nodes only through the V4L2
+multi-planar API (`V4L2_CAP_VIDEO_CAPTURE_MPLANE`), for example Qualcomm
+CAMSS on Snapdragon X laptops. Facelock opens these directly; it supports
+single-plane formats only, which covers every format it decodes, and rejects
+a node whose negotiated format has more than one plane.
+
+Such nodes usually sit behind a media-controller pipeline and advertise every
+format the hardware path supports, so set the pipeline up ahead of time (for
+an IR sensor: GREY end to end), point `device.path` at it, and set
+`keep_format = true`. Because the advertised format table is static, IR
+classification needs a `force_ir` quirk keyed on the node's `modalias` and
+`node_name` (previous section), as for IPU6/IPU7 nodes. If the illuminator is a
+separate LED class device rather than a UVC emitter, name it in
+`device.ir_led`.
 
 ## Init System Support
 
