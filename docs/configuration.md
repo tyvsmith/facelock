@@ -17,7 +17,7 @@ Camera settings.
 | `path` | string (optional) | Auto-detect | Camera device path (e.g., `/dev/video2`). When omitted, Facelock auto-detects the best available camera, preferring IR over RGB. |
 | `max_height` | u32 | `480` | Maximum frame height in pixels. Frames taller than this are downscaled to improve processing speed. |
 | `rotation` | u16 | `0` | Rotate captured frames. Values: `0`, `90`, `180`, `270`. Useful for cameras mounted sideways. |
-| `warmup_frames` | u32 | `2` | Frames to discard immediately after opening the camera to let exposure and gain stabilize. Device quirks may override this. |
+| `warmup_frames` | u32 | `2` | Frames to discard immediately after opening the camera to let exposure and gain stabilize. Device quirks may override this. On a Y16 stream with no `y16_bit_depth` quirk, the non-auth calibration burst (at least 8 frames, or this value if larger) is the warmup: a cold open discards the larger of the two, not their sum, and a burst cut short by its 1 s budget still discards up to this value. |
 | `dark_threshold` | f32 | `0.6` | Fraction of pixels that must be darker than `dark_pixel_value` before the frame is treated as unusably dark. |
 | `dark_pixel_value` | u8 | `10` | Pixel brightness cutoff used by the dark-frame check. |
 | `keep_format` | bool | `false` | Use the format already configured on the device instead of negotiating one. Needed for media-controller capture nodes (Intel IPU6/IPU7, Qualcomm CAMSS) whose format is set up with the pipeline (e.g. by `media-ctl`); padded GREY strides are handled. |
