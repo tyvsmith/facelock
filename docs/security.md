@@ -629,10 +629,14 @@ operator who has no backup, is `facelock clear` followed by re-enrollment.
   clear); the automatic policy does not, because on a genuine fresh install there is
   nothing to distinguish it from.
 - Under `ProtectSystem=strict` the shipped daemon unit cannot write `/etc/facelock` at all,
-  so it cannot create `/etc/facelock/encryption.key`: on that unit the key is created by
-installation or by a privileged `facelock setup` / `facelock tpm encrypt` run, and the daemon
-  only ever reads it. A daemon that finds no key refuses enrollment as above rather than
-  falling back to plaintext.
+  so it cannot create `/etc/facelock/encryption.key`: on that unit the key is created by a
+  privileged `facelock setup` / `facelock tpm encrypt` run, and the daemon only ever reads
+  it. Setup's automatic policy creates the key the configured method names even when the
+  config already says `keyfile`, which the shipped config does by default. A daemon that
+  finds no key refuses enrollment as above rather than falling back to plaintext, and its
+  refusal names the read-only directory and `sudo facelock setup` as the remedy. The unit is
+  not widened to `/etc/facelock`: the daemon reads its key and policy, it does not write
+  them (ADR 007).
 
 Plaintext storage (`method = "none"`) is an explicit opt-out: enrollment **refuses** to write
 plaintext biometric templates unless `security.allow_plaintext = true`, and warns prominently

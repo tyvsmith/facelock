@@ -2459,15 +2459,57 @@ fn setup_encryption_none(config: &mut Config) -> anyhow::Result<()> {
 /// orphaned-models guard first. The same decision `setup_encryption_auto`
 /// acts on, so the guard runs exactly when a key is minted (#358).
 fn auto_encryption_needs_keygen(config: &Config, tpm_available: bool) -> bool {
-    use facelock_core::config::EncryptionMethod;
-
-    if config.encryption.method != EncryptionMethod::None {
-        return false;
-    }
     let keyfile_exists = Path::new(&config.encryption.key_path).exists();
     let sealed_exists = Path::new(&config.encryption.sealed_key_path).exists();
     let tpm_usable = tpm_available && cfg!(feature = "tpm");
-    plan_auto_key_action(tpm_usable, keyfile_exists, sealed_exists).1 == KeyAction::Mint
+    plan_auto_for_config(
+        &config.encryption.method,
+        tpm_usable,
+        keyfile_exists,
+        sealed_exists,
+    )
+    .is_some_and(|(_, action)| action == KeyAction::Mint)
+}
+
+/// The automatic policy's decision for the method the config already holds,
+/// or `None` when there is nothing for it to do.
+///
+/// `none` gets the full policy. A configured `keyfile` or `tpm` method whose
+/// key artifact is missing gets that artifact made for the method it names:
+/// the shipped config leaves `method` at its `keyfile` default, so "already
+/// configured" on a fresh install used to leave the key for the daemon to
+/// mint — and the packaged unit's `ProtectSystem=strict` keeps the daemon
+/// from writing `/etc/facelock`. A `tpm` method with no usable TPM is left
+/// as it is: nothing here can seal to it.
+fn plan_auto_for_config(
+    method: &facelock_core::config::EncryptionMethod,
+    tpm_usable: bool,
+    keyfile_exists: bool,
+    sealed_exists: bool,
+) -> Option<(facelock_core::config::EncryptionMethod, KeyAction)> {
+    use facelock_core::config::EncryptionMethod;
+
+    match method {
+        EncryptionMethod::None => Some(plan_auto_key_action(
+            tpm_usable,
+            keyfile_exists,
+            sealed_exists,
+        )),
+        EncryptionMethod::Keyfile if !keyfile_exists => Some((
+            EncryptionMethod::Keyfile,
+            plan_key_action(
+                EncryptionMethod::Keyfile,
+                keyfile_exists,
+                sealed_exists,
+                false,
+            ),
+        )),
+        EncryptionMethod::Tpm if !sealed_exists && tpm_usable => Some((
+            EncryptionMethod::Tpm,
+            plan_key_action(EncryptionMethod::Tpm, keyfile_exists, sealed_exists, true),
+        )),
+        EncryptionMethod::Keyfile | EncryptionMethod::Tpm => None,
+    }
 }
 
 /// Apply `--encryption`. `theme` is `None` where prompting is not allowed.
@@ -3347,21 +3389,31 @@ fn keygen_refusal(
 fn setup_encryption_auto(config: &Config, tpm_available: Option<bool>) -> anyhow::Result<()> {
     use facelock_core::config::EncryptionMethod;
 
-    // Skip if already configured
-    if config.encryption.method != EncryptionMethod::None {
+    let key_path = Path::new(&config.encryption.key_path);
+    let sealed_path = Path::new(&config.encryption.sealed_key_path);
+    let keyfile_exists = key_path.exists();
+    let sealed_exists = sealed_path.exists();
+    let already_configured = || {
         Terminal.info(&SetupMessage::EncryptionAlreadyConfigured {
             // Pre-formatted: `Debug` here is the config enum's own spelling
             // (`Tpm`/`Keyfile`), and formatting before the seam keeps the
             // rendering locale-independent.
             method: format!("{:?}", config.encryption.method),
-        });
+        })
+    };
+
+    // Skip if already configured and its key is there — before the probe, so
+    // a configured host never touches the TPM for a no-op.
+    let configured_key_present = match config.encryption.method {
+        EncryptionMethod::None => false,
+        EncryptionMethod::Keyfile => keyfile_exists,
+        EncryptionMethod::Tpm => sealed_exists,
+    };
+    if configured_key_present {
+        already_configured();
         return Ok(());
     }
 
-    let key_path = Path::new(&config.encryption.key_path);
-    let sealed_path = Path::new(&config.encryption.sealed_key_path);
-    let keyfile_exists = key_path.exists();
-    let sealed_exists = sealed_path.exists();
     // Without TPM support compiled in, a usable device is still not a target
     // this build can seal to; the keyfile fallback is all it has.
     let tpm_usable = tpm_available.unwrap_or_else(|| detect_tpm(config)) && cfg!(feature = "tpm");
@@ -3369,7 +3421,15 @@ fn setup_encryption_auto(config: &Config, tpm_available: Option<bool>) -> anyhow
     // The same key-carrying decision the explicit `--encryption` flags make
     // (#354), so the auto path never mints a second key beside an existing
     // one (#358).
-    let (target, action) = plan_auto_key_action(tpm_usable, keyfile_exists, sealed_exists);
+    let Some((target, action)) = plan_auto_for_config(
+        &config.encryption.method,
+        tpm_usable,
+        keyfile_exists,
+        sealed_exists,
+    ) else {
+        already_configured();
+        return Ok(());
+    };
 
     if target == EncryptionMethod::Tpm {
         #[cfg(feature = "tpm")]
@@ -6580,6 +6640,59 @@ mod choice_tests {
         assert!(!sealed_path.exists(), "no sealed key may be minted");
     }
 
+    /// The shipped config leaves `method` commented out, so a fresh install
+    /// reads the default `keyfile` with no key on disk. The auto policy used
+    /// to call that "already configured" and write nothing, leaving the key
+    /// to the daemon — which the packaged unit's `ProtectSystem=strict` keeps
+    /// from writing `/etc/facelock`, so the first enrollment failed.
+    #[test]
+    fn auto_policy_creates_the_key_a_default_keyfile_config_names() {
+        let _lock = super::CONFIG_OVERRIDE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        struct OverrideGuard;
+        impl Drop for OverrideGuard {
+            fn drop(&mut self) {
+                facelock_core::paths::clear_process_config_override();
+            }
+        }
+        let (_cfg_dir, config_path) = temp_config("config.toml", "");
+        facelock_core::paths::set_process_config_override(config_path);
+        let _guard = OverrideGuard;
+
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("facelock.key"); // absent
+        let sealed_path = dir.path().join("sealed.key"); // absent
+        let mut config = config_for_auto(dir.path(), &key_path, &sealed_path);
+        config.encryption.method = EncryptionMethod::Keyfile;
+
+        setup_encryption_auto(&config, Some(false)).expect("minting the default key");
+
+        assert!(key_path.exists(), "setup must create the configured key");
+        assert!(
+            !sealed_path.exists(),
+            "a keyfile config must not mint a sealed key"
+        );
+    }
+
+    /// The other half of the above: a configured method whose key is already
+    /// there is left exactly as it is.
+    #[test]
+    fn auto_policy_leaves_a_present_configured_key_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("facelock.key");
+        let sealed_path = dir.path().join("sealed.key"); // absent
+        let original = [0x42u8; 32];
+        std::fs::write(&key_path, original).unwrap();
+        let mut config = config_for_auto(dir.path(), &key_path, &sealed_path);
+        config.encryption.method = EncryptionMethod::Keyfile;
+
+        setup_encryption_auto(&config, Some(true)).expect("already configured");
+
+        assert_eq!(std::fs::read(&key_path).unwrap().as_slice(), &original[..]);
+        assert!(!sealed_path.exists());
+    }
+
     #[cfg(feature = "tpm")]
     #[test]
     fn auto_policy_reuses_an_existing_sealed_key_without_minting() {
@@ -6753,9 +6866,10 @@ mod choice_tests {
         assert!(auto_encryption_needs_keygen(&config, false));
         assert!(auto_encryption_needs_keygen(&config, true));
 
-        // Already-configured encryption never mints a key.
+        // A configured method whose key is missing gets it minted, so the
+        // guard runs; the daemon cannot create it under ProtectSystem=strict.
         config.encryption.method = EncryptionMethod::Keyfile;
-        assert!(!auto_encryption_needs_keygen(&config, false));
+        assert!(auto_encryption_needs_keygen(&config, false));
 
         // An existing key file is reused, not replaced.
         let (_dir, key) = temp_config("encryption.key", "not-a-real-key");
@@ -6775,6 +6889,11 @@ mod choice_tests {
         config.encryption.key_path = "/nonexistent/facelock/encryption.key".to_string();
         config.encryption.sealed_key_path = sealed.display().to_string();
         assert!(auto_encryption_needs_keygen(&config, false));
+
+        // A configured method whose key is there is left alone.
+        config.encryption.method = EncryptionMethod::Keyfile;
+        config.encryption.key_path = key.display().to_string();
+        assert!(!auto_encryption_needs_keygen(&config, true));
     }
 }
 
