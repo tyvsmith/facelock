@@ -88,6 +88,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plaintext row of its store snapshot in `zeroize::Zeroizing`, as `facelock tpm decrypt`
   already did for unsealed rows, so a seal or store-update failure mid-run no longer
   frees plaintext template bytes unwiped.
+- **The `facelock` and `facelock-git` AUR recipes no longer trip shelly's PKGBUILD review**
+  (#361): `prepare()` ran `cargo fetch --locked --target "$(rustc -vV | …)"`, which shelly
+  flags twice at warning severity — `fetch` is on its risky-downloader list wherever it
+  appears, and the command substitution reads as a dynamically built command. `prepare()`
+  now runs `cargo vendor --locked` into `$srcdir/vendor` and writes the source replacement
+  to the tree's `.cargo/config.toml`, so network access stays in `prepare()` and `build()`
+  and `check()` remain `--frozen`. The vendor directory sits beside the source tree, not
+  inside it, because `check()`'s documentation-example scan walks every Markdown file in
+  the tree. The vendor step downloads every platform's crates rather than only the host's,
+  about 70 MB instead of 50 MB. `facelock-bin` is unchanged.
 
 ### Added
 
