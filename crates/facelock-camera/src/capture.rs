@@ -160,6 +160,14 @@ fn pending_calibration_frames(format: &str, y16_shift: Option<u8>, burst: usize)
     }
 }
 
+/// Frames still owed to the warmup after a burst that dequeued `burst_frames`.
+/// Zero for a burst that ran to its target (which is at least the warmup);
+/// the remainder when the wall-clock budget cut it short, so a slow sensor
+/// still settles for its full declared warmup.
+fn warmup_top_up(burst_frames: usize, warmup_frames: u32) -> usize {
+    (warmup_frames as usize).saturating_sub(burst_frames)
+}
+
 /// Pin a non-auth session's Y16 conversion scale by sampling a burst of frames
 /// and taking the brightest sample any of them produced.
 ///
@@ -182,7 +190,11 @@ fn pending_calibration_frames(format: &str, y16_shift: Option<u8>, burst: usize)
 /// Tolerating errors would therefore trade a hard failure carrying the real
 /// message for a `Camera` that returns "Invalid argument" from every capture,
 /// having reported a successfully pinned scale on the way out.
-fn calibrate_y16_shift(stream: &mut Stream<'_>, device_path: &str, target: usize) -> Result<u8> {
+fn calibrate_y16_shift(
+    stream: &mut Stream<'_>,
+    device_path: &str,
+    target: usize,
+) -> Result<(u8, usize)> {
     let start = Instant::now();
     let mut peak = 0u16;
     let mut frames = 0usize;
@@ -248,7 +260,7 @@ fn calibrate_y16_shift(stream: &mut Stream<'_>, device_path: &str, target: usize
         preprocess::Y16Calibration::Normal => {}
     }
     tracing::info!(device = %device_path, shift, peak, frames, "Y16 session scale pinned");
-    Ok(shift)
+    Ok((shift, frames))
 }
 
 /// Bytes per row facelock's converters assume for an uncompressed format.
@@ -297,6 +309,10 @@ pub struct Camera<'a> {
     /// Number of frames used if a non-auth caller first captures from an
     /// unverified Y16 stream.
     y16_calibration_frames: usize,
+    /// Effective warmup (quirk, else config). Callers subtract a pending burst
+    /// from their warmup discard, so a burst the budget cut short tops up to
+    /// this itself.
+    warmup_frames: u32,
 }
 
 impl<'a> Camera<'a> {
@@ -456,11 +472,10 @@ impl<'a> Camera<'a> {
         } else {
             Some(0)
         };
-        let y16_calibration_frames = y16_calibration_frames(
-            quirk
-                .and_then(|q| q.warmup_frames)
-                .unwrap_or(config.warmup_frames),
-        );
+        let warmup_frames = quirk
+            .and_then(|q| q.warmup_frames)
+            .unwrap_or(config.warmup_frames);
+        let y16_calibration_frames = y16_calibration_frames(warmup_frames);
 
         // Apply quirk overrides for rotation (warmup_frames is handled by the caller
         // since Camera::open doesn't consume warmup frames itself; a pending Y16
@@ -489,6 +504,7 @@ impl<'a> Camera<'a> {
             caps,
             y16_shift,
             y16_calibration_frames,
+            warmup_frames,
         })
     }
 
@@ -538,11 +554,17 @@ impl<'a> Camera<'a> {
             // Authentication checks `caps.ir_texture_scale` before any
             // capture. This lazy path exists for enrollment/preview/bench
             // conversion only and never upgrades the capability to verified.
-            self.y16_shift = Some(calibrate_y16_shift(
+            let (shift, frames) = calibrate_y16_shift(
                 &mut self.stream,
                 &self.device_path,
                 self.y16_calibration_frames,
-            )?);
+            )?;
+            self.y16_shift = Some(shift);
+            for _ in 0..warmup_top_up(frames, self.warmup_frames) {
+                self.stream.next().map_err(|e| {
+                    FacelockError::Camera(format!("warmup after Y16 calibration failed: {e}"))
+                })?;
+            }
         }
 
         // stream.next() uses the v4l built-in poll with CAPTURE_TIMEOUT.
@@ -829,6 +851,17 @@ mod tests {
         // `device.warmup_frames` (20) — gets a burst that covers it.
         assert_eq!(y16_calibration_frames(10), 10);
         assert_eq!(y16_calibration_frames(20), 20);
+    }
+
+    /// A burst that reached its target owes nothing; one the budget cut short
+    /// tops up to the full warmup, never past it.
+    #[test]
+    fn a_truncated_burst_tops_up_to_the_warmup() {
+        assert_eq!(warmup_top_up(y16_calibration_frames(2), 2), 0);
+        assert_eq!(warmup_top_up(y16_calibration_frames(20), 20), 0);
+        // 15 fps sensor, warmup 20: ~15 frames fit the 1 s budget.
+        assert_eq!(warmup_top_up(15, 20), 5);
+        assert_eq!(warmup_top_up(1, 2), 1);
     }
 
     /// Only an unpinned Y16 scale has a burst ahead of its next capture; a
