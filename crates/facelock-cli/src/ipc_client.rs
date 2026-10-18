@@ -400,13 +400,6 @@ pub fn resolve_user(flag: Option<&str>) -> String {
     resolve_user_from_env(flag, |key| std::env::var(key).ok())
 }
 
-/// The resolution order itself, with the environment supplied by the caller.
-///
-/// Split out so the precedence can be tested without `set_var`: mutating the
-/// process environment is global to the whole test binary, which cargo runs
-/// multi-threaded, so a test that does it can only be kept safe by a promise
-/// that no concurrent test reads the same variable — a promise nothing
-/// enforces and any later test may quietly break.
 /// The user behind `sudo`/`doas`, if any: SUDO_USER > DOAS_USER.
 ///
 /// The elevation half of `resolve_user`, for callers that must act as the
@@ -422,6 +415,13 @@ pub(crate) fn invoking_user_from_env(env: impl Fn(&str) -> Option<String>) -> Op
     env("SUDO_USER").or_else(|| env("DOAS_USER"))
 }
 
+/// The resolution order itself, with the environment supplied by the caller.
+///
+/// Split out so the precedence can be tested without `set_var`: mutating the
+/// process environment is global to the whole test binary, which cargo runs
+/// multi-threaded, so a test that does it can only be kept safe by a promise
+/// that no concurrent test reads the same variable — a promise nothing
+/// enforces and any later test may quietly break.
 pub(crate) fn resolve_user_from_env(
     flag: Option<&str>,
     env: impl Fn(&str) -> Option<String>,
