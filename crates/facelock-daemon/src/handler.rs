@@ -1191,8 +1191,9 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         frame: &facelock_core::types::Frame,
         user: &str,
     ) -> Vec<PreviewFace> {
+        // Per-frame embeddings, zeroized when `detections` drops (#305).
         let detections = match self.engine.process(frame) {
-            Ok(d) => d,
+            Ok(d) => Wiped::new(d),
             Err(e) => {
                 debug!("face engine error during preview: {e}");
                 return Vec::new();
@@ -1229,9 +1230,9 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         let threshold = self.config.recognition.threshold;
 
         detections
-            .into_iter()
+            .iter()
             .map(|(det, embedding)| {
-                let (best_sim, _) = best_match(&embedding, stored);
+                let (best_sim, _) = best_match(embedding, stored);
                 PreviewFace {
                     x: det.bbox.x,
                     y: det.bbox.y,

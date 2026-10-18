@@ -35,6 +35,9 @@ fail() {
 # the verdicts are read out in queue order at the end, under "mutations".
 # FACELOCK_MUTATION_JOBS=1 keeps the runs serial for debugging. Runs share
 # nothing: each allocates its own mktemp work tree and only reads the checkout.
+# They do load the machine, so no check may fail by timing: multi-line text
+# goes to `grep -q` as a here-string, never piped from printf, which writes a
+# line at a time and dies of SIGPIPE under pipefail once grep has matched (#389).
 work="$(mktemp -d "${TMPDIR:-/tmp}/facelock-release-artifacts.XXXXXX")"
 # The scheduler runs in its own process group so an early exit takes every
 # in-flight re-run down with it, not just xargs.
@@ -102,7 +105,7 @@ if [ -z "${FACELOCK_RELEASE_WORKFLOW:-}" ] && [ -z "${FACELOCK_RELEASE_ASSETS:-}
                     if [ "$status" = 0 ]; then
                         echo "release artifacts contract: release artifacts contract accepted $context" >&2
                         failures=$((failures + 1))
-                    elif ! printf '%s\n' "$output" | grep -Fq "$needle"; then
+                    elif ! grep -Fq "$needle" <<<"$output"; then
                         echo "release artifacts contract: $context mutation failed for an unrelated reason: $output" >&2
                         failures=$((failures + 1))
                     else
@@ -437,19 +440,19 @@ grep -Eq '^permissions:[[:space:]]*\{\}[[:space:]]*$' "$workflow_path" ||
 concurrency_block="$(awk '/^concurrency:/ { inside = 1; next } inside && /^[A-Za-z]/ { inside = 0 } inside && !/^[[:space:]]*(#|$)/ { sub(/^ +/, ""); print }' "$workflow_path")"
 [ -n "$concurrency_block" ] || fail "the release workflow must declare a concurrency group per tag"
 # shellcheck disable=SC2016
-printf '%s\n' "$concurrency_block" | grep -Fxq 'group: release-${{ github.ref }}' ||
+grep -Fxq 'group: release-${{ github.ref }}' <<<"$concurrency_block" ||
     fail "the release concurrency group must be keyed by the tag ref: $concurrency_block"
-printf '%s\n' "$concurrency_block" | grep -Fxq 'cancel-in-progress: false' ||
+grep -Fxq 'cancel-in-progress: false' <<<"$concurrency_block" ||
     fail "a release run must queue behind the one in progress, never cancel it: $concurrency_block"
 
 for job in "${expected_jobs[@]}"; do
     permissions="$(job_permissions "$job")"
     [ -n "$permissions" ] || fail "job $job declares no permissions: block"
     if [ "$job" = publish ]; then
-        printf '%s\n' "$permissions" | grep -Eq '^contents:[[:space:]]*write$' ||
+        grep -Eq '^contents:[[:space:]]*write$' <<<"$permissions" ||
             fail "the publish job must hold contents: write"
     else
-        if printf '%s\n' "$permissions" | grep -Eq '^contents:[[:space:]]*write$'; then
+        if grep -Eq '^contents:[[:space:]]*write$' <<<"$permissions"; then
             fail "only the publish job may hold contents: write, not $job"
         fi
     fi
@@ -465,16 +468,16 @@ for job in "${expected_jobs[@]}"; do
     fi
     body="$(job_body "$job")"
     for forbidden in 'RELEASE_PAT' 'action-gh-release' 'gh release'; do
-        if printf '%s\n' "$body" | grep -Fq "$forbidden"; then
+        if grep -Fq "$forbidden" <<<"$body"; then
             fail "job $job must not touch the release ($forbidden); builders produce artifacts only"
         fi
     done
 done
 
 build_job="$(job_body build)"
-printf '%s\n' "$build_job" | grep -Fq 'name: release-binaries' ||
+grep -Fq 'name: release-binaries' <<<"$build_job" ||
     fail "the build job must publish its binaries as a workflow artifact"
-if printf '%s\n' "$build_job" | grep -Fq 'SHA256SUMS'; then
+if grep -Fq 'SHA256SUMS' <<<"$build_job"; then
     fail "the build job must not publish a partial checksum file; MANIFEST.json covers every asset"
 fi
 
@@ -502,18 +505,18 @@ requires_job publish build ||
 publish_statements="$(printf '%s\n' "$publish_job" | grep -v '^[[:space:]]*#')"
 for toolchain in '(^|[^-A-Za-z])cargo[[:space:]]' 'rustup' 'rustc' 'rust-toolchain' \
     'rpmbuild' 'dpkg-buildpackage' 'just[[:space:]]+build'; do
-    if printf '%s\n' "$publish_statements" | grep -Eq "$toolchain"; then
+    if grep -Eq "$toolchain" <<<"$publish_statements"; then
         fail "the publish job must not compile or package anything ($toolchain); it holds the publication credential"
     fi
 done
 
 # Every step assertion reads the comment-stripped statements: a step that was
 # commented out, or replaced by `: # disabled`, must not pass as present.
-printf '%s\n' "$publish_statements" | grep -Eq '^[[:space:]]+draft: true[[:space:]]*$' ||
+grep -Eq '^[[:space:]]+draft: true[[:space:]]*$' <<<"$publish_statements" ||
     fail "the publish job must create the GitHub release as a draft"
 # Literal workflow expressions; nothing here is a shell expansion.
 # shellcheck disable=SC2016
-printf '%s\n' "$publish_statements" | grep -Fq 'prerelease: ${{ needs.metadata.outputs.prerelease }}' ||
+grep -Fq 'prerelease: ${{ needs.metadata.outputs.prerelease }}' <<<"$publish_statements" ||
     fail "the draft must carry the validated prerelease identity"
 # The helper invocations are matched with their trailing space so that a
 # `verify-digests-disabled` lookalike cannot stand in for the real call.
@@ -523,7 +526,7 @@ for step in '$HELPER verify-tag ' '$HELPER stage expected-assets' \
     'PRERELEASE" final' 'artifacts job-outputs.json assets actual-assets MANIFEST.json' \
     'gh release upload "$TAG" MANIFEST.json' \
     '$HELPER verify-published releases.json "$TAG" MANIFEST.json' 'draft=false'; do
-    printf '%s\n' "$publish_statements" | grep -Fq "$step" ||
+    grep -Fq "$step" <<<"$publish_statements" ||
         fail "the publish job must run ${step% } before the release becomes public"
 done
 
@@ -553,9 +556,9 @@ requires_job trigger-pages publish ||
 verify_copr_job="$(job_body verify-copr)"
 requires_job verify-copr publish ||
     fail "verify-copr waits on a build Packit submits after publication and must run after publish"
-printf '%s\n' "$verify_copr_job" | grep -Fq "needs.metadata.outputs.prerelease == 'false'" ||
+grep -Fq "needs.metadata.outputs.prerelease == 'false'" <<<"$verify_copr_job" ||
     fail "verify-copr must be stable-only; a prerelease never reaches production COPR"
-printf '%s\n' "$verify_copr_job" | grep -Eq '^ +timeout-minutes: [0-9]+$' ||
+grep -Eq '^ +timeout-minutes: [0-9]+$' <<<"$verify_copr_job" ||
     fail "verify-copr polls and must carry its own timeout"
 grep -Fq 'check-live-release-channels.py' .github/workflows/scripts/verify-copr.sh ||
     fail "verify-copr must compare the served EVR with the live release-channel checker"
@@ -563,7 +566,7 @@ grep -Fq 'check-live-release-channels.py' .github/workflows/scripts/verify-copr.
 publish_aur_job="$(job_body publish-aur)"
 requires_job publish-aur publish ||
     fail "publish-aur consumes published release assets and must run after publish"
-if printf '%s\n' "$publish_aur_job" | grep -Fq 'SHA256SUMS'; then
+if grep -Fq 'SHA256SUMS' <<<"$publish_aur_job"; then
     fail "publish-aur must take its binary digests from MANIFEST.json"
 fi
 grep -Fq 'MANIFEST.json' .github/workflows/scripts/publish-aur.sh ||
@@ -588,7 +591,7 @@ rpm_env_image="$(printf '%s\n' "$rpm_job" | awk '/^      BUILD_IMAGE: /{ sub(/^ 
     fail "build-rpm BUILD_IMAGE ('$rpm_env_image') must repeat container.image ('$rpm_container_image')"
 
 # Only what a validator inspected may be published.
-printf '%s\n' "$rpm_job" | grep -Fq 'steps.rpm.outputs.rpm' ||
+grep -Fq 'steps.rpm.outputs.rpm' <<<"$rpm_job" ||
     fail "build-rpm must validate the exact payload package the metadata names"
 
 # build-nix gates publication through its evaluation, which is deterministic
@@ -604,12 +607,12 @@ nix_step() {
 }
 flake_check_step="$(nix_step 'nix flake check')"
 [ -n "$flake_check_step" ] || fail "build-nix must evaluate the flake with nix flake check"
-if printf '%s\n' "$flake_check_step" | grep -Eq '^ +continue-on-error:'; then
+if grep -Eq '^ +continue-on-error:' <<<"$flake_check_step"; then
     fail "the flake evaluation must gate publication; drop continue-on-error from nix flake check"
 fi
 nix_build_step="$(nix_step 'nix build')"
 [ -n "$nix_build_step" ] || fail "build-nix must attempt nix build"
-printf '%s\n' "$nix_build_step" | grep -Eq '^ +continue-on-error: true$' ||
+grep -Eq '^ +continue-on-error: true$' <<<"$nix_build_step" ||
     fail "nix build depends on nixpkgs state and is documented as advisory; it must keep continue-on-error"
 
 # --------------------------------------- container jobs and checkout ownership
@@ -842,7 +845,7 @@ workflow_attestations() {
         body="$(job_body "$wf_job")"
         step="$(attest_step "$wf_job")"
         [ -n "$step" ] || fail "job $wf_job runs no attest-digests.sh step"
-        printf '%s\n' "$step" | grep -Eq '^        id: attest$' ||
+        grep -Eq '^        id: attest$' <<<"$step" ||
             fail "job $wf_job must give its attestation step the id attest so its digest can be a job output"
         # The call with its line continuations joined.
         call="$(printf '%s\n' "$step" | sed -e ':a' -e '/\\$/N; s/\\\n//; ta' | grep -F 'attest-digests.sh')"
@@ -920,7 +923,7 @@ trixie_matrix_image="$(matrix_image build-deb trixie)"
     fail "the build job must compile in build-deb's trixie image ('$trixie_matrix_image'), not '$build_container_image'"
 [ "$build_env_image" = "$build_container_image" ] ||
     fail "build BUILD_IMAGE ('$build_env_image') must repeat container.image ('$build_container_image')"
-printf '%s\n' "$build_statements" | grep -Fq -- '--image "$BUILD_IMAGE"' ||
+grep -Fq -- '--image "$BUILD_IMAGE"' <<<"$build_statements" ||
     fail "the build job must attest the image it built in (--image \"\$BUILD_IMAGE\")"
 [ ! -e .github/workflows/scripts/install-ubuntu-deps.sh ] ||
     fail "install-ubuntu-deps.sh is back; the build job must not depend on the hosted runner's packages"
@@ -939,13 +942,13 @@ rm -f "$attesting_set"
 [ "$(printf '%s\n' "$publish_job" | grep -c 'toJSON(needs)' || true)" = 1 ] ||
     fail "toJSON(needs) may appear in the publish job only as that env value"
 # shellcheck disable=SC2016
-printf '%s\n' "$publish_statements" | grep -Eq '^ +printf .%s\\n. "\$JOB_OUTPUTS" >job-outputs\.json$' ||
+grep -Eq '^ +printf .%s\\n. "\$JOB_OUTPUTS" >job-outputs\.json$' <<<"$publish_statements" ||
     fail "the publish job must write job-outputs.json from the JOB_OUTPUTS env value"
 # shellcheck disable=SC2016
 needs_lines="$(printf '%s\n' "$publish_job" | grep -F '${{ needs.' || true)"
 while IFS= read -r line; do
     [ -n "$line" ] || continue
-    printf '%s\n' "$line" | grep -Eq '^ +[A-Za-z_-]+: \$\{\{ needs\.[a-z-]+\.outputs\.[a-z-]+ \}\}$' ||
+    grep -Eq '^ +[A-Za-z_-]+: \$\{\{ needs\.[a-z-]+\.outputs\.[a-z-]+ \}\}$' <<<"$line" ||
         fail "a needs value reaches a shell line of the publish job; pass it through env: $line"
     case "$line" in
         *' run: '*) fail "a needs value is interpolated into a run line of the publish job: $line" ;;
@@ -976,7 +979,7 @@ assert_rejects() {
     if output="$("$helper_path" "$@" 2>&1)"; then
         fail "$context: helper accepted what it must reject"
     fi
-    printf '%s\n' "$output" | grep -Fq "$needle" ||
+    grep -Fq "$needle" <<<"$output" ||
         fail "$context: rejected for an unrelated reason: $output"
     echo "release artifacts case: $context rejected"
 }
@@ -1002,7 +1005,7 @@ if aur_output="$(HOME="$aur_home" AUR_SSH_KEY=fixture FACELOCK_RELEASE_MANIFEST_
     bash "$aur_publisher" 0.2.0 "$(printf 'c%.0s' $(seq 64))" 2>&1)"; then
     fail "the AUR publisher accepted a binary digest that is not a SHA-256"
 fi
-printf '%s\n' "$aur_output" | grep -Fq 'not a plausible SHA-256' ||
+grep -Fq 'not a plausible SHA-256' <<<"$aur_output" ||
     fail "the AUR publisher refused the bad digest for an unrelated reason: $aur_output"
 [ ! -e "$aur_home/.ssh" ] || fail "the AUR publisher touched SSH before validating the manifest digests"
 echo "release artifacts case: AUR publisher refusing a malformed binary digest rejected"
