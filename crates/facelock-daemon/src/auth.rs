@@ -1377,6 +1377,7 @@ enabled = false
             created_at: 0,
             embedder_model: "test".into(),
             device_id: None,
+            key_id: None,
         }];
         let outcome = authenticate_with_embeddings(
             &mut camera,

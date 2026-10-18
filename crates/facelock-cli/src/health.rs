@@ -395,6 +395,9 @@ pub struct ModelSummary {
     /// carries no device id: it still authenticates, and only a re-enrollment
     /// binds it (#312). Always false with hard binding off.
     pub unbound: bool,
+    /// Id of the key that sealed this model, or `None` for a pre-V7 or
+    /// plaintext row (#359).
+    pub key_id: Option<String>,
 }
 
 /// Does the `is-enrolled` marker agree with the database?
@@ -456,6 +459,7 @@ fn probe_enrolled(config: &Config, user: &str) -> Fact<EnrollmentHealth> {
                         unbound: config.classify_device_binding(m.device_id.as_deref())
                             == DeviceBinding::LegacyUnbound,
                         label: m.label,
+                        key_id: m.key_id,
                     })
                     .collect(),
             })

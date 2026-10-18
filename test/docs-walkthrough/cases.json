@@ -689,14 +689,14 @@
         "path": "docs/cli.md",
         "anchor": "facelock-devices",
         "ordinal": 1,
-        "line": 473,
+        "line": 479,
         "sha256": "6f6b179ea3830b95038c6708805c55ec33823224dc1b072d3e0173b1dc50f478"
       },
       {
         "path": "docs/cli.md",
         "anchor": "facelock-devices",
         "ordinal": 2,
-        "line": 474,
+        "line": 480,
         "sha256": "b9599e555bfca95fe805614377cdc83dfad7fea07c59141141f966e7e1d9ff54"
       }
     ]

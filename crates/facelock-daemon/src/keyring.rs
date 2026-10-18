@@ -114,36 +114,79 @@ impl SealingKeys {
             }
 
             EncryptionMethod::Tpm => {
+                let primary = unseal_tpm_primary(config)?;
                 #[cfg(feature = "tpm")]
-                {
-                    let sealed_path = Path::new(&config.encryption.sealed_key_path);
-                    let mut tpm = TpmSealer::new(&config.tpm.tcti)
-                        .map_err(|e| format!("TPM initialization failed: {e}"))?;
-                    let key = tpm.unseal_key_from_file(sealed_path).map_err(|e| {
-                        format!(
-                            "failed to unseal AES key from {}: {e}",
-                            sealed_path.display()
-                        )
-                    })?;
-                    info!("AES key unsealed from TPM ({})", sealed_path.display());
-                    let primary = SoftwareSealer::from_key(key);
+                let secondary = load_keyfile_secondary(config, &primary);
+                #[cfg(not(feature = "tpm"))]
+                let secondary = Vec::new();
+                Ok(Self {
+                    primary: Some(primary),
+                    primary_error: None,
+                    secondary,
+                })
+            }
+        }
+    }
+
+    /// Load only the keys whose artifacts already exist, for read-only
+    /// reporting (`facelock tpm status`, #359). Same artifacts and the same
+    /// secondary loaders as [`Self::load`], with two differences a report
+    /// needs: a keyfile primary is read, never minted through the
+    /// encrypt-by-default gate, and a primary that cannot be resolved under
+    /// either method is recorded in [`Self::primary_error`] rather than
+    /// failing the call — an unloadable primary is exactly what the report
+    /// exists to show.
+    pub fn load_existing(config: &Config) -> Self {
+        match config.encryption.method {
+            EncryptionMethod::None => Self::none(),
+            EncryptionMethod::Keyfile => {
+                let key_path = Path::new(&config.encryption.key_path);
+                let (primary, primary_error) = match SoftwareSealer::from_key_file(key_path) {
+                    Ok(sealer) => (Some(sealer), None),
+                    Err(e) => (
+                        None,
+                        Some(format!(
+                            "{} keyfile could not be read: {e}",
+                            key_path.display()
+                        )),
+                    ),
+                };
+                let secondary = load_tpm_secondary(config, primary.as_ref());
+                Self {
+                    primary,
+                    primary_error,
+                    secondary,
+                }
+            }
+            EncryptionMethod::Tpm => match unseal_tpm_primary(config) {
+                Ok(primary) => {
+                    #[cfg(feature = "tpm")]
                     let secondary = load_keyfile_secondary(config, &primary);
-                    Ok(Self {
+                    #[cfg(not(feature = "tpm"))]
+                    let secondary = Vec::new();
+                    Self {
                         primary: Some(primary),
                         primary_error: None,
                         secondary,
-                    })
+                    }
                 }
-                #[cfg(not(feature = "tpm"))]
-                {
-                    Err(
-                        "encryption method is 'tpm' but TPM support is not compiled in \
-                         (rebuild with --features tpm)"
-                            .into(),
-                    )
-                }
-            }
+                Err(msg) => Self {
+                    primary: None,
+                    primary_error: Some(msg),
+                    secondary: Vec::new(),
+                },
+            },
         }
+    }
+
+    /// The id of the primary key, if one is loaded.
+    pub fn primary_key_id(&self) -> Option<String> {
+        self.primary.as_ref().map(SoftwareSealer::key_id)
+    }
+
+    /// The ids of every loaded secondary key, in load order.
+    pub fn secondary_key_ids(&self) -> impl Iterator<Item = &str> {
+        self.secondary.iter().map(|(id, _)| id.as_str())
     }
 
     /// The configured method's key — what enroll seals new rows under.
@@ -262,6 +305,36 @@ fn resolve_keyfile_sealer(config: &Config, store: &FaceStore) -> Result<Software
     }
 }
 
+/// Unseal the TPM primary from `sealed_key_path`. `Err` is a configuration
+/// error: the caller decides whether it is fatal ([`SealingKeys::load`]) or
+/// reported ([`SealingKeys::load_existing`]).
+fn unseal_tpm_primary(
+    #[cfg_attr(not(feature = "tpm"), allow(unused_variables))] config: &Config,
+) -> Result<SoftwareSealer, String> {
+    #[cfg(feature = "tpm")]
+    {
+        let sealed_path = Path::new(&config.encryption.sealed_key_path);
+        let mut tpm = TpmSealer::new(&config.tpm.tcti)
+            .map_err(|e| format!("TPM initialization failed: {e}"))?;
+        let key = tpm.unseal_key_from_file(sealed_path).map_err(|e| {
+            format!(
+                "failed to unseal AES key from {}: {e}",
+                sealed_path.display()
+            )
+        })?;
+        info!("AES key unsealed from TPM ({})", sealed_path.display());
+        Ok(SoftwareSealer::from_key(key))
+    }
+    #[cfg(not(feature = "tpm"))]
+    {
+        Err(
+            "encryption method is 'tpm' but TPM support is not compiled in \
+             (rebuild with --features tpm)"
+                .into(),
+        )
+    }
+}
+
 /// Best-effort secondary for a keyfile primary: the TPM-sealed key at
 /// `sealed_key_path`, left over from before `facelock setup` flipped the
 /// method to `keyfile`. Never mints anything — only reads an artifact that is
@@ -360,6 +433,36 @@ mod tests {
             key_path.display()
         ))
         .unwrap()
+    }
+
+    /// #359: the report loader reads the keyfile that is there and names its
+    /// id, exactly as the auth path's loader would.
+    #[test]
+    fn load_existing_reports_an_existing_keyfile_primary() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("facelock.key");
+        SoftwareSealer::generate_key_file(&key_path).unwrap();
+        let config = config_for(&key_path);
+
+        let keys = SealingKeys::load_existing(&config);
+        let expected = SoftwareSealer::from_key_file(&key_path).unwrap().key_id();
+        assert_eq!(keys.primary_key_id(), Some(expected));
+        assert!(keys.primary_error().is_none());
+        assert_eq!(keys.secondary_key_ids().count(), 0);
+    }
+
+    /// #359: a read-only report must never mint the key it is reporting on —
+    /// a missing keyfile is reported as unloadable and stays missing.
+    #[test]
+    fn load_existing_never_mints_a_missing_keyfile() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("facelock.key");
+        let config = config_for(&key_path);
+
+        let keys = SealingKeys::load_existing(&config);
+        assert_eq!(keys.primary_key_id(), None);
+        assert!(keys.primary_error().is_some());
+        assert!(!key_path.exists(), "load_existing must not create a key");
     }
 
     #[test]

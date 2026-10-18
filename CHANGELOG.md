@@ -88,8 +88,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plaintext row of its store snapshot in `zeroize::Zeroizing`, as `facelock tpm decrypt`
   already did for unsealed rows, so a seal or store-update failure mid-run no longer
   frees plaintext template bytes unwiped.
+- **The `facelock` and `facelock-git` AUR recipes no longer trip shelly's PKGBUILD review**
+  (#361): `prepare()` ran `cargo fetch --locked --target "$(rustc -vV | …)"`, which shelly
+  flags twice at warning severity — `fetch` is on its risky-downloader list wherever it
+  appears, and the command substitution reads as a dynamically built command. `prepare()`
+  now runs `cargo vendor --locked` into `$srcdir/vendor` and writes the source replacement
+  to the tree's `.cargo/config.toml`, so network access stays in `prepare()` and `build()`
+  and `check()` remain `--frozen`. The vendor directory sits beside the source tree, not
+  inside it, because `check()`'s documentation-example scan walks every Markdown file in
+  the tree. The vendor step downloads every platform's crates rather than only the host's,
+  about 70 MB instead of 50 MB. `facelock-bin` is unchanged.
 
 ### Added
+
+- **Commands now show which key sealed each model** (#359): `facelock list` gains a `Key`
+  column (`legacy` for a row that records none), and each model in `list --json` and
+  `status --json` carries `key_id`, the 16-hex id #357 started recording (`null` in `list
+  --json`, absent in `status --json`, for a pre-V7 or plaintext row). `facelock tpm status`
+  groups encrypted models by key id, marks the primary and each loaded secondary, flags
+  every key this host cannot load, and counts the models under such keys, the state that
+  fails a user's load. Its key loading is read-only and never mints a keyfile. Every
+  existing JSON field is unchanged. The D-Bus `ModelInfo` struct gains a trailing `key_id`
+  field, so restart the daemon after upgrading.
 
 - **IR quirks can match a platform camera's kernel identity**: a quirk keyed on `modalias`
   and `node_name` matches a non-USB capture node (Intel IPU6/IPU7 ISYS, Qualcomm CAMSS)

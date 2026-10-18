@@ -395,10 +395,16 @@ facelock list --json                    # JSON output
     "user": "alice",
     "created_at": 1700000000,
     "embedder_model": "w600k_r50.onnx",
-    "device_id": ""
+    "device_id": "",
+    "key_id": "0123456789abcdef"
   }
 ]
 ```
+
+`key_id` is the 16-hex id of the key that sealed the model, `null` for a
+pre-V7 or plaintext row. The human table shows it in the `Key` column, with
+`legacy` for a row that records none. Only the id is shown, never key
+material.
 
 ## facelock remove
 
@@ -513,6 +519,10 @@ reason and no value — never a `null` and never a `false`, so read a section's
 carries no `models` key at all, and `(.enrollment.models // [])` would answer
 "not enrolled" for a machine nobody could check.
 
+Each `enrollment.models` entry carries `id`, `label` and, when the row records
+one, `key_id` (the 16-hex id of the sealing key). The key is absent for a pre-V7
+or plaintext row.
+
 **Two sections keep a narrower question than their name suggests**, and both
 have the specific answer nested one level down. Under auto-detection
 `.camera.state` reports only that detection is enabled, so it reads `ok` on a
@@ -625,8 +635,17 @@ software AES-256-GCM with no TPM involved.
 ### facelock tpm status
 
 Report the configured TPM path's presence, sealed-key presence, encryption method
-and encrypted/plaintext row counts. Requires a readable database; it does not
-test whether the TPM can unseal the key. Use `unseal-check` for that.
+and encrypted/plaintext row counts. Requires a readable database.
+
+It then groups encrypted models by the key id that sealed them. It loads the
+primary key and any secondary the same way the daemon does, but read-only: a
+missing keyfile is reported, never created. Each loaded key is marked `primary`
+or `secondary` with its model count. A key that rows name but this host could
+not load is marked `not loadable`; loading those models fails. Pre-V7 encrypted
+rows record no key id and are listed as `legacy`. The last line counts the
+models under a key this host cannot load. Legacy rows are not in that count.
+Only the 16-hex key id is printed, never key material. To get a pass/fail exit
+code for the TPM unseal, use `unseal-check`.
 
 ```bash
 sudo facelock tpm status

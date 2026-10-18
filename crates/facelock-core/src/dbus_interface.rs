@@ -43,6 +43,10 @@ pub struct ModelInfo {
     /// Option type, so empty string is the NULL sentinel (matching the
     /// `AuthResult` convention).
     pub device_id: String,
+    /// Id of the key that sealed this model (16 hex characters), or empty
+    /// string for a pre-V7 or plaintext model — the same NULL sentinel as
+    /// `device_id`. Appended last so every earlier field keeps its position.
+    pub key_id: String,
 }
 
 /// Info about a detected face in preview.

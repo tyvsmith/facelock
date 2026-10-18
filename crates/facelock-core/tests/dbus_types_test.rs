@@ -62,9 +62,10 @@ fn model_info_signature_is_pinned() {
         created_at: 0,
         embedder_model: String::new(),
         device_id: String::new(),
+        key_id: String::new(),
     };
-    // u32, String, String, u64, String, String -> u, s, s, t, s, s
-    assert_eq!(val.signature().to_string(), "(usstss)");
+    // u32, String, String, u64, String, String, String -> u, s, s, t, s, s, s
+    assert_eq!(val.signature().to_string(), "(usstsss)");
 }
 
 #[test]
