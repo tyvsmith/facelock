@@ -38,6 +38,11 @@ pub struct MockCamera {
     capture_hook: Option<CaptureHook>,
     /// Total captures served, across wrap-arounds.
     served: usize,
+    /// Frames the next capture spends on a simulated calibration burst before
+    /// it returns one (an unverified Y16 `Camera`'s burst). Cleared by it.
+    settle_burst: u32,
+    /// Frames dequeued by simulated bursts, which `served` does not count.
+    burst_dequeued: usize,
 }
 
 impl MockCamera {
@@ -53,6 +58,8 @@ impl MockCamera {
             caps: CameraCaps::default(),
             capture_hook: None,
             served: 0,
+            settle_burst: 0,
+            burst_dequeued: 0,
         }
     }
 
@@ -68,6 +75,8 @@ impl MockCamera {
             caps: CameraCaps::default(),
             capture_hook: None,
             served: 0,
+            settle_burst: 0,
+            burst_dequeued: 0,
         }
     }
 
@@ -80,6 +89,8 @@ impl MockCamera {
             caps: CameraCaps::default(),
             capture_hook: None,
             served: 0,
+            settle_burst: 0,
+            burst_dequeued: 0,
         }
     }
 
@@ -98,9 +109,22 @@ impl MockCamera {
         self
     }
 
+    /// Simulate an unverified Y16 camera: report `frames` as pending settle
+    /// frames, and spend them on the first capture before it returns.
+    pub fn with_settle_burst(mut self, frames: u32) -> Self {
+        self.settle_burst = frames;
+        self
+    }
+
     /// How many frames have been captured.
     pub fn captures(&self) -> usize {
         self.served
+    }
+
+    /// Every frame dequeued from the simulated device: captures served plus
+    /// frames a settle burst consumed without returning them.
+    pub fn dequeued(&self) -> usize {
+        self.served + self.burst_dequeued
     }
 
     /// Mock darkness check (fixed thresholds), kept as an inherent method now
@@ -121,6 +145,7 @@ impl CameraSource for MockCamera {
     }
 
     fn capture(&mut self) -> Result<Frame> {
+        self.burst_dequeued += std::mem::take(&mut self.settle_burst) as usize;
         self.served += 1;
         if let Some(hook) = self.capture_hook.as_mut() {
             hook(self.served);
@@ -138,6 +163,10 @@ impl CameraSource for MockCamera {
         let mut frame = self.capture()?;
         frame.gray = Vec::new();
         Ok(frame)
+    }
+
+    fn pending_settle_frames(&self) -> u32 {
+        self.settle_burst
     }
 }
 
@@ -170,6 +199,17 @@ mod tests {
         // Five frames served from a two-frame replay: the count is the
         // number served, not the replay index (which has wrapped to 1).
         assert_eq!(cam.captures(), 5);
+    }
+
+    #[test]
+    fn a_settle_burst_is_spent_once_by_the_first_capture() {
+        let mut cam = MockCamera::bright(8, 8, 1).with_settle_burst(8);
+        assert_eq!(cam.pending_settle_frames(), 8);
+        cam.capture().unwrap();
+        assert_eq!(cam.pending_settle_frames(), 0);
+        cam.capture().unwrap();
+        assert_eq!(cam.captures(), 2);
+        assert_eq!(cam.dequeued(), 10);
     }
 
     #[test]

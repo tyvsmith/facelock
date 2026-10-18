@@ -9,6 +9,7 @@ use anyhow::{Context, bail};
 use facelock_camera::quirks::QuirksDb;
 use facelock_camera::{Camera, ResolvedCamera, auto_detect_device, list_devices, validate_device};
 use facelock_core::config::{Config, EncryptionMethod};
+use facelock_core::traits::warmup_discard_count;
 use facelock_core::types::MatchResult;
 use facelock_daemon::audit::AuditSource;
 use facelock_daemon::auth::AuthOutcome;
@@ -104,7 +105,12 @@ fn open_resolved_camera(
     let mut camera = resolved
         .open(&config.device)
         .context("failed to open camera")?;
-    let captures = warmup_capture_count(purpose, camera.capabilities().ir_texture_scale, warmup);
+    // A pending Y16 calibration burst is itself the settling period (#163).
+    let captures = warmup_capture_count(
+        purpose,
+        camera.capabilities().ir_texture_scale,
+        warmup_discard_count(&camera, warmup),
+    );
     if captures > 0 {
         debug!(warmup = captures, "discarding warmup frames");
         for _ in 0..captures {
