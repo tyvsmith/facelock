@@ -244,7 +244,7 @@ someone states who parses the output.
 | `facelock is-enrolled --json` | one object. See "facelock is-enrolled Exit Codes" |
 | `facelock capabilities --json` | one object. See "facelock capabilities" |
 | `facelock list --json` | array of enrolled models: `id`, `label`, `user`, `created_at`, `embedder_model`, `device_id` (`""` when uncoupled), `key_id` (the 16-hex sealing key id, `null` for a pre-V7 or plaintext row; #359) |
-| `facelock devices --json` | array of `IpcDeviceInfo` (`facelock_core::ipc`): `path`, `name`, `driver`, `is_ir`, `formats` (empty whenever the daemon answers, which carries no format detail). Serde-derived, so it is a typed schema rather than a scrape of the human renderer, whose columns and `[IR]` tag are free to change |
+| `facelock devices --json` | array of `IpcDeviceInfo` (`facelock_core::ipc`): `path`, `name`, `driver`, `is_ir`, `formats` (empty whenever the daemon answers, which carries no format detail), `modalias`, `node_name` (the platform identity of a non-USB node with a real parent device, both `null` otherwise; read from sysfs on both backends, so the D-Bus `DeviceInfo` is unchanged). Serde-derived, so it is a typed schema rather than a scrape of the human renderer, whose columns and `[IR]` tag are free to change |
 | `facelock preview --json` | one object per line, one per frame |
 | `facelock status --json` | one object, one key per report section, each carrying an `ok`/`problem`/`unknown` verdict. See "facelock status Semantics" |
 | `facelock pam add\|remove\|status --json` | one object, whose shape is a stability contract. See "facelock pam Semantics" |

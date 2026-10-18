@@ -364,14 +364,22 @@ pub fn list_devices() -> anyhow::Result<Vec<IpcDeviceInfo>> {
             .context("D-Bus ListDevices call failed")?;
         Ok(devices
             .into_iter()
-            .map(|d| IpcDeviceInfo {
-                path: d.path,
-                name: d.name,
-                driver: d.driver,
-                is_ir: d.is_ir,
-                // The D-Bus DeviceInfo type carries no formats (C9, Phase E);
-                // `BackendCaps::device_formats` states this up front.
-                formats: vec![],
+            .map(|d| {
+                // The D-Bus DeviceInfo type carries no platform identity
+                // either; sysfs is world-readable on the same host, so read
+                // it here rather than widen the wire type.
+                let platform = facelock_camera::read_platform_identity(&d.path);
+                IpcDeviceInfo {
+                    path: d.path,
+                    name: d.name,
+                    driver: d.driver,
+                    is_ir: d.is_ir,
+                    // The D-Bus DeviceInfo type carries no formats (C9, Phase E);
+                    // `BackendCaps::device_formats` states this up front.
+                    formats: vec![],
+                    modalias: platform.as_ref().map(|p| p.modalias.clone()),
+                    node_name: platform.as_ref().map(|p| p.node_name.clone()),
+                }
             })
             .collect())
     })())

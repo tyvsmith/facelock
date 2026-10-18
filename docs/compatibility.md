@@ -197,6 +197,9 @@ cat /sys/class/video4linux/videoN/device/modalias 2>/dev/null || grep ^MODALIAS=
 cat /sys/class/video4linux/videoN/name
 ```
 
+`facelock devices` prints the same pair per node as `Platform:`, and
+`facelock devices --json` carries it as `modalias` and `node_name`.
+
 and copy them verbatim into `/etc/facelock/quirks.d/`:
 
 ```toml
