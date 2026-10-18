@@ -217,6 +217,11 @@ pub struct FaceModelInfo {
     /// advisory defense-in-depth, NOT an attested root of trust.
     #[serde(default)]
     pub device_id: Option<String>,
+    /// Truncated SHA-256 id (16 hex characters) of the key that sealed this
+    /// model's embeddings, or `None` for a pre-V7 row or a plaintext model.
+    /// The id names a key; it is never key material.
+    #[serde(default)]
+    pub key_id: Option<String>,
 }
 
 /// Stable-ish hardware identity of a capture device.
@@ -1424,6 +1429,7 @@ mod tests {
             created_at: 0,
             embedder_model: String::new(),
             device_id: device_id.map(String::from),
+            key_id: None,
         }
     }
 

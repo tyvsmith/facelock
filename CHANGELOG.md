@@ -24,6 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   config key is added, and no unit, D-Bus policy or dependency change is involved. A process
   left running in the user manager after an earlier SSH session is accepted once the user is
   back at a local desktop with no remote session; docs/security.md records that residual.
+- **`facelock setup` now creates the encryption key a default config names**: the shipped
+  config leaves `encryption.method` at its `keyfile` default, and the automatic policy
+  (`--non-interactive`, `--encryption auto`) treated any non-`none` method as already
+  configured, so a fresh install that ran a flagless `facelock setup --non-interactive`
+  finished with no key on disk (an explicit `--encryption keyfile` or `--encryption tpm`
+  already minted one). The daemon then tried to create
+  `/etc/facelock/encryption.key` itself, which the packaged unit's `ProtectSystem=strict`
+  forbids, and the first enrollment failed with a read-only filesystem error. Setup now
+  creates the missing keyfile for a `keyfile` method (unsealing an existing sealed key when the
+  TPM can open it, rather than minting a second key beside it), and seals a key for a `tpm` method that
+  has none when a TPM is usable, without changing the configured method. A daemon that still
+  cannot create its key refuses enrollment with a message naming `sudo facelock setup` as the
+  remedy. No `ReadWritePaths=/etc/facelock` drop-in is needed, and the unit is unchanged.
 - **`abort_if_lid_closed` now sees every ACPI lid device** (#365): the PAM module checked a
   fixed `LID0`/`LID`/`LID1` list and the daemon read only
   `/proc/acpi/button/lid/LID0/state`, so a laptop whose firmware names the device anything
@@ -103,8 +116,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plaintext row of its store snapshot in `zeroize::Zeroizing`, as `facelock tpm decrypt`
   already did for unsealed rows, so a seal or store-update failure mid-run no longer
   frees plaintext template bytes unwiped.
+- **The `facelock` and `facelock-git` AUR recipes no longer trip shelly's PKGBUILD review**
+  (#361): `prepare()` ran `cargo fetch --locked --target "$(rustc -vV | …)"`, which shelly
+  flags twice at warning severity — `fetch` is on its risky-downloader list wherever it
+  appears, and the command substitution reads as a dynamically built command. `prepare()`
+  now runs `cargo vendor --locked` into `$srcdir/vendor` and writes the source replacement
+  to the tree's `.cargo/config.toml`, so network access stays in `prepare()` and `build()`
+  and `check()` remain `--frozen`. The vendor directory sits beside the source tree, not
+  inside it, because `check()`'s documentation-example scan walks every Markdown file in
+  the tree. The vendor step downloads every platform's crates rather than only the host's,
+  about 70 MB instead of 50 MB. `facelock-bin` is unchanged.
 
 ### Added
+
+- **Commands now show which key sealed each model** (#359): `facelock list` gains a `Key`
+  column (`legacy` for a row that records none), and each model in `list --json` and
+  `status --json` carries `key_id`, the 16-hex id #357 started recording (`null` in `list
+  --json`, absent in `status --json`, for a pre-V7 or plaintext row). `facelock tpm status`
+  groups encrypted models by key id, marks the primary and each loaded secondary, flags
+  every key this host cannot load, and counts the models under such keys, the state that
+  fails a user's load. Its key loading is read-only and never mints a keyfile. Every
+  existing JSON field is unchanged. The D-Bus `ModelInfo` struct gains a trailing `key_id`
+  field, so restart the daemon after upgrading.
 
 - **A synthetic camera for the camera-required test tiers** (#139): `just test-arch-loopback`
   feeds a v4l2loopback node with a procedurally rendered face sequence (nobody's face, see
@@ -122,6 +155,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   open, so the gate catches feature-gate and decision regressions, not sealing behaviour: the
   swtpm-backed `tpm-tests` job stays the only place a sealed round trip executes, and it now
   runs `just test-tpm` rather than its own copy of the command.
+
+- **Media-controller capture nodes keep their configured format**: `[device] keep_format = true`
+  makes open use the node's current format instead of negotiating one, for Intel IPU6/IPU7
+  ISYS and Qualcomm CAMSS nodes that only stream what the pipeline (usually `media-ctl`) was
+  set up for. GREY frames whose rows are padded past the image width (CAMSS delivers
+  644-pixel rows in a 656-byte stride) are now cut to the width and decoded instead of
+  rejected at open; every other stride mismatch is still rejected.
+
+- **LED class IR illuminators**: `[device] ir_led = "/sys/class/leds/<name>"` lights an
+  illuminator that is a separate LED device rather than a UVC extension unit (for example the
+  Surface Pro 11's PMIC flash LED, `ir:flash`) at full brightness while the camera is open,
+  and switches it off first when the camera is released. Validation accepts only
+  `/sys/class/leds/<name>`, since the daemon writes it as root.
+
+- **Multi-planar capture nodes**: cameras whose capture node offers only
+  `V4L2_CAP_VIDEO_CAPTURE_MPLANE`, such as every Qualcomm CAMSS node on Snapdragon X laptops,
+  are now discovered, listed by `facelock devices` and captured from (single-plane formats
+  only). Single-planar cameras take the same path as before.
 
 ### Changed
 

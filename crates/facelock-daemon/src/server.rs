@@ -1994,6 +1994,7 @@ where
                         embedder_model: m.embedder_model,
                         // D-Bus has no Option: empty string == NULL/legacy.
                         device_id: m.device_id.unwrap_or_default(),
+                        key_id: m.key_id.unwrap_or_default(),
                     })
                     .collect()),
                 DaemonResponse::Error { message } => Err(fdo::Error::Failed(message)),

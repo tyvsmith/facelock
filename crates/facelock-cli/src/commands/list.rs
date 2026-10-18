@@ -43,6 +43,16 @@ fn camera_column(model: &FaceModelInfo, config: &Config) -> String {
     }
 }
 
+/// The Key column: the id of the key that sealed the model, or `legacy` when
+/// the row records none (a pre-V7 row, or a plaintext model) (#359). Only the
+/// 16-hex id is ever shown, never key material.
+fn key_column(model: &FaceModelInfo) -> &str {
+    match model.key_id.as_deref() {
+        Some(id) if !id.is_empty() => id,
+        _ => "legacy",
+    }
+}
+
 fn print_table(user: &str, models: &[FaceModelInfo], config: &Config) {
     if models.is_empty() {
         println!("No face models enrolled for user '{user}'.");
@@ -51,10 +61,10 @@ fn print_table(user: &str, models: &[FaceModelInfo], config: &Config) {
 
     println!("Face models for user '{user}':\n");
     println!(
-        "  {:<6} {:<20} {:<24} {:<22} Camera",
-        "ID", "Label", "Created", "Model"
+        "  {:<6} {:<20} {:<24} {:<22} {:<16} Camera",
+        "ID", "Label", "Created", "Model", "Key"
     );
-    println!("  {}", "-".repeat(92));
+    println!("  {}", "-".repeat(109));
 
     for model in models {
         let created = format_timestamp(model.created_at);
@@ -65,8 +75,13 @@ fn print_table(user: &str, models: &[FaceModelInfo], config: &Config) {
         };
         let camera = camera_column(model, config);
         println!(
-            "  {:<6} {:<20} {:<24} {:<22} {}",
-            model.id, model.label, created, model_name, camera
+            "  {:<6} {:<20} {:<24} {:<22} {:<16} {}",
+            model.id,
+            model.label,
+            created,
+            model_name,
+            key_column(model),
+            camera
         );
     }
 
@@ -80,7 +95,7 @@ fn print_json(models: &[FaceModelInfo]) {
     crate::message::payload(&list_json(models));
 }
 
-/// `[{"id", "label", "user", "created_at", "embedder_model", "device_id"}, ...]`.
+/// `[{"id", "label", "user", "created_at", "embedder_model", "device_id", "key_id"}, ...]`.
 ///
 /// Built through `serde_json::json!` (same pattern as
 /// `commands::is_enrolled::enrolled_json`) rather than interpolating fields
@@ -88,7 +103,8 @@ fn print_json(models: &[FaceModelInfo]) {
 /// trusted to be free of `"` or `\` (E10) — a `format!` version emits invalid
 /// JSON for a label like `my "favorite" face`, which `json!` escapes
 /// correctly. `device_id` renders as `""` rather than `null` for a legacy
-/// row, matching the pre-existing output contract.
+/// row, matching the pre-existing output contract. `key_id` (#359) is newer
+/// and has no such precedent, so a row with no recorded key renders `null`.
 fn list_json(models: &[FaceModelInfo]) -> String {
     let values: Vec<serde_json::Value> = models
         .iter()
@@ -101,6 +117,7 @@ fn list_json(models: &[FaceModelInfo]) -> String {
                 "created_at": model.created_at,
                 "embedder_model": model.embedder_model,
                 "device_id": device_id,
+                "key_id": model.key_id,
             })
         })
         .collect();
@@ -141,6 +158,7 @@ mod tests {
             created_at: 1700000000,
             embedder_model: "w600k_r50.onnx".to_string(),
             device_id: device_id.map(str::to_string),
+            key_id: None,
         }
     }
 
@@ -172,7 +190,7 @@ mod tests {
         let rendered = list_json(&models);
         assert_eq!(
             rendered,
-            r#"[{"created_at":1700000000,"device_id":"046d:085e:abc123","embedder_model":"w600k_r50.onnx","id":1,"label":"front","user":"alice"}]"#
+            r#"[{"created_at":1700000000,"device_id":"046d:085e:abc123","embedder_model":"w600k_r50.onnx","id":1,"key_id":null,"label":"front","user":"alice"}]"#
         );
     }
 
@@ -210,6 +228,27 @@ mod tests {
             camera_column(&model("front", Some("046d:085e:")), &ordinary),
             "046d:085e:"
         );
+    }
+
+    /// #359: the sealing key's id rides along as `key_id`, and a row that
+    /// records none (pre-V7 or plaintext) is `null`, not a missing key.
+    #[test]
+    fn json_carries_the_sealing_key_id() {
+        let mut sealed = model("front", None);
+        sealed.key_id = Some("0123456789abcdef".to_string());
+        let rendered = list_json(&[sealed, model("side", None)]);
+        let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(parsed[0]["key_id"], "0123456789abcdef");
+        assert!(parsed[1]["key_id"].is_null());
+        assert!(parsed[1].as_object().unwrap().contains_key("key_id"));
+    }
+
+    #[test]
+    fn key_column_names_the_key_or_legacy() {
+        let mut sealed = model("front", None);
+        sealed.key_id = Some("0123456789abcdef".to_string());
+        assert_eq!(key_column(&sealed), "0123456789abcdef");
+        assert_eq!(key_column(&model("front", None)), "legacy");
     }
 
     #[test]
