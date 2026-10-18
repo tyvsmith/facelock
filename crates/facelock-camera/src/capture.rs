@@ -139,15 +139,33 @@ pub(crate) fn select_format_for_quirk(
     select_format(&preferred, available)
 }
 
-/// How many frames the calibration burst aims for on this device. A quirk's
-/// `warmup_frames` is the device's own statement of how long its exposure takes
-/// to settle, so a camera that declares more than the default gets a burst at
-/// least that long. The wall-clock budget still bounds it.
-fn y16_calibration_frames(quirk: Option<&Quirk>) -> usize {
-    quirk
-        .and_then(|q| q.warmup_frames)
-        .unwrap_or(0)
-        .max(Y16_CALIBRATION_FRAMES as u32) as usize
+/// How many frames the calibration burst aims for on this device.
+/// `warmup_frames` is the effective warmup — the quirk's when it declares one,
+/// else `device.warmup_frames` — i.e. the stated settling period, so the burst
+/// is at least that long. It replaces the warmup discard rather than preceding
+/// it: callers subtract it through `warmup_discard_count`. The wall-clock
+/// budget still bounds it.
+fn y16_calibration_frames(warmup_frames: u32) -> usize {
+    warmup_frames.max(Y16_CALIBRATION_FRAMES as u32) as usize
+}
+
+/// Frames the next capture will spend on the calibration burst before
+/// returning one: the full burst while an unverified Y16 scale is still
+/// unpinned, nothing otherwise.
+fn pending_calibration_frames(format: &str, y16_shift: Option<u8>, burst: usize) -> u32 {
+    if format == "Y16" && y16_shift.is_none() {
+        burst as u32
+    } else {
+        0
+    }
+}
+
+/// Frames still owed to the warmup after a burst that dequeued `burst_frames`.
+/// Zero for a burst that ran to its target (which is at least the warmup);
+/// the remainder when the wall-clock budget cut it short, so a slow sensor
+/// still settles for its full declared warmup.
+fn warmup_top_up(burst_frames: usize, warmup_frames: u32) -> usize {
+    (warmup_frames as usize).saturating_sub(burst_frames)
 }
 
 /// Pin a non-auth session's Y16 conversion scale by sampling a burst of frames
@@ -176,7 +194,7 @@ fn calibrate_y16_shift(
     stream: &mut FrameStream<'_>,
     device_path: &str,
     target: usize,
-) -> Result<u8> {
+) -> Result<(u8, usize)> {
     let start = Instant::now();
     let mut peak = 0u16;
     let mut frames = 0usize;
@@ -242,7 +260,7 @@ fn calibrate_y16_shift(
         preprocess::Y16Calibration::Normal => {}
     }
     tracing::info!(device = %device_path, shift, peak, frames, "Y16 session scale pinned");
-    Ok(shift)
+    Ok((shift, frames))
 }
 
 /// A capture stream on either V4L2 API, behind one frame-reading interface.
@@ -343,6 +361,10 @@ pub struct Camera<'a> {
     /// Number of frames used if a non-auth caller first captures from an
     /// unverified Y16 stream.
     y16_calibration_frames: usize,
+    /// Effective warmup (quirk, else config). Callers subtract a pending burst
+    /// from their warmup discard, so a burst the budget cut short tops up to
+    /// this itself.
+    warmup_frames: u32,
 }
 
 impl<'a> Camera<'a> {
@@ -567,10 +589,14 @@ impl<'a> Camera<'a> {
         } else {
             Some(0)
         };
-        let y16_calibration_frames = y16_calibration_frames(quirk);
+        let warmup_frames = quirk
+            .and_then(|q| q.warmup_frames)
+            .unwrap_or(config.warmup_frames);
+        let y16_calibration_frames = y16_calibration_frames(warmup_frames);
 
         // Apply quirk overrides for rotation (warmup_frames is handled by the caller
-        // since Camera::open doesn't consume warmup frames itself).
+        // since Camera::open doesn't consume warmup frames itself; a pending Y16
+        // calibration burst counts toward it via `pending_settle_frames`).
         let rotation = quirk.and_then(|q| q.rotation).unwrap_or(config.rotation);
         if let Some(q) = quirk
             && (q.rotation.is_some() || q.warmup_frames.is_some() || q.format_preference.is_some())
@@ -597,6 +623,7 @@ impl<'a> Camera<'a> {
             caps,
             y16_shift,
             y16_calibration_frames,
+            warmup_frames,
         })
     }
 
@@ -646,11 +673,17 @@ impl<'a> Camera<'a> {
             // Authentication checks `caps.ir_texture_scale` before any
             // capture. This lazy path exists for enrollment/preview/bench
             // conversion only and never upgrades the capability to verified.
-            self.y16_shift = Some(calibrate_y16_shift(
+            let (shift, frames) = calibrate_y16_shift(
                 &mut self.stream,
                 &self.device_path,
                 self.y16_calibration_frames,
-            )?);
+            )?;
+            self.y16_shift = Some(shift);
+            for _ in 0..warmup_top_up(frames, self.warmup_frames) {
+                self.stream.next().map_err(|e| {
+                    FacelockError::Camera(format!("warmup after Y16 calibration failed: {e}"))
+                })?;
+            }
         }
 
         // stream.next() uses the v4l built-in poll with CAPTURE_TIMEOUT.
@@ -802,6 +835,10 @@ impl CameraSource for Camera<'_> {
     fn capture_rgb_only(&mut self) -> Result<Frame> {
         Camera::capture_rgb_only(self)
     }
+
+    fn pending_settle_frames(&self) -> u32 {
+        pending_calibration_frames(&self.format, self.y16_shift, self.y16_calibration_frames)
+    }
 }
 
 #[cfg(test)]
@@ -944,16 +981,35 @@ mod tests {
 
     #[test]
     fn y16_calibration_frames_follows_declared_warmup() {
-        // Default burst when the device says nothing.
-        assert_eq!(y16_calibration_frames(None), Y16_CALIBRATION_FRAMES);
-        let mut quirk = quirk_with_format("Y16");
-        assert_eq!(y16_calibration_frames(Some(&quirk)), 8);
-        // A camera that declares a longer warmup (RealSense SR300) gets a burst
-        // that covers it; a shorter one never shortens the default.
-        quirk.warmup_frames = Some(10);
-        assert_eq!(y16_calibration_frames(Some(&quirk)), 10);
-        quirk.warmup_frames = Some(1);
-        assert_eq!(y16_calibration_frames(Some(&quirk)), 8);
+        // Default burst when the effective warmup is shorter.
+        assert_eq!(y16_calibration_frames(0), Y16_CALIBRATION_FRAMES);
+        assert_eq!(y16_calibration_frames(2), Y16_CALIBRATION_FRAMES);
+        assert_eq!(y16_calibration_frames(1), 8);
+        // A longer warmup — a quirk's (RealSense SR300, 10) or a user's
+        // `device.warmup_frames` (20) — gets a burst that covers it.
+        assert_eq!(y16_calibration_frames(10), 10);
+        assert_eq!(y16_calibration_frames(20), 20);
+    }
+
+    /// A burst that reached its target owes nothing; one the budget cut short
+    /// tops up to the full warmup, never past it.
+    #[test]
+    fn a_truncated_burst_tops_up_to_the_warmup() {
+        assert_eq!(warmup_top_up(y16_calibration_frames(2), 2), 0);
+        assert_eq!(warmup_top_up(y16_calibration_frames(20), 20), 0);
+        // 15 fps sensor, warmup 20: ~15 frames fit the 1 s budget.
+        assert_eq!(warmup_top_up(15, 20), 5);
+        assert_eq!(warmup_top_up(1, 2), 1);
+    }
+
+    /// Only an unpinned Y16 scale has a burst ahead of its next capture; a
+    /// quirk-pinned Y16 and every other format leave the warmup to the caller.
+    #[test]
+    fn only_an_unpinned_y16_scale_has_calibration_frames_pending() {
+        assert_eq!(pending_calibration_frames("Y16", None, 10), 10);
+        assert_eq!(pending_calibration_frames("Y16", Some(2), 10), 0);
+        assert_eq!(pending_calibration_frames("GREY", Some(0), 10), 0);
+        assert_eq!(pending_calibration_frames("YUYV", Some(0), 10), 0);
     }
 
     #[test]

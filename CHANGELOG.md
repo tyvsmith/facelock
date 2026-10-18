@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   has none when a TPM is usable, without changing the configured method. A daemon that still
   cannot create its key refuses enrollment with a message naming `sudo facelock setup` as the
   remedy. No `ReadWritePaths=/etc/facelock` drop-in is needed, and the unit is unchanged.
+- **Y16 calibration burst no longer doubles the cold-open warmup** (#163): on a Y16 camera
+  with no `y16_bit_depth` quirk, the first non-auth capture's calibration burst ran on top of
+  the caller's `warmup_frames` discard, so the shipped RealSense SR300 entry kept its emitter
+  lit for 10 + 10 frames per cold open. The burst now counts as the warmup in both the daemon
+  and the one-shot path, so a cold open discards the larger of the two; a burst cut short by
+  its 1 s budget tops up to the full warmup itself. The burst is also
+  sized from the effective warmup, so `device.warmup_frames` is honored when no quirk
+  overrides it; previously only a quirk's value could lengthen it.
 - **`abort_if_lid_closed` now sees every ACPI lid device** (#365): the PAM module checked a
   fixed `LID0`/`LID`/`LID1` list and the daemon read only
   `/proc/acpi/button/lid/LID0/state`, so a laptop whose firmware names the device anything
