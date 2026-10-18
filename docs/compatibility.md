@@ -177,6 +177,51 @@ support from a kernel version alone. Facelock capture-node format and IR
 classification work for `hm1092` is tracked in issue #101; treat this path as
 experimental until the complete Facelock capture path is established.
 
+#### IR classification for media-controller nodes (IPU6/IPU7, Qualcomm CAMSS)
+
+A capture node behind a media-controller pipeline (Intel IPU6/IPU7 ISYS,
+Qualcomm CAMSS on Snapdragon X laptops such as the Surface Pro 11) has no USB
+identity and advertises a static table of every format the pipeline supports,
+so it never classifies as IR by format evidence, and a `name_pattern` quirk on
+it is not corroborated. Identify the IR node by its kernel-reported identity
+instead, with a quirk keyed on `modalias` and `node_name`. That match is
+authoritative for `security.require_ir`, like a USB vendor:product ID, and
+applies to that one node only; keep `require_ir = true`.
+
+Read both values for the node your IR pipeline delivers to:
+
+```bash
+cat /sys/class/video4linux/videoN/device/modalias
+cat /sys/class/video4linux/videoN/name
+```
+
+and copy them verbatim into `/etc/facelock/quirks.d/`:
+
+```toml
+[[quirk]]
+modalias = "auxiliary:intel_ipu6.isys"   # paste yours; compared exactly
+node_name = "Intel IPU6 ISYS Capture 0"  # paste yours; compared exactly
+force_ir = true
+format_preference = "GREY"
+notes = "IR sensor on ISYS capture node 0"
+```
+
+Values seen in kernel source, not yet confirmed on hardware in this project:
+IPU6 nodes are named `Intel IPU6 ISYS Capture N` under modalias
+`auxiliary:intel_ipu6.isys`; IPU7 (staging driver) `Intel IPU7 ISYS Capture N`
+under `auxiliary:intel_ipu7.isys`; CAMSS nodes are named `msm_vfeN_videoM`,
+and their modalias is a devicetree string beginning `of:N` that includes the
+SoC's camss compatible (for example `qcom,x1e80100-camss`). The exact CAMSS
+string depends on the devicetree, so always paste the value your machine
+reports rather than one from this page.
+
+The node name is stable across boots even where `/dev/videoN` numbering is
+not, but it names the capture node, not the sensor: which sensor feeds that
+node is set by the media-graph links. Route the IR sensor to the node the
+quirk names before authenticating (see `docs/security.md` §A). Capturing from
+these nodes is a separate concern from classifying them: the pipeline must be
+configured ahead of time, and CAMSS nodes need multi-planar capture support.
+
 ## Init System Support
 
 ### systemd (recommended)

@@ -47,7 +47,8 @@ with "no camera found".
    format_preference = "GREY"   # the IR node's native format, for multi-node cameras
    notes = "My IR camera"
    ```
-   Prefer a USB-ID quirk over a `name_pattern` one: a name-only `force_ir` is trusted only when corroborated by the device's own mono-format evidence or a real USB identity, so it will not, by itself, force a color-only device to IR.
+   For a non-USB media-controller node (Intel IPU6/IPU7, Qualcomm CAMSS), key the quirk by `modalias` and `node_name` instead (see `docs/compatibility.md`).
+   Prefer a USB-ID or platform-identity quirk over a `name_pattern` one: a name-only `force_ir` is trusted only when corroborated by the device's own mono-format evidence or a real USB identity, so it will not, by itself, force a color-only device to IR.
 5. As a last resort you can set `security.require_ir = false` -- but understand this weakens spoofing resistance. Only do this for testing.
 
 ## Enrollment captures 0 frames

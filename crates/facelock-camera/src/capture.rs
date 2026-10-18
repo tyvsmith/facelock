@@ -753,6 +753,8 @@ mod tests {
             vendor_id: None,
             product_id: None,
             name_pattern: None,
+            modalias: None,
+            node_name: None,
             force_ir: None,
             emitter_xu_guid: None,
             emitter_xu_selector: None,

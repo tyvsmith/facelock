@@ -24,6 +24,22 @@ Camera settings.
 | `camera_release_secs` | u32 | `3` | Daemon only. Seconds to keep the camera streaming after a **failed** authentication so an immediate retry skips the reopen cost. Cancellation and errors release the camera at once, and so does a success unless `camera_release_after_success_secs` is set. `0` disables the hold entirely (it used to be silently substituted with 5). |
 | `camera_release_after_success_secs` | u32 | `0` | Daemon only. Seconds to keep the camera streaming after a **successful** authentication too. `0` (the default) releases it immediately — the interaction is over, and on IR hardware the emitter LED goes out with it. Set it only where privileged actions repeat with no authentication caching in front of them (`sudo` with a zero `timestamp_timeout`, a polkit action without `auth_admin_keep`), so each one is a fresh authentication that would otherwise pay a camera reopen. Failures still use `camera_release_secs`; cancellations and errors always release at once. |
 
+### Hardware quirks
+
+Per-camera overrides live outside `config.toml`, in `[[quirk]]` tables under
+`/usr/share/facelock/quirks.d/` (shipped) and `/etc/facelock/quirks.d/`
+(local, wins over shipped). The shipped `00-defaults.toml` header lists every
+key. A quirk matches a node by one of:
+
+| Keys | Matches | Notes |
+|------|---------|-------|
+| `vendor_id` + `product_id` | USB cameras, by sysfs `idVendor`/`idProduct` | `force_ir` is authoritative |
+| `modalias` + `node_name` | non-USB media-controller nodes (IPU6/IPU7, CAMSS), by `/sys/class/video4linux/videoN/device/modalias` and `/sys/class/video4linux/videoN/name`, exact | `force_ir` is authoritative; both keys required; never matches a virtual node |
+| `name_pattern` | the V4L2 card name, anchored glob | `force_ir = true` needs corroboration by a USB identity or mono-only formats |
+
+See `docs/compatibility.md` for a media-controller example and
+`docs/security.md` §A for why each match carries the authority it does.
+
 ## [recognition]
 
 Face detection and embedding parameters.

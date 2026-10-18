@@ -2,7 +2,8 @@
 #
 # This file contains device-specific workarounds for cameras known to need
 # special handling. Entries are matched by USB vendor:product ID first,
-# then by device name pattern as a fallback.
+# then by platform identity (modalias + node_name), then by device name
+# pattern as a fallback.
 #
 # Fields:
 #   vendor_id / product_id  - USB IDs (hex string, e.g. "8086")
@@ -15,6 +16,13 @@
 #                             a start-anchored form and a `.* `-prefixed,
 #                             space-bounded form. That is why the name entries
 #                             below come in pairs.
+#   modalias / node_name    - kernel-reported identity of a non-USB capture node
+#                             (Intel IPU6/IPU7, Qualcomm CAMSS), compared exactly
+#                             against /sys/class/video4linux/videoN/device/modalias
+#                             and /sys/class/video4linux/videoN/name. Both are
+#                             required; a match names one node and is as
+#                             authoritative as a USB ID. Never matches a virtual
+#                             (v4l2loopback) node.
 #   force_ir                - treat this device as an IR camera regardless of format detection
 #   emitter_xu_guid         - UVC Extension Unit GUID for IR emitter control
 #   emitter_xu_selector     - UVC XU control selector for emitter toggle

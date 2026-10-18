@@ -20,6 +20,19 @@ pub struct Quirk {
     /// [`name_matches`].
     #[serde(default)]
     pub name_pattern: Option<String>,
+    /// Kernel modalias of the node's parent hardware device, compared exactly
+    /// against `/sys/class/video4linux/videoN/device/modalias` (e.g.
+    /// `auxiliary:intel_ipu6.isys`). Identifies a non-USB (platform,
+    /// auxiliary, PCI) capture pipeline. Only matches together with
+    /// [`node_name`](Self::node_name); see [`PlatformIdentity`].
+    #[serde(default)]
+    pub modalias: Option<String>,
+    /// Kernel-assigned V4L2 node name, compared exactly against
+    /// `/sys/class/video4linux/videoN/name` (e.g. `Intel IPU6 ISYS Capture 0`).
+    /// Required alongside [`modalias`](Self::modalias) so a platform quirk
+    /// names one capture node, not every node on the card.
+    #[serde(default)]
+    pub node_name: Option<String>,
     /// Force this device to be treated as an IR camera
     #[serde(default)]
     pub force_ir: Option<bool>,
@@ -73,6 +86,12 @@ pub enum QuirkMatchKind {
     /// a virtual device (e.g. v4l2loopback exposes no real USB node, so it
     /// can never win a USB-ID match).
     UsbId,
+    /// Matched by `modalias` + `node_name` against the kernel-reported
+    /// identity of a non-USB node (see [`PlatformIdentity`]). Same authority
+    /// as [`QuirkMatchKind::UsbId`]: the modalias is written by the kernel
+    /// bus driver of a real parent device, and a virtual node has no parent
+    /// device to read it from.
+    PlatformId,
     /// Matched by `name_pattern` against the free-text device/card name
     /// only. The name is attacker-controlled on virtual devices — see
     /// `facelock_camera::device::ir_source_with_quirks` for how a
@@ -141,6 +160,7 @@ impl QuirksDb {
         let content = std::fs::read_to_string(path).map_err(|e| format!("read error: {e}"))?;
         let mut file: QuirksFile =
             toml::from_str(&content).map_err(|e| format!("parse error: {e}"))?;
+        warn_incomplete_platform_keys(path, &file.quirk);
         // Quirk files are often written with the padded V4L2 FourCC ("Y16 ").
         // Normalize here so comparisons against `FormatInfo::fourcc` match.
         for quirk in &mut file.quirk {
@@ -155,7 +175,10 @@ impl QuirksDb {
     /// Matches by USB vendor:product ID first, then by name pattern; within
     /// each pass the LAST-loaded entry wins (see [`find_match_with_kind`](Self::find_match_with_kind)).
     pub fn find_match(&self, device: &DeviceInfo) -> Option<&Quirk> {
-        self.find_match_with_ids(device, read_usb_ids(&device.path).as_ref())
+        let usb_ids = read_usb_ids(&device.path);
+        let platform = read_platform_identity(&device.path);
+        self.find_match_with_kind(device, usb_ids.as_ref(), platform.as_ref())
+            .map(|(q, _)| q)
     }
 
     /// Like [`find_match`](Self::find_match) but with the device's USB
@@ -168,7 +191,8 @@ impl QuirksDb {
         device: &DeviceInfo,
         usb_ids: Option<&(String, String)>,
     ) -> Option<&Quirk> {
-        self.find_match_with_kind(device, usb_ids).map(|(q, _)| q)
+        self.find_match_with_kind(device, usb_ids, None)
+            .map(|(q, _)| q)
     }
 
     /// Like [`find_match_with_ids`](Self::find_match_with_ids) but also
@@ -178,6 +202,10 @@ impl QuirksDb {
     /// free-text device name, which is attacker-controlled on virtual
     /// devices such as v4l2loopback, and should not be trusted the same way
     /// as a [`QuirkMatchKind::UsbId`] match.
+    ///
+    /// Passes run in order USB ID, platform identity, name. A
+    /// [`QuirkMatchKind::PlatformId`] match needs both `modalias` and
+    /// `node_name` on the quirk to equal the node's [`PlatformIdentity`].
     ///
     /// A USB-ID match always beats a name match — that is specificity, and it
     /// is independent of load order. *Within* each pass the LAST-loaded entry
@@ -192,6 +220,7 @@ impl QuirksDb {
         &self,
         device: &DeviceInfo,
         usb_ids: Option<&(String, String)>,
+        platform: Option<&PlatformIdentity>,
     ) -> Option<(&Quirk, QuirkMatchKind)> {
         // First pass: match by USB vendor:product ID (most specific).
         if let Some((vendor, product)) = usb_ids {
@@ -213,7 +242,28 @@ impl QuirksDb {
             }
         }
 
-        // Second pass: match by name pattern. Simple case-insensitive
+        // Second pass: match by kernel-reported platform identity. Exact
+        // comparison on both keys; a quirk missing either never matches here.
+        if let Some(id) = platform {
+            let matched = self.quirks.iter().rev().find(|quirk| {
+                matches!(
+                    (&quirk.modalias, &quirk.node_name),
+                    (Some(qm), Some(qn)) if *qm == id.modalias && *qn == id.node_name
+                )
+            });
+            if let Some(quirk) = matched {
+                debug!(
+                    device = %device.path,
+                    modalias = %id.modalias,
+                    node_name = %id.node_name,
+                    notes = quirk.notes.as_deref().unwrap_or(""),
+                    "matched quirk by platform identity"
+                );
+                return Some((quirk, QuirkMatchKind::PlatformId));
+            }
+        }
+
+        // Third pass: match by name pattern. Simple case-insensitive
         // pattern matching (see `name_matches`); we avoid the regex crate.
         let matched = self.quirks.iter().rev().find(|quirk| {
             quirk
@@ -254,6 +304,66 @@ pub(crate) fn read_usb_ids(device_path: &str) -> Option<(String, String)> {
     match (fp.vid, fp.pid) {
         (Some(v), Some(p)) => Some((v, p)),
         _ => None,
+    }
+}
+
+/// Kernel-reported identity of a non-USB V4L2 capture node: the parent
+/// device's `modalias` and the node's own `name`, both from sysfs.
+///
+/// The modalias is written by the kernel bus code for a real parent device
+/// (`auxiliary:`, `of:`, `pci:`, `acpi:`, `platform:`), not by the V4L2
+/// driver or by userspace, and a virtual node (v4l2loopback, vivid) lives
+/// under `/sys/devices/virtual` with no parent device to read it from. The
+/// node name is what that real driver assigned to this one node, which is
+/// what keeps a platform verdict per node rather than per card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformIdentity {
+    pub modalias: String,
+    pub node_name: String,
+}
+
+/// Read the [`PlatformIdentity`] of `/dev/videoN` from sysfs. `None` for a
+/// USB node (covered by [`read_usb_ids`]), a virtual node, or any node whose
+/// parent device or name cannot be read.
+pub fn read_platform_identity(device_path: &str) -> Option<PlatformIdentity> {
+    let dev_name = device_path.strip_prefix("/dev/")?;
+    platform_identity_from_sysfs(&Path::new("/sys/class/video4linux").join(dev_name))
+}
+
+/// [`read_platform_identity`] against an explicit sysfs class directory, so
+/// the rules are testable on a fixture tree.
+fn platform_identity_from_sysfs(class_dir: &Path) -> Option<PlatformIdentity> {
+    // A virtual node has no `device` link; one whose link resolves under
+    // `devices/virtual` is refused too, so no kernel layout change can let a
+    // software-only device present a parent modalias.
+    let parent = std::fs::canonicalize(class_dir.join("device")).ok()?;
+    let mut components = parent.components().map(|c| c.as_os_str());
+    if components.any(|c| c == "devices") && components.next().is_some_and(|c| c == "virtual") {
+        return None;
+    }
+    let modalias = try_read_sysfs_attr(&parent.to_string_lossy(), "modalias")?;
+    if modalias.starts_with("usb:") {
+        return None;
+    }
+    let node_name = try_read_sysfs_attr(&class_dir.to_string_lossy(), "name")?;
+    Some(PlatformIdentity {
+        modalias,
+        node_name,
+    })
+}
+
+/// A quirk with only one of `modalias` / `node_name` can never match by
+/// platform identity. Say so at load rather than letting it fail silently.
+fn warn_incomplete_platform_keys(path: &Path, quirks: &[Quirk]) {
+    for quirk in quirks {
+        if quirk.modalias.is_some() != quirk.node_name.is_some() {
+            warn!(
+                file = %path.display(),
+                notes = quirk.notes.as_deref().unwrap_or(""),
+                "quirk sets only one of modalias/node_name; both are required \
+                 for a platform identity match, so it will not match by one"
+            );
+        }
     }
 }
 
@@ -503,6 +613,8 @@ y16_bit_depth = 10
             vendor_id: None,
             product_id: None,
             name_pattern: Some("(?i)hp.* ir.*".into()),
+            modalias: None,
+            node_name: None,
             force_ir: Some(true),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
@@ -533,6 +645,8 @@ y16_bit_depth = 10
             vendor_id: Some("8086".into()),
             product_id: Some("0b07".into()),
             name_pattern: None,
+            modalias: None,
+            node_name: None,
             force_ir: Some(true),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
@@ -547,6 +661,8 @@ y16_bit_depth = 10
             vendor_id: None,
             product_id: None,
             name_pattern: Some("(?i).*realsense.*".into()),
+            modalias: None,
+            node_name: None,
             force_ir: Some(false), // Different value to test priority
             emitter_xu_guid: None,
             emitter_xu_selector: None,
@@ -575,6 +691,8 @@ y16_bit_depth = 10
             vendor_id: Some("046D".into()),  // uppercase D
             product_id: Some("085E".into()), // uppercase E
             name_pattern: None,
+            modalias: None,
+            node_name: None,
             force_ir: Some(true),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
@@ -597,6 +715,8 @@ y16_bit_depth = 10
             vendor_id: None,
             product_id: None,
             name_pattern: Some("(?i)first.*camera".into()),
+            modalias: None,
+            node_name: None,
             force_ir: Some(true),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
@@ -610,6 +730,8 @@ y16_bit_depth = 10
             vendor_id: None,
             product_id: None,
             name_pattern: Some("(?i)second.*camera.*".into()),
+            modalias: None,
+            node_name: None,
             force_ir: Some(false),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
@@ -730,7 +852,7 @@ notes = "local override by usb id"
         // Name pass.
         let device = make_device("Integrated IR Camera");
         let (quirk, kind) = db
-            .find_match_with_kind(&device, None)
+            .find_match_with_kind(&device, None, None)
             .expect("a name pattern matches");
         assert_eq!(kind, QuirkMatchKind::NameOnly);
         assert_eq!(
@@ -743,7 +865,7 @@ notes = "local override by usb id"
         // USB-ID pass.
         let ids = ("dead".to_string(), "beef".to_string());
         let (quirk, kind) = db
-            .find_match_with_kind(&device, Some(&ids))
+            .find_match_with_kind(&device, Some(&ids), None)
             .expect("a USB id matches");
         assert_eq!(kind, QuirkMatchKind::UsbId);
         assert_eq!(
@@ -752,6 +874,217 @@ notes = "local override by usb id"
             "the /etc USB-ID entry must win over the shipped one"
         );
         assert_eq!(quirk.force_ir, Some(false));
+    }
+
+    #[test]
+    fn quirk_deserialization_platform_identity() {
+        let toml = r#"
+[[quirk]]
+modalias = "auxiliary:intel_ipu6.isys"
+node_name = "Intel IPU6 ISYS Capture 0"
+force_ir = true
+"#;
+        let file: QuirksFile = toml::from_str(toml).unwrap();
+        assert_eq!(
+            file.quirk[0].modalias.as_deref(),
+            Some("auxiliary:intel_ipu6.isys")
+        );
+        assert_eq!(
+            file.quirk[0].node_name.as_deref(),
+            Some("Intel IPU6 ISYS Capture 0")
+        );
+        assert_eq!(file.quirk[0].vendor_id, None);
+    }
+
+    fn platform_db() -> QuirksDb {
+        let quirks = toml::from_str::<QuirksFile>(
+            r#"
+[[quirk]]
+modalias = "auxiliary:intel_ipu6.isys"
+node_name = "Intel IPU6 ISYS Capture 0"
+force_ir = true
+notes = "full"
+
+[[quirk]]
+modalias = "auxiliary:intel_ipu6.isys"
+force_ir = true
+notes = "modalias only"
+
+[[quirk]]
+node_name = "Intel IPU6 ISYS Capture 1"
+force_ir = true
+notes = "node_name only"
+"#,
+        )
+        .unwrap()
+        .quirk;
+        QuirksDb { quirks }
+    }
+
+    fn ipu6(node_name: &str) -> PlatformIdentity {
+        PlatformIdentity {
+            modalias: "auxiliary:intel_ipu6.isys".into(),
+            node_name: node_name.into(),
+        }
+    }
+
+    #[test]
+    fn platform_match_requires_both_keys_exactly() {
+        let db = platform_db();
+        let device = make_device("Intel IPU6 ISYS Capture 0");
+
+        let (quirk, kind) = db
+            .find_match_with_kind(&device, None, Some(&ipu6("Intel IPU6 ISYS Capture 0")))
+            .expect("modalias + node_name match");
+        assert_eq!(kind, QuirkMatchKind::PlatformId);
+        assert_eq!(quirk.notes.as_deref(), Some("full"));
+
+        // One key alone never matches, and node_name is not a pattern.
+        for node in [
+            "Intel IPU6 ISYS Capture 1",
+            "Intel IPU6 ISYS Capture 2",
+            "intel ipu6 isys capture 0",
+        ] {
+            assert!(
+                db.find_match_with_kind(&device, None, Some(&ipu6(node)))
+                    .is_none()
+            );
+        }
+        let other_bus = PlatformIdentity {
+            modalias: "auxiliary:intel_ipu7.isys".into(),
+            node_name: "Intel IPU6 ISYS Capture 0".into(),
+        };
+        assert!(
+            db.find_match_with_kind(&device, None, Some(&other_bus))
+                .is_none()
+        );
+        // No identity (a virtual node) matches nothing.
+        assert!(db.find_match_with_kind(&device, None, None).is_none());
+    }
+
+    #[test]
+    fn usb_id_match_beats_platform_and_platform_beats_name() {
+        let mut db = platform_db();
+        db.quirks.push(Quirk {
+            name_pattern: Some("(?i)intel ipu6.*".into()),
+            modalias: None,
+            node_name: None,
+            notes: Some("name".into()),
+            ..db.quirks[0].clone()
+        });
+        db.quirks.push(Quirk {
+            vendor_id: Some("dead".into()),
+            product_id: Some("beef".into()),
+            modalias: None,
+            node_name: None,
+            notes: Some("usb".into()),
+            ..db.quirks[0].clone()
+        });
+        let device = make_device("Intel IPU6 ISYS Capture 0");
+        let id = ipu6("Intel IPU6 ISYS Capture 0");
+        let usb = ("dead".to_string(), "beef".to_string());
+
+        let (_, kind) = db
+            .find_match_with_kind(&device, Some(&usb), Some(&id))
+            .unwrap();
+        assert_eq!(kind, QuirkMatchKind::UsbId);
+        let (_, kind) = db.find_match_with_kind(&device, None, Some(&id)).unwrap();
+        assert_eq!(kind, QuirkMatchKind::PlatformId);
+        let (_, kind) = db.find_match_with_kind(&device, None, None).unwrap();
+        assert_eq!(kind, QuirkMatchKind::NameOnly);
+    }
+
+    /// A scratch sysfs tree: `devices/...` holds parent devices, `class/videoN`
+    /// is the node directory with its `name` and optional `device` link.
+    struct FakeSysfs(std::path::PathBuf);
+
+    impl FakeSysfs {
+        fn new(tag: &str) -> Self {
+            let root = std::env::temp_dir()
+                .join(format!("facelock-platform-id-{tag}-{}", std::process::id()));
+            std::fs::remove_dir_all(&root).ok();
+            std::fs::create_dir_all(&root).unwrap();
+            Self(root)
+        }
+
+        fn parent(&self, rel: &str, modalias: Option<&str>) -> std::path::PathBuf {
+            let dir = self.0.join(rel);
+            std::fs::create_dir_all(&dir).unwrap();
+            if let Some(m) = modalias {
+                std::fs::write(dir.join("modalias"), format!("{m}\n")).unwrap();
+            }
+            dir
+        }
+
+        fn node(&self, name: &str, parent: Option<&Path>) -> std::path::PathBuf {
+            let dir = self.0.join("class").join("video9");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("name"), format!("{name}\n")).unwrap();
+            if let Some(p) = parent {
+                std::os::unix::fs::symlink(p, dir.join("device")).unwrap();
+            }
+            dir
+        }
+    }
+
+    impl Drop for FakeSysfs {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).ok();
+        }
+    }
+
+    #[test]
+    fn platform_identity_reads_parent_modalias_and_node_name() {
+        let fs = FakeSysfs::new("real");
+        let parent = fs.parent(
+            "devices/pci0000:00/0000:00:05.0/intel_ipu6.isys.40",
+            Some("auxiliary:intel_ipu6.isys"),
+        );
+        let node = fs.node("Intel IPU6 ISYS Capture 0", Some(&parent));
+        assert_eq!(
+            platform_identity_from_sysfs(&node),
+            Some(ipu6("Intel IPU6 ISYS Capture 0"))
+        );
+    }
+
+    #[test]
+    fn platform_identity_refuses_virtual_nodes() {
+        // v4l2loopback: no `device` link at all.
+        let fs = FakeSysfs::new("loopback");
+        let node = fs.node("Intel IPU6 ISYS Capture 0", None);
+        assert_eq!(platform_identity_from_sysfs(&node), None);
+
+        // A link that resolves under devices/virtual is refused even if a
+        // modalias file is present there.
+        let fs = FakeSysfs::new("virtual");
+        let parent = fs.parent(
+            "devices/virtual/video4linux/video9",
+            Some("auxiliary:intel_ipu6.isys"),
+        );
+        let node = fs.node("Intel IPU6 ISYS Capture 0", Some(&parent));
+        assert_eq!(platform_identity_from_sysfs(&node), None);
+    }
+
+    #[test]
+    fn platform_identity_skips_usb_and_unreadable_parents() {
+        let fs = FakeSysfs::new("usb");
+        let parent = fs.parent(
+            "devices/pci0000:00/usb1/1-1/1-1:1.0",
+            Some("usb:v046Dp085Ed0317dcEFdsc02dp01ic0Eisc01ip00in00"),
+        );
+        let node = fs.node("Logitech BRIO", Some(&parent));
+        assert_eq!(platform_identity_from_sysfs(&node), None);
+
+        let fs = FakeSysfs::new("nomodalias");
+        let parent = fs.parent("devices/platform/soc/acb7000.isp", None);
+        let node = fs.node("msm_vfe0_video0", Some(&parent));
+        assert_eq!(platform_identity_from_sysfs(&node), None);
+    }
+
+    #[test]
+    fn platform_identity_tolerates_missing_sysfs() {
+        assert_eq!(read_platform_identity("/dev/nonexistent_test_video"), None);
+        assert_eq!(read_platform_identity("relative/path"), None);
     }
 
     #[test]

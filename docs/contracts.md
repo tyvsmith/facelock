@@ -3633,7 +3633,8 @@ When `device.path` is omitted:
 1. Enumerate `/dev/video0` through `/dev/video63`
 2. Filter to VIDEO_CAPTURE devices
 3. Classify every node's IR provenance from queried evidence: a quirks
-   `force_ir` match (authoritative by USB vendor:product ID; a name-only match
+   `force_ir` match (authoritative by USB vendor:product ID or by platform
+   identity, `modalias` plus `node_name`; a name-only match
    only when corroborated by a real USB identity or the node's own mono-format
    evidence), otherwise a node whose queried formats are mono-only/IR-typical
    (GREY/Y8/Y10/Y12/Y16, with no color format mixed in). The device name never
@@ -3706,6 +3707,28 @@ D-Bus `DeviceInfo` does not carry formats, so under the daemon backend
 `--json` reports `"formats": []` and there is no spelling to change
 (`BackendCaps::device_formats`, false for `BackendKind::Daemon`). The
 human-readable `facelock devices` table already trimmed.
+
+### Hardware Quirk Files
+
+Quirk files are TOML arrays of `[[quirk]]` tables, loaded from
+`/usr/share/facelock/quirks.d/*.toml` then `/etc/facelock/quirks.d/*.toml`
+(alphabetical within each). The header of `config/quirks.d/00-defaults.toml`
+lists every key. Match keys, tried in this order, last-loaded entry winning
+within a pass:
+
+| Pass | Keys | Compared against | `force_ir = true` authority |
+|------|------|------------------|-----------------------------|
+| USB ID | `vendor_id` + `product_id` | `idVendor` / `idProduct` of the node's USB device, case-insensitive | authoritative |
+| Platform identity | `modalias` + `node_name` | `/sys/class/video4linux/videoN/device/modalias` and `/sys/class/video4linux/videoN/name`, both exact | authoritative |
+| Name | `name_pattern` | V4L2 card name, anchored glob (`(?i)`, `.*`) | only when corroborated by a USB identity or mono-only formats |
+
+The platform pass reads an identity only for a node whose `device` link
+resolves to a real parent device outside `/sys/devices/virtual` with a
+non-USB modalias. A quirk that sets only one of `modalias` / `node_name`
+never matches by platform identity and logs a warning at load. A platform
+match names one capture node, so it never classifies the card's other nodes,
+and a platform identity does not corroborate a name-only match.
+`force_ir = false` is authoritative from every pass.
 
 ## Database Schema
 
@@ -4161,8 +4184,9 @@ treats a decline as a fall-through to another agent or as an outright denial.
 IR classification is derived from queried device evidence: a node is IR when its
 enumerated pixel formats are mono-only/IR-typical (GREY/Y8/Y10/Y12/Y16, with no
 color format mixed in), or when a quirks `force_ir` entry matches (authoritative
-by USB vendor:product ID; a name-only match requires corroborating format
-evidence or a real USB identity). The free-text device name never classifies a
+by USB vendor:product ID or by platform identity, `modalias` plus `node_name`
+read from sysfs for a non-USB node; a name-only match requires corroborating
+format evidence or a real USB identity). The free-text device name never classifies a
 device on its own, and a GREY/Y16 format offered *alongside* a color format is
 not treated as IR. A `force_ir` quirk is device-level ("this USB device has an
 IR sensor"): when the device exposes multiple capture nodes and at least one has
