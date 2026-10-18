@@ -85,6 +85,14 @@ impl WipeElement for FaceEmbedding {
     }
 }
 
+/// A per-frame inference result: the detection (box, landmarks, confidence)
+/// stays readable, the embedding wipes (#305).
+impl WipeElement for (Detection, FaceEmbedding) {
+    fn wipe(&mut self) {
+        self.1.zeroize();
+    }
+}
+
 /// Plaintext embeddings wiped when the guard leaves scope — on every return
 /// path *and* on an unwind, which hand-written per-return-site wipes cannot
 /// cover (D11).
@@ -1000,6 +1008,35 @@ mod tests {
             live.iter().all(|e| e.iter().all(|&v| v == 0.0)),
             "bare embeddings must be zeroized after the guard drops"
         );
+    }
+
+    /// Per-frame inference output (#305): the embedding half of each
+    /// `(Detection, FaceEmbedding)` wipes, the detection stays readable.
+    #[test]
+    fn wiped_covers_per_frame_inference_output() {
+        let det = Detection {
+            bbox: BoundingBox {
+                x: 1.0,
+                y: 2.0,
+                width: 3.0,
+                height: 4.0,
+            },
+            confidence: 0.9,
+            landmarks: [Point2D { x: 5.0, y: 6.0 }; 5],
+        };
+        let mut faces: Vec<(Detection, FaceEmbedding)> =
+            vec![(det.clone(), [1.0; 512]), (det, [2.0; 512])];
+
+        {
+            let guard = Wiped::new(faces.as_mut_slice());
+            assert_eq!(guard[1].1[0], 2.0, "guard must deref to the plaintext");
+        }
+
+        assert!(
+            faces.iter().all(|(_, e)| e.iter().all(|&v| v == 0.0)),
+            "per-frame embeddings must be zeroized after the guard drops"
+        );
+        assert_eq!(faces[0].0.confidence, 0.9, "detections are not secret");
     }
 
     /// The borrowed push form: a fallible producer accumulates into a

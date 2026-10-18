@@ -31,14 +31,13 @@
 //! The guard tests at the bottom pin all three.
 
 use std::fs;
-use std::io;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, bail};
+use anyhow::{Context, anyhow};
 
 use facelock_core::Config;
-use facelock_core::fs_security::ensure_private_dir;
+use facelock_core::fs_security::{chown_to, ensure_private_dir};
 
 // ---------------------------------------------------------------------------
 // Names and modes
@@ -176,19 +175,8 @@ struct DirSpec<'a> {
 
 /// `chown(2)` to `root:root`.
 fn chown_root(path: &Path) -> anyhow::Result<()> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
-    let c_path = CString::new(path.as_os_str().as_bytes())
-        .with_context(|| format!("path contains embedded NUL: {}", path.display()))?;
-    if unsafe { libc::chown(c_path.as_ptr(), 0, 0) } != 0 {
-        bail!(
-            "failed to chown {} to root:root: {}",
-            path.display(),
-            io::Error::last_os_error()
-        );
-    }
-    Ok(())
+    chown_to(path, 0, 0)
+        .map_err(|e| anyhow!("failed to chown {} to root:root: {e}", path.display()))
 }
 
 /// Create-or-tighten one directory, then optionally make it `root:root`.

@@ -657,10 +657,14 @@ decrypt paths are guarded too (#293): the decrypt loop and the store's plaintext
 accumulate inside the guard, so a row failing mid-load (AAD mismatch, TPM unseal failure,
 corrupt row) zeroizes the rows already collected, and buffer growth wipes the outgrown
 allocation; the compare set is built through the guard at exact capacity; and `facelock tpm
-decrypt` holds each row's unsealed bytes in `zeroize::Zeroizing`. Still unguarded: the
-per-frame embeddings inference returns before they are consumed, the per-row blob buffers
-SQLite hands back while a plaintext store loads, and the raw-row snapshot `facelock tpm
-encrypt` reads before sealing one.
+decrypt` holds each row's unsealed bytes in `zeroize::Zeroizing`. Live captures are guarded
+the same way (#305): the per-frame embeddings inference returns are held in `Wiped` by every
+consumer (authentication, enrollment, daemon and CLI preview, both benchmark paths), and the
+engine accumulates them through the guard, so a face failing to align or embed zeroizes
+the ones already extracted for that frame. And `facelock tpm
+encrypt` holds each plaintext blob of its raw-row snapshot in `zeroize::Zeroizing`, as
+decrypt does, so a seal or store-update failure mid-run wipes the rows it read. Still unguarded: the per-row blob buffers SQLite
+hands back while a plaintext store loads.
 
 **Hard device binding (opt-in, `security.bind_device_aad`).** When enabled, the enrolling
 camera's `device_id` is folded into the AES-GCM Additional Authenticated Data, so a template

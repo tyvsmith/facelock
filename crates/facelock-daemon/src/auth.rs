@@ -779,8 +779,10 @@ pub fn authenticate_with_embeddings<C: CameraSource, E: FaceProcessor>(
             last_frame = Some(frame.clone());
         }
 
+        // Per-frame embeddings, zeroized when `faces` drops at the end of this
+        // iteration — every `continue`, return and unwind included (#305).
         let faces = match engine.process(&frame) {
-            Ok(f) => f,
+            Ok(f) => Wiped::new(f),
             Err(e) => {
                 debug!(frame = frame_count, "face engine error: {e}");
                 continue;
@@ -823,7 +825,7 @@ pub fn authenticate_with_embeddings<C: CameraSource, E: FaceProcessor>(
         }
 
         let mut frame_matched = false;
-        for (det, embedding) in &faces {
+        for (det, embedding) in faces.iter() {
             // Skip individual faces that fail IR texture check
             if device_is_ir
                 && !check_ir_texture(&frame.gray, &det.bbox, frame.width, ir_texture_min)
