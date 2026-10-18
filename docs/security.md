@@ -901,6 +901,44 @@ caller that exits while logind is being queried cannot authorize a process
 that later reuses its numeric PID because the original pidfd is rechecked
 before the answer is used.
 
+A caller with no logind session at all gets one narrow fallback (#397).
+Processes started by the systemd user manager — KDE's `kscreenlocker` under
+`systemd --user`, a Quickshell `PamContext`, anything launched through
+`systemd-run --user` — live in `user@UID.service` rather than a
+`session-N.scope`, so `GetSessionByPID` answers
+`org.freedesktop.login1.NoSessionForPID`. On that error, and only that one,
+the daemon asks `org.freedesktop.systemd1.Manager.GetUnitByPID` for the same
+pidfd-derived PID and requires the unit's `Id` to be exactly
+`user@<uid>.service`, where `<uid>` is the caller UID already verified with
+`GetConnectionUnixUser`. It then lists that user's logind sessions
+(`ListSessions`, filtered by UID) and applies two rules:
+
+1. **No remote session.** If any of the user's sessions has `Remote = true`,
+   active or not, the caller is refused.
+2. **An active local graphical session.** At least one session must have
+   `Remote = false`, a non-empty `Seat`, `Type` of `wayland` or `x11`, and
+   `Active = true`.
+
+Any other unit, a failed unit or session lookup, or either rule failing
+refuses with the same AccessDenied message as above. The journal line
+`caller session provenance unavailable` carries a `reason` naming which rule
+fired: `no logind session and caller is not in user@<uid>.service`, `... has a
+remote logind session`, or `... has no active local graphical session`. The
+pidfd liveness recheck covers the whole fallback, and every read is a D-Bus
+call, so it needs nothing beyond the unit's existing `ProcSubset=pid` sandbox.
+A caller whose `GetSessionByPID` succeeds is decided by its own session's
+`Remote` property exactly as before.
+
+Residual risk: the user manager outlives any one login. A process planted in
+`user@UID.service` during an earlier SSH session (for example with
+`systemd-run --user` or a lingering user unit) that keeps running after that
+session ends is accepted once the user sits down at a local desktop and no
+remote session remains. That is the same class as persistent user-level
+malware, which the session check never stopped either: such code can already
+wait for the user's own local session and act from inside it. The fallback
+does stop a caller from the user manager while the user is logged in over SSH,
+and while nobody is at an active local desktop.
+
 UID 0 bypasses only that remote-session provenance check; it still uses the
 ordinary `Authenticate` authorization and the SQLite-backed biometric-guess
 limiter. When `abort_if_ssh = false`, no ProcessFD, PID, logind, or session

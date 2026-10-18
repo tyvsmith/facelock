@@ -1381,7 +1381,7 @@ What each physical-presence gate is worth behind the module is not uniform:
 |---|---|---|
 | `pam_facelock.so` | enforced, from the calling process's environment | enforced, from the calling process's `/proc` |
 | one-shot `facelock auth` | enforced in `pre_check` (PAM forwards `SSH_CONNECTION` / `SSH_TTY` into the child's allow-listed environment) | enforced in `pre_check`: the helper is an ordinary child of the PAM-using process, with no sandbox |
-| daemon `Authenticate` | enforced, by a different mechanism: for a non-root caller the D-Bus server resolves the caller's logind session (ProcessFD, then `GetSessionByPID`) and denies one whose `Remote` property is true. A root caller skips it, and a PAM `sudo` attempt arrives as UID 0 | enforced, by a different source: the D-Bus server reads `org.freedesktop.login1.Manager.LidClosed` and refuses a closed — or unresolvable — lid. Root is **not** exempt, because a PAM `sudo` attempt arrives as UID 0 |
+| daemon `Authenticate` | enforced, by a different mechanism: for a non-root caller the D-Bus server resolves the caller's logind session (ProcessFD, then `GetSessionByPID`) and denies one whose `Remote` property is true; a caller with no session is accepted only from its own `user@UID.service` while the user has an active local graphical session and no remote one. A root caller skips it, and a PAM `sudo` attempt arrives as UID 0 | enforced, by a different source: the D-Bus server reads `org.freedesktop.login1.Manager.LidClosed` and refuses a closed — or unresolvable — lid. Root is **not** exempt, because a PAM `sudo` attempt arrives as UID 0 |
 
 One consequence worth stating plainly. The `abort_if_ssh` arm inside
 `pre_check` reads the *calling* environment, which is the right environment on
@@ -3870,6 +3870,17 @@ session's `Remote` property. It never trusts the credentials' numeric
 `ProcessID`, never classifies the caller from a security label, and rejects a
 PID-reuse race because a dead original pidfd invalidates the intervening
 logind answer.
+
+When `GetSessionByPID` fails with `org.freedesktop.login1.NoSessionForPID`,
+and on no other error, the daemon falls back to the systemd user manager
+(#397): `org.freedesktop.systemd1.Manager.GetUnitByPID` on the same PID must
+name a unit whose `Id` is exactly `user@<uid>.service` for the caller UID from
+`GetConnectionUnixUser`, and the user's logind sessions (`ListSessions`
+filtered by UID) must include none with `Remote = true` and at least one with
+`Remote = false`, a non-empty `Seat`, `Type` `wayland` or `x11`, and
+`Active = true`. Failing any of those is the same denial described below;
+the journal reason names the rule. The pidfd liveness recheck spans the
+fallback.
 
 A remote session, omitted or invalid ProcessFD, dead caller, unavailable or
 inconsistent logind answer, cancellation, or expiry of the four-second

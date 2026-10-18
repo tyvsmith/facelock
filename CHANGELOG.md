@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Daemon `Authenticate` accepts user-manager callers with an active local session** (#397):
+  with `abort_if_ssh` on (the default), a non-root caller had to belong to a logind session,
+  and every process the systemd user manager starts — KDE's `kscreenlocker`, a Quickshell
+  `PamContext`, anything run through `systemd-run --user` — lives in `user@UID.service`
+  instead, so logind answered `NoSessionForPID` and the daemon refused before opening the
+  camera. Integrators worked around it with a global `abort_if_ssh = false`, which dropped
+  the SSH refusal for everyone. On `NoSessionForPID`, and only then, the daemon now asks
+  `org.freedesktop.systemd1.Manager.GetUnitByPID` for the caller's unit and accepts only
+  exactly `user@<uid>.service` for the verified caller UID, and only while that user has no
+  remote logind session and at least one active, seated, local `wayland` or `x11` session.
+  Every other case keeps the existing uniform `AccessDenied`; the journal `reason` now says
+  which rule refused. Root callers and callers with a logind session are unchanged, no
+  config key is added, and no unit, D-Bus policy or dependency change is involved. A process
+  left running in the user manager after an earlier SSH session is accepted once the user is
+  back at a local desktop with no remote session; docs/security.md records that residual.
 - **`abort_if_lid_closed` now sees every ACPI lid device** (#365): the PAM module checked a
   fixed `LID0`/`LID`/`LID1` list and the daemon read only
   `/proc/acpi/button/lid/LID0/state`, so a laptop whose firmware names the device anything
