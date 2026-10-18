@@ -312,8 +312,10 @@ pub(crate) fn read_usb_ids(device_path: &str) -> Option<(String, String)> {
 ///
 /// The modalias is written by the kernel bus code for a real parent device
 /// (`auxiliary:`, `of:`, `pci:`, `acpi:`, `platform:`), not by the V4L2
-/// driver or by userspace, and a virtual node (v4l2loopback, vivid) lives
-/// under `/sys/devices/virtual` with no parent device to read it from. The
+/// driver or by userspace. v4l2loopback lives under `/sys/devices/virtual`
+/// with no parent device to read it from. A test driver such as vivid does
+/// have a platform parent, but its own modalias (`platform:vivid`) and
+/// driver-fixed node names cannot equal another device's identity. The
 /// node name is what that real driver assigned to this one node, which is
 /// what keeps a platform verdict per node rather than per card.
 #[derive(Debug, Clone, PartialEq, Eq)]
