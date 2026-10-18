@@ -204,7 +204,10 @@ work is:
 Omarchy's Quickshell lock (`PamContext`) and KDE's `kscreenlocker` run under
 the systemd user manager, outside any logind session. The daemon accepts such
 a caller while the user has an active local Wayland/X11 session and no remote
-session, so integrators keep the default `security.abort_if_ssh = true`; do not
+session. The cost: while the user has any SSH session open to their own
+machine, an idle mosh or editor remote session included, such a locker is
+refused face unlock and falls through to the password; closing the remote
+session restores it. Integrators keep the default `security.abort_if_ssh = true`; do not
 write `abort_if_ssh = false` to make the lock screen work, since that removes
 the daemon's SSH refusal for every caller (see [security](security.md)).
 

@@ -324,8 +324,9 @@ struct UserSessionFacts {
 }
 
 impl UserSessionFacts {
-    /// An active, seated, local Wayland or X11 session: someone is at the
-    /// machine in a desktop.
+    /// An active, seated, local Wayland or X11 session. `Active = true` only
+    /// means the session is foreground on its seat; a locked, unattended
+    /// screen satisfies it too. Whether anyone is present is the camera's job.
     fn is_active_local_graphical(&self) -> bool {
         !self.remote
             && !self.seat.is_empty()
@@ -340,6 +341,8 @@ impl UserSessionFacts {
 enum UserManagerRefusal {
     #[error("no logind session and caller is not in user@{uid}.service: {detail}")]
     NotInUserManager { uid: u32, detail: String },
+    #[error("no logind session and unit lookup failed for caller UID {uid}: {detail}")]
+    UnitLookupFailed { uid: u32, detail: String },
     #[error("caller is in user@{uid}.service but user {uid} has a remote logind session")]
     RemoteSession { uid: u32 },
     #[error("caller is in user@{uid}.service but user {uid} has no active local graphical session")]
@@ -392,7 +395,7 @@ where
     SFut: Future<Output = Result<Vec<UserSessionFacts>, String>>,
 {
     let unit = unit_by_pid().await.map_err(|detail| {
-        UserManagerRefusal::NotInUserManager {
+        UserManagerRefusal::UnitLookupFailed {
             uid: caller_uid,
             detail,
         }
@@ -3161,8 +3164,9 @@ mod tests {
         )
         .await;
         let reason = result.expect_err("no unit refuses");
-        assert!(reason.starts_with("no logind session and caller is not in user@1000.service"));
+        assert!(reason.starts_with("no logind session and unit lookup failed for caller UID 1000"));
         assert!(reason.contains("NoUnitForPID"));
+        assert!(!reason.contains("not in user@1000.service"));
     }
 
     #[tokio::test]
@@ -3265,19 +3269,31 @@ mod tests {
     }
 
     #[test]
-    fn the_three_refusals_name_distinct_rules() {
+    fn the_four_refusals_name_distinct_rules() {
         let reasons = [
             UserManagerRefusal::NotInUserManager {
                 uid: 1000,
                 detail: "caller unit is \"sshd.service\"".to_owned(),
             }
             .to_string(),
+            UserManagerRefusal::UnitLookupFailed {
+                uid: 1000,
+                detail: "systemd GetUnitByPID(4242) failed: timeout".to_owned(),
+            }
+            .to_string(),
             UserManagerRefusal::RemoteSession { uid: 1000 }.to_string(),
             UserManagerRefusal::NoActiveLocalGraphicalSession { uid: 1000 }.to_string(),
         ];
         assert!(reasons[0].contains("not in user@1000.service"));
-        assert!(reasons[1].contains("remote logind session"));
-        assert!(reasons[2].contains("no active local graphical session"));
+        assert!(reasons[1].contains("unit lookup failed"));
+        assert!(!reasons[1].contains("not in user@1000.service"));
+        assert!(reasons[2].contains("remote logind session"));
+        assert!(reasons[3].contains("no active local graphical session"));
+        for (i, a) in reasons.iter().enumerate() {
+            for (j, b) in reasons.iter().enumerate() {
+                assert!(i == j || a != b, "{a:?} == {b:?}");
+            }
+        }
     }
 
     fn mock_handler_with_timeout(timeout_secs: u32) -> Handler<MockCamera, MockFaceEngine> {

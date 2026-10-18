@@ -914,7 +914,11 @@ pidfd-derived PID and requires the unit's `Id` to be exactly
 (`ListSessions`, filtered by UID) and applies two rules:
 
 1. **No remote session.** If any of the user's sessions has `Remote = true`,
-   active or not, the caller is refused.
+   active or not, the caller is refused. The cost is plain: while the user has
+   any SSH session open to their own machine, an idle mosh or editor remote
+   session included, a locker running under the user manager (KDE, Quickshell)
+   is refused face unlock and falls through to the password; closing the
+   remote session restores it.
 2. **An active local graphical session.** At least one session must have
    `Remote = false`, a non-empty `Seat`, `Type` of `wayland` or `x11`, and
    `Active = true`.
@@ -923,7 +927,11 @@ Any other unit, a failed unit or session lookup, or either rule failing
 refuses with the same AccessDenied message as above. The journal line
 `caller session provenance unavailable` carries a `reason` naming which rule
 fired: `no logind session and caller is not in user@<uid>.service`, `... has a
-remote logind session`, or `... has no active local graphical session`. The
+remote logind session`, or `... has no active local graphical session`. A
+`GetUnitByPID` call that fails outright (timeout, AccessDenied) is refused the
+same way under its own reason, `no logind session and unit lookup failed for
+caller UID <uid>`, so the journal separates a broken lookup from a foreign
+unit. The
 pidfd liveness recheck covers the whole fallback, and every read is a D-Bus
 call, so it needs nothing beyond the unit's existing `ProcSubset=pid` sandbox.
 A caller whose `GetSessionByPID` succeeds is decided by its own session's
