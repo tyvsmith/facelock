@@ -224,7 +224,12 @@ the camera's behaviour.
 The node name is stable across boots even where `/dev/videoN` numbering is
 not, but it names the capture node, not the sensor: which sensor feeds that
 node is set by the media-graph links. Route the IR sensor to the node the
-quirk names before authenticating (see `docs/security.md` §A). Capturing from
+quirk names before authenticating (see `docs/security.md` §A). Because of
+that, a platform-matched node is accepted as IR only when the format it
+negotiates at capture open is mono (GREY/Y8/Y10/Y12/Y16): keep
+`format_preference` at the sensor's mono format, or with `keep_format = true`
+leave the pipeline configured for it. A node that opens on a colour format is
+refused with an error naming the format and the quirk. Capturing from
 these nodes is a separate concern from classifying them: the pipeline must be
 configured ahead of time, and CAMSS nodes need multi-planar capture support
 (next section).

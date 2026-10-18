@@ -3764,6 +3764,11 @@ match names one capture node, so it never classifies the card's other nodes,
 and a platform identity does not corroborate a name-only match.
 `force_ir = false` is authoritative from every pass.
 
+A node that is IR only by a platform match must negotiate a mono format
+(GREY/Y8/Y10/Y12/Y16) at capture open; otherwise open fails, naming the
+negotiated format and the quirk, and authentication fails closed. A USB-ID
+match and a mono-only format table are not subject to this gate.
+
 ## Database Schema
 
 SQLite with WAL mode and foreign keys:
