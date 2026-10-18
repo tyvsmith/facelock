@@ -21,9 +21,10 @@ pub struct Quirk {
     #[serde(default)]
     pub name_pattern: Option<String>,
     /// Kernel modalias of the node's parent hardware device, compared exactly
-    /// against `/sys/class/video4linux/videoN/device/modalias` (e.g.
-    /// `auxiliary:intel_ipu6.isys`). Identifies a non-USB (platform,
-    /// auxiliary, PCI) capture pipeline. Only matches together with
+    /// against `/sys/class/video4linux/videoN/device/modalias`, or the
+    /// `MODALIAS=` line of `.../device/uevent` on a bus that exposes no
+    /// `modalias` file (e.g. `auxiliary:intel_ipu6.isys`). Identifies a
+    /// non-USB (platform, auxiliary, PCI) capture pipeline. Only matches together with
     /// [`node_name`](Self::node_name); see [`PlatformIdentity`].
     #[serde(default)]
     pub modalias: Option<String>,
@@ -343,7 +344,7 @@ fn platform_identity_from_sysfs(class_dir: &Path) -> Option<PlatformIdentity> {
     if components.any(|c| c == "devices") && components.next().is_some_and(|c| c == "virtual") {
         return None;
     }
-    let modalias = try_read_sysfs_attr(&parent.to_string_lossy(), "modalias")?;
+    let modalias = read_modalias(&parent)?;
     if modalias.starts_with("usb:") {
         return None;
     }
@@ -351,6 +352,26 @@ fn platform_identity_from_sysfs(class_dir: &Path) -> Option<PlatformIdentity> {
     Some(PlatformIdentity {
         modalias,
         node_name,
+    })
+}
+
+/// The modalias of a parent device directory: the `modalias` attribute when
+/// the bus exposes one, else the `MODALIAS=` line of its `uevent`.
+///
+/// Both come from the kernel bus code, but only some buses create the
+/// attribute file. An auxiliary-bus device (Intel IPU6/IPU7 ISYS) has no
+/// `modalias` file; its identity (`auxiliary:intel_ipu6.isys`) is written
+/// into `uevent` only. The file wins when both exist, and the `uevent` key is
+/// matched exactly (first `MODALIAS=` line, trimmed).
+fn read_modalias(parent: &Path) -> Option<String> {
+    let parent_str = parent.to_string_lossy();
+    try_read_sysfs_attr(&parent_str, "modalias").or_else(|| {
+        try_read_sysfs_attr(&parent_str, "uevent")?
+            .lines()
+            .find_map(|line| line.strip_prefix("MODALIAS="))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
     })
 }
 
@@ -1018,6 +1039,23 @@ notes = "node_name only"
             dir
         }
 
+        /// A parent whose bus writes the identity only into `uevent`, as the
+        /// auxiliary bus does; `modalias` is the `MODALIAS=` value, if any.
+        fn parent_with_uevent(
+            &self,
+            rel: &str,
+            uevent_modalias: Option<&str>,
+            modalias_file: Option<&str>,
+        ) -> std::path::PathBuf {
+            let dir = self.parent(rel, modalias_file);
+            let mut uevent = String::from("DRIVER=intel_ipu6_isys\n");
+            if let Some(m) = uevent_modalias {
+                uevent.push_str(&format!("MODALIAS={m}\n"));
+            }
+            std::fs::write(dir.join("uevent"), uevent).unwrap();
+            dir
+        }
+
         fn node(&self, name: &str, parent: Option<&Path>) -> std::path::PathBuf {
             let dir = self.0.join("class").join("video9");
             std::fs::create_dir_all(&dir).unwrap();
@@ -1046,6 +1084,57 @@ notes = "node_name only"
         assert_eq!(
             platform_identity_from_sysfs(&node),
             Some(ipu6("Intel IPU6 ISYS Capture 0"))
+        );
+    }
+
+    #[test]
+    fn platform_identity_falls_back_to_uevent_modalias() {
+        // An auxiliary-bus parent has no `modalias` file; the kernel writes
+        // MODALIAS= into its uevent only.
+        let fs = FakeSysfs::new("uevent");
+        let parent = fs.parent_with_uevent(
+            "devices/pci0000:00/0000:00:05.0/intel_ipu6.isys.40",
+            Some("auxiliary:intel_ipu6.isys"),
+            None,
+        );
+        let node = fs.node("Intel IPU6 ISYS Capture 0", Some(&parent));
+        assert_eq!(
+            platform_identity_from_sysfs(&node),
+            Some(ipu6("Intel IPU6 ISYS Capture 0"))
+        );
+
+        // A uevent without a MODALIAS= line gives no identity.
+        let fs = FakeSysfs::new("uevent-none");
+        let parent = fs.parent_with_uevent("devices/platform/soc/acb7000.isp", None, None);
+        let node = fs.node("msm_vfe0_video0", Some(&parent));
+        assert_eq!(platform_identity_from_sysfs(&node), None);
+
+        // The uevent fallback still refuses a USB parent.
+        let fs = FakeSysfs::new("uevent-usb");
+        let parent = fs.parent_with_uevent(
+            "devices/pci0000:00/usb1/1-1/1-1:1.0",
+            Some("usb:v046Dp085Ed0317dcEFdsc02dp01ic0Eisc01ip00in00"),
+            None,
+        );
+        let node = fs.node("Logitech BRIO", Some(&parent));
+        assert_eq!(platform_identity_from_sysfs(&node), None);
+    }
+
+    #[test]
+    fn platform_identity_prefers_modalias_file_over_uevent() {
+        let fs = FakeSysfs::new("both");
+        let parent = fs.parent_with_uevent(
+            "devices/platform/soc/acb7000.isp",
+            Some("of:NcamssT(null)Cstale,camss"),
+            Some("of:NcamssT(null)Cqcom,x1e80100-camss"),
+        );
+        let node = fs.node("msm_vfe0_video0", Some(&parent));
+        assert_eq!(
+            platform_identity_from_sysfs(&node),
+            Some(PlatformIdentity {
+                modalias: "of:NcamssT(null)Cqcom,x1e80100-camss".into(),
+                node_name: "msm_vfe0_video0".into(),
+            })
         );
     }
 

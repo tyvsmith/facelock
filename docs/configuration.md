@@ -36,7 +36,7 @@ key. A quirk matches a node by one of:
 | Keys | Matches | Notes |
 |------|---------|-------|
 | `vendor_id` + `product_id` | USB cameras, by sysfs `idVendor`/`idProduct` | `force_ir` is authoritative |
-| `modalias` + `node_name` | non-USB media-controller nodes (IPU6/IPU7, CAMSS), by `/sys/class/video4linux/videoN/device/modalias` and `/sys/class/video4linux/videoN/name`, exact | `force_ir` is authoritative; both keys required; never matches a virtual node |
+| `modalias` + `node_name` | non-USB media-controller nodes (IPU6/IPU7, CAMSS), by `/sys/class/video4linux/videoN/device/modalias` (or `MODALIAS=` in `.../device/uevent`) and `/sys/class/video4linux/videoN/name`, exact | `force_ir` is authoritative; both keys required; never matches a virtual node |
 | `name_pattern` | the V4L2 card name, anchored glob | `force_ir = true` needs corroboration by a USB identity or mono-only formats |
 
 See `docs/compatibility.md` for a media-controller example and

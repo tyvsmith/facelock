@@ -19,6 +19,8 @@
 #   modalias / node_name    - kernel-reported identity of a non-USB capture node
 #                             (Intel IPU6/IPU7, Qualcomm CAMSS), compared exactly
 #                             against /sys/class/video4linux/videoN/device/modalias
+#                             (or MODALIAS= in .../device/uevent where the bus
+#                             writes no modalias file, as the auxiliary bus does)
 #                             and /sys/class/video4linux/videoN/name. Both are
 #                             required; a match names one node and is as
 #                             authoritative as a USB ID. Never matches a virtual

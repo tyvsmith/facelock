@@ -3753,7 +3753,7 @@ within a pass:
 | Pass | Keys | Compared against | `force_ir = true` authority |
 |------|------|------------------|-----------------------------|
 | USB ID | `vendor_id` + `product_id` | `idVendor` / `idProduct` of the node's USB device, case-insensitive | authoritative |
-| Platform identity | `modalias` + `node_name` | `/sys/class/video4linux/videoN/device/modalias` and `/sys/class/video4linux/videoN/name`, both exact | authoritative |
+| Platform identity | `modalias` + `node_name` | `/sys/class/video4linux/videoN/device/modalias`, or the `MODALIAS=` line of `.../device/uevent` when the bus writes no `modalias` file (the file wins when both exist), and `/sys/class/video4linux/videoN/name`, both exact | authoritative |
 | Name | `name_pattern` | V4L2 card name, anchored glob (`(?i)`, `.*`) | only when corroborated by a USB identity or mono-only formats |
 
 The platform pass reads an identity only for a node whose `device` link

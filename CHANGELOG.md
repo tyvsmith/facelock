@@ -126,7 +126,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **IR quirks can match a platform camera's kernel identity**: a quirk keyed on `modalias`
   and `node_name` matches a non-USB capture node (Intel IPU6/IPU7 ISYS, Qualcomm CAMSS)
-  by `/sys/class/video4linux/videoN/device/modalias` and `/sys/class/video4linux/videoN/name`,
+  by `/sys/class/video4linux/videoN/device/modalias` (or the `MODALIAS=` line of
+  `.../device/uevent` where the bus writes no `modalias` file, as the auxiliary bus does)
+  and `/sys/class/video4linux/videoN/name`,
   and its `force_ir` is authoritative for `security.require_ir` the way a USB
   vendor:product ID is. These nodes have no USB identity and advertise every format the
   pipeline supports, so until now no quirk could classify them and their owners were left

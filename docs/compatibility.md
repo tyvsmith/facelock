@@ -188,10 +188,12 @@ instead, with a quirk keyed on `modalias` and `node_name`. That match is
 authoritative for `security.require_ir`, like a USB vendor:product ID, and
 applies to that one node only; keep `require_ir = true`.
 
-Read both values for the node your IR pipeline delivers to:
+Read both values for the node your IR pipeline delivers to. An auxiliary-bus
+parent (IPU6/IPU7) has no `modalias` file; the kernel writes the same value
+into the parent's `uevent` instead, and facelock reads whichever exists:
 
 ```bash
-cat /sys/class/video4linux/videoN/device/modalias
+cat /sys/class/video4linux/videoN/device/modalias 2>/dev/null || grep ^MODALIAS= /sys/class/video4linux/videoN/device/uevent
 cat /sys/class/video4linux/videoN/name
 ```
 
@@ -213,7 +215,11 @@ under `auxiliary:intel_ipu7.isys`; CAMSS nodes are named `msm_vfeN_videoM`,
 and their modalias is a devicetree string beginning `of:N` that includes the
 SoC's camss compatible (for example `qcom,x1e80100-camss`). The exact CAMSS
 string depends on the devicetree, so always paste the value your machine
-reports rather than one from this page.
+reports rather than one from this page. An `of:` modalias embeds every
+`compatible` string of the node, so a devicetree change on a kernel update can
+alter it and silently stop the match; with `require_ir = true` authentication
+then fails closed. Re-read the value above after a kernel update that changes
+the camera's behaviour.
 
 The node name is stable across boots even where `/dev/videoN` numbering is
 not, but it names the capture node, not the sensor: which sensor feeds that
