@@ -136,7 +136,7 @@ since omitting a flag already gives the default.
 | Flag | Meaning |
 |------|---------|
 | *(none)* | Full interactive wizard. Falls back to the non-interactive flow when stdin is not a terminal. |
-| `--non-interactive` | No prompts. Choices resolve to config-or-default. Runs the base setup only: directories, model download and verification, encryption, path permissions. No PAM, no systemd, no enrollment unless asked for explicitly. |
+| `--non-interactive` | No prompts. Choices resolve to config-or-default. Runs the base setup only: directories, model download and verification, encryption, path permissions. No PAM, no systemd, no enrollment unless asked for explicitly. When the config's encryption method names a key that is not on disk, setup creates that key. |
 | `-y`, `--yes` (alias `--no-confirm`) | Suppress ordinary confirmation prompts. Does not authorize a sensitive PAM edit. |
 
 `--yes` and `--non-interactive` suppress the per-file "Proceed?" confirmation;

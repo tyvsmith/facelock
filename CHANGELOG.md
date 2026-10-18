@@ -12,7 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`facelock setup` now creates the encryption key a default config names**: the shipped
   config leaves `encryption.method` at its `keyfile` default, and the automatic policy
   (`--non-interactive`, `--encryption auto`) treated any non-`none` method as already
-  configured, so a fresh install got no key. The daemon then tried to create
+  configured, so a fresh install that ran a flagless `facelock setup --non-interactive`
+  finished with no key on disk (an explicit `--encryption keyfile` or `--encryption tpm`
+  already minted one). The daemon then tried to create
   `/etc/facelock/encryption.key` itself, which the packaged unit's `ProtectSystem=strict`
   forbids, and the first enrollment failed with a read-only filesystem error. Setup now
   creates the missing keyfile for a `keyfile` method (unsealing an existing sealed key when the
