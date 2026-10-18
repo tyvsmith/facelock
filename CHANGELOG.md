@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`facelock setup` now creates the encryption key a default config names**: the shipped
+  config leaves `encryption.method` at its `keyfile` default, and the automatic policy
+  (`--non-interactive`, `--encryption auto`) treated any non-`none` method as already
+  configured, so a fresh install that ran a flagless `facelock setup --non-interactive`
+  finished with no key on disk (an explicit `--encryption keyfile` or `--encryption tpm`
+  already minted one). The daemon then tried to create
+  `/etc/facelock/encryption.key` itself, which the packaged unit's `ProtectSystem=strict`
+  forbids, and the first enrollment failed with a read-only filesystem error. Setup now
+  creates the missing keyfile for a `keyfile` method (unsealing an existing sealed key when the
+  TPM can open it, rather than minting a second key beside it), and seals a key for a `tpm` method that
+  has none when a TPM is usable, without changing the configured method. A daemon that still
+  cannot create its key refuses enrollment with a message naming `sudo facelock setup` as the
+  remedy. No `ReadWritePaths=/etc/facelock` drop-in is needed, and the unit is unchanged.
 - **`abort_if_lid_closed` now sees every ACPI lid device** (#365): the PAM module checked a
   fixed `LID0`/`LID`/`LID1` list and the daemon read only
   `/proc/acpi/button/lid/LID0/state`, so a laptop whose firmware names the device anything

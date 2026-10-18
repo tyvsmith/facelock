@@ -635,29 +635,29 @@
       {
         "path": "docs/security.md",
         "anchor": "c-encryption-at-rest-implemented--encrypted-by-default-plan-04",
-        "ordinal": 15,
-        "line": 714,
+        "ordinal": 17,
+        "line": 718,
         "sha256": "01e97e6674c49b0624391bf9baf995fbc5cd7b6a538c83d957874feaf7d6d619"
       },
       {
         "path": "docs/security.md",
         "anchor": "c-encryption-at-rest-implemented--encrypted-by-default-plan-04",
-        "ordinal": 16,
-        "line": 725,
+        "ordinal": 18,
+        "line": 729,
         "sha256": "ca52638beb8b81752047d1c4cfbeb5f5163e88c7236a263be28b86a84ad799a9"
       },
       {
         "path": "docs/security.md",
         "anchor": "c-encryption-at-rest-implemented--encrypted-by-default-plan-04",
-        "ordinal": 17,
-        "line": 729,
+        "ordinal": 19,
+        "line": 733,
         "sha256": "db7fc11fb14de64e8d400fe3178e168101f01d06eeb4940e5016052c8a4aa6af"
       },
       {
         "path": "docs/security.md",
         "anchor": "c-encryption-at-rest-implemented--encrypted-by-default-plan-04",
-        "ordinal": 19,
-        "line": 749,
+        "ordinal": 21,
+        "line": 753,
         "sha256": "08540ee4ee5e471b586a5c24a07b5cc333c4f1451e59e47ee59574b5ed24cc33"
       }
     ],
