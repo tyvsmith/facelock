@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configured, so a fresh install got no key. The daemon then tried to create
   `/etc/facelock/encryption.key` itself, which the packaged unit's `ProtectSystem=strict`
   forbids, and the first enrollment failed with a read-only filesystem error. Setup now
-  mints the missing keyfile for a `keyfile` method, and seals a key for a `tpm` method that
+  creates the missing keyfile for a `keyfile` method (unsealing an existing sealed key when the
+  TPM can open it, rather than minting a second key beside it), and seals a key for a `tpm` method that
   has none when a TPM is usable, without changing the configured method. A daemon that still
   cannot create its key refuses enrollment with a message naming `sudo facelock setup` as the
   remedy. No `ReadWritePaths=/etc/facelock` drop-in is needed, and the unit is unchanged.

@@ -2495,13 +2495,15 @@ fn plan_auto_for_config(
             keyfile_exists,
             sealed_exists,
         )),
+        // The real `tpm_usable`, so a sealed key the TPM can still open is
+        // unsealed into the keyfile rather than shadowed by a fresh one (#358).
         EncryptionMethod::Keyfile if !keyfile_exists => Some((
             EncryptionMethod::Keyfile,
             plan_key_action(
                 EncryptionMethod::Keyfile,
                 keyfile_exists,
                 sealed_exists,
-                false,
+                tpm_usable,
             ),
         )),
         EncryptionMethod::Tpm if !sealed_exists && tpm_usable => Some((
@@ -3503,13 +3505,38 @@ fn setup_encryption_auto(config: &Config, tpm_available: Option<bool>) -> anyhow
     // an offer to clear); this is the backstop for the automatic policy, which
     // `run_non_interactive` reaches with no flag at all — the command
     // `debian/postinst` tells operators to run.
-    if let Some(refusal) = keygen_refusal(config, EncryptionMethod::Keyfile)? {
+    //
+    // Unsealing carries the existing key across rather than minting one, so
+    // it skips the gate: the gate's keyfile arm would mint before the unseal.
+    if action != KeyAction::UnsealExistingSealed
+        && let Some(refusal) = keygen_refusal(config, EncryptionMethod::Keyfile)?
+    {
         bail!("{refusal}");
     }
     match action {
         KeyAction::ReuseExisting => {
             if sealed_exists {
                 notice_if_keys_diverged(config, key_path, sealed_path);
+            }
+        }
+        // Only a configured `keyfile` method with no keyfile and a usable TPM
+        // gets here; `tpm_usable` already implies the feature.
+        KeyAction::UnsealExistingSealed => {
+            Terminal.info(&SetupMessage::UnsealingExistingSealedKey {
+                sealed_path: sealed_path.display().to_string(),
+                key_path: key_path.display().to_string(),
+            });
+            #[cfg(feature = "tpm")]
+            {
+                super::tpm::unseal_into_keyfile(config)
+                    .context("failed to unseal the existing sealed key")?;
+                Terminal.info(&SetupMessage::KeyfileWritten {
+                    path: key_path.display().to_string(),
+                });
+            }
+            #[cfg(not(feature = "tpm"))]
+            {
+                unreachable!("tpm_usable is false without the tpm feature")
             }
         }
         KeyAction::Mint => {
@@ -3526,8 +3553,8 @@ fn setup_encryption_auto(config: &Config, tpm_available: Option<bool>) -> anyhow
                 });
             }
         }
-        KeyAction::SealExistingKeyfile | KeyAction::UnsealExistingSealed => {
-            unreachable!("plan_auto_key_action never carries a key across for a Keyfile target")
+        KeyAction::SealExistingKeyfile => {
+            unreachable!("plan_key_action never seals for a Keyfile target")
         }
     }
 
@@ -6673,6 +6700,46 @@ mod choice_tests {
             !sealed_path.exists(),
             "a keyfile config must not mint a sealed key"
         );
+    }
+
+    /// A default keyfile config on a TPM host that still holds a sealed key
+    /// (a config reset to the shipped default, say) must unseal that key into
+    /// the keyfile, not mint a second, unrelated one beside it (#358). Here
+    /// the unseal fails (no TPM), and that failure is the proof that nothing
+    /// was minted first.
+    #[cfg(feature = "tpm")]
+    #[test]
+    fn auto_policy_unseals_a_sealed_key_for_a_keyfile_config_instead_of_minting() {
+        let _lock = super::CONFIG_OVERRIDE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        struct OverrideGuard;
+        impl Drop for OverrideGuard {
+            fn drop(&mut self) {
+                facelock_core::paths::clear_process_config_override();
+            }
+        }
+        let (_cfg_dir, config_path) = temp_config("config.toml", "");
+        facelock_core::paths::set_process_config_override(config_path);
+        let _guard = OverrideGuard;
+
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("facelock.key"); // absent
+        let sealed_path = dir.path().join("sealed.key");
+        let sealed_bytes = b"an-existing-sealed-blob".to_vec();
+        std::fs::write(&sealed_path, &sealed_bytes).unwrap();
+        let mut config = config_for_auto(dir.path(), &key_path, &sealed_path);
+        config.encryption.method = EncryptionMethod::Keyfile;
+
+        let err = setup_encryption_auto(&config, Some(true))
+            .expect_err("unsealing must be attempted, and no TPM can answer here");
+        let chain = format!("{err:#}");
+        assert!(
+            chain.contains("failed to unseal the existing sealed key"),
+            "the auto policy must unseal the sealed key, not mint: {chain}"
+        );
+        assert!(!key_path.exists(), "no keyfile may be minted");
+        assert_eq!(std::fs::read(&sealed_path).unwrap(), sealed_bytes);
     }
 
     /// The other half of the above: a configured method whose key is already
