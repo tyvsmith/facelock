@@ -480,11 +480,18 @@ facelock devices                        # human-readable listing
 facelock devices --json                 # JSON output
 ```
 
-Shows device path, name, driver, formats, resolutions, and IR status.
+Shows device path, name, driver, platform identity, formats, resolutions, and
+IR status. `Platform:` is the pair a `modalias` + `node_name` quirk matches,
+printed as `modalias / node_name` for a non-USB node with a real parent device
+(Intel IPU6/IPU7, Qualcomm CAMSS), or `none` for a USB or virtual node; see
+`docs/compatibility.md` for how to turn it into a quirk.
 
 `--json` emits an array of device objects with `path`, `name`, `driver`,
-`is_ir`, and `formats`; each format carries `fourcc`, `description`, and
-`sizes`, a list of `[width, height]` pairs. It is a typed schema derived from
+`is_ir`, `formats`, `modalias`, and `node_name`; each format carries `fourcc`,
+`description`, and `sizes`, a list of `[width, height]` pairs. `modalias` and
+`node_name` are the strings a platform quirk needs, verbatim, and both are
+`null` when the node has none (USB or virtual). They are read from sysfs on
+both backends. It is a typed schema derived from
 the device struct, so a script reads it rather than parsing the listing above,
 whose columns, indentation and `[IR]` tag are free to change.
 

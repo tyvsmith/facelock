@@ -21,4 +21,4 @@ pub use preprocess::{
     check_ir_texture, clahe, extract_bbox_region, nv12_to_rgb, rgb_to_gray, y16_to_gray,
     yuyv_to_rgb,
 };
-pub use quirks::{Quirk, QuirksDb, device_fingerprint};
+pub use quirks::{PlatformIdentity, Quirk, QuirksDb, device_fingerprint, read_platform_identity};

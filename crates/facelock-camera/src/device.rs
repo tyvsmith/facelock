@@ -202,12 +202,18 @@ fn heuristic_ir_source(device: &DeviceInfo) -> IrSource {
 /// 2. A quirks DB `force_ir = true` matched by USB vendor:product ID is
 ///    authoritative "IR" — a virtual device (e.g. v4l2loopback) has no real
 ///    USB node, so it can never win this path.
-/// 3. A quirks DB `force_ir = true` matched by device NAME ONLY requires
+/// 3. A quirks DB `force_ir = true` matched by platform identity (`modalias`
+///    plus `node_name`, read from sysfs for a non-USB node) is authoritative
+///    "IR" on the same terms as a USB-ID match: a virtual node has no parent
+///    device and so no modalias. It names one node, so it never marks the
+///    other nodes on the same card IR.
+/// 4. A quirks DB `force_ir = true` matched by device NAME ONLY requires
 ///    corroboration before it is trusted: either the device has a real (if
 ///    DB-unlisted) USB identity, or its own queried formats independently
-///    support IR (rule 4). Without corroboration a crafted device name alone
-///    cannot win `force_ir` through the quirks path either (#98 Task 3).
-/// 4. Otherwise, IR-ness is derived SOLELY from the device's own queried
+///    support IR (rule 5). Without corroboration a crafted device name alone
+///    cannot win `force_ir` through the quirks path either (#98 Task 3). A
+///    platform identity alone does not corroborate a name-only match.
+/// 5. Otherwise, IR-ness is derived SOLELY from the device's own queried
 ///    capture formats (mono-only enumeration — GREY/Y8/Y10/Y12/Y16). The
 ///    free-text device name is NEVER, by itself, sufficient (#98): a crafted
 ///    `CARD_LABEL` on a color-only device does not classify as IR no matter
@@ -222,22 +228,34 @@ pub fn ir_source_with_quirks(
     device: &DeviceInfo,
     quirks: Option<&crate::quirks::QuirksDb>,
 ) -> IrSource {
-    ir_source_with_quirks_and_ids(
+    ir_source_with_quirks_and_identity(
         device,
         quirks,
         crate::quirks::read_usb_ids(&device.path).as_ref(),
+        crate::quirks::read_platform_identity(&device.path).as_ref(),
     )
 }
 
-/// Per-node classification with the USB IDs supplied by the caller (keeps the
-/// sysfs read at the call boundary for testability).
+/// [`ir_source_with_quirks_and_identity`] for a node with no platform identity.
+#[cfg(test)]
 fn ir_source_with_quirks_and_ids(
     device: &DeviceInfo,
     quirks: Option<&crate::quirks::QuirksDb>,
     usb_ids: Option<&(String, String)>,
 ) -> IrSource {
+    ir_source_with_quirks_and_identity(device, quirks, usb_ids, None)
+}
+
+/// Per-node classification with the hardware identity supplied by the caller
+/// (keeps the sysfs reads at the call boundary for testability).
+fn ir_source_with_quirks_and_identity(
+    device: &DeviceInfo,
+    quirks: Option<&crate::quirks::QuirksDb>,
+    usb_ids: Option<&(String, String)>,
+    platform: Option<&crate::quirks::PlatformIdentity>,
+) -> IrSource {
     if let Some(db) = quirks
-        && let Some((quirk, kind)) = db.find_match_with_kind(device, usb_ids)
+        && let Some((quirk, kind)) = db.find_match_with_kind(device, usb_ids, platform)
     {
         match quirk.force_ir {
             Some(false) => return IrSource::None,
@@ -245,7 +263,8 @@ fn ir_source_with_quirks_and_ids(
                 let corroborated = match kind {
                     // A real hardware identity match — authoritative on
                     // its own.
-                    crate::quirks::QuirkMatchKind::UsbId => true,
+                    crate::quirks::QuirkMatchKind::UsbId
+                    | crate::quirks::QuirkMatchKind::PlatformId => true,
                     // A name-only match needs corroboration: either a
                     // real (if DB-unlisted) USB identity, or the
                     // device's own queried evidence. A virtual
@@ -291,18 +310,39 @@ pub fn classify_ir_sources(
         .iter()
         .map(|d| crate::quirks::read_usb_ids(&d.path))
         .collect();
-    classify_ir_sources_with_ids(devices, quirks, &usb_ids)
+    let platform: Vec<Option<crate::quirks::PlatformIdentity>> = devices
+        .iter()
+        .map(|d| crate::quirks::read_platform_identity(&d.path))
+        .collect();
+    classify_ir_sources_with_identity(devices, quirks, &usb_ids, &platform)
 }
 
+/// [`classify_ir_sources_with_identity`] for nodes with no platform identity.
+#[cfg(test)]
 fn classify_ir_sources_with_ids(
     devices: &[DeviceInfo],
     quirks: Option<&crate::quirks::QuirksDb>,
     usb_ids: &[Option<(String, String)>],
 ) -> Vec<IrSource> {
+    classify_ir_sources_with_identity(devices, quirks, usb_ids, &vec![None; devices.len()])
+}
+
+fn classify_ir_sources_with_identity(
+    devices: &[DeviceInfo],
+    quirks: Option<&crate::quirks::QuirksDb>,
+    usb_ids: &[Option<(String, String)>],
+    platform: &[Option<crate::quirks::PlatformIdentity>],
+) -> Vec<IrSource> {
+    // Platform-matched nodes need no sibling pass below: each quirk names
+    // exactly one node by `node_name`, and they carry no USB identity to
+    // group on.
     let mut sources: Vec<IrSource> = devices
         .iter()
         .zip(usb_ids)
-        .map(|(d, ids)| ir_source_with_quirks_and_ids(d, quirks, ids.as_ref()))
+        .zip(platform)
+        .map(|((d, ids), id)| {
+            ir_source_with_quirks_and_identity(d, quirks, ids.as_ref(), id.as_ref())
+        })
         .collect();
 
     // Node-level disambiguation for multi-node USB devices.
@@ -698,6 +738,8 @@ mod tests {
             vendor_id: Some("dead".into()),
             product_id: Some("beef".into()),
             name_pattern: None,
+            modalias: None,
+            node_name: None,
             force_ir: Some(true),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
@@ -727,6 +769,8 @@ mod tests {
             vendor_id: None,
             product_id: None,
             name_pattern: Some("(?i)generic.*".into()),
+            modalias: None,
+            node_name: None,
             force_ir: Some(true),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
@@ -772,6 +816,8 @@ mod tests {
             vendor_id: None,
             product_id: None,
             name_pattern: Some("(?i)ir camera".into()),
+            modalias: None,
+            node_name: None,
             force_ir: Some(false),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
@@ -800,6 +846,8 @@ mod tests {
             vendor_id: Some("046d".into()),
             product_id: Some("085e".into()),
             name_pattern: None,
+            modalias: None,
+            node_name: None,
             force_ir: Some(true),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
@@ -962,6 +1010,8 @@ mod tests {
             vendor_id: None,
             product_id: None,
             name_pattern: Some("(?i)generic.*".into()),
+            modalias: None,
+            node_name: None,
             force_ir: Some(true),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
@@ -1001,6 +1051,8 @@ mod tests {
             vendor_id: Some("8086".into()),
             product_id: Some("0b07".into()),
             name_pattern: None,
+            modalias: None,
+            node_name: None,
             force_ir: Some(true),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
@@ -1020,6 +1072,174 @@ mod tests {
         // Different physical devices — both keep their quirk classification.
         assert_eq!(sources[0], IrSource::Quirk);
         assert_eq!(sources[1], IrSource::Quirk);
+    }
+
+    fn platform_quirk(node_name: &str, force_ir: bool) -> crate::quirks::Quirk {
+        crate::quirks::Quirk {
+            vendor_id: None,
+            product_id: None,
+            name_pattern: None,
+            modalias: Some("auxiliary:intel_ipu6.isys".into()),
+            node_name: Some(node_name.into()),
+            force_ir: Some(force_ir),
+            emitter_xu_guid: None,
+            emitter_xu_selector: None,
+            warmup_frames: None,
+            format_preference: None,
+            y16_bit_depth: None,
+            rotation: None,
+            notes: Some("test platform IR node".into()),
+        }
+    }
+
+    fn ipu6_identity(node_name: &str) -> Option<crate::quirks::PlatformIdentity> {
+        Some(crate::quirks::PlatformIdentity {
+            modalias: "auxiliary:intel_ipu6.isys".into(),
+            node_name: node_name.into(),
+        })
+    }
+
+    #[test]
+    fn quirk_force_ir_platform_identity_match_is_authoritative() {
+        // A media-controller node advertises a static table of every format,
+        // so it has no mono-only evidence and no USB identity. A quirk on its
+        // kernel-reported identity classifies it IR on its own.
+        let mut db = crate::quirks::QuirksDb::default();
+        db.push_quirk_for_test(platform_quirk("Intel IPU6 ISYS Capture 0", true));
+        let device = device_with("Intel IPU6 ISYS Capture 0", &["GREY", "YUYV", "NV12"]);
+        assert_eq!(heuristic_ir_source(&device), IrSource::None);
+        assert_eq!(
+            ir_source_with_quirks_and_identity(
+                &device,
+                Some(&db),
+                None,
+                ipu6_identity("Intel IPU6 ISYS Capture 0").as_ref()
+            ),
+            IrSource::Quirk
+        );
+    }
+
+    #[test]
+    fn platform_quirk_classifies_one_node_not_the_card() {
+        // Every ISYS capture node shares the parent modalias. Only the node
+        // the quirk names is IR; its siblings keep their own verdict.
+        let mut db = crate::quirks::QuirksDb::default();
+        db.push_quirk_for_test(platform_quirk("Intel IPU6 ISYS Capture 1", true));
+        let fourccs = &["GREY", "YUYV", "NV12"];
+        let devices = [
+            device_at("/dev/video0", "Intel IPU6 ISYS Capture 0", fourccs),
+            device_at("/dev/video1", "Intel IPU6 ISYS Capture 1", fourccs),
+            device_at("/dev/video2", "Intel IPU6 ISYS Capture 2", fourccs),
+        ];
+        let usb = vec![None, None, None];
+        let platform = vec![
+            ipu6_identity("Intel IPU6 ISYS Capture 0"),
+            ipu6_identity("Intel IPU6 ISYS Capture 1"),
+            ipu6_identity("Intel IPU6 ISYS Capture 2"),
+        ];
+        let sources = classify_ir_sources_with_identity(&devices, Some(&db), &usb, &platform);
+        assert_eq!(
+            sources,
+            vec![IrSource::None, IrSource::Quirk, IrSource::None]
+        );
+        let picked = pick_auto_device(&devices, &sources).expect("a device is picked");
+        assert_eq!(picked.path, "/dev/video1");
+    }
+
+    #[test]
+    fn platform_quirk_never_matches_a_virtual_node() {
+        // #98: a v4l2loopback node can copy the card name, but it has no
+        // parent device and so no platform identity. The quirk cannot match.
+        let mut db = crate::quirks::QuirksDb::default();
+        db.push_quirk_for_test(platform_quirk("Intel IPU6 ISYS Capture 0", true));
+        let fake = device_with("Intel IPU6 ISYS Capture 0", &["YUYV", "MJPG"]);
+        assert_eq!(
+            ir_source_with_quirks_and_identity(&fake, Some(&db), None, None),
+            IrSource::None
+        );
+    }
+
+    #[test]
+    fn platform_identity_does_not_corroborate_a_name_only_quirk() {
+        // Only a quirk keyed on the identity gets its authority. A name-only
+        // quirk on a platform node still needs USB identity or mono-only
+        // formats, so it cannot mark every node on the card IR.
+        let mut db = crate::quirks::QuirksDb::default();
+        db.push_quirk_for_test(crate::quirks::Quirk {
+            vendor_id: None,
+            product_id: None,
+            name_pattern: Some("(?i)intel ipu6 isys capture.*".into()),
+            modalias: None,
+            node_name: None,
+            force_ir: Some(true),
+            emitter_xu_guid: None,
+            emitter_xu_selector: None,
+            warmup_frames: None,
+            format_preference: Some("GREY".into()),
+            y16_bit_depth: None,
+            rotation: None,
+            notes: None,
+        });
+        let device = device_with("Intel IPU6 ISYS Capture 0", &["GREY", "YUYV"]);
+        assert_eq!(
+            ir_source_with_quirks_and_identity(
+                &device,
+                Some(&db),
+                None,
+                ipu6_identity("Intel IPU6 ISYS Capture 0").as_ref()
+            ),
+            IrSource::None
+        );
+    }
+
+    #[test]
+    fn platform_quirk_force_ir_false_is_authoritative() {
+        let mut db = crate::quirks::QuirksDb::default();
+        db.push_quirk_for_test(platform_quirk("Intel IPU6 ISYS Capture 0", false));
+        let mono = device_with("Intel IPU6 ISYS Capture 0", &["GREY"]);
+        assert_eq!(
+            ir_source_with_quirks_and_identity(
+                &mono,
+                Some(&db),
+                None,
+                ipu6_identity("Intel IPU6 ISYS Capture 0").as_ref()
+            ),
+            IrSource::None
+        );
+    }
+
+    #[test]
+    fn usb_and_name_only_rules_unchanged_with_platform_quirks_loaded() {
+        // Regression: adding platform quirks to the DB changes nothing for a
+        // node without a platform identity.
+        let mut db = crate::quirks::QuirksDb::default();
+        db.push_quirk_for_test(platform_quirk("Logitech BRIO", true));
+        db.push_quirk_for_test(brio_quirk(None));
+        db.push_quirk_for_test(crate::quirks::Quirk {
+            name_pattern: Some("(?i)generic.*".into()),
+            vendor_id: None,
+            product_id: None,
+            ..platform_quirk("unused", true)
+        });
+        let ids = brio_ids();
+        let rgb = device_with("Logitech BRIO", &["YUYV"]);
+        assert_eq!(
+            ir_source_with_quirks_and_identity(&rgb, Some(&db), ids.as_ref(), None),
+            IrSource::Quirk,
+            "USB-ID match stays authoritative"
+        );
+        let generic = device_with("Generic Camera", &["YUYV"]);
+        assert_eq!(
+            ir_source_with_quirks_and_identity(&generic, Some(&db), None, None),
+            IrSource::None,
+            "uncorroborated name-only match stays refused"
+        );
+        let generic_mono = device_with("Generic Camera", &["GREY"]);
+        assert_eq!(
+            ir_source_with_quirks_and_identity(&generic_mono, Some(&db), None, None),
+            IrSource::Quirk,
+            "name-only match corroborated by mono-only formats"
+        );
     }
 
     #[test]

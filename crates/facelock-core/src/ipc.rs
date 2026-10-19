@@ -31,6 +31,14 @@ pub struct IpcDeviceInfo {
     pub driver: String,
     pub is_ir: bool,
     pub formats: Vec<IpcFormatInfo>,
+    /// Kernel modalias of the node's parent device, for a non-USB node with a
+    /// real parent (`auxiliary:intel_ipu6.isys`, `of:...`); `None` for USB
+    /// and virtual nodes. Paired with `node_name` as the quirk keys of the
+    /// same names.
+    pub modalias: Option<String>,
+    /// The node's sysfs `name`, read alongside `modalias`; `None` whenever
+    /// `modalias` is.
+    pub node_name: Option<String>,
 }
 
 /// A supported pixel format with available resolutions.
