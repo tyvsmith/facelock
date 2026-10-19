@@ -4159,6 +4159,7 @@ the module falls through (oneshot fallback / password), never `PAM_SUCCESS`.
 | Rate limited (daemon, model_id -2) | `PAM_AUTH_ERR` (7) — no oneshot fallback |
 | IR required / unverified Y16 texture scale / internal daemon error (model_id -2) | `PAM_IGNORE` (25) — no oneshot fallback |
 | Suppressed (model_id -3) | `PAM_AUTHINFO_UNAVAIL` (9) |
+| Daemon refused the caller (D-Bus `AccessDenied` on `Authenticate`: caller provenance or UID authorization) | `PAM_IGNORE` (25) — never triggers the oneshot fallback; syslog result `refused by daemon (caller provenance or authorization)` |
 | Daemon unavailable / untrusted (non-root) peer | oneshot fallback, else `PAM_IGNORE` (25) |
 | Oneshot fallback (and `mode = "oneshot"`) | per the `facelock auth` exit-code table above: 0 → `PAM_SUCCESS`, 1/3 → `PAM_AUTH_ERR`, 4 → `PAM_AUTHINFO_UNAVAIL`, 2/5/unknown/signal death → `PAM_IGNORE` |
 | Config missing, unparseable, or untrusted (not root-owned / group- or world-writable, incl. parents) | `PAM_IGNORE` (25) |

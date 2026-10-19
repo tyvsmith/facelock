@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   added, and no unit, D-Bus policy or dependency change is involved. A user-level process
   launched outside any session, for example by an SSH shell through `systemd-run --user`,
   is accepted while the user is at a local session; docs/security.md records that residual.
+  The PAM module now honors the daemon's `AccessDenied` as a final refusal (`PAM_IGNORE`)
+  instead of retrying it through the root `facelock auth` oneshot, which saw only the
+  stripped environment.
 - **`facelock setup` now creates the encryption key a default config names**: the shipped
   config leaves `encryption.method` at its `keyfile` default, and the automatic policy
   (`--non-interactive`, `--encryption auto`) treated any non-`none` method as already

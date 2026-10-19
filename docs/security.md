@@ -916,7 +916,10 @@ Root is not exempt. `sudo` is setuid root, so a `sudo` typed into an SSH
 shell reaches the daemon as UID 0; its process sits in the SSH login's
 `session-N.scope`, logind reports `Remote = true`, and the daemon refuses it
 even when `SSH_*` was stripped from its environment and the PAM module's own
-environment check saw nothing.
+environment check saw nothing. The PAM module honors that refusal: an
+`AccessDenied` reply from the verified root daemon returns `PAM_IGNORE` and
+never falls back to a root `facelock auth` oneshot, which would see only the
+stripped environment.
 
 A caller with no logind session at all gets one narrow fallback (#397).
 Processes started by the systemd user manager — KDE's `kscreenlocker` under
