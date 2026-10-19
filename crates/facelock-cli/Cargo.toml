@@ -45,7 +45,7 @@ thiserror = { workspace = true }
 libc = "0.2"
 nix = { version = "0.31", features = ["user", "socket"] }
 facelock-tpm = { path = "../facelock-tpm" }
-zbus = { version = "6", default-features = false, features = ["tokio", "blocking-api"] }
+zbus = { version = "6", default-features = false, features = ["tokio", "proxy", "tracing"] }
 tss-esapi = { workspace = true, optional = true }
 zeroize = "1"
 bytemuck = "1"

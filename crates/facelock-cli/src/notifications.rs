@@ -46,30 +46,35 @@ fn original_user() -> Option<String> {
 ///
 /// Connects to the session bus and calls the standard Notify method.
 fn send_notification_dbus(event: &NotifyEvent) -> anyhow::Result<()> {
-    let connection = zbus::blocking::Connection::session()?;
+    zbus::block_on(async {
+        let connection = zbus::Connection::session().await?;
 
-    let proxy = zbus::blocking::Proxy::new(
-        &connection,
-        "org.freedesktop.Notifications",
-        "/org/freedesktop/Notifications",
-        "org.freedesktop.Notifications",
-    )?;
+        let proxy = zbus::Proxy::new(
+            &connection,
+            "org.freedesktop.Notifications",
+            "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications",
+        )
+        .await?;
 
-    let _: u32 = proxy.call(
-        "Notify",
-        &(
-            "Facelock",                                                        // app_name
-            0u32,                                                              // replaces_id
-            icon(event),                                                       // app_icon
-            "Facelock",                                                        // summary
-            body(event),                                                       // body
-            Vec::<String>::new(),                                              // actions
-            std::collections::HashMap::<String, zbus::zvariant::Value>::new(), // hints
-            timeout_ms(event),                                                 // expire_timeout
-        ),
-    )?;
+        let _: u32 = proxy
+            .call(
+                "Notify",
+                &(
+                    "Facelock",                                                // app_name
+                    0u32,                                                      // replaces_id
+                    icon(event),                                               // app_icon
+                    "Facelock",                                                // summary
+                    body(event),                                               // body
+                    Vec::<String>::new(),                                      // actions
+                    std::collections::HashMap::<String, zbus::Variant>::new(), // hints
+                    timeout_ms(event),                                         // expire_timeout
+                ),
+            )
+            .await?;
 
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Send a desktop notification for the given event.

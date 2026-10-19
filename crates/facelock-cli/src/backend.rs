@@ -29,7 +29,6 @@
 //!   direct-by-nature and never select.
 
 use anyhow::bail;
-use zbus::blocking::Connection;
 
 use facelock_core::Config;
 use facelock_core::config::DaemonMode;
@@ -475,16 +474,18 @@ fn announcement(kind: BackendKind) -> (tracing::Level, Option<AccessMessage>) {
 /// system would *start* the daemon). Any failure to ask reads as
 /// unreachable.
 fn daemon_bus_reachable() -> bool {
-    let Ok(conn) = Connection::system() else {
-        return false;
-    };
-    let Ok(proxy) = zbus::blocking::fdo::DBusProxy::new(&conn) else {
-        return false;
-    };
-    let Ok(name) = BUS_NAME.try_into() else {
-        return false;
-    };
-    proxy.name_has_owner(name).unwrap_or(false)
+    zbus::block_on(async {
+        let Ok(conn) = zbus::Connection::system().await else {
+            return false;
+        };
+        let Ok(proxy) = zbus::fdo::DBusProxy::new(&conn).await else {
+            return false;
+        };
+        let Ok(name) = BUS_NAME.try_into() else {
+            return false;
+        };
+        proxy.name_has_owner(name).await.unwrap_or(false)
+    })
 }
 
 #[cfg(test)]

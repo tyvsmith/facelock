@@ -266,7 +266,7 @@ async fn logind_session_is_remote(connection: &zbus::Connection, pid: u32) -> Re
     )
     .await
     .map_err(|error| format!("create logind manager proxy: {error}"))?;
-    let session_path: zbus::zvariant::OwnedObjectPath = manager
+    let session_path: zbus::OwnedObjectPath = manager
         .call("GetSessionByPID", &(pid,))
         .await
         .map_err(|error| format!("logind GetSessionByPID({pid}) failed: {error}"))?;
@@ -304,11 +304,8 @@ async fn logind_lid_is_closed(connection: &zbus::Connection) -> Result<bool, Str
     // unreadable" to "any property on logind's Manager is unreadable".
     let manager = zbus::proxy::Builder::<zbus::Proxy>::new(connection)
         .destination(LOGIND_SERVICE)
-        .map_err(|error| format!("logind destination: {error}"))?
         .path(LOGIND_MANAGER_PATH)
-        .map_err(|error| format!("logind manager path: {error}"))?
         .interface(LOGIND_MANAGER_INTERFACE)
-        .map_err(|error| format!("logind manager interface: {error}"))?
         .cache_properties(zbus::proxy::CacheProperties::No)
         .build()
         .await
@@ -2000,7 +1997,7 @@ impl FacelockService<Camera<'static>, FaceEngine> {
         &self,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(connection)] connection: &zbus::Connection,
-        #[zbus(signal_context)] ctxt: SignalEmitter<'_>,
+        #[zbus(signal_emitter)] ctxt: SignalEmitter<'_>,
         user: &str,
     ) -> fdo::Result<AuthResult> {
         let caller = resolve_caller_identity(&hdr, connection).await?;
@@ -2047,7 +2044,7 @@ impl FacelockService<Camera<'static>, FaceEngine> {
         &self,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(connection)] connection: &zbus::Connection,
-        #[zbus(signal_context)] ctxt: SignalEmitter<'_>,
+        #[zbus(signal_emitter)] ctxt: SignalEmitter<'_>,
         user: &str,
     ) -> fdo::Result<AuthResult> {
         let caller = resolve_caller_identity(&hdr, connection).await?;
@@ -2570,9 +2567,9 @@ async fn run_dbus_server(
     let last_activity = service.last_activity.clone();
     let current_request = service.current_request();
 
-    let _connection = zbus::connection::Builder::system()?
-        .name(BUS_NAME)?
-        .serve_at(OBJECT_PATH, service)?
+    let _connection = zbus::connection::Builder::system()
+        .name(BUS_NAME)
+        .serve_at(OBJECT_PATH, service)
         .build()
         .await?;
 

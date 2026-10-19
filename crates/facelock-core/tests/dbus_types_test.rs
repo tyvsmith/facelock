@@ -11,7 +11,7 @@
 //! retyped on any of these structs, this file must be touched deliberately.
 
 use facelock_core::dbus_interface::*;
-use zvariant::{DynamicType, Type};
+use zbus::{DynamicType, Type};
 
 #[test]
 fn auth_result_signature_is_pinned() {

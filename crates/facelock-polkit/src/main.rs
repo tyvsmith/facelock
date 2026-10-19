@@ -4,8 +4,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use tokio::sync::{Mutex, oneshot};
 use zbus::connection::Builder;
-use zbus::zvariant::Value;
-use zbus::{Connection, fdo, interface};
+use zbus::{Connection, Variant, fdo, interface};
 
 use facelock_core::config::PolkitConfig;
 use facelock_core::dbus_interface::{BUS_NAME, INTERFACE_NAME, OBJECT_PATH};
@@ -32,7 +31,7 @@ impl PolkitAgent {
         _icon_name: &str,
         _details: HashMap<String, String>,
         cookie: &str,
-        identities: Vec<(String, HashMap<String, Value<'_>>)>,
+        identities: Vec<(String, HashMap<String, Variant<'_>>)>,
     ) -> fdo::Result<()> {
         tracing::info!(action_id, message, "polkit auth request received");
 
@@ -122,10 +121,10 @@ impl PolkitAgent {
 }
 
 /// Extract the unix username from the polkit identities list.
-fn extract_username(identities: &[(String, HashMap<String, Value<'_>>)]) -> Option<String> {
+fn extract_username(identities: &[(String, HashMap<String, Variant<'_>>)]) -> Option<String> {
     for (kind, details) in identities {
         if kind == "unix-user"
-            && let Some(Value::U32(uid)) = details.get("uid")
+            && let Some(Variant::U32(uid)) = details.get("uid")
             && let Ok(Some(user)) = nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(*uid))
         {
             return Some(user.name);
@@ -223,8 +222,8 @@ async fn register_agent(system_conn: &Connection) -> anyhow::Result<()> {
     let session_id = std::env::var("XDG_SESSION_ID").unwrap_or_else(|_| "auto".to_string());
 
     let subject_kind = "unix-session";
-    let mut subject_details: HashMap<String, Value<'_>> = HashMap::new();
-    subject_details.insert("session-id".to_string(), Value::from(session_id));
+    let mut subject_details: HashMap<String, Variant<'_>> = HashMap::new();
+    subject_details.insert("session-id".to_string(), Variant::from(session_id));
 
     let locale = std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".to_string());
     let object_path = "/org/facelock/PolkitAgent";
@@ -281,9 +280,9 @@ async fn main() -> anyhow::Result<()> {
     let skip_register = std::env::var_os("FACELOCK_POLKIT_SKIP_REGISTER").is_some();
 
     // Build a session bus connection that serves the agent interface.
-    let mut builder = Builder::session()?.serve_at("/org/facelock/PolkitAgent", agent)?;
+    let mut builder = Builder::session().serve_at("/org/facelock/PolkitAgent", agent);
     if skip_register {
-        builder = builder.name("org.facelock.PolkitAgent")?;
+        builder = builder.name("org.facelock.PolkitAgent");
     }
     let _session_conn = builder
         .build()
@@ -318,7 +317,7 @@ mod tests {
     fn extract_username_from_unix_user_identity() {
         // UID 0 should resolve to "root" on any Linux system.
         let mut details = HashMap::new();
-        details.insert("uid".to_string(), Value::U32(0));
+        details.insert("uid".to_string(), Variant::U32(0));
         let identities = vec![("unix-user".to_string(), details)];
         let user = extract_username(&identities);
         assert_eq!(user, Some("root".to_string()));
@@ -326,14 +325,14 @@ mod tests {
 
     #[test]
     fn extract_username_returns_none_for_empty() {
-        let identities: Vec<(String, HashMap<String, Value<'_>>)> = vec![];
+        let identities: Vec<(String, HashMap<String, Variant<'_>>)> = vec![];
         assert_eq!(extract_username(&identities), None);
     }
 
     #[test]
     fn extract_username_ignores_non_unix_user() {
         let mut details = HashMap::new();
-        details.insert("uid".to_string(), Value::U32(0));
+        details.insert("uid".to_string(), Variant::U32(0));
         let identities = vec![("unix-group".to_string(), details)];
         assert_eq!(extract_username(&identities), None);
     }

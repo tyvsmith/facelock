@@ -12,4 +12,4 @@ crate-type = ["cdylib"]
 libc = "0.2"
 toml = { workspace = true }
 serde = { workspace = true }
-zbus = { version = "6", default-features = false, features = ["tokio", "blocking-api"] }
+zbus = { version = "6", default-features = false, features = ["tokio", "proxy"] }

@@ -12,11 +12,10 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 subtle = "2"
 zeroize = { version = "1", features = ["derive"] }
-zvariant = { version = "5", default-features = false, features = ["enumflags2"] }
+zbus = { version = "6", default-features = false }
 # The purge engine (src/purge/) is descriptor-anchored syscall work: openat,
 # fstatat, renameat2, unlinkat, fdopendir. libc only — no nix, no rustix.
 libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
-zvariant = { version = "5", default-features = false, features = ["enumflags2"] }
