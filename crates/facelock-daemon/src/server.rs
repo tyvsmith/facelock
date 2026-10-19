@@ -398,11 +398,18 @@ fn classify_caller_unit(caller_uid: u32, unit: &str) -> Result<UnitProvenance, U
     }
 }
 
-/// A system manager `.service` unit that is not a user manager. Scopes
-/// (`session-N.scope`, `init.scope`) and slices are not services.
+/// A system manager `.service` unit that is not a user manager and not the
+/// SSH daemon. Scopes (`session-N.scope`, `init.scope`) and slices are not
+/// services. `sshd.service` and per-connection `sshd@…` units run a PAM
+/// stack for a remote login before any logind session exists; that caller
+/// is remote by definition, so it never earns the system-service trust.
 fn is_system_service(unit: &str) -> bool {
-    unit.strip_suffix(".service")
-        .is_some_and(|stem| !stem.is_empty() && !stem.starts_with("user@"))
+    unit.strip_suffix(".service").is_some_and(|stem| {
+        !stem.is_empty()
+            && !stem.starts_with("user@")
+            && stem != "sshd"
+            && !stem.starts_with("sshd@")
+    })
 }
 
 /// Accept a user-manager caller only while the manager's owner has at least
@@ -3293,6 +3300,8 @@ mod tests {
             "session-3.scope",
             "init.scope",
             "user-1000.slice",
+            "sshd.service",
+            "sshd@3-10.0.0.2:22-10.0.0.9:51234.service",
             ".service",
             "",
         ] {

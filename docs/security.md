@@ -949,8 +949,12 @@ PID and reads the unit's `Id`:
 3. **Root system services are trusted callers.** A UID 0 caller in any other
    `.service` unit — a display-manager greeter's PAM worker (`gdm.service`,
    `sddm.service`), `login` under `getty@ttyN.service` before its session
-   exists, a socket-activated polkit helper — is accepted. Only root can
-   start a system service, so the unit is root's own provenance claim.
+   exists, a socket-activated polkit helper — is accepted, with one
+   exclusion: `sshd.service` and per-connection `sshd@…` units are refused,
+   because their PAM stack runs for a remote login before any session exists.
+   The unit name and UID identify the current process, not who activated the
+   service; the rule assumes that only trusted activation paths can run a
+   root service that calls `Authenticate`.
 
 Any other unit (a non-root caller outside its own user manager, a root
 caller in a scope or slice), a failed unit or session lookup, or a user with
@@ -975,11 +979,10 @@ matches Howdy's exposure, where the attacker only has to unset the
 environment variables, and is accepted because such an attacker already has
 the account: code running as the user can wait for the user's own local
 session and act from inside it. The same reasoning covers a root system
-service, whose author is already root; note that an `sshd` PAM stack, which
-authenticates in `sshd.service` before any session exists, is such a caller,
-so the daemon does not refuse face authentication *for* an SSH login — the
-PAM module's environment check and not adding `sshd` to the PAM services
-(`pam add` gates it as sensitive) are what keep that door shut.
+service, whose author is already root. An `sshd` PAM stack, which
+authenticates in `sshd.service` before any session exists, is the one root
+service the fallback refuses outright; not adding `sshd` to the PAM services
+(`pam add` gates it as sensitive) keeps that door shut a second time.
 
 The check uses the ordinary `Authenticate` authorization and the
 SQLite-backed biometric-guess limiter for every caller. When
