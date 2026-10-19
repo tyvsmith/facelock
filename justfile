@@ -1927,7 +1927,7 @@ test-release-contract:
 # Native version comparison tools run only inside disposable, digest-pinned containers.
 test-release-native-ordering:
     podman run --rm -v "$PWD:/repo:ro" -w /repo docker.io/library/debian:13@sha256:34cd9e9fd437c0a095ec39cb2e73422c9f30821b0d0848ed74fd0d43bae4d958 bash test/release-native-ordering.sh debian
-    podman run --rm -v "$PWD:/repo:ro" -w /repo registry.fedoraproject.org/fedora:44@sha256:fc3ec3da3ce49de0da0bab5a33223e90866c488d5d04fc6612284169e20a1bdb bash -lc 'dnf -qy install rpmdevtools && bash test/release-native-ordering.sh rpm'
+    podman run --rm -v "$PWD:/repo:ro" -w /repo registry.fedoraproject.org/fedora:44@sha256:99741a26ce7d4ee2746a564552210f267a458c527cc09ea7dd103ecbe62b0d5a bash -lc 'dnf -qy install rpmdevtools && bash test/release-native-ordering.sh rpm'
     podman run --rm -v "$PWD:/repo:ro" -w /repo docker.io/library/archlinux:base-devel@sha256:714acd1eef9ae997d95691b1c5220ada0076185b77857c1813f02de0fa83cf7b bash test/release-native-ordering.sh arch
 
 # Complete Track V version/matrix gate.

@@ -304,7 +304,7 @@ serves no alpha or candidate build.
 Container identities are pinned by registry/index digest, with the linux/amd64
 manifest digest retained where the registry exposes both. They were resolved
 from Docker Hub registry metadata and Fedora registry `Docker-Content-Digest`
-on 2026-08-18. The Arch repository identity is pinned separately to
+on 2026-08-18, Fedora 44 re-resolved on 2026-10-19. The Arch repository identity is pinned separately to
 `https://archive.archlinux.org/repos/2026/08/18/`; every matrix-associated CI
 and AUR `pacman` invocation installs that exact mirror before refreshing package
 metadata.
