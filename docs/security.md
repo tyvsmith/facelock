@@ -950,7 +950,8 @@ PID and reads the unit's `Id`:
    `.service` unit — a display-manager greeter's PAM worker (`gdm.service`,
    `sddm.service`), `login` under `getty@ttyN.service` before its session
    exists, a socket-activated polkit helper — is accepted, with one
-   exclusion: `sshd.service` and per-connection `sshd@…` units are refused,
+   exclusion: OpenSSH's unit (`sshd.service`, or `ssh.service` on Debian and
+   Ubuntu) and its per-connection `sshd@…` / `ssh@…` instances are refused,
    because their PAM stack runs for a remote login before any session exists.
    The unit name and UID identify the current process, not who activated the
    service; the rule assumes that only trusted activation paths can run a
@@ -979,9 +980,9 @@ matches Howdy's exposure, where the attacker only has to unset the
 environment variables, and is accepted because such an attacker already has
 the account: code running as the user can wait for the user's own local
 session and act from inside it. The same reasoning covers a root system
-service, whose author is already root. An `sshd` PAM stack, which
-authenticates in `sshd.service` before any session exists, is the one root
-service the fallback refuses outright; not adding `sshd` to the PAM services
+service, whose author is already root. An OpenSSH PAM stack, which
+authenticates in `sshd.service` or `ssh.service` before any session exists,
+is the one root service the fallback refuses outright; not adding `sshd` to the PAM services
 (`pam add` gates it as sensitive) keeps that door shut a second time.
 
 The check uses the ordinary `Authenticate` authorization and the

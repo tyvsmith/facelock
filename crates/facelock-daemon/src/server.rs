@@ -400,15 +400,17 @@ fn classify_caller_unit(caller_uid: u32, unit: &str) -> Result<UnitProvenance, U
 
 /// A system manager `.service` unit that is not a user manager and not the
 /// SSH daemon. Scopes (`session-N.scope`, `init.scope`) and slices are not
-/// services. `sshd.service` and per-connection `sshd@…` units run a PAM
+/// services. OpenSSH's unit (`sshd.service`, or `ssh.service` on Debian and
+/// Ubuntu) and its per-connection `sshd@…` / `ssh@…` instances run a PAM
 /// stack for a remote login before any logind session exists; that caller
 /// is remote by definition, so it never earns the system-service trust.
 fn is_system_service(unit: &str) -> bool {
     unit.strip_suffix(".service").is_some_and(|stem| {
         !stem.is_empty()
             && !stem.starts_with("user@")
-            && stem != "sshd"
+            && !matches!(stem, "sshd" | "ssh")
             && !stem.starts_with("sshd@")
+            && !stem.starts_with("ssh@")
     })
 }
 
@@ -3302,6 +3304,8 @@ mod tests {
             "user-1000.slice",
             "sshd.service",
             "sshd@3-10.0.0.2:22-10.0.0.9:51234.service",
+            "ssh.service",
+            "ssh@7-10.0.0.2:22-10.0.0.9:51235.service",
             ".service",
             "",
         ] {
