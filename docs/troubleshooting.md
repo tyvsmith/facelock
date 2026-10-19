@@ -47,7 +47,8 @@ with "no camera found".
    format_preference = "GREY"   # the IR node's native format, for multi-node cameras
    notes = "My IR camera"
    ```
-   Prefer a USB-ID quirk over a `name_pattern` one: a name-only `force_ir` is trusted only when corroborated by the device's own mono-format evidence or a real USB identity, so it will not, by itself, force a color-only device to IR.
+   For a non-USB media-controller node (Intel IPU6/IPU7, Qualcomm CAMSS), key the quirk by `modalias` and `node_name` instead (see `docs/compatibility.md`). An `of:` modalias (devicetree platforms such as CAMSS) embeds every `compatible` string of the node, so a devicetree change on a kernel update can alter it and silently stop the match; with `require_ir = true` authentication then fails closed. After such an update, re-read the value with `cat /sys/class/video4linux/videoN/device/modalias 2>/dev/null || grep ^MODALIAS= /sys/class/video4linux/videoN/device/uevent` (or `facelock devices`) and update the quirk.
+   Prefer a USB-ID or platform-identity quirk over a `name_pattern` one: a name-only `force_ir` is trusted only when corroborated by the device's own mono-format evidence or a real USB identity, so it will not, by itself, force a color-only device to IR.
 5. As a last resort you can set `security.require_ir = false` -- but understand this weakens spoofing resistance. Only do this for testing.
 
 ## Enrollment captures 0 frames

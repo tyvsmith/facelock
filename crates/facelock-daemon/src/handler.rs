@@ -929,20 +929,25 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
                             devices
                                 .iter()
                                 .zip(&sources)
-                                .map(|(d, source)| facelock_core::ipc::IpcDeviceInfo {
-                                    path: d.path.clone(),
-                                    name: d.name.clone(),
-                                    driver: d.driver.clone(),
-                                    is_ir: *source != IrSource::None,
-                                    formats: d
-                                        .formats
-                                        .iter()
-                                        .map(|f| facelock_core::ipc::IpcFormatInfo {
-                                            fourcc: f.fourcc.clone(),
-                                            description: f.description.clone(),
-                                            sizes: f.sizes.clone(),
-                                        })
-                                        .collect(),
+                                .map(|(d, source)| {
+                                    let platform = facelock_camera::read_platform_identity(&d.path);
+                                    facelock_core::ipc::IpcDeviceInfo {
+                                        path: d.path.clone(),
+                                        name: d.name.clone(),
+                                        driver: d.driver.clone(),
+                                        is_ir: *source != IrSource::None,
+                                        modalias: platform.as_ref().map(|p| p.modalias.clone()),
+                                        node_name: platform.as_ref().map(|p| p.node_name.clone()),
+                                        formats: d
+                                            .formats
+                                            .iter()
+                                            .map(|f| facelock_core::ipc::IpcFormatInfo {
+                                                fourcc: f.fourcc.clone(),
+                                                description: f.description.clone(),
+                                                sizes: f.sizes.clone(),
+                                            })
+                                            .collect(),
+                                    }
                                 })
                                 .collect(),
                         )

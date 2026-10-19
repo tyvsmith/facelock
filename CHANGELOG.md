@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its 1 s budget tops up to the full warmup itself. The burst is also
   sized from the effective warmup, so `device.warmup_frames` is honored when no quirk
   overrides it; previously only a quirk's value could lengthen it.
+- **`facelock bench` resolves its user like every other command** (#213): the benchmarks
+  read `SUDO_USER`, then `USER`, then `LOGNAME` themselves. They now go through the shared
+  resolver, so `doas facelock bench ...` benchmarks the invoking user instead of `root`, and
+  with no `USER` set the fallback is a UID lookup rather than `LOGNAME`.
 - **`abort_if_lid_closed` now sees every ACPI lid device** (#365): the PAM module checked a
   fixed `LID0`/`LID`/`LID1` list and the daemon read only
   `/proc/acpi/button/lid/LID0/state`, so a laptop whose firmware names the device anything
@@ -131,6 +135,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fails a user's load. Its key loading is read-only and never mints a keyfile. Every
   existing JSON field is unchanged. The D-Bus `ModelInfo` struct gains a trailing `key_id`
   field, so restart the daemon after upgrading.
+
+- **IR quirks can match a platform camera's kernel identity**: a quirk keyed on `modalias`
+  and `node_name` matches a non-USB capture node (Intel IPU6/IPU7 ISYS, Qualcomm CAMSS)
+  by `/sys/class/video4linux/videoN/device/modalias` (or the `MODALIAS=` line of
+  `.../device/uevent` where the bus writes no `modalias` file, as the auxiliary bus does)
+  and `/sys/class/video4linux/videoN/name`,
+  and its `force_ir` is authoritative for `security.require_ir` the way a USB
+  vendor:product ID is. These nodes have no USB identity and advertise every format the
+  pipeline supports, so until now no quirk could classify them and their owners were left
+  with `require_ir = false`. A match names one node, never the whole card; a virtual node
+  (v4l2loopback) has no parent device and cannot match; a quirk with only one of the two
+  keys logs a warning and never matches by them. The USB-ID and name-pattern rules are
+  unchanged.
 
 - **A synthetic camera for the camera-required test tiers** (#139): `just test-arch-loopback`
   feeds a v4l2loopback node with a procedurally rendered face sequence (nobody's face, see
