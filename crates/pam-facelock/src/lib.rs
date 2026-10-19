@@ -510,6 +510,54 @@ fn classify_fdo_error(prefix: &str, err: &zbus::fdo::Error) -> String {
     }
 }
 
+/// D-Bus error name the daemon uses to refuse a caller (provenance or UID
+/// authorization; `fdo::Error::AccessDenied` on the server side).
+const DBUS_ACCESS_DENIED: &str = "org.freedesktop.DBus.Error.AccessDenied";
+
+/// Classify an error from the `Authenticate` call itself. A refusal gets the
+/// `dbus_access_denied` prefix; everything else keeps the
+/// `dbus_timeout` / `dbus_call_failed` split.
+fn classify_authenticate_error(err: &zbus::Error) -> String {
+    let denied = match err {
+        zbus::Error::MethodError(name, _, _) => name.as_str() == DBUS_ACCESS_DENIED,
+        zbus::Error::FDO(e) => matches!(**e, zbus::fdo::Error::AccessDenied(_)),
+        _ => false,
+    };
+    if denied {
+        format!("dbus_access_denied: {err}")
+    } else {
+        classify_zbus_error("dbus_call_failed", err)
+    }
+}
+
+/// What `authenticate` does with an `Err` from the daemon transport.
+#[derive(Debug, PartialEq, Eq)]
+enum TransportErrorAction {
+    /// Log the reason and return the code; no oneshot fallback.
+    Return(libc::c_int, &'static str),
+    /// The daemon is unavailable: fall back to oneshot.
+    FallBackToOneshot,
+}
+
+fn action_for_transport_error(e: &str) -> TransportErrorAction {
+    if e.starts_with("dbus_access_denied") {
+        // The daemon is running and refused this caller (e.g. a root caller
+        // inside a remote logind session). Its name owner was verified as
+        // UID 0 in `verify_daemon_peer` and the call is pinned to that unique
+        // name, so this is the root daemon's decision. Never retry it through
+        // a root oneshot, which sees only the forwarded environment an
+        // attacker can strip. Degrade to password instead.
+        TransportErrorAction::Return(
+            PAM_IGNORE,
+            "refused by daemon (caller provenance or authorization)",
+        )
+    } else if e.contains("dbus_timeout") {
+        TransportErrorAction::Return(PAM_AUTH_ERR, "timeout")
+    } else {
+        TransportErrorAction::FallBackToOneshot
+    }
+}
+
 /// Map a raw D-Bus `Authenticate` reply onto an [`AuthResponse`].
 ///
 /// Sentinel `model_id` values (with `matched == false`):
@@ -655,7 +703,7 @@ async fn daemon_authenticate_async(
     let reply: (bool, i32, String, f64) = proxy
         .call("Authenticate", &(user,))
         .await
-        .map_err(|e: zbus::Error| classify_zbus_error("dbus_call_failed", &e))?;
+        .map_err(|e: zbus::Error| classify_authenticate_error(&e))?;
 
     let (matched, model_id, label, similarity) = reply;
     Ok(parse_auth_reply(matched, model_id, label, similarity))
@@ -1225,10 +1273,12 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
             code
         }
         Err(e) => {
-            // D-Bus connection/call failed -- fall back to oneshot mode
-            if e.contains("dbus_timeout") {
-                log_auth(&service, "timeout", &user, LOG_WARNING);
-                return PAM_AUTH_ERR;
+            // D-Bus connection/call failed -- fall back to oneshot mode,
+            // unless the daemon timed out or refused the caller (see
+            // `action_for_transport_error`).
+            if let TransportErrorAction::Return(code, reason) = action_for_transport_error(&e) {
+                log_auth(&service, reason, &user, LOG_WARNING);
+                return code;
             }
             log_auth(
                 &service,
@@ -1865,6 +1915,79 @@ auth_bin = "/usr/local/bin/evil"
             let (code, _) = pam_code_for_daemon_error(message);
             assert_ne!(code, PAM_SUCCESS, "fail-open for message: {message}");
         }
+    }
+
+    // --- Daemon refusals on the Authenticate call (#397) ---
+
+    /// A provenance or authorization refusal from the daemon gets its own
+    /// prefix, whether zbus hands it over as a typed fdo error or as the raw
+    /// method-error reply the client actually receives.
+    #[test]
+    fn authenticate_access_denied_gets_its_own_prefix() {
+        let typed = zbus::Error::from(zbus::fdo::Error::AccessDenied("remote session".into()));
+        assert!(
+            classify_authenticate_error(&typed).starts_with("dbus_access_denied: "),
+            "{}",
+            classify_authenticate_error(&typed)
+        );
+
+        let call = zbus::message::Message::method_call("/org/facelock/Daemon", "Authenticate")
+            .serial(std::num::NonZeroU32::new(1).unwrap())
+            .build(&())
+            .unwrap();
+        let reply = zbus::message::Message::error(
+            &call.header(),
+            "org.freedesktop.DBus.Error.AccessDenied",
+        )
+        .build(&("remote session",))
+        .unwrap();
+        let raw = zbus::Error::from(reply);
+        assert!(
+            classify_authenticate_error(&raw).starts_with("dbus_access_denied: "),
+            "{}",
+            classify_authenticate_error(&raw)
+        );
+    }
+
+    /// Everything that is not a refusal keeps the existing prefixes.
+    #[test]
+    fn authenticate_other_errors_keep_their_prefixes() {
+        let failed = zbus::Error::from(zbus::fdo::Error::ServiceUnknown("gone".into()));
+        assert!(classify_authenticate_error(&failed).starts_with("dbus_call_failed: "));
+        let timeout = zbus::Error::from(zbus::fdo::Error::NoReply("slow".into()));
+        assert!(classify_authenticate_error(&timeout).starts_with("dbus_timeout: "));
+    }
+
+    /// The verified root daemon's refusal is final: abstain, never retry it
+    /// through a root oneshot that sees less than the daemon did.
+    #[test]
+    fn access_denied_is_ignored_without_oneshot() {
+        assert_eq!(
+            action_for_transport_error("dbus_access_denied: refused"),
+            TransportErrorAction::Return(
+                PAM_IGNORE,
+                "refused by daemon (caller provenance or authorization)"
+            )
+        );
+    }
+
+    #[test]
+    fn unavailable_daemon_still_falls_back_and_timeout_still_fails() {
+        for e in [
+            "dbus_call_failed: org.freedesktop.DBus.Error.ServiceUnknown",
+            "dbus_connect_failed: no bus",
+            "dbus_untrusted_peer: owned by uid 1000 (require root)",
+        ] {
+            assert_eq!(
+                action_for_transport_error(e),
+                TransportErrorAction::FallBackToOneshot,
+                "{e}"
+            );
+        }
+        assert_eq!(
+            action_for_transport_error("dbus_timeout: deadline"),
+            TransportErrorAction::Return(PAM_AUTH_ERR, "timeout")
+        );
     }
 
     // --- Plan 05: structured timeout classification ---

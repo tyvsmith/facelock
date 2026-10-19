@@ -1390,7 +1390,7 @@ What each physical-presence gate is worth behind the module is not uniform:
 |---|---|---|
 | `pam_facelock.so` | enforced, from the calling process's environment | enforced, from the calling process's `/proc` |
 | one-shot `facelock auth` | enforced in `pre_check` (PAM forwards `SSH_CONNECTION` / `SSH_TTY` into the child's allow-listed environment) | enforced in `pre_check`: the helper is an ordinary child of the PAM-using process, with no sandbox |
-| daemon `Authenticate` | enforced, by a different mechanism: for a non-root caller the D-Bus server resolves the caller's logind session (ProcessFD, then `GetSessionByPID`) and denies one whose `Remote` property is true. A root caller skips it, and a PAM `sudo` attempt arrives as UID 0 | enforced, by a different source: the D-Bus server reads `org.freedesktop.login1.Manager.LidClosed` and refuses a closed — or unresolvable — lid. Root is **not** exempt, because a PAM `sudo` attempt arrives as UID 0 |
+| daemon `Authenticate` | enforced, by a different mechanism: for every caller, root included, the D-Bus server resolves the caller's logind session (ProcessFD, then `GetSessionByPID`) and denies one whose `Remote` property is true; a caller with no session is accepted from a user manager whose owner has an active local session, or as root from a system service. A PAM `sudo` inside an SSH login arrives as UID 0 from the remote session and is refused | enforced, by a different source: the D-Bus server reads `org.freedesktop.login1.Manager.LidClosed` and refuses a closed — or unresolvable — lid. Root is **not** exempt, because a PAM `sudo` attempt arrives as UID 0 |
 
 One consequence worth stating plainly. The `abort_if_ssh` arm inside
 `pre_check` reads the *calling* environment, which is the right environment on
@@ -1435,8 +1435,8 @@ preference, and the two cases cannot overlap:
 The `dist/openrc`, `dist/runit` and `dist/s6` templates apply no proc
 sandboxing, which is why the last row can answer at all; a host that hides
 `/proc/acpi` is by construction a host that has logind to ask. This is
-load-bearing because the lid gate covers root callers, who never ran the
-logind-dependent remote-session check: without the fallback,
+load-bearing because the lid gate covers root callers on every host, while
+the remote-session check needs logind to answer at all: without the fallback,
 `pam_facelock.so` inside `sudo` on a logind-less host would go from working
 to abstaining on every attempt.
 
@@ -3886,8 +3886,8 @@ hill-climbing oracle by construction rather than by redacting fields):
   not policy. It is **real authentication**: a failed attempt that saw a face
   consumes biometric-guess budget, whatever the caller's UID; no-face attempts
   do not (see "facelock test Semantics"). When
-  `security.abort_if_ssh = true`, an authorized non-root caller must also
-  prove a live local process/session identity as described below.
+  `security.abort_if_ssh = true`, an authorized caller, root included, must
+  also prove a live local process/session identity as described below.
 - `TestAuthenticate`: **root only.** Same arguments and same `AuthResult`
   reply as `Authenticate`, and the same gates except that it skips the
   SSH/lid physical-presence aborts and charges no rate-limit budget on
@@ -3922,7 +3922,8 @@ biometric-guess limiter and still charges root `Authenticate` failures under
 the rules in "facelock test Semantics".
 
 The remote-session gate is bound to the D-Bus caller rather than the daemon's
-environment. For an authorized non-root `Authenticate` with
+environment, and never considers the machine's other sessions. For an
+authorized `Authenticate`, root included, with
 `security.abort_if_ssh = true`, the daemon asks
 `org.freedesktop.DBus.GetConnectionCredentials` for the message sender's
 unique bus name and requires the returned `ProcessFD`. It derives the PID from
@@ -3932,6 +3933,23 @@ session's `Remote` property. It never trusts the credentials' numeric
 `ProcessID`, never classifies the caller from a security label, and rejects a
 PID-reuse race because a dead original pidfd invalidates the intervening
 logind answer.
+
+When `GetSessionByPID` fails with `org.freedesktop.login1.NoSessionForPID`,
+and on no other error, the daemon reads the caller's unit `Id` from
+`org.freedesktop.systemd1.Manager.GetUnitByPID` on the same PID (#397). It
+accepts exactly `user@<uid>.service` for the caller UID from
+`GetConnectionUnixUser`, or, for a UID 0 caller, any canonical
+`user@<n>.service`, while that manager's owner has at least one logind
+session (`ListSessions` filtered by UID) with `Remote = false`,
+`Active = true`, a non-empty `Seat`, and `Type` `wayland`, `x11` or `tty`;
+the owner's other sessions are not considered. A UID 0 caller in any other
+`.service` unit is a trusted root system service and is accepted. Everything
+else is the same denial described below; the journal reason names the rule:
+`no logind session and caller is not in user@<uid>.service`, `no logind
+session and root caller is in neither a user manager nor a system service`,
+`no logind session and unit lookup failed for caller UID <uid>`, or `caller
+is in user@<uid>.service but user <uid> has no active local session`. The
+pidfd liveness recheck spans the fallback.
 
 A remote session, omitted or invalid ProcessFD, dead caller, unavailable or
 inconsistent logind answer, cancellation, or expiry of the four-second
@@ -3945,12 +3963,12 @@ retaining the handler mutex. Caller departure, `ReleaseCamera`, suspend, and
 shutdown cancel a pending query, so a stalled system-bus reply cannot delay
 later handler operations or daemon shutdown. This check runs after method
 authorization, non-root ingress charging, the early busy check, and live
-config reload, but before handler preflight or capture admission. UID 0
-bypasses only this remote-session provenance check: ordinary authorization and
-the persistent
-biometric-guess limiter remain unchanged. `TestAuthenticate` remains its
-separate root-only diagnostic method. When `abort_if_ssh = false`, the daemon
-performs no ProcessFD, PID, or `GetSessionByPID` lookup at all. The one-shot
+config reload, but before handler preflight or capture admission. UID 0 is
+not exempt: a setuid `sudo` inside an SSH login is refused here even when
+`SSH_*` was stripped from its environment. `TestAuthenticate` remains its
+separate root-only diagnostic method and skips this gate. When
+`abort_if_ssh = false`, the daemon performs no ProcessFD, PID,
+`GetSessionByPID`, unit, or session lookup at all. The one-shot
 transport continues to enforce SSH provenance from the PAM-sanitized
 `SSH_CONNECTION` / `SSH_TTY` environment instead of D-Bus.
 
@@ -4088,7 +4106,7 @@ Sentinel `model_id` values (only meaningful with `matched == false`):
 Recoverable errors travel **in-band** (model_id `-2`), not as D-Bus errors, so
 clients can distinguish "the daemon decided auth cannot proceed" from "the
 daemon is unavailable". D-Bus errors remain for authorization failures,
-daemon-busy, transport problems, and the non-root ProcessFD/session gate above.
+daemon-busy, transport problems, and the ProcessFD/session gate above.
 In particular, a rate-limited state is a daemon decision and must never make
 the PAM client retry via a root oneshot.
 
@@ -4169,6 +4187,7 @@ the module falls through (oneshot fallback / password), never `PAM_SUCCESS`.
 | Rate limited (daemon, model_id -2) | `PAM_AUTH_ERR` (7) — no oneshot fallback |
 | IR required / unverified Y16 texture scale / internal daemon error (model_id -2) | `PAM_IGNORE` (25) — no oneshot fallback |
 | Suppressed (model_id -3) | `PAM_AUTHINFO_UNAVAIL` (9) |
+| Daemon refused the caller (D-Bus `AccessDenied` on `Authenticate`: caller provenance or UID authorization) | `PAM_IGNORE` (25) — never triggers the oneshot fallback; syslog result `refused by daemon (caller provenance or authorization)` |
 | Daemon unavailable / untrusted (non-root) peer | oneshot fallback, else `PAM_IGNORE` (25) |
 | Oneshot fallback (and `mode = "oneshot"`) | per the `facelock auth` exit-code table above: 0 → `PAM_SUCCESS`, 1/3 → `PAM_AUTH_ERR`, 4 → `PAM_AUTHINFO_UNAVAIL`, 2/5/unknown/signal death → `PAM_IGNORE` |
 | Config missing, unparseable, or untrusted (not root-owned / group- or world-writable, incl. parents) | `PAM_IGNORE` (25) |
