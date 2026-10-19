@@ -391,20 +391,25 @@ pub fn list_devices_info() -> anyhow::Result<Vec<facelock_core::ipc::IpcDeviceIn
     Ok(devices
         .iter()
         .zip(&sources)
-        .map(|(dev, source)| facelock_core::ipc::IpcDeviceInfo {
-            path: dev.path.clone(),
-            name: dev.name.clone(),
-            driver: dev.driver.clone(),
-            is_ir: *source != facelock_camera::IrSource::None,
-            formats: dev
-                .formats
-                .iter()
-                .map(|f| facelock_core::ipc::IpcFormatInfo {
-                    fourcc: f.fourcc.clone(),
-                    description: f.description.clone(),
-                    sizes: f.sizes.clone(),
-                })
-                .collect(),
+        .map(|(dev, source)| {
+            let platform = facelock_camera::read_platform_identity(&dev.path);
+            facelock_core::ipc::IpcDeviceInfo {
+                path: dev.path.clone(),
+                name: dev.name.clone(),
+                driver: dev.driver.clone(),
+                is_ir: *source != facelock_camera::IrSource::None,
+                modalias: platform.as_ref().map(|p| p.modalias.clone()),
+                node_name: platform.as_ref().map(|p| p.node_name.clone()),
+                formats: dev
+                    .formats
+                    .iter()
+                    .map(|f| facelock_core::ipc::IpcFormatInfo {
+                        fourcc: f.fourcc.clone(),
+                        description: f.description.clone(),
+                        sizes: f.sizes.clone(),
+                    })
+                    .collect(),
+            }
         })
         .collect())
 }

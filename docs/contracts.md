@@ -244,7 +244,7 @@ someone states who parses the output.
 | `facelock is-enrolled --json` | one object. See "facelock is-enrolled Exit Codes" |
 | `facelock capabilities --json` | one object. See "facelock capabilities" |
 | `facelock list --json` | array of enrolled models: `id`, `label`, `user`, `created_at`, `embedder_model`, `device_id` (`""` when uncoupled), `key_id` (the 16-hex sealing key id, `null` for a pre-V7 or plaintext row; #359) |
-| `facelock devices --json` | array of `IpcDeviceInfo` (`facelock_core::ipc`): `path`, `name`, `driver`, `is_ir`, `formats` (empty whenever the daemon answers, which carries no format detail). Serde-derived, so it is a typed schema rather than a scrape of the human renderer, whose columns and `[IR]` tag are free to change |
+| `facelock devices --json` | array of `IpcDeviceInfo` (`facelock_core::ipc`): `path`, `name`, `driver`, `is_ir`, `formats` (empty whenever the daemon answers, which carries no format detail), `modalias`, `node_name` (the platform identity of a non-USB node with a real parent device, both `null` otherwise; read from sysfs on both backends, so the D-Bus `DeviceInfo` is unchanged). Serde-derived, so it is a typed schema rather than a scrape of the human renderer, whose columns and `[IR]` tag are free to change |
 | `facelock preview --json` | one object per line, one per frame |
 | `facelock status --json` | one object, one key per report section, each carrying an `ok`/`problem`/`unknown` verdict. See "facelock status Semantics" |
 | `facelock pam add\|remove\|status --json` | one object, whose shape is a stability contract. See "facelock pam Semantics" |
@@ -3659,7 +3659,8 @@ When `device.path` is omitted:
 2. Filter to VIDEO_CAPTURE devices (single-planar, or multi-planar nodes that
    offer no single-planar capture, such as Qualcomm CAMSS)
 3. Classify every node's IR provenance from queried evidence: a quirks
-   `force_ir` match (authoritative by USB vendor:product ID; a name-only match
+   `force_ir` match (authoritative by USB vendor:product ID or by platform
+   identity, `modalias` plus `node_name`; a name-only match
    only when corroborated by a real USB identity or the node's own mono-format
    evidence), otherwise a node whose queried formats are mono-only/IR-typical
    (GREY/Y8/Y10/Y12/Y16, with no color format mixed in). The device name never
@@ -3740,6 +3741,33 @@ D-Bus `DeviceInfo` does not carry formats, so under the daemon backend
 `--json` reports `"formats": []` and there is no spelling to change
 (`BackendCaps::device_formats`, false for `BackendKind::Daemon`). The
 human-readable `facelock devices` table already trimmed.
+
+### Hardware Quirk Files
+
+Quirk files are TOML arrays of `[[quirk]]` tables, loaded from
+`/usr/share/facelock/quirks.d/*.toml` then `/etc/facelock/quirks.d/*.toml`
+(alphabetical within each). The header of `config/quirks.d/00-defaults.toml`
+lists every key. Match keys, tried in this order, last-loaded entry winning
+within a pass:
+
+| Pass | Keys | Compared against | `force_ir = true` authority |
+|------|------|------------------|-----------------------------|
+| USB ID | `vendor_id` + `product_id` | `idVendor` / `idProduct` of the node's USB device, case-insensitive | authoritative |
+| Platform identity | `modalias` + `node_name` | `/sys/class/video4linux/videoN/device/modalias`, or the `MODALIAS=` line of `.../device/uevent` when the bus writes no `modalias` file (the file wins when both exist), and `/sys/class/video4linux/videoN/name`, both exact | authoritative |
+| Name | `name_pattern` | V4L2 card name, anchored glob (`(?i)`, `.*`) | only when corroborated by a USB identity or mono-only formats |
+
+The platform pass reads an identity only for a node whose `device` link
+resolves to a real parent device outside `/sys/devices/virtual` with a
+non-USB modalias. A quirk that sets only one of `modalias` / `node_name`
+never matches by platform identity and logs a warning at load. A platform
+match names one capture node, so it never classifies the card's other nodes,
+and a platform identity does not corroborate a name-only match.
+`force_ir = false` is authoritative from every pass.
+
+A node that is IR only by a platform match must negotiate a mono format
+(GREY/Y8/Y10/Y12/Y16) at capture open; otherwise open fails, naming the
+negotiated format and the quirk, and authentication fails closed. A USB-ID
+match and a mono-only format table are not subject to this gate.
 
 ## Database Schema
 
@@ -4219,8 +4247,9 @@ treats a decline as a fall-through to another agent or as an outright denial.
 IR classification is derived from queried device evidence: a node is IR when its
 enumerated pixel formats are mono-only/IR-typical (GREY/Y8/Y10/Y12/Y16, with no
 color format mixed in), or when a quirks `force_ir` entry matches (authoritative
-by USB vendor:product ID; a name-only match requires corroborating format
-evidence or a real USB identity). The free-text device name never classifies a
+by USB vendor:product ID or by platform identity, `modalias` plus `node_name`
+read from sysfs for a non-USB node; a name-only match requires corroborating
+format evidence or a real USB identity). The free-text device name never classifies a
 device on its own, and a GREY/Y16 format offered *alongside* a color format is
 not treated as IR. A `force_ir` quirk is device-level ("this USB device has an
 IR sensor"): when the device exposes multiple capture nodes and at least one has

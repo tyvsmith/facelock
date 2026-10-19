@@ -35,6 +35,7 @@ pub fn run(config: &Config, json: bool) -> anyhow::Result<()> {
         println!("  {}{ir_tag}", dev.path);
         println!("    Name:    {}", dev.name);
         println!("    Driver:  {}", dev.driver);
+        println!("    Platform: {}", platform_line(dev));
 
         if show_formats && !dev.formats.is_empty() {
             println!("    Formats:");
@@ -57,6 +58,15 @@ pub fn run(config: &Config, json: bool) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// The platform identity a `modalias` + `node_name` quirk would name, as
+/// `modalias / node_name`, or `none` for a USB or virtual node.
+fn platform_line(dev: &IpcDeviceInfo) -> String {
+    match (&dev.modalias, &dev.node_name) {
+        (Some(modalias), Some(node_name)) => format!("{modalias} / {node_name}"),
+        _ => "none".to_string(),
+    }
 }
 
 /// `facelock devices --json`: serde-derived output (see
@@ -88,6 +98,8 @@ mod tests {
                     description: "YUYV 4:2:2".to_string(),
                     sizes: vec![(1920, 1080), (640, 480)],
                 }],
+                modalias: None,
+                node_name: None,
             },
             IpcDeviceInfo {
                 path: "/dev/video2".to_string(),
@@ -99,6 +111,8 @@ mod tests {
                     description: "8-bit Greyscale".to_string(),
                     sizes: vec![(640, 480)],
                 }],
+                modalias: Some("auxiliary:intel_ipu6.isys".to_string()),
+                node_name: Some("Intel IPU6 ISYS Capture 0".to_string()),
             },
         ]
     }
@@ -123,6 +137,23 @@ mod tests {
         assert_eq!(arr[1]["path"], "/dev/video2");
         assert_eq!(arr[1]["is_ir"], true);
         assert_eq!(arr[1]["formats"][0]["fourcc"], "GREY");
+
+        // Platform identity is additive: null for a USB node, the quirk
+        // keys verbatim for a platform node.
+        assert!(arr[0]["modalias"].is_null());
+        assert!(arr[0]["node_name"].is_null());
+        assert_eq!(arr[1]["modalias"], "auxiliary:intel_ipu6.isys");
+        assert_eq!(arr[1]["node_name"], "Intel IPU6 ISYS Capture 0");
+    }
+
+    #[test]
+    fn human_platform_line_names_both_keys_or_none() {
+        let devices = sample_devices();
+        assert_eq!(platform_line(&devices[0]), "none");
+        assert_eq!(
+            platform_line(&devices[1]),
+            "auxiliary:intel_ipu6.isys / Intel IPU6 ISYS Capture 0"
+        );
     }
 
     #[test]
