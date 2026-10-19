@@ -19,7 +19,8 @@ jobs:
     #     and again on `ready_for_review` doubles the spend for nothing.
     if: |
       github.event.pull_request.head.repo.full_name == github.repository &&
-      !github.event.pull_request.draft
+      !github.event.pull_request.draft &&
+      github.event.pull_request.user.login != 'renovate[bot]'
 
     runs-on: ubuntu-latest
     permissions:
@@ -39,9 +40,6 @@ jobs:
         uses: anthropics/claude-code-action@5eb090f3c3afd701a0672cd32981197ca27688f6 # v1.0.253
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # Renovate opens PRs as a GitHub App; the action refuses bot actors
-          # unless they are listed here, and a refused run is a red check.
-          allowed_bots: 'renovate[bot]'
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
