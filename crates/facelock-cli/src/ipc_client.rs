@@ -122,8 +122,9 @@ fn create_proxy() -> anyhow::Result<Proxy<'static>> {
 /// Connect to the system bus with `method_timeout` and build the daemon proxy.
 ///
 /// zbus 6 has no blocking API: callers drive this and every method call with
-/// `zbus::block_on`, which runs them on the one Tokio runtime zbus keeps for
-/// the process, so the cached proxy's connection outlives each call.
+/// `zbus::block_on`, which runs them on the one multi-threaded Tokio runtime
+/// zbus keeps for the process, so the cached proxy's connection outlives each
+/// call and its background tasks keep running between calls.
 async fn connect_proxy(method_timeout: std::time::Duration) -> anyhow::Result<Proxy<'static>> {
     let connection = zbus::connection::Builder::system()
         .method_timeout(method_timeout)

@@ -590,9 +590,13 @@ async fn verify_daemon_peer(
 /// Runs the blocking D-Bus work on a worker thread with an overall deadline,
 /// so that even connection establishment against a hung bus cannot stall the
 /// PAM stack (zbus `method_timeout` only bounds method calls, not connect).
-/// The worker drives the async client with `zbus::block_on`, which runs it on
-/// zbus's own single-threaded Tokio runtime; the PAM-hosting process needs no
-/// runtime of its own.
+/// The worker drives the async client with `zbus::block_on` on zbus's own
+/// multi-threaded Tokio runtime (`tokio-multithread`), so the PAM-hosting
+/// process needs no runtime of its own. Multi-threaded is deliberate: a
+/// worker abandoned at the deadline must not stall the next attempt in a
+/// long-lived host such as a locker, and the dropped connection's close must
+/// still run so the daemon's caller-departure watch cancels the stuck
+/// authentication, both of which a single-threaded runtime would prevent.
 fn daemon_authenticate(config: &PamConfig, user: &str) -> Result<AuthResponse, String> {
     // Method timeout = recognition timeout + buffer for camera open/warmup/model load
     let method_timeout_secs = config.recognition.timeout_secs as u64 + 5;
