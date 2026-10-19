@@ -87,8 +87,13 @@ impl ResolvedCamera {
 /// `CameraCaps::applied_quirks` diagnostics. The quirks files carry no stable
 /// ids, so this is derived from the match fields plus the entry's notes.
 pub fn quirk_id(quirk: &Quirk) -> String {
-    let base = match (&quirk.vendor_id, &quirk.product_id, &quirk.name_pattern) {
-        (Some(vid), Some(pid), _) => format!("{vid}:{pid}"),
+    let base = match (
+        (&quirk.vendor_id, &quirk.product_id),
+        (&quirk.modalias, &quirk.node_name),
+        &quirk.name_pattern,
+    ) {
+        ((Some(vid), Some(pid)), _, _) => format!("{vid}:{pid}"),
+        (_, (Some(modalias), Some(node)), _) => format!("platform:{modalias}/{node}"),
         (_, _, Some(pattern)) => format!("name:{pattern}"),
         _ => "unidentified-quirk".to_string(),
     };
@@ -126,6 +131,8 @@ mod tests {
             vendor_id: None,
             product_id: None,
             name_pattern: Some(name_pattern.into()),
+            modalias: None,
+            node_name: None,
             force_ir: None,
             emitter_xu_guid: None,
             emitter_xu_selector: None,
@@ -286,5 +293,16 @@ mod tests {
         q.notes = Some("Logitech BRIO".into());
         assert_eq!(quirk_id(&q), "046d:085e (Logitech BRIO)");
         assert_eq!(quirk_id(&quirk("(?i)brio")), "name:(?i)brio");
+    }
+
+    #[test]
+    fn quirk_id_names_platform_identity() {
+        let mut q = quirk("(?i)ipu6");
+        q.modalias = Some("auxiliary:intel_ipu6.isys".into());
+        q.node_name = Some("Intel IPU6 ISYS Capture 0".into());
+        assert_eq!(
+            quirk_id(&q),
+            "platform:auxiliary:intel_ipu6.isys/Intel IPU6 ISYS Capture 0"
+        );
     }
 }

@@ -92,6 +92,48 @@ fn quirk_format_preference(quirk: Option<&Quirk>) -> Option<&str> {
     Some(pref)
 }
 
+/// True when `quirk` can only have conferred IR authority through its
+/// platform keys: `modalias` plus `node_name`, with no USB vendor:product ID
+/// pair (a USB-ID match is authoritative without this gate, as before).
+fn is_platform_ir_quirk(quirk: &Quirk) -> bool {
+    quirk.force_ir == Some(true)
+        && quirk.modalias.is_some()
+        && quirk.node_name.is_some()
+        && !(quirk.vendor_id.is_some() && quirk.product_id.is_some())
+}
+
+/// Refuse to open a platform-quirk IR node on a non-mono format.
+///
+/// Every capture node on an ISYS or CAMSS card shares the parent modalias,
+/// and the active seat user can reroute sensors across those nodes through
+/// `/dev/media*` and `/dev/v4l-subdev*` without privilege, so a platform
+/// quirk names a capture slot, not a sensor. The format negotiated at open
+/// is the one piece of evidence tied to what is actually feeding the slot:
+/// an IR sensor delivers a mono format. A node that negotiated a colour
+/// format behind an IR verdict is not the IR path the quirk described, so
+/// it fails closed here rather than letting `require_ir` pass on a colour
+/// stream. See `docs/security.md` §A.
+fn check_platform_ir_format(
+    quirk: Option<&Quirk>,
+    is_ir: bool,
+    format: &str,
+    device_path: &str,
+) -> Result<()> {
+    let Some(quirk) = quirk.filter(|q| is_platform_ir_quirk(q)) else {
+        return Ok(());
+    };
+    if !is_ir || crate::device::is_ir_typical_fourcc(format) {
+        return Ok(());
+    }
+    Err(FacelockError::Camera(format!(
+        "{device_path}: negotiated {format}, which is not a mono format, but the node is IR \
+         only by the platform quirk {} — an IR sensor delivers a mono format, so this node \
+         is refused as IR; route the IR sensor to it (or set format_preference to its mono \
+         format) before authenticating (see docs/security.md)",
+        crate::caps::quirk_id(quirk),
+    )))
+}
+
 /// The Y16 shift implied by a quirk's declared sensor bit depth, if any.
 /// A depth the 16-bit container cannot hold is a quirks-file typo rather than
 /// hardware truth. Non-auth capture can still calibrate its conversion from
@@ -497,6 +539,10 @@ impl<'a> Camera<'a> {
         let width = fmt.width;
         let height = fmt.height;
         let format_str = normalize_fourcc(fmt.fourcc);
+        // The verdict in `caps.is_ir` was formed from the quirk; the format
+        // negotiated just now is what the node will actually deliver. A
+        // platform-quirk IR node must deliver a mono format or it is not IR.
+        check_platform_ir_format(quirk, caps.is_ir, &format_str, &device_path)?;
         let mut caps = caps;
         // A V4L2 driver may negotiate a different FourCC than requested. The
         // open camera's auth boundary must describe what frames actually use,
@@ -932,6 +978,8 @@ mod tests {
             vendor_id: None,
             product_id: None,
             name_pattern: None,
+            modalias: None,
+            node_name: None,
             force_ir: None,
             emitter_xu_guid: None,
             emitter_xu_selector: None,
@@ -941,6 +989,65 @@ mod tests {
             rotation: None,
             notes: None,
         }
+    }
+
+    fn platform_ir_quirk() -> Quirk {
+        Quirk {
+            modalias: Some("auxiliary:intel_ipu6.isys".into()),
+            node_name: Some("Intel IPU6 ISYS Capture 0".into()),
+            force_ir: Some(true),
+            ..quirk_with_format("GREY")
+        }
+    }
+
+    #[test]
+    fn platform_ir_quirk_requires_a_mono_negotiated_format() {
+        let quirk = platform_ir_quirk();
+        for mono in ["GREY", "Y16", "Y8", "Y10", "Y12"] {
+            assert!(
+                check_platform_ir_format(Some(&quirk), true, mono, "/dev/video1").is_ok(),
+                "{mono} is mono"
+            );
+        }
+        for colour in ["YUYV", "NV12", "MJPG"] {
+            let err = check_platform_ir_format(Some(&quirk), true, colour, "/dev/video1")
+                .expect_err("a colour format behind a platform IR verdict fails closed");
+            let msg = err.to_string();
+            assert!(msg.contains(colour), "names the format: {msg}");
+            assert!(
+                msg.contains("platform:auxiliary:intel_ipu6.isys/Intel IPU6 ISYS Capture 0"),
+                "names the quirk: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn mono_gate_only_applies_to_a_platform_ir_verdict() {
+        // No quirk, or a quirk that is not platform-keyed, is untouched: a
+        // USB-ID or name-pattern quirk keeps its existing authority.
+        assert!(check_platform_ir_format(None, true, "YUYV", "/dev/video0").is_ok());
+        let usb = Quirk {
+            vendor_id: Some("046d".into()),
+            product_id: Some("085e".into()),
+            force_ir: Some(true),
+            ..quirk_with_format("GREY")
+        };
+        assert!(check_platform_ir_format(Some(&usb), true, "YUYV", "/dev/video0").is_ok());
+        let name = Quirk {
+            name_pattern: Some("(?i)generic.*".into()),
+            force_ir: Some(true),
+            ..quirk_with_format("GREY")
+        };
+        assert!(check_platform_ir_format(Some(&name), true, "YUYV", "/dev/video0").is_ok());
+        // A platform quirk on a node that did not classify IR (force_ir
+        // false, or an uncorroborated verdict) has nothing to gate.
+        let platform = platform_ir_quirk();
+        assert!(check_platform_ir_format(Some(&platform), false, "YUYV", "/dev/video1").is_ok());
+        let not_ir = Quirk {
+            force_ir: Some(false),
+            ..platform_ir_quirk()
+        };
+        assert!(check_platform_ir_format(Some(&not_ir), true, "YUYV", "/dev/video1").is_ok());
     }
 
     #[test]

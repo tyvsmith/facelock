@@ -364,14 +364,22 @@ pub fn list_devices() -> anyhow::Result<Vec<IpcDeviceInfo>> {
             .context("D-Bus ListDevices call failed")?;
         Ok(devices
             .into_iter()
-            .map(|d| IpcDeviceInfo {
-                path: d.path,
-                name: d.name,
-                driver: d.driver,
-                is_ir: d.is_ir,
-                // The D-Bus DeviceInfo type carries no formats (C9, Phase E);
-                // `BackendCaps::device_formats` states this up front.
-                formats: vec![],
+            .map(|d| {
+                // The D-Bus DeviceInfo type carries no platform identity
+                // either; sysfs is world-readable on the same host, so read
+                // it here rather than widen the wire type.
+                let platform = facelock_camera::read_platform_identity(&d.path);
+                IpcDeviceInfo {
+                    path: d.path,
+                    name: d.name,
+                    driver: d.driver,
+                    is_ir: d.is_ir,
+                    // The D-Bus DeviceInfo type carries no formats (C9, Phase E);
+                    // `BackendCaps::device_formats` states this up front.
+                    formats: vec![],
+                    modalias: platform.as_ref().map(|p| p.modalias.clone()),
+                    node_name: platform.as_ref().map(|p| p.node_name.clone()),
+                }
             })
             .collect())
     })())
@@ -401,6 +409,21 @@ pub fn resolve_user(flag: Option<&str>) -> String {
     resolve_user_from_env(flag, |key| std::env::var(key).ok())
 }
 
+/// The user behind `sudo`/`doas`, if any: SUDO_USER > DOAS_USER.
+///
+/// The elevation half of `resolve_user`, for callers that must act as the
+/// invoking user and have nothing to do when there is none — no flag and no
+/// fallback to the current user.
+pub fn invoking_user() -> Option<String> {
+    invoking_user_from_env(|key| std::env::var(key).ok())
+}
+
+/// `invoking_user` with the environment supplied by the caller; see
+/// `resolve_user_from_env` for why.
+pub(crate) fn invoking_user_from_env(env: impl Fn(&str) -> Option<String>) -> Option<String> {
+    env("SUDO_USER").or_else(|| env("DOAS_USER"))
+}
+
 /// The resolution order itself, with the environment supplied by the caller.
 ///
 /// Split out so the precedence can be tested without `set_var`: mutating the
@@ -413,8 +436,7 @@ pub(crate) fn resolve_user_from_env(
     env: impl Fn(&str) -> Option<String>,
 ) -> String {
     flag.map(String::from)
-        .or_else(|| env("SUDO_USER"))
-        .or_else(|| env("DOAS_USER"))
+        .or_else(|| invoking_user_from_env(&env))
         .unwrap_or_else(|| {
             env("USER").unwrap_or_else(|| {
                 // Fall back to getpwuid if $USER is not set (e.g. in containers)

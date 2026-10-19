@@ -177,6 +177,66 @@ support from a kernel version alone. Facelock capture-node format and IR
 classification work for `hm1092` is tracked in issue #101; treat this path as
 experimental until the complete Facelock capture path is established.
 
+#### IR classification for media-controller nodes (IPU6/IPU7, Qualcomm CAMSS)
+
+A capture node behind a media-controller pipeline (Intel IPU6/IPU7 ISYS,
+Qualcomm CAMSS on Snapdragon X laptops such as the Surface Pro 11) has no USB
+identity and advertises a static table of every format the pipeline supports,
+so it never classifies as IR by format evidence, and a `name_pattern` quirk on
+it is not corroborated. Identify the IR node by its kernel-reported identity
+instead, with a quirk keyed on `modalias` and `node_name`. That match is
+authoritative for `security.require_ir`, like a USB vendor:product ID, and
+applies to that one node only; keep `require_ir = true`.
+
+Read both values for the node your IR pipeline delivers to. An auxiliary-bus
+parent (IPU6/IPU7) has no `modalias` file; the kernel writes the same value
+into the parent's `uevent` instead, and facelock reads whichever exists:
+
+```bash
+cat /sys/class/video4linux/videoN/device/modalias 2>/dev/null || grep ^MODALIAS= /sys/class/video4linux/videoN/device/uevent
+cat /sys/class/video4linux/videoN/name
+```
+
+`facelock devices` prints the same pair per node as `Platform:`, and
+`facelock devices --json` carries it as `modalias` and `node_name`.
+
+and copy them verbatim into `/etc/facelock/quirks.d/`:
+
+```toml
+[[quirk]]
+modalias = "auxiliary:intel_ipu6.isys"   # paste yours; compared exactly
+node_name = "Intel IPU6 ISYS Capture 0"  # paste yours; compared exactly
+force_ir = true
+format_preference = "GREY"
+notes = "IR sensor on ISYS capture node 0"
+```
+
+Values seen in kernel source, not yet confirmed on hardware in this project:
+IPU6 nodes are named `Intel IPU6 ISYS Capture N` under modalias
+`auxiliary:intel_ipu6.isys`; IPU7 (staging driver) `Intel IPU7 ISYS Capture N`
+under `auxiliary:intel_ipu7.isys`; CAMSS nodes are named `msm_vfeN_videoM`,
+and their modalias is a devicetree string beginning `of:N` that includes the
+SoC's camss compatible (for example `qcom,x1e80100-camss`). The exact CAMSS
+string depends on the devicetree, so always paste the value your machine
+reports rather than one from this page. An `of:` modalias embeds every
+`compatible` string of the node, so a devicetree change on a kernel update can
+alter it and silently stop the match; with `require_ir = true` authentication
+then fails closed. Re-read the value above after a kernel update that changes
+the camera's behaviour.
+
+The node name is stable across boots even where `/dev/videoN` numbering is
+not, but it names the capture node, not the sensor: which sensor feeds that
+node is set by the media-graph links. Route the IR sensor to the node the
+quirk names before authenticating (see `docs/security.md` §A). Because of
+that, a platform-matched node is accepted as IR only when the format it
+negotiates at capture open is mono (GREY/Y8/Y10/Y12/Y16): keep
+`format_preference` at the sensor's mono format, or with `keep_format = true`
+leave the pipeline configured for it. A node that opens on a colour format is
+refused with an error naming the format and the quirk. Capturing from
+these nodes is a separate concern from classifying them: the pipeline must be
+configured ahead of time, and CAMSS nodes need multi-planar capture support
+(next section).
+
 ### Multi-planar capture nodes (e.g. Qualcomm CAMSS)
 
 Some SoC camera subsystems expose capture nodes only through the V4L2
@@ -189,8 +249,8 @@ Such nodes usually sit behind a media-controller pipeline and advertise every
 format the hardware path supports, so set the pipeline up ahead of time (for
 an IR sensor: GREY end to end), point `device.path` at it, and set
 `keep_format = true`. Because the advertised format table is static, IR
-classification needs a name-matched `force_ir` quirk with
-`format_preference = "GREY"`, as for IPU6/IPU7 nodes. If the illuminator is a
+classification needs a `force_ir` quirk keyed on the node's `modalias` and
+`node_name` (previous section), as for IPU6/IPU7 nodes. If the illuminator is a
 separate LED class device rather than a UVC emitter, name it in
 `device.ir_led`.
 
