@@ -231,7 +231,7 @@
       "release_target": true,
       "optional": false,
       "lifecycle_depth": "full",
-      "image": "registry.fedoraproject.org/fedora:44@sha256:fc3ec3da3ce49de0da0bab5a33223e90866c488d5d04fc6612284169e20a1bdb"
+      "image": "registry.fedoraproject.org/fedora:44@sha256:99741a26ce7d4ee2746a564552210f267a458c527cc09ea7dd103ecbe62b0d5a"
     },
     {
       "id": "fedora-45",
@@ -280,7 +280,7 @@
       "release_target": true,
       "optional": false,
       "lifecycle_depth": "full",
-      "image": "registry.fedoraproject.org/fedora:44@sha256:fc3ec3da3ce49de0da0bab5a33223e90866c488d5d04fc6612284169e20a1bdb"
+      "image": "registry.fedoraproject.org/fedora:44@sha256:99741a26ce7d4ee2746a564552210f267a458c527cc09ea7dd103ecbe62b0d5a"
     },
     {
       "id": "arch-2026-08-18",
