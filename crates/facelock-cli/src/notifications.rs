@@ -36,11 +36,10 @@ fn timeout_ms(event: &NotifyEvent) -> i32 {
 }
 
 /// Resolve the original (non-root) user for privilege de-escalation.
-/// Returns the username from SUDO_USER or DOAS_USER if running under sudo/doas.
+/// Returns the username from SUDO_USER or DOAS_USER if running under sudo/doas,
+/// in the shared resolver's precedence.
 fn original_user() -> Option<String> {
-    std::env::var("SUDO_USER")
-        .ok()
-        .or_else(|| std::env::var("DOAS_USER").ok())
+    crate::ipc_client::invoking_user()
 }
 
 /// Send a desktop notification via D-Bus org.freedesktop.Notifications.
@@ -230,6 +229,41 @@ pub fn daemon_notifier_factory() -> NotifierFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #213: the de-escalation target comes from the shared resolver's
+    /// elevation half — SUDO_USER, then DOAS_USER — and is `None` when neither
+    /// is set, even though `$USER` is: as root with no invoking user there is
+    /// no session bus to reach, so the notification is skipped rather than
+    /// sent as the current user.
+    #[test]
+    fn original_user_precedence_is_the_shared_resolvers() {
+        let both = |key: &str| match key {
+            "SUDO_USER" => Some("notify-alice".to_string()),
+            "DOAS_USER" => Some("notify-dave".to_string()),
+            "USER" => Some("root".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            crate::ipc_client::invoking_user_from_env(both).as_deref(),
+            Some("notify-alice")
+        );
+
+        let doas = |key: &str| match key {
+            "DOAS_USER" => Some("notify-dave".to_string()),
+            "USER" => Some("root".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            crate::ipc_client::invoking_user_from_env(doas).as_deref(),
+            Some("notify-dave")
+        );
+
+        let neither = |key: &str| match key {
+            "USER" => Some("root".to_string()),
+            _ => None,
+        };
+        assert_eq!(crate::ipc_client::invoking_user_from_env(neither), None);
+    }
 
     #[test]
     fn scanning_event_rendering() {

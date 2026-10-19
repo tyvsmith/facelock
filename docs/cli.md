@@ -756,9 +756,9 @@ report timing with no enrolled faces.
 These are direct capture/inference measurements, not full PAM or daemon
 authentication: the benchmarks do not run the authentication policy, rate
 limiter or liveness checks. They do not change configuration or save captures.
-The user is selected from `SUDO_USER`, then `USER`, then `LOGNAME`, then
-`unknown`; the benchmark group has no `--user` option and does not use
-`DOAS_USER` or a UID lookup. Missing a timing target or face match does not
+The user is selected as under [User Resolution](#user-resolution): `SUDO_USER`,
+then `DOAS_USER`, then `USER`, then a UID lookup, then `unknown`; the benchmark
+group has no `--user` option. Missing a timing target or face match does not
 itself make a benchmark exit non-zero.
 
 `camera-reopen` needs no enrolled face and loads no models — but is root like
