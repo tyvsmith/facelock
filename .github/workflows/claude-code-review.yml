@@ -19,7 +19,8 @@ jobs:
     #     and again on `ready_for_review` doubles the spend for nothing.
     if: |
       github.event.pull_request.head.repo.full_name == github.repository &&
-      !github.event.pull_request.draft
+      !github.event.pull_request.draft &&
+      github.event.pull_request.user.login != 'renovate[bot]'
 
     runs-on: ubuntu-latest
     permissions:
