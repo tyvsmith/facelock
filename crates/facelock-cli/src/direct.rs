@@ -21,6 +21,8 @@ use facelock_face::FaceEngine;
 use facelock_store::{FaceStore, StoreError};
 use tracing::debug;
 
+use crate::message::{FaceMessage, Terminal};
+
 /// Open the face database, applying the state-directory layout first.
 ///
 /// This is the single choke point for every direct-mode store access —
@@ -187,6 +189,14 @@ pub fn authenticate(config: &Config, user: &str) -> anyhow::Result<MatchResult> 
     }
 
     let mut camera = open_resolved_camera(config, resolved, CameraPurpose::Authentication)?;
+    // The open continues without a configured LED it could not light; this
+    // transport holds the camera, so `test` names the failure here (#413).
+    if let (Some(led), Some(error)) = (&config.device.ir_led, camera.ir_led_error()) {
+        Terminal.error(&FaceMessage::IrLedNotLit {
+            led: led.clone(),
+            error: error.to_string(),
+        });
+    }
     let mut engine = load_engine(config)?;
 
     // Same shape as the daemon's `handle_authenticate` (C3): a storage failure

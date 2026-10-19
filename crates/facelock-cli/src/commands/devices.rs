@@ -1,3 +1,4 @@
+use facelock_camera::IrLedState;
 use facelock_core::Config;
 use facelock_core::ipc::IpcDeviceInfo;
 
@@ -21,6 +22,7 @@ pub fn run(config: &Config, json: bool) -> anyhow::Result<()> {
     if devices.is_empty() {
         println!("No video devices found.");
         println!("Check that your camera is connected and the v4l2 module is loaded.");
+        print_ir_led(config);
         return Ok(());
     }
 
@@ -56,8 +58,32 @@ pub fn run(config: &Config, json: bool) -> anyhow::Result<()> {
         }
         println!();
     }
+    print_ir_led(config);
 
     Ok(())
+}
+
+/// The configured `device.ir_led`, read from sysfs without writing to it, so
+/// a wrong path or an unwritable node shows here and not only in the daemon
+/// log when the camera opens (#413). Nothing when none is configured.
+fn print_ir_led(config: &Config) {
+    if let Some(led) = &config.device.ir_led {
+        println!(
+            "Configured IR LED: {}",
+            ir_led_line(led, facelock_camera::ir_led::probe(led))
+        );
+    }
+}
+
+fn ir_led_line(led: &str, state: Result<IrLedState, String>) -> String {
+    match state {
+        Ok(s) if s.brightness == 0 => format!("{led} (off, max brightness {})", s.max_brightness),
+        Ok(s) => format!(
+            "{led} (lit, brightness {}/{})",
+            s.brightness, s.max_brightness
+        ),
+        Err(e) => format!("{led} (cannot be lit: {e})"),
+    }
 }
 
 /// The platform identity a `modalias` + `node_name` quirk would name, as
@@ -144,6 +170,29 @@ mod tests {
         assert!(arr[0]["node_name"].is_null());
         assert_eq!(arr[1]["modalias"], "auxiliary:intel_ipu6.isys");
         assert_eq!(arr[1]["node_name"], "Intel IPU6 ISYS Capture 0");
+    }
+
+    #[test]
+    fn ir_led_line_states_off_lit_or_the_error() {
+        let led = "/sys/class/leds/ir:flash";
+        let state = |brightness| {
+            Ok(IrLedState {
+                brightness,
+                max_brightness: 255,
+            })
+        };
+        assert_eq!(
+            ir_led_line(led, state(0)),
+            "/sys/class/leds/ir:flash (off, max brightness 255)"
+        );
+        assert_eq!(
+            ir_led_line(led, state(255)),
+            "/sys/class/leds/ir:flash (lit, brightness 255/255)"
+        );
+        assert_eq!(
+            ir_led_line(led, Err("no such node".into())),
+            "/sys/class/leds/ir:flash (cannot be lit: no such node)"
+        );
     }
 
     #[test]

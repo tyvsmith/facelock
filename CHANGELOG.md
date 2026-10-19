@@ -31,6 +31,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The PAM module now honors the daemon's `AccessDenied` as a final refusal (`PAM_IGNORE`)
   instead of retrying it through the root `facelock auth` oneshot, which saw only the
   stripped environment.
+- **Camera diagnostics on the media-controller path** (#413): three failures that only the
+  daemon log or a bare errno described now say what went wrong. A configured
+  `device.ir_led` that cannot be lit is named by `facelock test` on stderr (from the open
+  itself on the direct transport, from a sysfs probe that writes nothing under the daemon),
+  and `facelock devices` ends its human listing with the configured LED and whether it is
+  off, lit or unusable; the open still continues without the LED. Closing the camera now
+  restores the LED's earlier brightness instead of writing `0`, and switches it off when that
+  brightness was already the maximum, which is what an LED left lit by a daemon that died
+  without unwinding reads as, so the next open and close clears it. The packaged unit gains
+  no `ExecStopPost=` reset, because the LED is named only in `config.toml`;
+  `docs/compatibility.md` gives the manual reset. A multi-planar node whose driver allocates
+  no buffers at `VIDIOC_REQBUFS` is refused at open with an error naming the node, instead of
+  failing the first capture with a bare `EINVAL` from `VIDIOC_STREAMON`.
+
 - **`facelock setup` now creates the encryption key a default config names**: the shipped
   config leaves `encryption.method` at its `keyfile` default, and the automatic policy
   (`--non-interactive`, `--encryption auto`) treated any non-`none` method as already

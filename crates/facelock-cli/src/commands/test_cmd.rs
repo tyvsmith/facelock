@@ -75,6 +75,16 @@ pub fn run(config: &Config, user: Option<String>) -> anyhow::Result<()> {
     Terminal.info(&FaceMessage::TestingUser { user: user.clone() });
     Terminal.info(&FaceMessage::TestLookAtCamera);
 
+    // The daemon opens the camera out of reach of this process, so a
+    // configured LED is checked from sysfs instead: a wrong path or an
+    // unwritable node is named here rather than only in the daemon log
+    // (#413). The direct transport names the failure from the open itself.
+    if backend.kind() == BackendKind::Daemon
+        && let Some(warning) = ir_led_warning(config)
+    {
+        Terminal.error(&warning);
+    }
+
     notify_desktop_if_enabled(notif_config, &notifier, &NotifyEvent::Scanning);
 
     let start = Instant::now();
@@ -172,6 +182,18 @@ pub fn run(config: &Config, user: Option<String>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The warning for a configured `device.ir_led` that cannot be lit, read
+/// from sysfs without writing to it; `None` when unset or usable.
+fn ir_led_warning(config: &Config) -> Option<FaceMessage> {
+    let led = config.device.ir_led.as_ref()?;
+    facelock_camera::ir_led::probe(led)
+        .err()
+        .map(|error| FaceMessage::IrLedNotLit {
+            led: led.clone(),
+            error,
+        })
+}
+
 /// The C7 enrolled check, with the direct transport's store failures reworded
 /// for the human running `test`: the per-user enrollment marker is consulted
 /// **for the message only** — it is readable in exactly the cases the
@@ -212,6 +234,25 @@ fn unreadable_store_error(config: &Config, user: &str, cause: &anyhow::Error) ->
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn no_ir_led_warning_when_none_is_configured() {
+        assert!(ir_led_warning(&Config::default()).is_none());
+    }
+
+    #[test]
+    fn a_configured_led_that_does_not_exist_is_named() {
+        let mut config = Config::default();
+        let led = "/sys/class/leds/facelock-test-absent-413".to_string();
+        config.device.ir_led = Some(led.clone());
+        match ir_led_warning(&config) {
+            Some(FaceMessage::IrLedNotLit { led: named, error }) => {
+                assert_eq!(named, led);
+                assert!(error.contains("facelock-test-absent-413"), "{error}");
+            }
+            other => panic!("expected IrLedNotLit, got {other:?}"),
+        }
+    }
 
     /// `mode = "oneshot"` pins a DirectByConfig selection without touching
     /// D-Bus.

@@ -254,6 +254,19 @@ classification needs a `force_ir` quirk keyed on the node's `modalias` and
 separate LED class device rather than a UVC emitter, name it in
 `device.ir_led`.
 
+The LED is switched back when the camera closes: to the brightness it had
+before it was lit, or off when that was already full brightness. A daemon that
+dies without unwinding (SIGKILL, an OOM kill) skips that step and leaves the
+LED at full brightness. The packaged unit has no `ExecStopPost=` reset for it:
+the LED is named only in `config.toml`, and the unit does not parse TOML.
+The next camera open and close switches it off again, since a starting
+brightness at the maximum is treated as one left lit; to switch it off at
+once, write `0` to its `brightness` node, for example
+`echo 0 | sudo tee /sys/class/leds/ir:flash/brightness`.
+
+`sudo facelock devices` shows the configured LED and its state, and
+`sudo facelock test` warns when it cannot be lit.
+
 ## Init System Support
 
 ### systemd (recommended)

@@ -141,6 +141,18 @@ fn c_str(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
+/// The buffer count `VIDIOC_REQBUFS` returned, refused when the driver
+/// allocated none: streaming zero buffers fails later at `VIDIOC_STREAMON`
+/// with a bare `EINVAL` that names neither the node nor the cause.
+fn allocated_buffers(path: &str, count: u32) -> io::Result<u32> {
+    if count == 0 {
+        return Err(io::Error::other(format!(
+            "{path}: driver allocated no buffers (VIDIOC_REQBUFS returned count 0)"
+        )));
+    }
+    Ok(count)
+}
+
 /// One mmap'd plane, owned exclusively by its stream.
 struct Mapping {
     ptr: NonNull<u8>,
@@ -164,8 +176,14 @@ pub struct Stream {
 unsafe impl Send for Stream {}
 
 impl Stream {
-    /// Allocate and map `count` buffers; streaming starts on the first `next_frame()`.
-    pub fn with_buffers(dev: &Device, count: u32, timeout: Duration) -> io::Result<Self> {
+    /// Allocate and map `count` buffers on the node at `path`; streaming
+    /// starts on the first `next_frame()`.
+    pub fn with_buffers(
+        dev: &Device,
+        path: &str,
+        count: u32,
+        timeout: Duration,
+    ) -> io::Result<Self> {
         let handle = dev.handle();
         let mut req = v4l2_requestbuffers {
             count,
@@ -181,14 +199,15 @@ impl Stream {
                 &mut req as *mut _ as *mut std::os::raw::c_void,
             )?;
         }
+        let count = allocated_buffers(path, req.count)?;
         let mut stream = Self {
             handle,
-            mappings: Vec::with_capacity(req.count as usize),
+            mappings: Vec::with_capacity(count as usize),
             streaming: false,
             pending: None,
             timeout_ms: i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX),
         };
-        for index in 0..req.count {
+        for index in 0..count {
             let mut plane: v4l2_plane = unsafe { std::mem::zeroed() };
             let mut buf = stream.buffer(index, &mut plane);
             // SAFETY: `buf` points at one valid plane, as `length = 1` says.
@@ -347,6 +366,15 @@ mod tests {
         assert!(!is_mplane_only(&caps(single)));
         assert!(!is_mplane_only(&caps(single | multi)));
         assert!(!is_mplane_only(&caps(0)));
+    }
+
+    #[test]
+    fn zero_buffers_from_reqbufs_is_an_error_naming_the_node() {
+        let err = allocated_buffers("/dev/video3", 0).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("/dev/video3"), "{msg}");
+        assert!(msg.contains("driver allocated no buffers"), "{msg}");
+        assert_eq!(allocated_buffers("/dev/video3", 4).unwrap(), 4);
     }
 
     #[test]

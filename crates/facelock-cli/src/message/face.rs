@@ -57,6 +57,10 @@ pub enum FaceMessage {
         user: String,
     },
     TestLookAtCamera,
+    IrLedNotLit {
+        led: String,
+        error: String,
+    },
     TestMatched {
         similarity: f32,
         seconds: f64,
@@ -171,6 +175,10 @@ impl Message for FaceMessage {
                 &[("user", user.clone())],
             ),
             TestLookAtCamera => translate("Look at the camera."),
+            IrLedNotLit { led, error } => fill(
+                translate("Warning: IR LED {led} cannot be lit: {error}"),
+                &[("led", led.clone()), ("error", error.clone())],
+            ),
             TestMatched {
                 similarity,
                 seconds,
@@ -256,7 +264,7 @@ impl Message for FaceMessage {
 /// above: no wildcard arm, so a variant that renders nothing does not build.
 #[cfg(test)]
 impl super::Samples for FaceMessage {
-    const VARIANT_COUNT: usize = 32;
+    const VARIANT_COUNT: usize = 33;
 
     fn samples() -> Vec<Self> {
         use FaceMessage::*;
@@ -292,6 +300,10 @@ impl super::Samples for FaceMessage {
             ReenrollHint,
             TestingUser { user: s("u") },
             TestLookAtCamera,
+            IrLedNotLit {
+                led: s("l"),
+                error: s("e"),
+            },
             TestMatched {
                 similarity: 0.5,
                 seconds: 1.0,

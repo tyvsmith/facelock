@@ -489,7 +489,7 @@
         "path": "docs/compatibility.md",
         "anchor": "non-systemd",
         "ordinal": 1,
-        "line": 280,
+        "line": 293,
         "sha256": "4048f94d4e94a019ea8fce71887f6614b1bb0cec5f2847a54745ee8c5157d02d"
       }
     ],
@@ -498,7 +498,7 @@
         "path": "docs/compatibility.md",
         "anchor": "non-systemd",
         "ordinal": 1,
-        "line": 280,
+        "line": 293,
         "sha256": "4048f94d4e94a019ea8fce71887f6614b1bb0cec5f2847a54745ee8c5157d02d"
       }
     ],
@@ -507,7 +507,7 @@
         "path": "docs/compatibility.md",
         "anchor": "non-systemd",
         "ordinal": 1,
-        "line": 280,
+        "line": 293,
         "sha256": "4048f94d4e94a019ea8fce71887f6614b1bb0cec5f2847a54745ee8c5157d02d"
       }
     ],
@@ -689,14 +689,14 @@
         "path": "docs/cli.md",
         "anchor": "facelock-devices",
         "ordinal": 1,
-        "line": 479,
+        "line": 485,
         "sha256": "6f6b179ea3830b95038c6708805c55ec33823224dc1b072d3e0173b1dc50f478"
       },
       {
         "path": "docs/cli.md",
         "anchor": "facelock-devices",
         "ordinal": 2,
-        "line": 480,
+        "line": 486,
         "sha256": "b9599e555bfca95fe805614377cdc83dfad7fea07c59141141f966e7e1d9ff54"
       }
     ]
