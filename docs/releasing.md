@@ -217,6 +217,12 @@ the gate never tags anything to test it. Each mutation re-runs the script
 against a mutated copy; those runs execute concurrently, `FACELOCK_MUTATION_JOBS`
 at a time (default: one per CPU). Set `FACELOCK_MUTATION_JOBS=1` to run them
 one after another when debugging a mutation.
+Every run's verdict comes from its own log, so a failure always names its own
+mutant. The runs share no state, but they do load the machine, and load exposes
+any check that can fail by timing. The one this script had to guard against
+(#389) is `printf '%s\n' "$text" | grep -q` under `pipefail`: `grep` exits on
+its first match while `printf` is still writing, so SIGPIPE fails a check whose
+text is present. Feed such checks a here-string (`grep -q ... <<<"$text"`).
 
 #### Debian package channels
 

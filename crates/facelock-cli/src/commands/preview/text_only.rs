@@ -113,7 +113,7 @@ pub fn run(user: &str) -> anyhow::Result<()> {
 
 /// Direct text-only preview (oneshot mode, no daemon).
 pub fn run_direct(config: &facelock_core::Config, user: &str) -> anyhow::Result<()> {
-    use facelock_core::types::cosine_similarity;
+    use facelock_core::types::{Wiped, cosine_similarity};
 
     eprintln!("Text-only preview mode (direct). Press Ctrl+C to stop.\n");
 
@@ -169,8 +169,8 @@ pub fn run_direct(config: &facelock_core::Config, user: &str) -> anyhow::Result<
             last_fps_time = now;
         }
 
-        let faces_result = engine.process(&frame);
-        let faces = faces_result.unwrap_or_default();
+        // Per-frame embeddings, zeroized when `faces` drops (#305).
+        let faces = Wiped::new(engine.process(&frame).unwrap_or_default());
 
         let faces_json: Vec<serde_json::Value> = faces
             .iter()

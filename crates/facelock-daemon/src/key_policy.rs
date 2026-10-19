@@ -256,10 +256,46 @@ fn decide_and_create(store: &FaceStore, config: &Config) -> KeyfileDecision {
         // Another process published between the inspection and the create.
         // Its file is complete by construction; the caller reads it.
         Ok(false) => KeyfileDecision::Present,
-        Err(e) => KeyfileDecision::Refused(format!(
-            "no encryption key could be created at {}: {e}",
-            key_path.display()
-        )),
+        Err(e) => {
+            let parent = key_path.parent().unwrap_or_else(|| Path::new("."));
+            let parent_access = nix::unistd::access(parent, nix::unistd::AccessFlags::W_OK);
+            KeyfileDecision::Refused(key_creation_failure(
+                key_path,
+                &e.to_string(),
+                parent_access,
+            ))
+        }
+    }
+}
+
+/// The refusal for a key the gate was allowed to create but could not.
+///
+/// `parent_access` is a `W_OK` probe of the key's directory, taken after the
+/// create failed. When the directory is not writable to this process the
+/// cause is almost always the packaged unit's `ProtectSystem=strict` (or the
+/// unprivileged mode bits a non-root caller sees), and the remedy is to
+/// create the key outside the daemon. The unit is deliberately not widened to
+/// `/etc/facelock` (ADR 007): the daemon reads its key and policy, it does not
+/// write them.
+fn key_creation_failure(key_path: &Path, cause: &str, parent_access: nix::Result<()>) -> String {
+    let failure = format!(
+        "no encryption key could be created at {}: {cause}",
+        key_path.display()
+    );
+    match parent_access {
+        Err(errno @ (nix::errno::Errno::EROFS | nix::errno::Errno::EACCES)) => {
+            let parent = key_path.parent().unwrap_or_else(|| Path::new("."));
+            format!(
+                "{}. {} is not writable by this process ({}); the packaged daemon unit \
+                 runs with ProtectSystem=strict, which keeps /etc read-only to the \
+                 daemon by design. Create the key with `sudo facelock setup`, then \
+                 retry; the daemon picks it up on the next enrollment attempt.",
+                failure.trim_end_matches('.'),
+                parent.display(),
+                errno.desc()
+            )
+        }
+        _ => failure,
     }
 }
 
@@ -603,6 +639,65 @@ mod tests {
             refusal.contains(&db_path.display().to_string()),
             "{refusal}"
         );
+        assert!(!key_path.exists());
+    }
+
+    /// `ProtectSystem=strict` is why the packaged daemon cannot create the
+    /// key: the write fails with `EROFS`. The bare I/O error told the operator
+    /// neither why nor what to run, and invited widening the unit instead.
+    #[test]
+    fn a_read_only_key_directory_names_setup_as_the_remedy() {
+        let key_path = Path::new("/etc/facelock/encryption.key");
+        let refusal = key_creation_failure(
+            key_path,
+            "failed to create the staged key file: Read-only file system (os error 30)",
+            Err(nix::errno::Errno::EROFS),
+        );
+        assert!(
+            refusal.contains("/etc/facelock/encryption.key"),
+            "{refusal}"
+        );
+        assert!(refusal.contains("Read-only file system"), "{refusal}");
+        assert!(refusal.contains("ProtectSystem=strict"), "{refusal}");
+        assert!(refusal.contains("sudo facelock setup"), "{refusal}");
+    }
+
+    /// A failure that is not about the directory being unwritable keeps the
+    /// plain message: the remedy above would point at the wrong problem.
+    #[test]
+    fn a_writable_key_directory_keeps_the_plain_failure() {
+        let key_path = Path::new("/etc/facelock/encryption.key");
+        let refusal = key_creation_failure(key_path, "disk full", Ok(()));
+        assert_eq!(
+            refusal,
+            "no encryption key could be created at /etc/facelock/encryption.key: disk full"
+        );
+    }
+
+    /// The same refusal reached through the gate itself, on a key directory
+    /// this process cannot write. Root ignores the mode bits, so this one only
+    /// runs unprivileged; the pure test above covers root.
+    #[test]
+    fn an_unwritable_key_directory_refuses_with_the_setup_remedy() {
+        use std::os::unix::fs::PermissionsExt;
+        if nix::unistd::geteuid().is_root() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let etc = dir.path().join("facelock");
+        std::fs::create_dir(&etc).unwrap();
+        std::fs::set_permissions(&etc, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let key_path = etc.join("encryption.key");
+        let config = config_for(&key_path);
+        let store = FaceStore::open_memory().unwrap();
+
+        let decision = ensure_encrypt_by_default_key(&store, &config);
+        std::fs::set_permissions(&etc, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let refusal = decision
+            .refusal()
+            .expect("an unwritable directory must refuse");
+        assert!(refusal.contains("sudo facelock setup"), "{refusal}");
         assert!(!key_path.exists());
     }
 }

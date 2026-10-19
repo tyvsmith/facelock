@@ -310,6 +310,7 @@ pub fn list_models(user: &str) -> anyhow::Result<Vec<FaceModelInfo>> {
                 embedder_model: m.embedder_model,
                 // Empty string sentinel (D-Bus) maps back to NULL.
                 device_id: Some(m.device_id).filter(|s| !s.is_empty()),
+                key_id: Some(m.key_id).filter(|s| !s.is_empty()),
             })
             .collect())
     })())

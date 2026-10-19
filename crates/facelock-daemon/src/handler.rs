@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use facelock_camera::MMAP_BUFFERS;
 use facelock_core::config::{Config, DeviceConfig, EncryptionMethod};
 use facelock_core::ipc::PreviewFace;
-use facelock_core::traits::{CameraSource, FaceProcessor};
+use facelock_core::traits::{CameraSource, FaceProcessor, warmup_discard_count};
 use facelock_core::types::{FaceEmbedding, Wiped, best_match};
 use facelock_store::FaceStore;
 use image::codecs::jpeg::JpegEncoder;
@@ -446,9 +446,13 @@ impl<C: CameraSource> CameraLease<C> {
                 .ok_or_else(|| "no camera available".to_string())?;
             debug!("opening camera");
             let mut camera = factory(config).map_err(|e| format!("failed to open camera: {e}"))?;
-            let warmup = self
-                .warmup_frames_override
-                .unwrap_or(config.device.warmup_frames);
+            // A pending Y16 calibration burst is itself the settling period,
+            // so it is subtracted rather than paid on top (#163).
+            let warmup = warmup_discard_count(
+                &camera,
+                self.warmup_frames_override
+                    .unwrap_or(config.device.warmup_frames),
+            );
             // A cold warmup discard is advisory (AGC/AE settling); a failure
             // here is left for the scan loop to surface, as it always was.
             if purpose.may_discard_from(&camera)
@@ -1191,8 +1195,9 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         frame: &facelock_core::types::Frame,
         user: &str,
     ) -> Vec<PreviewFace> {
+        // Per-frame embeddings, zeroized when `detections` drops (#305).
         let detections = match self.engine.process(frame) {
-            Ok(d) => d,
+            Ok(d) => Wiped::new(d),
             Err(e) => {
                 debug!("face engine error during preview: {e}");
                 return Vec::new();
@@ -1229,9 +1234,9 @@ impl<C: CameraSource, E: FaceProcessor> Handler<C, E> {
         let threshold = self.config.recognition.threshold;
 
         detections
-            .into_iter()
+            .iter()
             .map(|(det, embedding)| {
-                let (best_sim, _) = best_match(&embedding, stored);
+                let (best_sim, _) = best_match(embedding, stored);
                 PreviewFace {
                     x: det.bbox.x,
                     y: det.bbox.y,
@@ -1580,6 +1585,63 @@ mod tests {
             after_warm,
             Some((warmup + MMAP_BUFFERS - 1) as usize),
             "warm reuse must discard exactly MMAP_BUFFERS - 1 frames and no warmup"
+        );
+    }
+
+    /// A lease whose cold open yields a camera with `burst` settle frames
+    /// pending (0 = no burst) and whose quirk declares `warmup`, if any.
+    fn burst_lease(burst: u32, warmup_override: Option<u32>) -> CameraLease<MockCamera> {
+        CameraLease::new(
+            Some(Box::new(move |_| {
+                Ok(MockCamera::bright(64, 64, MOCK_FRAMES).with_settle_burst(burst))
+            })),
+            warmup_override,
+        )
+    }
+
+    /// Frames dequeued by a cold open before the first frame a request
+    /// analyzes: everything up to, not including, that frame.
+    fn discarded_before_first_frame(lease: &mut CameraLease<MockCamera>, config: &Config) -> usize {
+        let camera = lease.acquire(config, &live()).expect("mock camera opens");
+        camera.capture().expect("first analyzed frame");
+        camera.dequeued() - 1
+    }
+
+    /// An unquirked Y16 node's calibration burst is the warmup, not a second
+    /// settling period ahead of it (#163): a cold open discards
+    /// max(burst, warmup) frames, never their sum. The burst is sized from
+    /// the effective warmup (`Camera::open_resolved`), so the shipped SR300
+    /// quirk (10) and a user's `device.warmup_frames = 20` both burst that long.
+    #[test]
+    fn a_y16_calibration_burst_absorbs_the_cold_warmup() {
+        // Config default warmup (2) under the default 8-frame burst.
+        let config = lease_config(3);
+        let mut lease = burst_lease(8, None);
+        assert_eq!(discarded_before_first_frame(&mut lease, &config), 8);
+
+        // SR300: quirk warmup 10, burst 10.
+        let mut lease = burst_lease(10, Some(10));
+        assert_eq!(discarded_before_first_frame(&mut lease, &config), 10);
+
+        // Unlisted slow sensor: config warmup 20, burst 20.
+        let mut config = lease_config(3);
+        config.device.warmup_frames = 20;
+        let mut lease = burst_lease(20, None);
+        assert_eq!(discarded_before_first_frame(&mut lease, &config), 20);
+    }
+
+    /// A pinned `y16_bit_depth` runs no burst, so the warmup discard is
+    /// paid in full, exactly as on any other format.
+    #[test]
+    fn a_pinned_y16_scale_still_discards_the_full_warmup() {
+        let config = lease_config(3);
+        let mut lease = burst_lease(0, Some(10));
+        assert_eq!(discarded_before_first_frame(&mut lease, &config), 10);
+
+        let mut lease = burst_lease(0, None);
+        assert_eq!(
+            discarded_before_first_frame(&mut lease, &config),
+            config.device.warmup_frames as usize
         );
     }
 

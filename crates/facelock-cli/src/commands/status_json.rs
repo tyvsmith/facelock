@@ -770,6 +770,9 @@ struct EnrollmentDetail {
 struct EnrolledModel {
     id: u32,
     label: String,
+    /// The sealing key's id; absent for a pre-V7 or plaintext row (#359).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -824,6 +827,7 @@ fn enrollment_section(
                 .map(|model| EnrolledModel {
                     id: model.id,
                     label: model.label.clone(),
+                    key_id: model.key_id.clone(),
                 })
                 .collect(),
         ),
@@ -1215,6 +1219,7 @@ mod tests {
                 id: 1,
                 label: "front".into(),
                 unbound: false,
+                key_id: None,
             }],
             marker: MarkerDiagnostic::Unreadable {
                 why: "malformed marker".into(),
@@ -1321,7 +1326,7 @@ mod tests {
                 "state": "ok",
                 "user": "alice",
                 "models": [
-                    { "id": 1, "label": "front" },
+                    { "id": 1, "label": "front", "key_id": "0123456789abcdef" },
                     { "id": 2, "label": "side" }
                 ],
                 "marker": { "state": "ok" }

@@ -139,15 +139,33 @@ pub(crate) fn select_format_for_quirk(
     select_format(&preferred, available)
 }
 
-/// How many frames the calibration burst aims for on this device. A quirk's
-/// `warmup_frames` is the device's own statement of how long its exposure takes
-/// to settle, so a camera that declares more than the default gets a burst at
-/// least that long. The wall-clock budget still bounds it.
-fn y16_calibration_frames(quirk: Option<&Quirk>) -> usize {
-    quirk
-        .and_then(|q| q.warmup_frames)
-        .unwrap_or(0)
-        .max(Y16_CALIBRATION_FRAMES as u32) as usize
+/// How many frames the calibration burst aims for on this device.
+/// `warmup_frames` is the effective warmup — the quirk's when it declares one,
+/// else `device.warmup_frames` — i.e. the stated settling period, so the burst
+/// is at least that long. It replaces the warmup discard rather than preceding
+/// it: callers subtract it through `warmup_discard_count`. The wall-clock
+/// budget still bounds it.
+fn y16_calibration_frames(warmup_frames: u32) -> usize {
+    warmup_frames.max(Y16_CALIBRATION_FRAMES as u32) as usize
+}
+
+/// Frames the next capture will spend on the calibration burst before
+/// returning one: the full burst while an unverified Y16 scale is still
+/// unpinned, nothing otherwise.
+fn pending_calibration_frames(format: &str, y16_shift: Option<u8>, burst: usize) -> u32 {
+    if format == "Y16" && y16_shift.is_none() {
+        burst as u32
+    } else {
+        0
+    }
+}
+
+/// Frames still owed to the warmup after a burst that dequeued `burst_frames`.
+/// Zero for a burst that ran to its target (which is at least the warmup);
+/// the remainder when the wall-clock budget cut it short, so a slow sensor
+/// still settles for its full declared warmup.
+fn warmup_top_up(burst_frames: usize, warmup_frames: u32) -> usize {
+    (warmup_frames as usize).saturating_sub(burst_frames)
 }
 
 /// Pin a non-auth session's Y16 conversion scale by sampling a burst of frames
@@ -172,14 +190,18 @@ fn y16_calibration_frames(quirk: Option<&Quirk>) -> usize {
 /// Tolerating errors would therefore trade a hard failure carrying the real
 /// message for a `Camera` that returns "Invalid argument" from every capture,
 /// having reported a successfully pinned scale on the way out.
-fn calibrate_y16_shift(stream: &mut Stream<'_>, device_path: &str, target: usize) -> Result<u8> {
+fn calibrate_y16_shift(
+    stream: &mut FrameStream<'_>,
+    device_path: &str,
+    target: usize,
+) -> Result<(u8, usize)> {
     let start = Instant::now();
     let mut peak = 0u16;
     let mut frames = 0usize;
 
     while frames < target && start.elapsed() < Y16_CALIBRATION_BUDGET {
         match stream.next() {
-            Ok((buf, _meta)) => {
+            Ok(buf) => {
                 peak = peak.max(preprocess::y16_peak(buf));
                 frames += 1;
             }
@@ -238,7 +260,25 @@ fn calibrate_y16_shift(stream: &mut Stream<'_>, device_path: &str, target: usize
         preprocess::Y16Calibration::Normal => {}
     }
     tracing::info!(device = %device_path, shift, peak, frames, "Y16 session scale pinned");
-    Ok(shift)
+    Ok((shift, frames))
+}
+
+/// A capture stream on either V4L2 API, behind one frame-reading interface.
+/// Most cameras are single-planar (the `v4l` crate's stream); some SoC camera
+/// subsystems expose only multi-planar nodes ([`mplane`]).
+enum FrameStream<'a> {
+    Single(Stream<'a>),
+    Multi(mplane::Stream),
+}
+
+impl FrameStream<'_> {
+    /// The next frame's bytes, waiting up to `CAPTURE_TIMEOUT`.
+    fn next(&mut self) -> std::io::Result<&[u8]> {
+        match self {
+            FrameStream::Single(s) => s.next().map(|(buf, _meta)| buf),
+            FrameStream::Multi(s) => s.next_frame(),
+        }
+    }
 }
 
 /// Bytes per row facelock's converters assume for an uncompressed format.
@@ -251,18 +291,49 @@ fn expected_stride(format: &str, width: u32) -> Option<u32> {
     }
 }
 
+/// Expand a GREY frame to packed RGB, dropping the row padding an ISP node
+/// may add past `width` (`stride` is the delivered bytesperline).
+fn grey_to_rgb(buf: &[u8], width: usize, height: usize, stride: usize) -> Result<Vec<u8>> {
+    let needed = match height {
+        0 => Some(0),
+        h => stride.checked_mul(h - 1).and_then(|n| n.checked_add(width)),
+    };
+    let short = || {
+        FacelockError::Camera(format!(
+            "GREY frame too short: {} bytes for {width}x{height} (stride {stride})",
+            buf.len()
+        ))
+    };
+    if stride < width || needed.is_none_or(|n| buf.len() < n) {
+        return Err(short());
+    }
+    let mut rgb = Vec::with_capacity(width * height * 3);
+    for row in buf.chunks(stride.max(1)).take(height) {
+        let row = row.get(..width).ok_or_else(short)?;
+        for &p in row {
+            rgb.extend_from_slice(&[p, p, p]);
+        }
+    }
+    Ok(rgb)
+}
+
 use crate::ir_emitter;
 use crate::ir_emitter::EmitterXuInfo;
+use crate::ir_led::IrLed;
+use crate::mplane;
 use crate::preprocess;
 use crate::quirks::{Quirk, QuirksDb};
 use facelock_core::types::CameraCaps;
 
 /// A V4L2 camera for frame capture.
 pub struct Camera<'a> {
-    stream: Stream<'a>,
+    stream: FrameStream<'a>,
     width: u32,
     height: u32,
     format: String,
+    /// Bytes per row as delivered; larger than the packed row size on ISP
+    /// nodes that pad lines (GREY only).
+    stride: u32,
     rotation: u16,
     /// Device path, stored for IR emitter cleanup on drop.
     device_path: String,
@@ -270,6 +341,9 @@ pub struct Camera<'a> {
     ir_emitter_active: bool,
     /// Emitter XU info, stored for disable on drop when the quirk ref is gone.
     emitter_xu_info: Option<EmitterXuInfo>,
+    /// LED class illuminator lit while the camera is open (`device.ir_led`);
+    /// switched off on drop.
+    ir_led: Option<IrLed>,
     /// Capabilities computed at construction — see `crate::caps` (gap D8).
     caps: CameraCaps,
     /// Y16 -> 8-bit shift. A verified quirk pins it at open; an unverified Y16
@@ -287,6 +361,10 @@ pub struct Camera<'a> {
     /// Number of frames used if a non-auth caller first captures from an
     /// unverified Y16 stream.
     y16_calibration_frames: usize,
+    /// Effective warmup (quirk, else config). Callers subtract a pending burst
+    /// from their warmup discard, so a burst the budget cut short tops up to
+    /// this itself.
+    warmup_frames: u32,
 }
 
 impl<'a> Camera<'a> {
@@ -330,9 +408,11 @@ impl<'a> Camera<'a> {
         let v4l_caps = dev.query_caps().map_err(|e| {
             FacelockError::Camera(format!("failed to query caps for {device_path}: {e}"))
         })?;
-        if !v4l_caps
-            .capabilities
-            .contains(v4l::capability::Flags::VIDEO_CAPTURE)
+        let mplane_only = mplane::is_mplane_only(&v4l_caps);
+        if !mplane_only
+            && !v4l_caps
+                .capabilities
+                .contains(v4l::capability::Flags::VIDEO_CAPTURE)
         {
             return Err(FacelockError::Camera(format!(
                 "{device_path}: not a video capture device",
@@ -343,13 +423,17 @@ impl<'a> Camera<'a> {
         // format_preference, prepend it to the priority list. A device that
         // advertises no decodable format (e.g. a raw Bayer sensor node) fails
         // here with an actionable error.
-        let formats = dev
-            .enum_formats()
-            .map_err(|e| FacelockError::Camera(format!("failed to enum formats: {e}")))?;
+        let formats: Vec<v4l::FourCC> = if mplane_only {
+            mplane::enum_formats(&dev).map(|list| list.into_iter().map(|f| f.fourcc).collect())
+        } else {
+            dev.enum_formats()
+                .map(|list| list.into_iter().map(|f| f.fourcc).collect())
+        }
+        .map_err(|e| FacelockError::Camera(format!("failed to enum formats: {e}")))?;
 
-        let available: Vec<String> = formats.iter().map(|f| normalize_fourcc(f.fourcc)).collect();
+        let available: Vec<String> = formats.iter().map(|&f| normalize_fourcc(f)).collect();
         let selected_fourcc = select_format_for_quirk(quirk, &available)
-            .map(|idx| formats[idx].fourcc)
+            .map(|idx| formats[idx])
             .ok_or_else(|| {
                 FacelockError::Camera(format!(
                     "{device_path}: no decodable pixel format — device advertises [{}] but \
@@ -365,15 +449,50 @@ impl<'a> Camera<'a> {
         let max_h = config.max_height.min(480);
         let max_w = 640u32;
 
-        let mut fmt = dev
-            .format()
-            .map_err(|e| FacelockError::Camera(format!("failed to get format: {e}")))?;
-        fmt.fourcc = selected_fourcc;
-        fmt.width = max_w;
-        fmt.height = max_h;
-        let fmt = dev
-            .set_format(&fmt)
-            .map_err(|e| FacelockError::Camera(format!("failed to set format: {e}")))?;
+        let fmt = if config.keep_format {
+            // The pipeline is configured externally; use it as it stands.
+            // Only this branch reads the current format: a multi-plane format
+            // left behind by another app must not stop negotiation below.
+            let current = if mplane_only {
+                mplane::get_format(&dev)
+            } else {
+                dev.format().map(|f| mplane::Format {
+                    width: f.width,
+                    height: f.height,
+                    fourcc: f.fourcc,
+                    stride: f.stride,
+                })
+            };
+            let fmt =
+                current.map_err(|e| FacelockError::Camera(format!("failed to get format: {e}")))?;
+            if !DECODABLE_FORMATS.contains(&normalize_fourcc(fmt.fourcc).as_str()) {
+                return Err(FacelockError::Camera(format!(
+                    "{device_path}: keep_format is set but the current format {} is not \
+                     decodable",
+                    normalize_fourcc(fmt.fourcc)
+                )));
+            }
+            fmt
+        } else if mplane_only {
+            mplane::set_format(&dev, selected_fourcc, max_w, max_h)
+                .map_err(|e| FacelockError::Camera(format!("failed to set format: {e}")))?
+        } else {
+            let mut want = dev
+                .format()
+                .map_err(|e| FacelockError::Camera(format!("failed to get format: {e}")))?;
+            want.fourcc = selected_fourcc;
+            want.width = max_w;
+            want.height = max_h;
+            let set = dev
+                .set_format(&want)
+                .map_err(|e| FacelockError::Camera(format!("failed to set format: {e}")))?;
+            mplane::Format {
+                width: set.width,
+                height: set.height,
+                fourcc: set.fourcc,
+                stride: set.stride,
+            }
+        };
 
         let width = fmt.width;
         let height = fmt.height;
@@ -395,6 +514,8 @@ impl<'a> Camera<'a> {
         // bytesperline, which would shear every decoded frame silently.
         if let Some(expected) = expected_stride(&format_str, width)
             && fmt.stride != expected
+            // Padded GREY rows are repacked in capture_rgb.
+            && !(format_str == "GREY" && fmt.stride > expected)
         {
             return Err(FacelockError::Camera(format!(
                 "{device_path}: {format_str} bytesperline is {} but facelock expects {expected} \
@@ -404,9 +525,17 @@ impl<'a> Camera<'a> {
         }
 
         // Create MMAP stream with `MMAP_BUFFERS` buffers and a capture timeout
-        let mut stream = Stream::with_buffers(&dev, Type::VideoCapture, MMAP_BUFFERS)
-            .map_err(|e| FacelockError::Camera(format!("failed to create stream: {e}")))?;
-        stream.set_timeout(CAPTURE_TIMEOUT);
+        let stream = if mplane_only {
+            FrameStream::Multi(
+                mplane::Stream::with_buffers(&dev, MMAP_BUFFERS, CAPTURE_TIMEOUT)
+                    .map_err(|e| FacelockError::Camera(format!("failed to create stream: {e}")))?,
+            )
+        } else {
+            let mut stream = Stream::with_buffers(&dev, Type::VideoCapture, MMAP_BUFFERS)
+                .map_err(|e| FacelockError::Camera(format!("failed to create stream: {e}")))?;
+            stream.set_timeout(CAPTURE_TIMEOUT);
+            FrameStream::Single(stream)
+        };
 
         // Extract emitter XU info from quirk (if available) for use during
         // enable and later in Drop.
@@ -432,6 +561,20 @@ impl<'a> Camera<'a> {
             false
         };
 
+        let ir_led = config
+            .ir_led
+            .as_deref()
+            .and_then(|spec| match IrLed::on(spec) {
+                Ok(led) => {
+                    tracing::info!("IR LED {} lit for {device_path}", led.path().display());
+                    Some(led)
+                }
+                Err(e) => {
+                    tracing::warn!("failed to light IR LED for {device_path}: {e}");
+                    None
+                }
+            });
+
         // Pin verified Y16 scale at open. An unverified stream stays
         // uncalibrated until a non-auth caller asks for a frame: auth can then
         // reject negotiated-format drift without capturing calibration data.
@@ -446,10 +589,14 @@ impl<'a> Camera<'a> {
         } else {
             Some(0)
         };
-        let y16_calibration_frames = y16_calibration_frames(quirk);
+        let warmup_frames = quirk
+            .and_then(|q| q.warmup_frames)
+            .unwrap_or(config.warmup_frames);
+        let y16_calibration_frames = y16_calibration_frames(warmup_frames);
 
         // Apply quirk overrides for rotation (warmup_frames is handled by the caller
-        // since Camera::open doesn't consume warmup frames itself).
+        // since Camera::open doesn't consume warmup frames itself; a pending Y16
+        // calibration burst counts toward it via `pending_settle_frames`).
         let rotation = quirk.and_then(|q| q.rotation).unwrap_or(config.rotation);
         if let Some(q) = quirk
             && (q.rotation.is_some() || q.warmup_frames.is_some() || q.format_preference.is_some())
@@ -467,13 +614,16 @@ impl<'a> Camera<'a> {
             width,
             height,
             format: format_str,
+            stride: fmt.stride,
             rotation,
             device_path,
             ir_emitter_active,
             emitter_xu_info,
+            ir_led,
             caps,
             y16_shift,
             y16_calibration_frames,
+            warmup_frames,
         })
     }
 
@@ -523,32 +673,34 @@ impl<'a> Camera<'a> {
             // Authentication checks `caps.ir_texture_scale` before any
             // capture. This lazy path exists for enrollment/preview/bench
             // conversion only and never upgrades the capability to verified.
-            self.y16_shift = Some(calibrate_y16_shift(
+            let (shift, frames) = calibrate_y16_shift(
                 &mut self.stream,
                 &self.device_path,
                 self.y16_calibration_frames,
-            )?);
+            )?;
+            self.y16_shift = Some(shift);
+            for _ in 0..warmup_top_up(frames, self.warmup_frames) {
+                self.stream.next().map_err(|e| {
+                    FacelockError::Camera(format!("warmup after Y16 calibration failed: {e}"))
+                })?;
+            }
         }
 
         // stream.next() uses the v4l built-in poll with CAPTURE_TIMEOUT.
         // If the camera stops producing frames, this returns TimedOut error
         // instead of blocking forever.
-        let (buf, _meta) = self
+        let buf = self
             .stream
             .next()
             .map_err(|e| FacelockError::Camera(format!("capture failed: {e}")))?;
 
         let rgb: Vec<u8> = match self.format.as_str() {
-            "GREY" => {
-                // Replicate single channel 3x
-                let mut rgb = Vec::with_capacity(buf.len() * 3);
-                for &p in buf {
-                    rgb.push(p);
-                    rgb.push(p);
-                    rgb.push(p);
-                }
-                rgb
-            }
+            "GREY" => grey_to_rgb(
+                buf,
+                self.width as usize,
+                self.height as usize,
+                self.stride as usize,
+            )?,
             "Y16" => {
                 // 16-bit grayscale -> 8-bit at the session-fixed scale, replicated 3x
                 let shift = self.y16_shift.ok_or_else(|| {
@@ -656,6 +808,8 @@ pub fn is_dark_with_config(frame: &Frame, threshold: f32, dark_value: u8) -> boo
 
 impl Drop for Camera<'_> {
     fn drop(&mut self) {
+        // Out first, ahead of the stream and the other fields.
+        drop(self.ir_led.take());
         if self.ir_emitter_active
             && let Some(ref xu_info) = self.emitter_xu_info
         {
@@ -680,6 +834,10 @@ impl CameraSource for Camera<'_> {
 
     fn capture_rgb_only(&mut self) -> Result<Frame> {
         Camera::capture_rgb_only(self)
+    }
+
+    fn pending_settle_frames(&self) -> u32 {
+        pending_calibration_frames(&self.format, self.y16_shift, self.y16_calibration_frames)
     }
 }
 
@@ -721,6 +879,27 @@ mod tests {
         // Changing this order changes the documented negotiation contract —
         // update docs/contracts.md with it.
         assert_eq!(DECODABLE_FORMATS, &["GREY", "Y16", "YUYV", "NV12", "MJPG"]);
+    }
+
+    #[test]
+    fn grey_to_rgb_replicates_a_packed_frame() {
+        let rgb = grey_to_rgb(&[1, 2, 3, 4], 2, 2, 2).unwrap();
+        assert_eq!(rgb, [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]);
+    }
+
+    #[test]
+    fn grey_to_rgb_drops_row_padding() {
+        // 2x2 frame delivered with a 4-byte stride (Qualcomm CAMSS pads rows);
+        // the last row may stop at the image width.
+        let buf = [1, 2, 0xee, 0xee, 3, 4];
+        let rgb = grey_to_rgb(&buf, 2, 2, 4).unwrap();
+        assert_eq!(rgb, [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]);
+    }
+
+    #[test]
+    fn grey_to_rgb_rejects_a_short_frame() {
+        assert!(grey_to_rgb(&[1, 2, 0, 0, 3], 2, 2, 4).is_err());
+        assert!(grey_to_rgb(&[1, 2, 3, 4], 4, 1, 2).is_err());
     }
 
     #[test]
@@ -802,16 +981,35 @@ mod tests {
 
     #[test]
     fn y16_calibration_frames_follows_declared_warmup() {
-        // Default burst when the device says nothing.
-        assert_eq!(y16_calibration_frames(None), Y16_CALIBRATION_FRAMES);
-        let mut quirk = quirk_with_format("Y16");
-        assert_eq!(y16_calibration_frames(Some(&quirk)), 8);
-        // A camera that declares a longer warmup (RealSense SR300) gets a burst
-        // that covers it; a shorter one never shortens the default.
-        quirk.warmup_frames = Some(10);
-        assert_eq!(y16_calibration_frames(Some(&quirk)), 10);
-        quirk.warmup_frames = Some(1);
-        assert_eq!(y16_calibration_frames(Some(&quirk)), 8);
+        // Default burst when the effective warmup is shorter.
+        assert_eq!(y16_calibration_frames(0), Y16_CALIBRATION_FRAMES);
+        assert_eq!(y16_calibration_frames(2), Y16_CALIBRATION_FRAMES);
+        assert_eq!(y16_calibration_frames(1), 8);
+        // A longer warmup — a quirk's (RealSense SR300, 10) or a user's
+        // `device.warmup_frames` (20) — gets a burst that covers it.
+        assert_eq!(y16_calibration_frames(10), 10);
+        assert_eq!(y16_calibration_frames(20), 20);
+    }
+
+    /// A burst that reached its target owes nothing; one the budget cut short
+    /// tops up to the full warmup, never past it.
+    #[test]
+    fn a_truncated_burst_tops_up_to_the_warmup() {
+        assert_eq!(warmup_top_up(y16_calibration_frames(2), 2), 0);
+        assert_eq!(warmup_top_up(y16_calibration_frames(20), 20), 0);
+        // 15 fps sensor, warmup 20: ~15 frames fit the 1 s budget.
+        assert_eq!(warmup_top_up(15, 20), 5);
+        assert_eq!(warmup_top_up(1, 2), 1);
+    }
+
+    /// Only an unpinned Y16 scale has a burst ahead of its next capture; a
+    /// quirk-pinned Y16 and every other format leave the warmup to the caller.
+    #[test]
+    fn only_an_unpinned_y16_scale_has_calibration_frames_pending() {
+        assert_eq!(pending_calibration_frames("Y16", None, 10), 10);
+        assert_eq!(pending_calibration_frames("Y16", Some(2), 10), 0);
+        assert_eq!(pending_calibration_frames("GREY", Some(0), 10), 0);
+        assert_eq!(pending_calibration_frames("YUYV", Some(0), 10), 0);
     }
 
     #[test]
@@ -944,8 +1142,10 @@ mod tests {
             dark_threshold: 0.6,
             dark_pixel_value: 10,
             ir_emitter: false,
+            ir_led: None,
             camera_release_secs: 5,
             camera_release_after_success_secs: 0,
+            keep_format: false,
         };
         let mut cam = Camera::open(&config, &QuirksDb::load()).expect("failed to open camera");
         let frame = cam.capture().expect("failed to capture frame");
