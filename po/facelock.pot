@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: facelock\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-06 20:06-0700\n"
+"POT-Creation-Date: 2026-10-19 22:09+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -246,52 +246,52 @@ msgstr ""
 msgid "  [ok] {name} re-downloaded and verified"
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:109
+#: crates/facelock-cli/src/message/face.rs:113
 msgid "Setup has not been completed."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:110
+#: crates/facelock-cli/src/message/face.rs:114
 msgid "Run setup now?"
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:111
+#: crates/facelock-cli/src/message/face.rs:115
 msgid "Setup did not complete successfully."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:112
+#: crates/facelock-cli/src/message/face.rs:116
 msgid "Run 'sudo facelock setup' when ready."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:114
+#: crates/facelock-cli/src/message/face.rs:118
 msgid ""
 "WARNING: encryption.method = \"none\" and security.allow_plaintext = true.\n"
 "Your face template will be stored UNENCRYPTED (plaintext biometric data at rest)."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:118
+#: crates/facelock-cli/src/message/face.rs:122
 #, python-brace-format
 msgid ""
 "Face recognition models not found in {dir}.\n"
 "Run `sudo facelock setup` to download them."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:124
+#: crates/facelock-cli/src/message/face.rs:128
 #, python-brace-format
 msgid ""
 "Note: existing models don't use the configured embedder '{embedder}'.\n"
 "Old enrollments will not work with the new embedder. Consider removing them with 'facelock remove'.\n"
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:129
+#: crates/facelock-cli/src/message/face.rs:133
 #, python-brace-format
 msgid "Enrolling face for user '{user}' with label '{label}'..."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:133
+#: crates/facelock-cli/src/message/face.rs:137
 msgid "Look at the camera. Slowly turn your head left and right."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:141
+#: crates/facelock-cli/src/message/face.rs:145
 #, python-brace-format
 msgid ""
 "\n"
@@ -301,106 +301,111 @@ msgid ""
 "  Label: {label}"
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:151
+#: crates/facelock-cli/src/message/face.rs:155
 #, python-brace-format
 msgid ""
 "\n"
 "Warning: user '{user}' has {count} face models. Consider removing old ones with 'facelock remove'."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:155
+#: crates/facelock-cli/src/message/face.rs:159
 msgid "Face recognition models not found."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:156
+#: crates/facelock-cli/src/message/face.rs:160
 msgid "Download models now?"
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:157
+#: crates/facelock-cli/src/message/face.rs:161
 msgid "Models still not found after setup."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:158
+#: crates/facelock-cli/src/message/face.rs:162
 msgid "Models required. Run `facelock setup` to download them."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:160
+#: crates/facelock-cli/src/message/face.rs:164
 #, python-brace-format
 msgid "No face models enrolled for user '{user}'."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:163
+#: crates/facelock-cli/src/message/face.rs:167
 msgid "Run 'facelock enroll' to enroll a face first."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:165
+#: crates/facelock-cli/src/message/face.rs:169
 #, python-brace-format
 msgid "Warning: no enrolled models use the configured embedder '{embedder}'."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:168
+#: crates/facelock-cli/src/message/face.rs:172
 msgid "Re-enroll with 'facelock enroll' to use the current model."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:170
+#: crates/facelock-cli/src/message/face.rs:174
 #, python-brace-format
 msgid "Testing face recognition for user '{user}'..."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:173
+#: crates/facelock-cli/src/message/face.rs:177
 msgid "Look at the camera."
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:178
+#: crates/facelock-cli/src/message/face.rs:179
+#, python-brace-format
+msgid "Warning: IR LED {led} cannot be lit: {error}"
+msgstr ""
+
+#: crates/facelock-cli/src/message/face.rs:186
 #, python-brace-format
 msgid "Matched (similarity: {similarity}) in {seconds}s"
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:191
+#: crates/facelock-cli/src/message/face.rs:199
 #, python-brace-format
 msgid "Matched model #{model_id} '{label}' (similarity: {similarity}) in {seconds}s"
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:205
+#: crates/facelock-cli/src/message/face.rs:213
 #, python-brace-format
 msgid "Face matched (best: {similarity}) but the liveness variance check was not satisfied after {seconds}s — try moving slightly, or tune security.frame_variance_max_similarity"
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:216
+#: crates/facelock-cli/src/message/face.rs:224
 #, python-brace-format
 msgid "No match (best: {similarity}) after {seconds}s"
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:223
+#: crates/facelock-cli/src/message/face.rs:231
 #, python-brace-format
 msgid "Remove face model #{model_id} for user '{user}'?"
 msgstr ""
 
-#: crates/facelock-cli/src/message/face.rs:226
+#: crates/facelock-cli/src/message/face.rs:234
 msgid "Cancelled."
-msgstr ""
-
-#: crates/facelock-cli/src/message/face.rs:228
-#, python-brace-format
-msgid "Removed face model #{model_id} for user '{user}'."
-msgstr ""
-
-#: crates/facelock-cli/src/message/face.rs:232
-#, python-brace-format
-msgid "Model #{model_id} not found for user '{user}'."
 msgstr ""
 
 #: crates/facelock-cli/src/message/face.rs:236
 #, python-brace-format
-msgid "Remove ALL face models for user '{user}'?"
+msgid "Removed face model #{model_id} for user '{user}'."
 msgstr ""
 
 #: crates/facelock-cli/src/message/face.rs:240
 #, python-brace-format
-msgid "Removed {count} face model(s) for user '{user}'."
+msgid "Model #{model_id} not found for user '{user}'."
 msgstr ""
 
 #: crates/facelock-cli/src/message/face.rs:244
+#, python-brace-format
+msgid "Remove ALL face models for user '{user}'?"
+msgstr ""
+
+#: crates/facelock-cli/src/message/face.rs:248
+#, python-brace-format
+msgid "Removed {count} face model(s) for user '{user}'."
+msgstr ""
+
+#: crates/facelock-cli/src/message/face.rs:252
 #, python-brace-format
 msgid "All face models removed for user '{user}'."
 msgstr ""

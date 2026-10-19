@@ -2076,6 +2076,19 @@ by any of the above and still runs on both methods and both transports: an
 already-limited user's `test` run reports "rate limited", exactly like real
 auth would — surfacing an existing lockout instead of masking it.
 
+**A configured `device.ir_led` that cannot be lit is named on stderr**
+(#413) as `Warning: IR LED <path> cannot be lit: <error>`, and the run
+continues: the camera open is fail-open for the LED on every path, and `test`
+only reports it. On the direct transport the error is the one the open hit.
+On the daemon transport the camera opens in the daemon, so `test` reads the
+node from sysfs instead (`facelock_camera::ir_led::probe`, which writes
+nothing): it catches a wrong path, a node without a usable `max_brightness`,
+and a `brightness` this process cannot open for writing, but not a failure
+that only the daemon's own sandbox produces, which stays in the daemon log.
+The warning changes no exit code. `facelock devices` prints the same probe as
+a trailing `Configured IR LED:` line in its human listing; `--json` is
+unchanged.
+
 ## Operating Modes
 
 | Mode | Config | PAM Behavior | CLI Behavior |

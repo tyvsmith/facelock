@@ -375,6 +375,12 @@ camera was opened: no enrollment, no enrollment for the configured embedder,
 and a completed non-match all return zero with explanatory output. Inspect the
 human result; this command has no machine-readable success contract.
 
+When `device.ir_led` is set and the LED cannot be lit, `test` prints
+`Warning: IR LED <path> cannot be lit: <error>` on stderr and carries on
+without it, as the camera open does. Under the daemon the check reads the LED
+from sysfs rather than lighting it, so a failure the daemon's own sandbox
+causes still appears only in the daemon log.
+
 ## facelock list
 
 List enrolled face models.
@@ -485,6 +491,11 @@ IR status. `Platform:` is the pair a `modalias` + `node_name` quirk matches,
 printed as `modalias / node_name` for a non-USB node with a real parent device
 (Intel IPU6/IPU7, Qualcomm CAMSS), or `none` for a USB or virtual node; see
 `docs/compatibility.md` for how to turn it into a quirk.
+
+When `device.ir_led` is set, the listing ends with a `Configured IR LED:` line
+naming the LED and whether it is off, lit (with its brightness), or cannot be
+lit and why. It is read from sysfs without lighting the LED or opening a
+camera, and is not part of `--json`.
 
 `--json` emits an array of device objects with `path`, `name`, `driver`,
 `is_ir`, `formats`, `modalias`, and `node_name`; each format carries `fourcc`,

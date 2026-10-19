@@ -384,8 +384,11 @@ pub struct Camera<'a> {
     /// Emitter XU info, stored for disable on drop when the quirk ref is gone.
     emitter_xu_info: Option<EmitterXuInfo>,
     /// LED class illuminator lit while the camera is open (`device.ir_led`);
-    /// switched off on drop.
+    /// its prior brightness is restored on drop.
     ir_led: Option<IrLed>,
+    /// Why a configured `device.ir_led` could not be lit at open, which does
+    /// not fail the open.
+    ir_led_error: Option<String>,
     /// Capabilities computed at construction — see `crate::caps` (gap D8).
     caps: CameraCaps,
     /// Y16 -> 8-bit shift. A verified quirk pins it at open; an unverified Y16
@@ -573,7 +576,7 @@ impl<'a> Camera<'a> {
         // Create MMAP stream with `MMAP_BUFFERS` buffers and a capture timeout
         let stream = if mplane_only {
             FrameStream::Multi(
-                mplane::Stream::with_buffers(&dev, MMAP_BUFFERS, CAPTURE_TIMEOUT)
+                mplane::Stream::with_buffers(&dev, &device_path, MMAP_BUFFERS, CAPTURE_TIMEOUT)
                     .map_err(|e| FacelockError::Camera(format!("failed to create stream: {e}")))?,
             )
         } else {
@@ -607,19 +610,17 @@ impl<'a> Camera<'a> {
             false
         };
 
-        let ir_led = config
-            .ir_led
-            .as_deref()
-            .and_then(|spec| match IrLed::on(spec) {
-                Ok(led) => {
-                    tracing::info!("IR LED {} lit for {device_path}", led.path().display());
-                    Some(led)
-                }
-                Err(e) => {
-                    tracing::warn!("failed to light IR LED for {device_path}: {e}");
-                    None
-                }
-            });
+        let (ir_led, ir_led_error) = match config.ir_led.as_deref().map(IrLed::on) {
+            Some(Ok(led)) => {
+                tracing::info!("IR LED {} lit for {device_path}", led.path().display());
+                (Some(led), None)
+            }
+            Some(Err(e)) => {
+                tracing::warn!("failed to light IR LED for {device_path}: {e}");
+                (None, Some(e))
+            }
+            None => (None, None),
+        };
 
         // Pin verified Y16 scale at open. An unverified stream stays
         // uncalibrated until a non-auth caller asks for a frame: auth can then
@@ -666,11 +667,18 @@ impl<'a> Camera<'a> {
             ir_emitter_active,
             emitter_xu_info,
             ir_led,
+            ir_led_error,
             caps,
             y16_shift,
             y16_calibration_frames,
             warmup_frames,
         })
+    }
+
+    /// Why the configured `device.ir_led` could not be lit at open, if it
+    /// could not; the open itself continued without it.
+    pub fn ir_led_error(&self) -> Option<&str> {
+        self.ir_led_error.as_deref()
     }
 
     /// Capabilities computed at construction. See [`CameraCaps`].
