@@ -1,11 +1,10 @@
 //! The remote-session physical-presence gate across the real service (D6).
 //!
-//! The daemon process environment is never caller provenance. For a
-//! non-root D-Bus `Authenticate` with `abort_if_ssh = true`, the server must
+//! The daemon process environment is never caller provenance. For a D-Bus
+//! `Authenticate` with `abort_if_ssh = true`, root included, the server must
 //! consult the caller's live ProcessFD-backed logind session and deny every
 //! remote or unverifiable identity as a D-Bus authorization error. Disabling
-//! the setting skips the lookup altogether. Root skips only this provenance
-//! gate; it still runs ordinary authorization and real authentication.
+//! the setting skips the lookup altogether.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -188,8 +187,11 @@ async fn ordinary_authorization_denial_precedes_process_lookup() {
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
+/// `sudo` is setuid root, so a `sudo` typed into an SSH shell reaches the
+/// daemon as UID 0 from inside the remote session, with `SSH_*` possibly
+/// stripped from its environment. Root is not exempt from the session check.
 #[tokio::test]
-async fn root_bypasses_only_remote_provenance() {
+async fn root_caller_in_a_remote_session_is_refused() {
     let calls = Arc::new(AtomicUsize::new(0));
     let checked = Arc::clone(&calls);
 
@@ -203,9 +205,23 @@ async fn root_bypasses_only_remote_provenance() {
                 Ok(true)
             },
         )
+        .await;
+
+    assert_process_provenance_denied(result);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn root_caller_with_local_provenance_runs_real_authenticate() {
+    let result = service(true)
+        .authenticate_as_with_session_check(
+            caller(0, "root"),
+            "alice",
+            CancelToken::new(),
+            || async { Ok(false) },
+        )
         .await
         .unwrap();
 
     assert!(result.matched, "root still runs real Authenticate");
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }

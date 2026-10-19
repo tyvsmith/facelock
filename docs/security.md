@@ -887,8 +887,15 @@ non-root admission fails closed as the same recoverable in-band rate-limit
 response until daemon restart; the daemon never resumes from possibly
 half-mutated ingress state.
 
-With `security.abort_if_ssh = true`, an admitted non-root `Authenticate` must
-also carry a live process identity from the bus daemon's
+`security.abort_if_ssh` has one meaning: refuse camera authentication when
+the *calling process* is inside a remote (SSH) login session. It never looks
+at the machine's other sessions, so a local caller is unaffected while SSH
+sessions to the same machine are open. This is the meaning Howdy's
+`abort_if_ssh` has; Howdy reads the caller's environment, the daemon reads
+the caller's logind session.
+
+With `security.abort_if_ssh = true`, every admitted `Authenticate`, root
+included, must also carry a live process identity from the bus daemon's
 `GetConnectionCredentials` `ProcessFD`. The daemon derives the PID only from
 that pidfd's `/proc/self/fdinfo` metadata, checks pidfd liveness on both sides
 of logind's `GetSessionByPID`, and accepts only a session whose `Remote`
@@ -905,58 +912,73 @@ caller that exits while logind is being queried cannot authorize a process
 that later reuses its numeric PID because the original pidfd is rechecked
 before the answer is used.
 
+Root is not exempt. `sudo` is setuid root, so a `sudo` typed into an SSH
+shell reaches the daemon as UID 0; its process sits in the SSH login's
+`session-N.scope`, logind reports `Remote = true`, and the daemon refuses it
+even when `SSH_*` was stripped from its environment and the PAM module's own
+environment check saw nothing.
+
 A caller with no logind session at all gets one narrow fallback (#397).
 Processes started by the systemd user manager — KDE's `kscreenlocker` under
-`systemd --user`, a Quickshell `PamContext`, anything launched through
-`systemd-run --user` — live in `user@UID.service` rather than a
-`session-N.scope`, so `GetSessionByPID` answers
-`org.freedesktop.login1.NoSessionForPID`. On that error, and only that one,
-the daemon asks `org.freedesktop.systemd1.Manager.GetUnitByPID` for the same
-pidfd-derived PID and requires the unit's `Id` to be exactly
-`user@<uid>.service`, where `<uid>` is the caller UID already verified with
-`GetConnectionUnixUser`. It then lists that user's logind sessions
-(`ListSessions`, filtered by UID) and applies two rules:
+`systemd --user`, a Quickshell `PamContext`, a terminal tab KDE launches as
+its own scope, anything run through `systemd-run --user` — live in
+`user@UID.service` rather than a `session-N.scope`, and a root PAM worker
+that runs before `pam_systemd` registers a session lives in its system
+service. `GetSessionByPID` answers `org.freedesktop.login1.NoSessionForPID`
+for both. On that error, and only that one, the daemon asks
+`org.freedesktop.systemd1.Manager.GetUnitByPID` for the same pidfd-derived
+PID and reads the unit's `Id`:
 
-1. **No remote session.** If any of the user's sessions has `Remote = true`,
-   active or not, the caller is refused. The cost is plain: while the user has
-   any SSH session open to their own machine, an idle mosh or editor remote
-   session included, a locker running under the user manager (KDE, Quickshell)
-   is refused face unlock and falls through to the password; closing the
-   remote session restores it.
-2. **An active local graphical session.** At least one session must have
-   `Remote = false`, a non-empty `Seat`, `Type` of `wayland` or `x11`, and
-   `Active = true`.
+1. **The caller's own user manager.** `user@<uid>.service`, where `<uid>` is
+   the caller UID already verified with `GetConnectionUnixUser`, is accepted
+   while that user has at least one logind session (`ListSessions`, filtered
+   by UID) with `Remote = false`, `Active = true`, a non-empty `Seat`, and
+   `Type` `wayland`, `x11` or `tty`. The user's other sessions, remote ones
+   included, are not considered.
+2. **Root in a user manager.** A UID 0 caller in `user@<n>.service` — `sudo`
+   from a terminal the user manager started — is decided by user `<n>`'s
+   sessions under the same rule.
+3. **Root system services are trusted callers.** A UID 0 caller in any other
+   `.service` unit — a display-manager greeter's PAM worker (`gdm.service`,
+   `sddm.service`), `login` under `getty@ttyN.service` before its session
+   exists, a socket-activated polkit helper — is accepted. Only root can
+   start a system service, so the unit is root's own provenance claim.
 
-Any other unit, a failed unit or session lookup, or either rule failing
-refuses with the same AccessDenied message as above. The journal line
-`caller session provenance unavailable` carries a `reason` naming which rule
-fired: `no logind session and caller is not in user@<uid>.service`, `... has a
-remote logind session`, or `... has no active local graphical session`. A
-`GetUnitByPID` call that fails outright (timeout, AccessDenied) is refused the
-same way under its own reason, `no logind session and unit lookup failed for
-caller UID <uid>`, so the journal separates a broken lookup from a foreign
-unit. The
-pidfd liveness recheck covers the whole fallback, and every read is a D-Bus
-call, so it needs nothing beyond the unit's existing `ProcSubset=pid` sandbox.
-A caller whose `GetSessionByPID` succeeds is decided by its own session's
-`Remote` property exactly as before.
+Any other unit (a non-root caller outside its own user manager, a root
+caller in a scope or slice), a failed unit or session lookup, or a user with
+no active local session refuses with the same AccessDenied message as above.
+The journal line `caller session provenance unavailable` carries a `reason`
+naming which rule fired: `no logind session and caller is not in
+user@<uid>.service`, `no logind session and root caller is in neither a user
+manager nor a system service`, `no logind session and unit lookup failed for
+caller UID <uid>`, or `caller is in user@<uid>.service but user <uid> has no
+active local session`. The pidfd liveness recheck covers the whole fallback,
+and every read is a D-Bus call, so it needs nothing beyond the unit's
+existing `ProcSubset=pid` sandbox. A caller whose `GetSessionByPID` succeeds
+is decided by its own session's `Remote` property alone.
 
-Residual risk: the user manager outlives any one login. A process planted in
-`user@UID.service` during an earlier SSH session (for example with
-`systemd-run --user` or a lingering user unit) that keeps running after that
-session ends is accepted once the user sits down at a local desktop and no
-remote session remains. That is the same class as persistent user-level
-malware, which the session check never stopped either: such code can already
-wait for the user's own local session and act from inside it. The fallback
-does stop a caller from the user manager while the user is logged in over SSH,
-and while nobody is at an active local desktop.
+Residual risk, stated plainly. An attacker who already holds the user's
+shell over SSH can strip `SSH_*` and launch the authentication request
+through `systemd-run --user`, outside any logind session. That caller is in
+`user@<uid>.service`, the user is logged in locally, and the request is
+accepted if the owner is in front of the camera. The same holds for a
+process left running in the user manager after an earlier SSH session. This
+matches Howdy's exposure, where the attacker only has to unset the
+environment variables, and is accepted because such an attacker already has
+the account: code running as the user can wait for the user's own local
+session and act from inside it. The same reasoning covers a root system
+service, whose author is already root; note that an `sshd` PAM stack, which
+authenticates in `sshd.service` before any session exists, is such a caller,
+so the daemon does not refuse face authentication *for* an SSH login — the
+PAM module's environment check and not adding `sshd` to the PAM services
+(`pam add` gates it as sensitive) are what keep that door shut.
 
-UID 0 bypasses only that remote-session provenance check; it still uses the
-ordinary `Authenticate` authorization and the SQLite-backed biometric-guess
-limiter. When `abort_if_ssh = false`, no ProcessFD, PID, logind, or session
-lookup occurs. `TestAuthenticate` is separately root-only. The one-shot PAM
-fallback retains its environment check, using only the explicitly forwarded
-`SSH_CONNECTION` / `SSH_TTY` variables.
+The check uses the ordinary `Authenticate` authorization and the
+SQLite-backed biometric-guess limiter for every caller. When
+`abort_if_ssh = false`, no ProcessFD, PID, logind, unit, or session lookup
+occurs. `TestAuthenticate` is separately root-only and skips this gate. The
+one-shot PAM fallback retains its environment check, using only the
+explicitly forwarded `SSH_CONNECTION` / `SSH_TTY` variables.
 
 An unenrolled UID is answered by the audited `pre_check` from SQLite
 (`has_models`) before the global capture slot is claimed. Saturated ingress and
@@ -1717,10 +1739,10 @@ stack continues to the password.
 The module is the gate that fires first here, because it runs in the calling
 process, with that process's environment and an unrestricted `/proc`. Behind
 it the daemon is not a second copy of the same two gates — it enforces both,
-from sources its own sandbox can see. Its SSH refusal: for a non-root
-`Authenticate` caller the D-Bus server resolves the caller's logind session
-and denies a remote one (a root caller skips that check, and a PAM `sudo`
-attempt arrives as UID 0). Its lid refusal: the server reads
+from sources its own sandbox can see. Its SSH refusal: for every
+`Authenticate` caller, root included, the D-Bus server resolves the caller's
+logind session and denies a remote one, so a PAM `sudo` inside an SSH login
+is refused even with `SSH_*` stripped. Its lid refusal: the server reads
 `org.freedesktop.login1.Manager.LidClosed` once per request, falling back to
 procfs only where procfs can see, and refuses a closed lid for every caller
 including root. The one-shot `facelock auth`

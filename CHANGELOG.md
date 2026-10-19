@@ -9,21 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Daemon `Authenticate` accepts user-manager callers with an active local session** (#397):
+- **Daemon `Authenticate` accepts user-manager callers and checks root callers** (#397):
   with `abort_if_ssh` on (the default), a non-root caller had to belong to a logind session,
   and every process the systemd user manager starts — KDE's `kscreenlocker`, a Quickshell
   `PamContext`, anything run through `systemd-run --user` — lives in `user@UID.service`
   instead, so logind answered `NoSessionForPID` and the daemon refused before opening the
   camera. Integrators worked around it with a global `abort_if_ssh = false`, which dropped
-  the SSH refusal for everyone. On `NoSessionForPID`, and only then, the daemon now asks
-  `org.freedesktop.systemd1.Manager.GetUnitByPID` for the caller's unit and accepts only
-  exactly `user@<uid>.service` for the verified caller UID, and only while that user has no
-  remote logind session and at least one active, seated, local `wayland` or `x11` session.
-  Every other case keeps the existing uniform `AccessDenied`; the journal `reason` now says
-  which rule refused. Root callers and callers with a logind session are unchanged, no
-  config key is added, and no unit, D-Bus policy or dependency change is involved. A process
-  left running in the user manager after an earlier SSH session is accepted once the user is
-  back at a local desktop with no remote session; docs/security.md records that residual.
+  the SSH refusal for everyone. `abort_if_ssh` now means only "refuse when the calling
+  process is in a remote login session", as in Howdy; other sessions on the machine are
+  never considered. On `NoSessionForPID`, and only then, the daemon asks
+  `org.freedesktop.systemd1.Manager.GetUnitByPID` for the caller's unit and accepts exactly
+  `user@<uid>.service` for the verified caller UID while that user has an active, seated,
+  local `wayland`, `x11` or `tty` session. Root callers are no longer exempt: a setuid
+  `sudo` inside an SSH login is refused even with `SSH_*` stripped, root in a user's
+  manager is decided by that user's sessions, and root in a system service (a greeter's
+  PAM worker, `login` before its session exists) is trusted. Every refusal keeps the
+  uniform `AccessDenied`; the journal `reason` says which rule refused. No config key is
+  added, and no unit, D-Bus policy or dependency change is involved. A user-level process
+  launched outside any session, for example by an SSH shell through `systemd-run --user`,
+  is accepted while the user is at a local session; docs/security.md records that residual.
 - **`facelock setup` now creates the encryption key a default config names**: the shipped
   config leaves `encryption.method` at its `keyfile` default, and the automatic policy
   (`--non-interactive`, `--encryption auto`) treated any non-`none` method as already

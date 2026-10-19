@@ -280,7 +280,7 @@ async fn logind_session_is_remote(
                 return user_manager_session_is_remote(
                     caller_uid,
                     || systemd_unit_by_pid(connection, pid),
-                    || logind_user_sessions(connection, caller_uid),
+                    |owner_uid| logind_user_sessions(connection, owner_uid),
                 )
                 .await;
             }
@@ -313,7 +313,7 @@ fn is_no_session_for_pid(error: &zbus::Error) -> bool {
     matches!(error, zbus::Error::MethodError(name, _, _) if name.as_str() == LOGIND_NO_SESSION_FOR_PID)
 }
 
-/// The facts the user-manager fallback reads for one of the caller's logind
+/// The facts the `NoSessionForPID` fallback reads for one of a user's logind
 /// sessions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct UserSessionFacts {
@@ -324,65 +324,106 @@ struct UserSessionFacts {
 }
 
 impl UserSessionFacts {
-    /// An active, seated, local Wayland or X11 session. `Active = true` only
-    /// means the session is foreground on its seat; a locked, unattended
-    /// screen satisfies it too. Whether anyone is present is the camera's job.
-    fn is_active_local_graphical(&self) -> bool {
+    /// An active, seated, local Wayland, X11 or text-console session.
+    /// `Active = true` only means the session is foreground on its seat; a
+    /// locked, unattended screen satisfies it too. Whether anyone is present
+    /// is the camera's job.
+    fn is_active_local(&self) -> bool {
         !self.remote
             && !self.seat.is_empty()
-            && matches!(self.kind.as_str(), "wayland" | "x11")
+            && matches!(self.kind.as_str(), "wayland" | "x11" | "tty")
             && self.active
     }
 }
 
-/// Why the user-manager fallback refused. Each variant is a distinct
+/// Why the `NoSessionForPID` fallback refused. Each variant is a distinct
 /// journal reason so the log says which rule fired.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 enum UserManagerRefusal {
     #[error("no logind session and caller is not in user@{uid}.service: {detail}")]
     NotInUserManager { uid: u32, detail: String },
+    #[error(
+        "no logind session and root caller is in neither a user manager nor a system service: {detail}"
+    )]
+    RootNotInSystemService { detail: String },
     #[error("no logind session and unit lookup failed for caller UID {uid}: {detail}")]
     UnitLookupFailed { uid: u32, detail: String },
-    #[error("caller is in user@{uid}.service but user {uid} has a remote logind session")]
-    RemoteSession { uid: u32 },
-    #[error("caller is in user@{uid}.service but user {uid} has no active local graphical session")]
-    NoActiveLocalGraphicalSession { uid: u32 },
+    #[error("caller is in user@{uid}.service but user {uid} has no active local session")]
+    NoActiveLocalSession { uid: u32 },
 }
 
-/// Is `unit` exactly the caller's own systemd user manager?
-fn check_user_manager_unit(caller_uid: u32, unit: &str) -> Result<(), UserManagerRefusal> {
-    if unit == format!("user@{caller_uid}.service") {
-        Ok(())
-    } else {
-        Err(UserManagerRefusal::NotInUserManager {
+/// What a session-less caller's systemd unit establishes.
+#[derive(Debug, PartialEq, Eq)]
+enum UnitProvenance {
+    /// The caller runs under `user@<owner_uid>.service`; that user's
+    /// sessions decide.
+    UserManager { owner_uid: u32 },
+    /// A UID 0 caller in a system service: a display-manager greeter's PAM
+    /// worker, `login` before `pam_systemd` registers its session, a
+    /// socket-activated polkit helper. Root system services are trusted
+    /// callers.
+    RootSystemService,
+}
+
+/// The UID in a canonical `user@<uid>.service` unit name.
+fn user_manager_owner(unit: &str) -> Option<u32> {
+    let uid = unit
+        .strip_prefix("user@")?
+        .strip_suffix(".service")?
+        .parse::<u32>()
+        .ok()?;
+    (unit == format!("user@{uid}.service")).then_some(uid)
+}
+
+/// Classify a session-less caller by its systemd unit. A non-root caller
+/// must be in exactly its own `user@<uid>.service`. Root may also be in
+/// another user's manager (`sudo` typed into a terminal the user manager
+/// started), which defers to that user's sessions, or in a system service.
+fn classify_caller_unit(caller_uid: u32, unit: &str) -> Result<UnitProvenance, UserManagerRefusal> {
+    let detail = || format!("caller unit is {unit:?}");
+    match user_manager_owner(unit) {
+        Some(owner_uid) if owner_uid == caller_uid || caller_uid == 0 => {
+            Ok(UnitProvenance::UserManager { owner_uid })
+        }
+        Some(_) => Err(UserManagerRefusal::NotInUserManager {
             uid: caller_uid,
-            detail: format!("caller unit is {unit:?}"),
-        })
+            detail: detail(),
+        }),
+        None if caller_uid != 0 => Err(UserManagerRefusal::NotInUserManager {
+            uid: caller_uid,
+            detail: detail(),
+        }),
+        None if is_system_service(unit) => Ok(UnitProvenance::RootSystemService),
+        None => Err(UserManagerRefusal::RootNotInSystemService { detail: detail() }),
     }
 }
 
-/// Accept a user-manager caller only while its user has an active local
-/// graphical session and no remote session at all.
+/// A system manager `.service` unit that is not a user manager. Scopes
+/// (`session-N.scope`, `init.scope`) and slices are not services.
+fn is_system_service(unit: &str) -> bool {
+    unit.strip_suffix(".service")
+        .is_some_and(|stem| !stem.is_empty() && !stem.starts_with("user@"))
+}
+
+/// Accept a user-manager caller only while the manager's owner has at least
+/// one active local session. Other sessions, remote ones included, are not
+/// considered: `abort_if_ssh` is about the caller, not the machine.
 fn check_user_manager_sessions(
-    caller_uid: u32,
+    owner_uid: u32,
     sessions: &[UserSessionFacts],
 ) -> Result<(), UserManagerRefusal> {
-    if sessions.iter().any(|session| session.remote) {
-        return Err(UserManagerRefusal::RemoteSession { uid: caller_uid });
+    if sessions.iter().any(UserSessionFacts::is_active_local) {
+        Ok(())
+    } else {
+        Err(UserManagerRefusal::NoActiveLocalSession { uid: owner_uid })
     }
-    if !sessions
-        .iter()
-        .any(UserSessionFacts::is_active_local_graphical)
-    {
-        return Err(UserManagerRefusal::NoActiveLocalGraphicalSession { uid: caller_uid });
-    }
-    Ok(())
 }
 
-/// The `NoSessionForPID` fallback: `Ok(false)` (local) when the caller runs in
-/// its own `user@UID.service` and the user's sessions pass
-/// [`check_user_manager_sessions`]; otherwise an error naming the rule.
-/// Sessions are not enumerated for a caller outside its user manager.
+/// The `NoSessionForPID` fallback: `Ok(false)` (local) when the caller runs
+/// in a user manager [`classify_caller_unit`] admits and that manager's owner
+/// passes [`check_user_manager_sessions`], or is a root system service;
+/// otherwise an error naming the rule. Sessions are read only for a
+/// user-manager caller.
 async fn user_manager_session_is_remote<U, UFut, S, SFut>(
     caller_uid: u32,
     unit_by_pid: U,
@@ -391,7 +432,7 @@ async fn user_manager_session_is_remote<U, UFut, S, SFut>(
 where
     U: FnOnce() -> UFut,
     UFut: Future<Output = Result<String, String>>,
-    S: FnOnce() -> SFut,
+    S: FnOnce(u32) -> SFut,
     SFut: Future<Output = Result<Vec<UserSessionFacts>, String>>,
 {
     let unit = unit_by_pid().await.map_err(|detail| {
@@ -401,11 +442,15 @@ where
         }
         .to_string()
     })?;
-    check_user_manager_unit(caller_uid, &unit).map_err(|refusal| refusal.to_string())?;
-    let sessions = user_sessions()
+    let owner_uid =
+        match classify_caller_unit(caller_uid, &unit).map_err(|refusal| refusal.to_string())? {
+            UnitProvenance::RootSystemService => return Ok(false),
+            UnitProvenance::UserManager { owner_uid } => owner_uid,
+        };
+    let sessions = user_sessions(owner_uid)
         .await
-        .map_err(|error| format!("enumerate logind sessions for UID {caller_uid}: {error}"))?;
-    check_user_manager_sessions(caller_uid, &sessions).map_err(|refusal| refusal.to_string())?;
+        .map_err(|error| format!("enumerate logind sessions for UID {owner_uid}: {error}"))?;
+    check_user_manager_sessions(owner_uid, &sessions).map_err(|refusal| refusal.to_string())?;
     Ok(false)
 }
 
@@ -1579,8 +1624,9 @@ where
     }
 
     /// `Authenticate` with a lazy ProcessFD-backed session check. The check
-    /// is invoked only for non-root callers when the installed configuration
-    /// enables `abort_if_ssh`; every other path drops it without lookup.
+    /// is invoked, for every caller including root, only when the installed
+    /// configuration enables `abort_if_ssh`; otherwise it is dropped without
+    /// lookup.
     pub async fn authenticate_as_with_session_check<F, Fut>(
         &self,
         caller: CallerIdentity,
@@ -1743,7 +1789,7 @@ where
                     Some((capture_slot.as_ref(), operation)),
                 )?;
                 Ok::<(bool, bool), fdo::Error>((
-                    !caller_is_root && handler.config.security.abort_if_ssh,
+                    handler.config.security.abort_if_ssh,
                     handler.config.security.abort_if_lid_closed,
                 ))
             })
@@ -1808,10 +1854,7 @@ where
                 &handler,
                 Some((capture_slot.as_ref(), operation)),
             )?;
-            if method == Method::Authenticate
-                && !caller_is_root
-                && handler.config.security.abort_if_ssh
-            {
+            if method == Method::Authenticate && handler.config.security.abort_if_ssh {
                 match provenance {
                     Some(Ok(false)) => {}
                     Some(Ok(true)) => {
@@ -3105,7 +3148,10 @@ mod tests {
         user_manager_session_is_remote(
             1000,
             || async move { unit.map(str::to_owned).map_err(str::to_owned) },
-            || async move { Ok(sessions) },
+            |owner_uid| async move {
+                assert_eq!(owner_uid, 1000);
+                Ok(sessions)
+            },
         )
         .await
     }
@@ -3137,23 +3183,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn user_manager_caller_with_an_active_local_graphical_session_is_local() {
-        assert_eq!(
-            fallback(
-                Ok("user@1000.service"),
-                vec![local_wayland(), manager_session()]
-            )
-            .await,
-            Ok(false)
-        );
-        assert_eq!(
-            fallback(
-                Ok("user@1000.service"),
-                vec![session(false, "seat0", "x11", true)]
-            )
-            .await,
-            Ok(false)
-        );
+    async fn user_manager_caller_with_an_active_local_session_is_local() {
+        for local in [
+            local_wayland(),
+            session(false, "seat0", "x11", true),
+            // A local text console.
+            session(false, "seat0", "tty", true),
+        ] {
+            assert_eq!(
+                fallback(
+                    Ok("user@1000.service"),
+                    vec![local.clone(), manager_session()]
+                )
+                .await,
+                Ok(false),
+                "{local:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_remote_session_beside_a_local_desktop_does_not_refuse() {
+        // `abort_if_ssh` is about the caller; other sessions are not consulted.
+        for remote in [
+            session(true, "", "tty", true),
+            session(true, "", "tty", false),
+        ] {
+            assert_eq!(
+                fallback(Ok("user@1000.service"), vec![local_wayland(), remote]).await,
+                Ok(false)
+            );
+        }
     }
 
     #[tokio::test]
@@ -3161,7 +3221,7 @@ mod tests {
         let result = user_manager_session_is_remote(
             1000,
             || async { Err("systemd GetUnitByPID(4242) failed: NoUnitForPID".to_owned()) },
-            || async { panic!("sessions must not be read for an unresolved unit") },
+            |_| async { panic!("sessions must not be read for an unresolved unit") },
         )
         .await;
         let reason = result.expect_err("no unit refuses");
@@ -3175,6 +3235,7 @@ mod tests {
         for unit in [
             "sshd.service",
             "user@1001.service",
+            "user@01000.service",
             "user@1000.service.d",
             "user-1000.slice",
             "session-3.scope",
@@ -3183,7 +3244,7 @@ mod tests {
             let result = user_manager_session_is_remote(
                 1000,
                 || async move { Ok(unit.to_owned()) },
-                || async { panic!("sessions must not be read for {unit:?}") },
+                |_| async { panic!("sessions must not be read for {unit:?}") },
             )
             .await;
             let reason = result.expect_err("foreign unit refuses");
@@ -3196,38 +3257,90 @@ mod tests {
 
     #[test]
     fn the_user_manager_unit_must_match_the_verified_caller_uid() {
-        assert_eq!(check_user_manager_unit(1000, "user@1000.service"), Ok(()));
+        assert_eq!(
+            classify_caller_unit(1000, "user@1000.service"),
+            Ok(UnitProvenance::UserManager { owner_uid: 1000 })
+        );
         assert!(matches!(
-            check_user_manager_unit(1001, "user@1000.service"),
+            classify_caller_unit(1001, "user@1000.service"),
             Err(UserManagerRefusal::NotInUserManager { uid: 1001, .. })
         ));
-        assert!(matches!(
-            check_user_manager_unit(0, "user@1000.service"),
-            Err(UserManagerRefusal::NotInUserManager { uid: 0, .. })
-        ));
+    }
+
+    /// A display-manager greeter's PAM worker or `login` before its session
+    /// is registered: root, no session, a system service.
+    #[tokio::test]
+    async fn a_root_system_service_with_no_session_is_local() {
+        for unit in [
+            "gdm.service",
+            "sddm.service",
+            "getty@tty1.service",
+            "polkit-agent-helper@1.service",
+        ] {
+            let result = user_manager_session_is_remote(
+                0,
+                || async move { Ok(unit.to_owned()) },
+                |_| async { panic!("sessions must not be read for a root system service") },
+            )
+            .await;
+            assert_eq!(result, Ok(false), "{unit:?}");
+        }
     }
 
     #[tokio::test]
-    async fn any_remote_session_refuses_even_beside_a_local_desktop() {
-        let reason = fallback(
-            Ok("user@1000.service"),
-            vec![local_wayland(), session(true, "", "tty", true)],
+    async fn a_root_caller_in_neither_a_user_manager_nor_a_system_service_refuses() {
+        for unit in [
+            "session-3.scope",
+            "init.scope",
+            "user-1000.slice",
+            ".service",
+            "",
+        ] {
+            let result = user_manager_session_is_remote(
+                0,
+                || async move { Ok(unit.to_owned()) },
+                |_| async { panic!("sessions must not be read for {unit:?}") },
+            )
+            .await;
+            let reason = result.expect_err("root outside a service refuses");
+            assert!(
+                reason.starts_with(
+                    "no logind session and root caller is in neither a user manager nor a system service"
+                ),
+                "{unit:?}: {reason}"
+            );
+        }
+    }
+
+    /// `sudo` typed into a terminal the user manager started: root in
+    /// `user@1000.service`, decided by user 1000's sessions.
+    #[tokio::test]
+    async fn a_root_caller_in_a_user_manager_defers_to_that_users_sessions() {
+        let accepted = user_manager_session_is_remote(
+            0,
+            || async { Ok("user@1000.service".to_owned()) },
+            |owner_uid| async move {
+                assert_eq!(owner_uid, 1000);
+                Ok(vec![local_wayland()])
+            },
         )
-        .await
-        .expect_err("remote session refuses");
+        .await;
+        assert_eq!(accepted, Ok(false));
+
+        let refused = user_manager_session_is_remote(
+            0,
+            || async { Ok("user@1000.service".to_owned()) },
+            |_| async { Ok(vec![manager_session()]) },
+        )
+        .await;
         assert_eq!(
-            reason,
-            "caller is in user@1000.service but user 1000 has a remote logind session"
-        );
-        // An inactive or closing remote session still counts.
-        assert_eq!(
-            check_user_manager_sessions(1000, &[local_wayland(), session(true, "", "tty", false)]),
-            Err(UserManagerRefusal::RemoteSession { uid: 1000 })
+            refused.expect_err("no local session refuses"),
+            "caller is in user@1000.service but user 1000 has no active local session"
         );
     }
 
     #[tokio::test]
-    async fn no_active_local_graphical_session_refuses() {
+    async fn no_active_local_session_refuses() {
         let cases: [Vec<UserSessionFacts>; 6] = [
             // No sessions at all.
             vec![],
@@ -3235,20 +3348,19 @@ mod tests {
             vec![manager_session()],
             // A graphical session on another VT.
             vec![session(false, "seat0", "wayland", false), manager_session()],
-            // A local text console.
-            vec![session(false, "seat0", "tty", true)],
             // A graphical type with no seat.
             vec![session(false, "", "wayland", true)],
             // Unrecognised type on a seat.
             vec![session(false, "seat0", "mir", true)],
+            // Only a remote session.
+            vec![session(true, "", "tty", true)],
         ];
         for sessions in cases {
             let reason = fallback(Ok("user@1000.service"), sessions.clone())
                 .await
-                .expect_err("no active local graphical session refuses");
+                .expect_err("no active local session refuses");
             assert_eq!(
-                reason,
-                "caller is in user@1000.service but user 1000 has no active local graphical session",
+                reason, "caller is in user@1000.service but user 1000 has no active local session",
                 "{sessions:?}"
             );
         }
@@ -3259,7 +3371,7 @@ mod tests {
         let result = user_manager_session_is_remote(
             1000,
             || async { Ok("user@1000.service".to_owned()) },
-            || async { Err("logind ListSessions failed: timeout".to_owned()) },
+            |_| async { Err("logind ListSessions failed: timeout".to_owned()) },
         )
         .await;
         assert!(
@@ -3270,11 +3382,15 @@ mod tests {
     }
 
     #[test]
-    fn the_four_refusals_name_distinct_rules() {
+    fn the_refusals_name_distinct_rules() {
         let reasons = [
             UserManagerRefusal::NotInUserManager {
                 uid: 1000,
                 detail: "caller unit is \"sshd.service\"".to_owned(),
+            }
+            .to_string(),
+            UserManagerRefusal::RootNotInSystemService {
+                detail: "caller unit is \"init.scope\"".to_owned(),
             }
             .to_string(),
             UserManagerRefusal::UnitLookupFailed {
@@ -3282,14 +3398,13 @@ mod tests {
                 detail: "systemd GetUnitByPID(4242) failed: timeout".to_owned(),
             }
             .to_string(),
-            UserManagerRefusal::RemoteSession { uid: 1000 }.to_string(),
-            UserManagerRefusal::NoActiveLocalGraphicalSession { uid: 1000 }.to_string(),
+            UserManagerRefusal::NoActiveLocalSession { uid: 1000 }.to_string(),
         ];
         assert!(reasons[0].contains("not in user@1000.service"));
-        assert!(reasons[1].contains("unit lookup failed"));
-        assert!(!reasons[1].contains("not in user@1000.service"));
-        assert!(reasons[2].contains("remote logind session"));
-        assert!(reasons[3].contains("no active local graphical session"));
+        assert!(reasons[1].contains("neither a user manager nor a system service"));
+        assert!(reasons[2].contains("unit lookup failed"));
+        assert!(!reasons[2].contains("not in user@1000.service"));
+        assert!(reasons[3].contains("no active local session"));
         for (i, a) in reasons.iter().enumerate() {
             for (j, b) in reasons.iter().enumerate() {
                 assert!(i == j || a != b, "{a:?} == {b:?}");
