@@ -201,6 +201,13 @@ work is:
        --no-confirm
    ```
 
+Omarchy's Quickshell lock (`PamContext`) and KDE's `kscreenlocker` run under
+the systemd user manager, outside any logind session. The daemon accepts such
+a caller while the user has an active local session. Integrators keep the
+default `security.abort_if_ssh = true`; do not write `abort_if_ssh = false` to
+make the lock screen work, since that removes the daemon's SSH refusal for
+every caller (see [security](security.md)).
+
 Omarchy can change its menu, lock behavior, notifications, and package choice
 without a Facelock release. Facelock can change its internal implementation
 while the capability, probe, and PAM contracts keep the downstream wrapper
