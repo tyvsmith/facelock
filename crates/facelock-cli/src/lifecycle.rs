@@ -1336,16 +1336,21 @@ pub struct SystemBus;
 impl BusProbe for SystemBus {
     fn daemon_name_has_owner(&self) -> Result<bool, LifecycleError> {
         let unreachable = |detail: String| LifecycleError::BusUnreachable { detail };
-        let connection =
-            zbus::blocking::Connection::system().map_err(|e| unreachable(e.to_string()))?;
-        let proxy = zbus::blocking::fdo::DBusProxy::new(&connection)
-            .map_err(|e| unreachable(e.to_string()))?;
-        let name: zbus::names::BusName<'_> = BUS_NAME
-            .try_into()
-            .map_err(|e: zbus::names::Error| unreachable(e.to_string()))?;
-        proxy
-            .name_has_owner(name)
-            .map_err(|e| unreachable(e.to_string()))
+        zbus::block_on(async {
+            let connection = zbus::Connection::system()
+                .await
+                .map_err(|e| unreachable(e.to_string()))?;
+            let proxy = zbus::fdo::DBusProxy::new(&connection)
+                .await
+                .map_err(|e| unreachable(e.to_string()))?;
+            let name: zbus::names::BusName<'_> = BUS_NAME
+                .try_into()
+                .map_err(|e: zbus::Error| unreachable(e.to_string()))?;
+            proxy
+                .name_has_owner(name)
+                .await
+                .map_err(|e| unreachable(e.to_string()))
+        })
     }
 }
 

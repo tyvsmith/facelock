@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 facelock-core = { path = "../facelock-core" }
-zbus = { version = "5", default-features = false, features = ["tokio", "blocking-api"] }
+zbus = { version = "6", default-features = false, features = ["tokio", "proxy", "service", "tracing"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 nix = { version = "0.31", features = ["user"] }
 tracing = { workspace = true }

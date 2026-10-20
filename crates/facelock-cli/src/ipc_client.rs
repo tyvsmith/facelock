@@ -1,6 +1,6 @@
 use anyhow::Context;
 use nix::unistd::Uid;
-use zbus::blocking::Proxy;
+use zbus::Proxy;
 
 use facelock_core::dbus_interface::*;
 use facelock_core::ipc::{IpcDeviceInfo, PreviewFace};
@@ -114,16 +114,27 @@ fn create_proxy() -> anyhow::Result<Proxy<'static>> {
         return Ok(proxy.clone());
     }
 
-    let connection = zbus::blocking::connection::Builder::system()
-        .map_err(|e| anyhow::anyhow!("D-Bus connection failed: {e}"))?
-        .method_timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| anyhow::anyhow!("D-Bus connection failed: {e}"))?;
-
-    let proxy = Proxy::new_owned(connection, BUS_NAME, OBJECT_PATH, INTERFACE_NAME)
-        .map_err(|e| anyhow::anyhow!("D-Bus proxy failed: {e}"))?;
+    let proxy = zbus::block_on(connect_proxy(std::time::Duration::from_secs(15)))?;
 
     Ok(PROXY.get_or_init(|| proxy).clone())
+}
+
+/// Connect to the system bus with `method_timeout` and build the daemon proxy.
+///
+/// zbus 6 has no blocking API: callers drive this and every method call with
+/// `zbus::block_on`, which runs them on the one multi-threaded Tokio runtime
+/// zbus keeps for the process, so the cached proxy's connection outlives each
+/// call and its background tasks keep running between calls.
+async fn connect_proxy(method_timeout: std::time::Duration) -> anyhow::Result<Proxy<'static>> {
+    let connection = zbus::connection::Builder::system()
+        .method_timeout(method_timeout)
+        .build()
+        .await
+        .map_err(|e| anyhow::anyhow!("D-Bus connection failed: {e}"))?;
+
+    Proxy::new_owned(connection, BUS_NAME, OBJECT_PATH, INTERFACE_NAME)
+        .await
+        .map_err(|e| anyhow::anyhow!("D-Bus proxy failed: {e}"))
 }
 
 /// Extra headroom on top of the daemon's enrollment deadline: D-Bus
@@ -148,20 +159,14 @@ pub fn send_enroll(
 ) -> anyhow::Result<(u32, u32)> {
     let timeout =
         std::time::Duration::from_secs(config.enroll_timeout_secs()) + ENROLL_TIMEOUT_MARGIN;
-    let connection = zbus::blocking::connection::Builder::system()
-        .map_err(|e| anyhow::anyhow!("D-Bus connection failed: {e}"))?
-        .method_timeout(timeout)
-        .build()
-        .map_err(|e| anyhow::anyhow!("D-Bus connection failed: {e}"))?;
-    let proxy = Proxy::new_owned(connection, BUS_NAME, OBJECT_PATH, INTERFACE_NAME)
-        .map_err(|e| anyhow::anyhow!("D-Bus proxy failed: {e}"))?;
+    let proxy = zbus::block_on(connect_proxy(timeout))?;
 
     // A client-side timeout ends this process, which drops the bus connection;
     // the daemon's caller-departure watch then cancels the enrollment and
     // nothing is stored (#308). The one exception is a commit that landed
     // before we gave up: the reply is lost but the template is real, which is
     // why the message sends the user to `facelock list` before retrying.
-    let result: (u32, u32) = proxy.call("Enroll", &(user, label)).map_err(|e| {
+    let result: (u32, u32) = zbus::block_on(proxy.call("Enroll", &(user, label))).map_err(|e| {
         if is_timeout_error(&e) {
             anyhow::Error::new(e).context(explain(&AccessMessage::EnrollTimedOutClientSide))
         } else {
@@ -188,10 +193,12 @@ fn is_access_denied_name(name: &str) -> bool {
 pub fn is_access_denied(err: &anyhow::Error) -> bool {
     err.chain().any(|cause| {
         match cause.downcast_ref::<zbus::Error>() {
-            // What a remote denial arrives as: the bus or the daemon replies
-            // with an error name.
+            // A remote error name `fdo::Error` does not define.
             Some(zbus::Error::MethodError(name, _, _)) => is_access_denied_name(name.as_str()),
-            // Locally constructed denials (never produced by `Proxy::call`).
+            // What a remote denial arrives as since zbus 6 (the bus or the
+            // daemon replies with `org.freedesktop.DBus.Error.AccessDenied`,
+            // which `Proxy::call` maps onto `fdo::Error`), and locally
+            // constructed denials.
             Some(zbus::Error::FDO(fdo_err)) => {
                 matches!(**fdo_err, zbus::fdo::Error::AccessDenied(_))
             }
@@ -238,8 +245,7 @@ fn hinted<T>(result: anyhow::Result<T>) -> anyhow::Result<T> {
 pub fn test_authenticate(user: &str) -> anyhow::Result<AuthOutcome> {
     hinted((|| {
         let proxy = create_proxy()?;
-        let result: AuthResult = proxy
-            .call("TestAuthenticate", &(user,))
+        let result: AuthResult = zbus::block_on(proxy.call("TestAuthenticate", &(user,)))
             .context("D-Bus TestAuthenticate call failed")?;
         Ok(decode_auth_result(result))
     })())
@@ -297,8 +303,7 @@ fn decode_auth_result(result: AuthResult) -> AuthOutcome {
 pub fn list_models(user: &str) -> anyhow::Result<Vec<FaceModelInfo>> {
     hinted((|| {
         let proxy = create_proxy()?;
-        let models: Vec<ModelInfo> = proxy
-            .call("ListModels", &(user,))
+        let models: Vec<ModelInfo> = zbus::block_on(proxy.call("ListModels", &(user,)))
             .context("D-Bus ListModels call failed")?;
         Ok(models
             .into_iter()
@@ -319,8 +324,7 @@ pub fn list_models(user: &str) -> anyhow::Result<Vec<FaceModelInfo>> {
 pub fn remove_model(user: &str, model_id: u32) -> anyhow::Result<()> {
     hinted((|| {
         let proxy = create_proxy()?;
-        proxy
-            .call("RemoveModel", &(user, model_id))
+        zbus::block_on(proxy.call("RemoveModel", &(user, model_id)))
             .context("D-Bus RemoveModel call failed")
     })())
 }
@@ -328,18 +332,16 @@ pub fn remove_model(user: &str, model_id: u32) -> anyhow::Result<()> {
 pub fn clear_models(user: &str) -> anyhow::Result<()> {
     hinted((|| {
         let proxy = create_proxy()?;
-        proxy
-            .call("ClearModels", &(user,))
-            .context("D-Bus ClearModels call failed")
+        zbus::block_on(proxy.call("ClearModels", &(user,))).context("D-Bus ClearModels call failed")
     })())
 }
 
 pub fn preview_detect_frame(user: &str) -> anyhow::Result<(Vec<u8>, Vec<PreviewFace>)> {
     hinted((|| {
         let proxy = create_proxy()?;
-        let (jpeg_data, face_infos): (Vec<u8>, Vec<PreviewFaceInfo>) = proxy
-            .call("PreviewDetectFrame", &(user,))
-            .context("D-Bus PreviewDetectFrame call failed")?;
+        let (jpeg_data, face_infos): (Vec<u8>, Vec<PreviewFaceInfo>) =
+            zbus::block_on(proxy.call("PreviewDetectFrame", &(user,)))
+                .context("D-Bus PreviewDetectFrame call failed")?;
         let faces = face_infos
             .into_iter()
             .map(|f| PreviewFace {
@@ -359,8 +361,7 @@ pub fn preview_detect_frame(user: &str) -> anyhow::Result<(Vec<u8>, Vec<PreviewF
 pub fn list_devices() -> anyhow::Result<Vec<IpcDeviceInfo>> {
     hinted((|| {
         let proxy = create_proxy()?;
-        let devices: Vec<DeviceInfo> = proxy
-            .call("ListDevices", &())
+        let devices: Vec<DeviceInfo> = zbus::block_on(proxy.call("ListDevices", &()))
             .context("D-Bus ListDevices call failed")?;
         Ok(devices
             .into_iter()
@@ -388,16 +389,15 @@ pub fn list_devices() -> anyhow::Result<Vec<IpcDeviceInfo>> {
 pub fn release_camera() -> anyhow::Result<()> {
     hinted((|| {
         let proxy = create_proxy()?;
-        proxy
-            .call("ReleaseCamera", &())
-            .context("D-Bus ReleaseCamera call failed")
+        zbus::block_on(proxy.call("ReleaseCamera", &())).context("D-Bus ReleaseCamera call failed")
     })())
 }
 
 pub fn ping() -> anyhow::Result<()> {
     hinted((|| {
         let proxy = create_proxy()?;
-        let _: String = proxy.call("Ping", &()).context("D-Bus Ping call failed")?;
+        let _: String =
+            zbus::block_on(proxy.call("Ping", &())).context("D-Bus Ping call failed")?;
         Ok(())
     })())
 }

@@ -27,7 +27,7 @@ thiserror = { workspace = true }
 # The D-Bus server (src/server.rs) — async service/runtime and cancellable
 # ProcessFD/logind provenance queries. libc backs pidfd liveness and the
 # post-init capability drop.
-zbus = { version = "5", default-features = false, features = ["tokio"] }
+zbus = { version = "6", default-features = false, features = ["tokio", "proxy", "service", "tracing"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 futures-util = "0.3"
 libc = "0.2"

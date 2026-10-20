@@ -271,21 +271,20 @@ async fn logind_session_is_remote(
     )
     .await
     .map_err(|error| format!("create logind manager proxy: {error}"))?;
-    let session_path: zbus::zvariant::OwnedObjectPath =
-        match manager.call("GetSessionByPID", &(pid,)).await {
-            Ok(path) => path,
-            // Only "this PID has no session" earns the user-manager fallback
-            // (issue #397). Any other logind failure stays fail-closed.
-            Err(error) if is_no_session_for_pid(&error) => {
-                return user_manager_session_is_remote(
-                    caller_uid,
-                    || systemd_unit_by_pid(connection, pid),
-                    |owner_uid| logind_user_sessions(connection, owner_uid),
-                )
-                .await;
-            }
-            Err(error) => return Err(format!("logind GetSessionByPID({pid}) failed: {error}")),
-        };
+    let session_path: zbus::OwnedObjectPath = match manager.call("GetSessionByPID", &(pid,)).await {
+        Ok(path) => path,
+        // Only "this PID has no session" earns the user-manager fallback
+        // (issue #397). Any other logind failure stays fail-closed.
+        Err(error) if is_no_session_for_pid(&error) => {
+            return user_manager_session_is_remote(
+                caller_uid,
+                || systemd_unit_by_pid(connection, pid),
+                |owner_uid| logind_user_sessions(connection, owner_uid),
+            )
+            .await;
+        }
+        Err(error) => return Err(format!("logind GetSessionByPID({pid}) failed: {error}")),
+    };
     let session = zbus::Proxy::new(
         connection,
         LOGIND_SERVICE,
@@ -474,7 +473,7 @@ async fn systemd_unit_by_pid(connection: &zbus::Connection, pid: u32) -> Result<
     )
     .await
     .map_err(|error| format!("create systemd manager proxy: {error}"))?;
-    let unit_path: zbus::zvariant::OwnedObjectPath = manager
+    let unit_path: zbus::OwnedObjectPath = manager
         .call("GetUnitByPID", &(pid,))
         .await
         .map_err(|error| format!("systemd GetUnitByPID({pid}) failed: {error}"))?;
@@ -506,7 +505,7 @@ async fn logind_user_sessions(
     .await
     .map_err(|error| format!("create logind manager proxy: {error}"))?;
     // (session id, uid, user name, seat id, session object path)
-    let listed: Vec<(String, u32, String, String, zbus::zvariant::OwnedObjectPath)> = manager
+    let listed: Vec<(String, u32, String, String, zbus::OwnedObjectPath)> = manager
         .call("ListSessions", &())
         .await
         .map_err(|error| format!("logind ListSessions failed: {error}"))?;
@@ -545,13 +544,13 @@ async fn logind_user_sessions(
 async fn uncached_proxy<'a>(
     connection: &zbus::Connection,
     destination: &'static str,
-    path: zbus::zvariant::OwnedObjectPath,
+    path: zbus::OwnedObjectPath,
     interface: &'static str,
 ) -> zbus::Result<zbus::Proxy<'a>> {
     zbus::proxy::Builder::<zbus::Proxy>::new(connection)
-        .destination(destination)?
-        .path(path)?
-        .interface(interface)?
+        .destination(destination)
+        .path(path)
+        .interface(interface)
         .cache_properties(zbus::proxy::CacheProperties::No)
         .build()
         .await
@@ -577,11 +576,8 @@ async fn logind_lid_is_closed(connection: &zbus::Connection) -> Result<bool, Str
     // unreadable" to "any property on logind's Manager is unreadable".
     let manager = zbus::proxy::Builder::<zbus::Proxy>::new(connection)
         .destination(LOGIND_SERVICE)
-        .map_err(|error| format!("logind destination: {error}"))?
         .path(LOGIND_MANAGER_PATH)
-        .map_err(|error| format!("logind manager path: {error}"))?
         .interface(LOGIND_MANAGER_INTERFACE)
-        .map_err(|error| format!("logind manager interface: {error}"))?
         .cache_properties(zbus::proxy::CacheProperties::No)
         .build()
         .await
@@ -2272,7 +2268,7 @@ impl FacelockService<Camera<'static>, FaceEngine> {
         &self,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(connection)] connection: &zbus::Connection,
-        #[zbus(signal_context)] ctxt: SignalEmitter<'_>,
+        #[zbus(signal_emitter)] ctxt: SignalEmitter<'_>,
         user: &str,
     ) -> fdo::Result<AuthResult> {
         let caller = resolve_caller_identity(&hdr, connection).await?;
@@ -2322,7 +2318,7 @@ impl FacelockService<Camera<'static>, FaceEngine> {
         &self,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         #[zbus(connection)] connection: &zbus::Connection,
-        #[zbus(signal_context)] ctxt: SignalEmitter<'_>,
+        #[zbus(signal_emitter)] ctxt: SignalEmitter<'_>,
         user: &str,
     ) -> fdo::Result<AuthResult> {
         let caller = resolve_caller_identity(&hdr, connection).await?;
@@ -2845,9 +2841,9 @@ async fn run_dbus_server(
     let last_activity = service.last_activity.clone();
     let current_request = service.current_request();
 
-    let _connection = zbus::connection::Builder::system()?
-        .name(BUS_NAME)?
-        .serve_at(OBJECT_PATH, service)?
+    let _connection = zbus::connection::Builder::system()
+        .name(BUS_NAME)
+        .serve_at(OBJECT_PATH, service)
         .build()
         .await?;
 
@@ -3167,7 +3163,6 @@ mod tests {
 
     fn method_error(name: &str) -> zbus::Error {
         let message = zbus::Message::method_call("/org/freedesktop/login1", "GetSessionByPID")
-            .expect("method call builder")
             .build(&())
             .expect("method call message");
         zbus::Error::MethodError(

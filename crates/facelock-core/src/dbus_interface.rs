@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use zvariant::Type;
+use zbus::Type;
 
 /// Result of an authentication attempt.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]

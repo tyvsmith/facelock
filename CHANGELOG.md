@@ -227,6 +227,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-deb`, `-rpm`, `-contract` and `-pins` (was `just test-upgrade-v014*`). v0.1.4 stays pinned for
   the retired-authselect fixture, and the COPR served-EVR gap record retires with the pin it excused.
 
+- **zbus moved to 6** (#412): the daemon, CLI, polkit agent and PAM module now build on zbus 6,
+  with no change to the D-Bus interface, bus policy or anything else on the wire.
+
 ## [0.2.1] - 2026-09-07
 
 ### Changed

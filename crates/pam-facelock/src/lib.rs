@@ -469,7 +469,8 @@ enum AuthResponse {
 /// Matches the concrete variants zbus uses for method-call timeouts
 /// (`InputOutput` with `ErrorKind::TimedOut` from `method_timeout`) and the
 /// D-Bus daemon's own reply-timeout errors, instead of fragile substring
-/// matching on the display string.
+/// matching on the display string. zbus 6 delivers the latter as
+/// `Error::FDO`; the `MethodError` arm stays for any name it does not map.
 fn is_timeout_zbus_error(err: &zbus::Error) -> bool {
     match err {
         zbus::Error::InputOutput(io_err) => io_err.kind() == std::io::ErrorKind::TimedOut,
@@ -588,10 +589,11 @@ fn parse_auth_reply(matched: bool, model_id: i32, label: String, similarity: f64
 /// single point of failure on that file. The caller pins the `Authenticate`
 /// call to the returned unique name, so the owner cannot change between the
 /// UID check and the method call.
-fn verify_daemon_peer(
-    connection: &zbus::blocking::Connection,
+async fn verify_daemon_peer(
+    connection: &zbus::Connection,
 ) -> Result<zbus::names::OwnedUniqueName, String> {
-    let dbus_proxy = zbus::blocking::fdo::DBusProxy::new(connection)
+    let dbus_proxy = zbus::fdo::DBusProxy::new(connection)
+        .await
         .map_err(|e| classify_zbus_error("dbus_proxy_failed", &e))?;
 
     let bus_name = zbus::names::BusName::try_from(DBUS_BUS_NAME)
@@ -599,22 +601,25 @@ fn verify_daemon_peer(
 
     // Resolve the owner, triggering D-Bus activation first if the daemon is
     // not running yet (GetNameOwner alone does not activate services).
-    let owner = match dbus_proxy.get_name_owner(bus_name.clone()) {
+    let owner = match dbus_proxy.get_name_owner(bus_name.clone()).await {
         Ok(owner) => owner,
         Err(_) => {
             let well_known = zbus::names::WellKnownName::try_from(DBUS_BUS_NAME)
                 .map_err(|e| format!("dbus_proxy_failed: invalid bus name: {e}"))?;
             dbus_proxy
                 .start_service_by_name(well_known, 0)
+                .await
                 .map_err(|e| classify_fdo_error("dbus_connect_failed", &e))?;
             dbus_proxy
                 .get_name_owner(bus_name)
+                .await
                 .map_err(|e| classify_fdo_error("dbus_connect_failed", &e))?
         }
     };
 
     let owner_uid = dbus_proxy
         .get_connection_unix_user(zbus::names::BusName::from(owner.inner().clone()))
+        .await
         .map_err(|e| classify_fdo_error("dbus_call_failed", &e))?;
 
     if owner_uid != 0 {
@@ -633,6 +638,13 @@ fn verify_daemon_peer(
 /// Runs the blocking D-Bus work on a worker thread with an overall deadline,
 /// so that even connection establishment against a hung bus cannot stall the
 /// PAM stack (zbus `method_timeout` only bounds method calls, not connect).
+/// The worker drives the async client with `zbus::block_on` on zbus's own
+/// multi-threaded Tokio runtime (`tokio-multithread`), so the PAM-hosting
+/// process needs no runtime of its own. Multi-threaded is deliberate: a
+/// worker abandoned at the deadline must not stall the next attempt in a
+/// long-lived host such as a locker, and the dropped connection's close must
+/// still run so the daemon's caller-departure watch cancels the stuck
+/// authentication, both of which a single-threaded runtime would prevent.
 fn daemon_authenticate(config: &PamConfig, user: &str) -> Result<AuthResponse, String> {
     // Method timeout = recognition timeout + buffer for camera open/warmup/model load
     let method_timeout_secs = config.recognition.timeout_secs as u64 + 5;
@@ -645,10 +657,10 @@ fn daemon_authenticate(config: &PamConfig, user: &str) -> Result<AuthResponse, S
     std::thread::Builder::new()
         .name("pam-facelock-dbus".into())
         .spawn(move || {
-            let _ = tx.send(daemon_authenticate_blocking(
+            let _ = tx.send(zbus::block_on(daemon_authenticate_async(
                 method_timeout_secs,
                 &user_owned,
-            ));
+            )));
         })
         .map_err(|e| format!("dbus_call_failed: worker thread spawn failed: {e}"))?;
 
@@ -665,30 +677,32 @@ fn daemon_authenticate(config: &PamConfig, user: &str) -> Result<AuthResponse, S
     }
 }
 
-fn daemon_authenticate_blocking(
+async fn daemon_authenticate_async(
     method_timeout_secs: u64,
     user: &str,
 ) -> Result<AuthResponse, String> {
-    let connection = zbus::blocking::connection::Builder::system()
-        .map_err(|e| format!("dbus_connect_failed: {e}"))?
+    let connection = zbus::connection::Builder::system()
         .method_timeout(std::time::Duration::from_secs(method_timeout_secs))
         .build()
+        .await
         .map_err(|e| format!("dbus_connect_failed: {e}"))?;
 
     // Verify the daemon peer is root and pin the call to its unique name.
-    let daemon_peer = verify_daemon_peer(&connection)?;
+    let daemon_peer = verify_daemon_peer(&connection).await?;
 
-    let proxy = zbus::blocking::Proxy::new(
+    let proxy = zbus::Proxy::new(
         &connection,
         zbus::names::BusName::from(daemon_peer.inner().clone()),
         DBUS_OBJECT_PATH,
         DBUS_INTERFACE_NAME,
     )
+    .await
     .map_err(|e| classify_zbus_error("dbus_proxy_failed", &e))?;
 
     // D-Bus method returns (matched: bool, model_id: i32, label: String, similarity: f64)
     let reply: (bool, i32, String, f64) = proxy
         .call("Authenticate", &(user,))
+        .await
         .map_err(|e: zbus::Error| classify_authenticate_error(&e))?;
 
     let (matched, model_id, label, similarity) = reply;
@@ -1918,7 +1932,6 @@ auth_bin = "/usr/local/bin/evil"
         );
 
         let call = zbus::message::Message::method_call("/org/facelock/Daemon", "Authenticate")
-            .unwrap()
             .serial(std::num::NonZeroU32::new(1).unwrap())
             .build(&())
             .unwrap();
@@ -1926,7 +1939,6 @@ auth_bin = "/usr/local/bin/evil"
             &call.header(),
             "org.freedesktop.DBus.Error.AccessDenied",
         )
-        .unwrap()
         .build(&("remote session",))
         .unwrap();
         let raw = zbus::Error::from(reply);
