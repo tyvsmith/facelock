@@ -602,6 +602,12 @@ adr008_live_client_timeout_body() {
     sed -i -E 's/^([[:space:]]*timeout_secs[[:space:]]*=).*/\1 1/' "$ADR008_LIVE_CONFIG"
     touch -r "$ADR008_LIVE_SAVED" "$ADR008_LIVE_CONFIG"
 
+    # Every forged-id failure above charged testuser's biometric-guess budget
+    # (max_attempts failures per window), and a budget that is already spent
+    # answers the first attempt in-band with "rate limited" before any scan,
+    # so there would be nothing in flight to cancel. Spend from a fresh one.
+    sqlite3 "$DB" "PRAGMA busy_timeout=8000; DELETE FROM rate_limit WHERE user='testuser'" > /dev/null || true
+
     rm -f "$gate"
     from=$(daemon_log_lines)
     timeout "$LIVE_TIMEOUT" python3 /pam-auth-twice.py facelock-test testuser "$gate" \
@@ -624,6 +630,7 @@ adr008_live_client_timeout_body() {
     if ! daemon_is_scanning "$from"; then
         cat "$out"
         echo "the daemon never reached the scan loop; nothing was in flight to cancel"
+        tail -n "+$((from + 1))" "$DAEMON_LOG"
         return 3
     fi
     if [ "$first" = "attempt 1: 0 Success" ]; then
