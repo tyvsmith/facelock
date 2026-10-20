@@ -538,6 +538,175 @@ adr008_caller_departure_cancels() {
     echo "caller departure seen at ${cancel_ms}ms, attempt cancelled at ${auth_ms}ms, camera released at ${release_ms}ms"
 }
 
+# ADR 008 §5, the case a PAM host actually produces. The SIGKILL above closes
+# the client's bus socket by process death, whatever the client runtime does.
+# A screen locker or sudo does not die: pam_facelock's own method timeout
+# fires, the module drops its D-Bus connection and returns, and the same
+# process authenticates again later. Two things must hold, and a change to the
+# module's D-Bus runtime (a connection kept alive past the call, a worker that
+# outlives it) breaks both without touching the SIGKILL case:
+#   1. the daemon sees the dropped connection and cancels within 500 ms, as it
+#      does for a killed client;
+#   2. the next Authenticate from that same process succeeds through the daemon.
+#
+# The client is test/pam-auth-twice.py, not pamtester: pamtester runs several
+# operations in one process but stops at the first that fails, and the first
+# one here fails by design.
+#
+# The client times out first because only the module reads a lowered
+# recognition.timeout_secs. The daemon reloads its config when the file's mtime
+# advances, so the edit is written with the old mtime put back: the daemon keeps
+# scanning for its own timeout_secs (the forged device_id below means it never
+# matches) while the module gives up at 1 + 5 s. Freezing the daemon with
+# SIGSTOP instead does not work: its scan deadline is monotonic and keeps
+# running while it is stopped, the module's timeout always lands after that
+# deadline, so on SIGCONT the daemon's own timeout races the departure signal.
+#
+# Runs inside the forged-device_id window and restores the id itself before the
+# second attempt, which is the one that needs a match.
+ADR008_LIVE_CONFIG="/etc/facelock/config.toml"
+ADR008_LIVE_SAVED="/tmp/adr008-live-config.toml"
+
+adr008_live_restore_config() {
+    [ -f "$ADR008_LIVE_SAVED" ] || return 0
+    cp "$ADR008_LIVE_SAVED" "$ADR008_LIVE_CONFIG"
+    touch -r "$ADR008_LIVE_SAVED" "$ADR008_LIVE_CONFIG"
+}
+
+adr008_live_client_timeout_cancels() {
+    local client="" rc=0
+    cp -p "$ADR008_LIVE_CONFIG" "$ADR008_LIVE_SAVED"
+    adr008_live_client_timeout_body || rc=$?
+    # TERM, not KILL: $client is timeout(1), which forwards TERM to the harness.
+    if [ -n "$client" ] && kill -0 "$client" 2>/dev/null; then
+        kill "$client" 2>/dev/null || true
+    fi
+    [ -z "$client" ] || wait "$client" 2>/dev/null || true
+    adr008_live_restore_config
+    rm -f "$ADR008_LIVE_SAVED"
+    return "$rc"
+}
+
+# Body of the check above; `client` is that function's local.
+adr008_live_client_timeout_body() {
+    local gate="/tmp/adr008-live-gate" out="/tmp/adr008-live.log"
+    local daemon_secs from second_from deadline first cancel_ms auth_ms release_ms
+    daemon_secs="$({ grep -E '^[[:space:]]*timeout_secs[[:space:]]*=' "$ADR008_LIVE_CONFIG" \
+        || true; } | tail -1 | sed -E 's/[^0-9]//g')"
+    # The module gives up at 6 s from the call; the daemon's scan has to still
+    # be running then, camera open included, for there to be anything to cancel.
+    if [ -z "$daemon_secs" ] || [ "$daemon_secs" -lt 9 ]; then
+        echo "recognition.timeout_secs is '${daemon_secs:-unset}'; needs >= 9 so the daemon outlasts the module's 6 s"
+        return 3
+    fi
+    sed -i -E 's/^([[:space:]]*timeout_secs[[:space:]]*=).*/\1 1/' "$ADR008_LIVE_CONFIG"
+    touch -r "$ADR008_LIVE_SAVED" "$ADR008_LIVE_CONFIG"
+
+    # Every forged-id failure above charged testuser's biometric-guess budget
+    # (max_attempts failures per window), and a budget that is already spent
+    # answers the first attempt in-band with "rate limited" before any scan,
+    # so there would be nothing in flight to cancel. Spend from a fresh one.
+    sqlite3 "$DB" "PRAGMA busy_timeout=8000; DELETE FROM rate_limit WHERE user='testuser'" > /dev/null || true
+
+    rm -f "$gate"
+    from=$(daemon_log_lines)
+    timeout "$LIVE_TIMEOUT" python3 /pam-auth-twice.py facelock-test testuser "$gate" \
+        > "$out" 2>&1 &
+    client=$!
+
+    # 1 + 5 s method timeout, plus margin for the connection setup.
+    deadline=$(( $(now_ms) + 15000 ))
+    while [ "$(now_ms)" -lt "$deadline" ]; do
+        grep -q '^attempt 1:' "$out" && break
+        kill -0 "$client" 2>/dev/null || break
+        sleep 0.05
+    done
+    first="$(grep '^attempt 1:' "$out" || true)"
+    if [ -z "$first" ]; then
+        cat "$out"
+        echo "the first attempt never returned (module deadline did not fire)"
+        return 1
+    fi
+    if ! daemon_is_scanning "$from"; then
+        cat "$out"
+        echo "the daemon never reached the scan loop; nothing was in flight to cancel"
+        echo "--- daemon log since the attempt started:"
+        tail -n "+$((from + 1))" "$DAEMON_LOG"
+        echo "--- config as the module saw it:"
+        ls -l --time-style=full-iso "$ADR008_LIVE_CONFIG" "$ADR008_LIVE_SAVED"
+        grep -nE 'timeout_secs|abort_if|allowed_services|denied_services|disabled' "$ADR008_LIVE_CONFIG" || true
+        echo "--- control: pamtester under the same lowered config:"
+        local ctl_from ctl_rc=0
+        ctl_from=$(daemon_log_lines)
+        timeout 30 pamtester facelock-test testuser authenticate || ctl_rc=$?
+        echo "pamtester exit $ctl_rc"
+        tail -n "+$((ctl_from + 1))" "$DAEMON_LOG"
+        echo "--- harness alone, stderr included:"
+        timeout 30 python3 /pam-auth-twice.py facelock-test testuser /nonexistent-gate 2>&1 | head -20 || true
+        return 3
+    fi
+    if [ "$first" = "attempt 1: 0 Success" ]; then
+        cat "$out"
+        echo "the first attempt succeeded against a forged device_id"
+        return 1
+    fi
+
+    # The client process is alive and parked at the gate; only its connection
+    # is gone.
+    if ! kill -0 "$client" 2>/dev/null; then
+        cat "$out"
+        echo "the client exited after the first attempt; nothing is left to test"
+        return 1
+    fi
+    if ! cancel_ms=$(wait_for_daemon_log "$from" 500 "caller disconnected, cancelling in-flight request"); then
+        echo "daemon did not notice the dropped connection within 500ms (client still alive)"
+        tail -n "+$((from + 1))" "$DAEMON_LOG"
+        return 1
+    fi
+    if ! auth_ms=$(wait_for_daemon_log "$from" 500 "authentication cancelled"); then
+        echo "request did not end as cancelled within 500ms of the module giving up"
+        tail -n "+$((from + 1))" "$DAEMON_LOG"
+        return 1
+    fi
+    if ! release_ms=$(wait_for_daemon_log "$from" 500 "releasing camera" "request cancelled"); then
+        echo "camera not released within 500ms of the cancellation"
+        tail -n "+$((from + 1))" "$DAEMON_LOG"
+        return 1
+    fi
+
+    # The second attempt runs with the real timeout and a matchable template.
+    adr008_live_restore_config
+    sqlite3 "$DB" "PRAGMA busy_timeout=8000; UPDATE face_models SET device_id=$ADR008_DEVID WHERE user='testuser'" > /dev/null || true
+    second_from=$(daemon_log_lines)
+    touch "$gate"
+    wait "$client" 2>/dev/null || true
+    client=""
+    cat "$out"
+
+    if ! grep -q '^attempt 2:' "$out"; then
+        echo "the second attempt never returned"
+        return 1
+    fi
+    if grep -q '^attempt 2: 0 Success' "$out"; then
+        # Success through the daemon, not through the oneshot fallback a
+        # broken bus connection would take.
+        if ! wait_for_daemon_log "$second_from" 500 "authentication succeeded" > /dev/null; then
+            echo "the second attempt succeeded, but not through the daemon"
+            tail -n "+$((second_from + 1))" "$DAEMON_LOG"
+            return 1
+        fi
+        echo "dropped connection seen at ${cancel_ms}ms, attempt cancelled at ${auth_ms}ms, camera released at ${release_ms}ms; second attempt from the same process succeeded"
+        return 0
+    fi
+    if wait_for_daemon_log "$second_from" 0 "holding camera warm after a failed attempt" > /dev/null; then
+        echo "the second attempt reached the daemon and matched nothing (needs a live enrolled face)"
+        return 3
+    fi
+    echo "the second attempt from the same process failed"
+    tail -n "+$((second_from + 1))" "$DAEMON_LOG"
+    return 1
+}
+
 run_test_or_skip "ADR 008: success releases the camera immediately" \
     "adr008_success_releases_camera"
 
@@ -570,6 +739,9 @@ run_test_or_skip "ADR 008: a failed attempt holds the camera, then releases it a
 
 run_test_or_skip "ADR 008: a departed caller cancels the request and closes the camera" \
     "adr008_caller_departure_cancels"
+
+run_test_or_skip "ADR 008: a live client that times out cancels the request and can authenticate again" \
+    "adr008_live_client_timeout_cancels"
 
 sqlite3 "$DB" "PRAGMA busy_timeout=8000; UPDATE face_models SET device_id=$ADR008_DEVID WHERE user='testuser'" || true
 
