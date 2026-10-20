@@ -63,7 +63,11 @@ libc.calloc.argtypes = [ctypes.c_size_t, ctypes.c_size_t]
 libc.strdup.restype = ctypes.c_void_p
 libc.strdup.argtypes = [ctypes.c_char_p]
 
-libpam = ctypes.CDLL(ctypes.util.find_library("pam") or "libpam.so.0")
+# RTLD_GLOBAL, as a program linked against libpam gets for free: PAM modules
+# call pam_get_item and friends without a DT_NEEDED on libpam (pam_facelock.so
+# among them), so with ctypes' default RTLD_LOCAL libpam's own dlopen of the
+# module fails and the stack reports "Module is unknown" before it runs.
+libpam = ctypes.CDLL(ctypes.util.find_library("pam") or "libpam.so.0", mode=ctypes.RTLD_GLOBAL)
 libpam.pam_start.argtypes = [
     ctypes.c_char_p,
     ctypes.c_char_p,
