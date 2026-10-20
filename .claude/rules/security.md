@@ -9,7 +9,7 @@ derives-from:
   - dist/facelock.tmpfiles
   - systemd/facelock-daemon.service
   - docs/adr/**
-reviewed: 2026-09-01
+reviewed: 2026-10-20
 ---
 
 # Security Rules
