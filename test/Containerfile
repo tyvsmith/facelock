@@ -93,6 +93,11 @@ COPY test/pam.d/facelock-map-success \
 # Fake daemon harness for the PAM peer-UID container test (plan 05)
 COPY test/fake-facelock-daemon.py /fake-facelock-daemon.py
 
+# Two pam_authenticate calls from one process, for the ADR 008 live-client
+# timeout assertion in run-integration-tests.sh (pamtester stops at the first
+# failed operation)
+COPY test/pam-auth-twice.py /pam-auth-twice.py
+
 # Stable source-install lifecycle oracle for the booted real-systemd gate.
 COPY scripts/source-install-daemon-lifecycle.sh /source-install-lifecycle/scripts/source-install-daemon-lifecycle.sh
 COPY scripts/migrate-legacy-system-assets.sh /source-install-lifecycle/scripts/migrate-legacy-system-assets.sh

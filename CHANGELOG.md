@@ -180,6 +180,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runs it on every pull request (`loopback-e2e`). A model-backed contract test pins the
   fixture inside the detector, IR-texture, quality, recognition and frame-variance bands.
 
+- **An E2E assertion for a live PAM client that gives up**: the daemon suite already killed
+  a client mid-`Authenticate`, which closes its bus socket by process death. It now also
+  lets the PAM module's own method timeout fire in a client that stays alive, as a screen
+  locker or `sudo` does, and checks that the daemon logs `caller disconnected` and cancels
+  within 500 ms and that the next `Authenticate` from that same process succeeds through
+  the daemon. The client is `test/pam-auth-twice.py`, a libpam harness, because pamtester
+  stops at the first failed operation. It runs in `loopback-e2e` and the real-camera tiers.
+
 - **A local gate for the `tpm` feature** (#386): `just check-tpm` runs `lint-tpm` and the new
   `just test-tpm`, and `just check` now calls it, so the 80 `feature = "tpm"` cfg sites across
   the cli, daemon and tpm crates are compiled and exercised locally instead of only in CI. It is deliberately outside `just test`, which is the inner loop and would pay a
