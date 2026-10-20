@@ -630,7 +630,19 @@ adr008_live_client_timeout_body() {
     if ! daemon_is_scanning "$from"; then
         cat "$out"
         echo "the daemon never reached the scan loop; nothing was in flight to cancel"
+        echo "--- daemon log since the attempt started:"
         tail -n "+$((from + 1))" "$DAEMON_LOG"
+        echo "--- config as the module saw it:"
+        ls -l --time-style=full-iso "$ADR008_LIVE_CONFIG" "$ADR008_LIVE_SAVED"
+        grep -nE 'timeout_secs|abort_if|allowed_services|denied_services|disabled' "$ADR008_LIVE_CONFIG" || true
+        echo "--- control: pamtester under the same lowered config:"
+        local ctl_from ctl_rc=0
+        ctl_from=$(daemon_log_lines)
+        timeout 30 pamtester facelock-test testuser authenticate || ctl_rc=$?
+        echo "pamtester exit $ctl_rc"
+        tail -n "+$((ctl_from + 1))" "$DAEMON_LOG"
+        echo "--- harness alone, stderr included:"
+        timeout 30 python3 /pam-auth-twice.py facelock-test testuser /nonexistent-gate 2>&1 | head -20 || true
         return 3
     fi
     if [ "$first" = "attempt 1: 0 Success" ]; then
