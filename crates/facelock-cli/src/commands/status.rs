@@ -475,6 +475,15 @@ fn render_security(out: &mut String, security: &Fact<SecurityHealth>) {
     }
 }
 
+fn notification_policy(policy: facelock_core::config::NotificationPolicy) -> &'static str {
+    use facelock_core::config::NotificationPolicy;
+    match policy {
+        NotificationPolicy::On => "on",
+        NotificationPolicy::Off => "off",
+        NotificationPolicy::System => "system",
+    }
+}
+
 fn render_notifications(out: &mut String, notifications: &Fact<NotificationHealth>) {
     match notifications {
         Fact::Unknown { why } => {
@@ -495,9 +504,21 @@ fn render_notifications(out: &mut String, notifications: &Fact<NotificationHealt
                 &mode.localized(),
             );
             if notifications.mode != NotificationMode::Off {
-                detail(out, "prompt", &yes_no(notifications.notify_prompt));
-                detail(out, "on success", &yes_no(notifications.notify_on_success));
-                detail(out, "on failure", &yes_no(notifications.notify_on_failure));
+                detail(
+                    out,
+                    "prompt",
+                    notification_policy(notifications.notify_prompt),
+                );
+                detail(
+                    out,
+                    "on success",
+                    notification_policy(notifications.notify_on_success),
+                );
+                detail(
+                    out,
+                    "on failure",
+                    notification_policy(notifications.notify_on_failure),
+                );
             }
         }
     }
@@ -572,7 +593,7 @@ pub(crate) mod tests {
 
     use std::path::PathBuf;
 
-    use facelock_core::config::NotificationMode;
+    use facelock_core::config::{NotificationMode, NotificationPolicy};
 
     use crate::health::{ConfigHealth, ConfiguredService, ModelSummary, NotChecked};
     use crate::resolved::ProbedFile;
@@ -661,9 +682,9 @@ pub(crate) mod tests {
             }),
             notifications: Fact::claimed(NotificationHealth {
                 mode: NotificationMode::Both,
-                notify_prompt: true,
-                notify_on_success: true,
-                notify_on_failure: false,
+                notify_prompt: NotificationPolicy::On,
+                notify_on_success: NotificationPolicy::On,
+                notify_on_failure: NotificationPolicy::Off,
             }),
             pam: PamWiring {
                 module_path: "/lib/security/pam_facelock.so".into(),
@@ -723,14 +744,29 @@ facelock system status
     - liveness (landmark movement): no
     - min_auth_frames: 3
   Notifications: terminal + desktop
-    - prompt: yes
-    - on success: yes
-    - on failure: no
+    - prompt: on
+    - on success: on
+    - on failure: off
   PAM module: /lib/security/pam_facelock.so
     [ok] installed
     - PAM services: sudo, polkit-1 (2 configured, 1 shadowing a vendor file)
 ";
         assert_eq!(render(&healthy()), expected);
+    }
+
+    #[test]
+    fn notifications_preserve_mixed_policies() {
+        let mut health = healthy();
+        health.notifications = Fact::claimed(NotificationHealth {
+            mode: NotificationMode::Both,
+            notify_prompt: NotificationPolicy::System,
+            notify_on_success: NotificationPolicy::On,
+            notify_on_failure: NotificationPolicy::Off,
+        });
+        let report = render(&health);
+        assert!(report.contains("    - prompt: system\n"), "{report}");
+        assert!(report.contains("    - on success: on\n"), "{report}");
+        assert!(report.contains("    - on failure: off\n"), "{report}");
     }
 
     /// N4, the money case: a daemon that is unreachable and a store that

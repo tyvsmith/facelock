@@ -123,9 +123,26 @@ Controls how authentication feedback is delivered.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `mode` | string | `"terminal"` | Notification mode. `"off"` -- no notifications. `"terminal"` -- PAM text prompts only. `"desktop"` -- desktop popups only (via D-Bus/notify-send). `"both"` -- terminal and desktop. |
-| `notify_prompt` | bool | `true` | Show prompt when scanning starts ("Identifying face..."). |
-| `notify_on_success` | bool | `true` | Notify on successful face match. |
-| `notify_on_failure` | bool | `false` | Notify on failed face match. |
+| `notify_prompt` | bool or string | `"on"` | Show prompt when scanning starts ("Identifying face..."). |
+| `notify_on_success` | bool or string | `"on"` | Notify on successful face match. |
+| `notify_on_failure` | bool or string | `"off"` | Notify on failed face match. |
+
+Each event accepts `true`/`"on"` (show even when the PAM caller requests silence),
+`false`/`"off"` (never show), or `"system"` (show unless the caller supplies
+`PAM_SILENT`). Channel selection still applies; `mode = "off"` disables all
+feedback. Settings can mix booleans and strings without migration. Omitted
+values retain the defaults above.
+
+Sudo enables `pam_silent` by default on current versions. Use `"system"` for
+quiet sudo authentication, or `true`/`"on"` for facelock feedback without changing
+sudoers. This does not change sudo's `-n` authentication policy or detect scripts.
+Desktop notifications currently come from the daemon; oneshot authentication
+provides PAM conversation feedback only.
+
+Saved configurations serialize event policies as strings. Upgrade all components
+that read the configuration before using strings; older versions accept only
+booleans. To roll back, replace `"on"`/`"off"` with `true`/`false` and explicitly
+choose a boolean behavior for any `"system"` values before downgrading.
 
 ## [snapshots]
 

@@ -2509,7 +2509,12 @@ fn notify_auth_outcome(
     result: &facelock_core::types::MatchResult,
     silent: bool,
 ) {
-    if silent {
+    let policy = if result.matched {
+        config.notify_on_success
+    } else {
+        config.notify_on_failure
+    };
+    if !policy.enabled(silent) {
         return;
     }
     let event = if result.matched {
@@ -4141,17 +4146,43 @@ enabled = false
     fn desktop_config() -> NotificationConfig {
         NotificationConfig {
             mode: NotificationMode::Both,
-            notify_prompt: true,
-            notify_on_success: true,
-            notify_on_failure: true,
+            notify_prompt: true.into(),
+            notify_on_success: true.into(),
+            notify_on_failure: true.into(),
         }
     }
 
     #[test]
-    fn silent_auth_suppresses_success_and_failure_popups() {
+    fn auth_outcome_policies_gate_each_event_under_both_pam_flags() {
+        use facelock_core::config::NotificationPolicy::{Off, On, System};
+        for success in [On, Off, System] {
+            for failure in [On, Off, System] {
+                for matched in [true, false] {
+                    for silent in [true, false] {
+                        let recorder = RecordingNotifier::new();
+                        let mut config = desktop_config();
+                        config.notify_on_success = success;
+                        config.notify_on_failure = failure;
+                        notify_auth_outcome(&config, &recorder, &match_result(matched), silent);
+                        let policy = if matched { success } else { failure };
+                        assert_eq!(
+                            recorder.events().len(),
+                            usize::from(policy == On || (policy == System && !silent))
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn system_policy_suppresses_silent_success_and_failure_popups() {
         for matched in [true, false] {
             let recorder = RecordingNotifier::new();
-            notify_auth_outcome(&desktop_config(), &recorder, &match_result(matched), true);
+            let mut config = desktop_config();
+            config.notify_on_success = facelock_core::config::NotificationPolicy::System;
+            config.notify_on_failure = facelock_core::config::NotificationPolicy::System;
+            notify_auth_outcome(&config, &recorder, &match_result(matched), true);
             assert!(recorder.events().is_empty());
         }
     }

@@ -153,6 +153,62 @@ enum PamNotificationMode {
     Both,
 }
 
+/// Per-event feedback policy. Booleans remain aliases for On and Off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PamNotificationPolicy {
+    On,
+    Off,
+    System,
+}
+
+impl PamNotificationPolicy {
+    pub fn enabled(self, pam_silent: bool) -> bool {
+        match self {
+            Self::On => true,
+            Self::Off => false,
+            Self::System => !pam_silent,
+        }
+    }
+}
+
+impl From<bool> for PamNotificationPolicy {
+    fn from(value: bool) -> Self {
+        if value { Self::On } else { Self::Off }
+    }
+}
+
+impl<'de> Deserialize<'de> for PamNotificationPolicy {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        struct PolicyVisitor;
+        impl serde::de::Visitor<'_> for PolicyVisitor {
+            type Value = PamNotificationPolicy;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a boolean or one of \"on\", \"off\", \"system\"")
+            }
+            fn visit_bool<E: serde::de::Error>(
+                self,
+                value: bool,
+            ) -> std::result::Result<Self::Value, E> {
+                Ok(value.into())
+            }
+            fn visit_str<E: serde::de::Error>(
+                self,
+                value: &str,
+            ) -> std::result::Result<Self::Value, E> {
+                match value {
+                    "on" => Ok(PamNotificationPolicy::On),
+                    "off" => Ok(PamNotificationPolicy::Off),
+                    "system" => Ok(PamNotificationPolicy::System),
+                    _ => Err(E::unknown_variant(value, &["on", "off", "system"])),
+                }
+            }
+        }
+        deserializer.deserialize_any(PolicyVisitor)
+    }
+}
+
 /// Private mirror of the `[notification]` table in facelock-core's
 /// `NotificationConfig` — the canonical schema. The dependency ceiling
 /// (libc/toml/serde/zbus only) forbids sharing the types; keep field names
@@ -171,16 +227,20 @@ enum PamNotificationMode {
 #[serde(default)]
 struct PamNotificationConfig {
     mode: PamNotificationMode,
-    notify_prompt: bool,
-    notify_on_success: bool,
+    notify_prompt: PamNotificationPolicy,
+    notify_on_success: PamNotificationPolicy,
+    // Validated here even though failure popups are delivered by the daemon.
+    #[allow(dead_code)]
+    notify_on_failure: PamNotificationPolicy,
 }
 
 impl Default for PamNotificationConfig {
     fn default() -> Self {
         Self {
             mode: PamNotificationMode::Terminal,
-            notify_prompt: true,
-            notify_on_success: true,
+            notify_prompt: true.into(),
+            notify_on_success: true.into(),
+            notify_on_failure: false.into(),
         }
     }
 }
@@ -1260,7 +1320,7 @@ fn identify(pamh: *mut libc::c_void, flags: libc::c_int) -> libc::c_int {
     let silent = pam_silent(flags);
 
     // 4. Display scanning notice
-    if !silent && config.notification.notify_prompt && config.notification.terminal() {
+    if config.notification.notify_prompt.enabled(silent) && config.notification.terminal() {
         unsafe { pam_info(pamh, &gettext("Identifying face...")) };
     }
 
@@ -1268,8 +1328,7 @@ fn identify(pamh: *mut libc::c_void, flags: libc::c_int) -> libc::c_int {
     if config.daemon.mode == "oneshot" {
         let result = run_oneshot_auth(&service, &user, &config);
         if result == PAM_SUCCESS
-            && !silent
-            && config.notification.notify_on_success
+            && config.notification.notify_on_success.enabled(silent)
             && config.notification.terminal()
         {
             unsafe { pam_info(pamh, &gettext("Face recognized.")) };
@@ -1285,7 +1344,9 @@ fn identify(pamh: *mut libc::c_void, flags: libc::c_int) -> libc::c_int {
     match daemon_authenticate(&config, &user, silent) {
         Ok(AuthResponse::Matched { .. }) => {
             log_auth(&service, "success", &user, LOG_INFO);
-            if !silent && config.notification.notify_on_success && config.notification.terminal() {
+            if config.notification.notify_on_success.enabled(silent)
+                && config.notification.terminal()
+            {
                 unsafe { pam_info(pamh, &gettext("Face recognized.")) };
             }
             PAM_SUCCESS
@@ -1327,8 +1388,7 @@ fn identify(pamh: *mut libc::c_void, flags: libc::c_int) -> libc::c_int {
             );
             let result = run_oneshot_auth(&service, &user, &config);
             if result == PAM_SUCCESS
-                && !silent
-                && config.notification.notify_on_success
+                && config.notification.notify_on_success.enabled(silent)
                 && config.notification.terminal()
             {
                 unsafe { pam_info(pamh, &gettext("Face recognized.")) };
@@ -1384,6 +1444,42 @@ pub unsafe extern "C" fn pam_sm_setcred(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pam_notification_policy_parser_matches_core_semantics() {
+        for key in ["notify_prompt", "notify_on_success", "notify_on_failure"] {
+            for (value, expected) in [
+                ("true", PamNotificationPolicy::On),
+                ("false", PamNotificationPolicy::Off),
+                ("\"on\"", PamNotificationPolicy::On),
+                ("\"off\"", PamNotificationPolicy::Off),
+                ("\"system\"", PamNotificationPolicy::System),
+            ] {
+                let parsed: PamConfig =
+                    toml::from_str(&format!("[notification]\n{key} = {value}")).unwrap();
+                let actual = match key {
+                    "notify_prompt" => parsed.notification.notify_prompt,
+                    "notify_on_success" => parsed.notification.notify_on_success,
+                    _ => parsed.notification.notify_on_failure,
+                };
+                assert_eq!(actual, expected);
+                assert_eq!(actual.enabled(false), actual != PamNotificationPolicy::Off);
+                assert_eq!(actual.enabled(true), actual == PamNotificationPolicy::On);
+            }
+            for value in ["\"true\"", "\"always\"", "1", "[]", "{}"] {
+                assert!(
+                    toml::from_str::<PamConfig>(&format!("[notification]\n{key} = {value}"))
+                        .is_err()
+                );
+            }
+        }
+        let config: PamConfig = toml::from_str("[notification]\nnotify_prompt = true\nnotify_on_success = \"system\"\nnotify_on_failure = \"off\"").unwrap();
+        assert_eq!(config.notification.notify_prompt, PamNotificationPolicy::On);
+        assert_eq!(
+            config.notification.notify_on_success,
+            PamNotificationPolicy::System
+        );
+    }
 
     #[test]
     fn unsupported_silent_method_never_retries_through_oneshot() {
@@ -2141,7 +2237,7 @@ auth_bin = "/usr/local/bin/evil"
         assert!(config.security.pam_policy.is_none());
         assert_eq!(config.recognition.timeout_secs, DEFAULT_TIMEOUT_SECS);
         assert!(config.notification.terminal());
-        assert!(config.notification.notify_prompt);
-        assert!(config.notification.notify_on_success);
+        assert!(config.notification.notify_prompt.enabled(false));
+        assert!(config.notification.notify_on_success.enabled(false));
     }
 }

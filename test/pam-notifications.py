@@ -87,6 +87,37 @@ def daemon(work, legacy=False):
             process.wait(timeout=5)
 
 
+def check_sudo_policies(work):
+    """Exercise sudo's real default PAM_SILENT and explicit sudoers opt-out."""
+    service = Path('/etc/pam.d/sudo')
+    original = service.read_bytes()
+    sudoers = Path('/etc/sudoers.d/facelock-notification-test')
+    assert not sudoers.exists()
+    count = 0
+    try:
+        service.write_text('auth required pam_facelock.so\naccount required pam_permit.so\nsession required pam_permit.so\n')
+        (work / 'outcome').write_text('true')
+        with daemon(work) as calls:
+            for silent in [True, False]:
+                sudoers.write_text('testuser ALL=(root) /usr/bin/true\n' + ('' if silent else 'Defaults:testuser !pam_silent\n'))
+                sudoers.chmod(0o440)
+                for policy in [True, False, 'on', 'off', 'system']:
+                    CONFIG.write_text(f'[daemon]\nmode = "daemon"\n[security]\nabort_if_ssh = false\nabort_if_lid_closed = false\n[notification]\nmode = "terminal"\nnotify_prompt = {json.dumps(policy)}\nnotify_on_success = {json.dumps(policy)}\n')
+                    calls.write_text('')
+                    result = subprocess.run(['runuser', '-u', 'testuser', '--', 'sudo', '-k', '/usr/bin/true'], input='', capture_output=True, text=True, timeout=20)
+                    output = result.stdout + result.stderr
+                    assert result.returncode == 0, output
+                    visible = policy in (True, 'on') or (policy == 'system' and not silent)
+                    assert output.count('Identifying face...') == int(visible), (silent, policy, output)
+                    assert output.count('Face recognized.') == int(visible), (silent, policy, output)
+                    assert calls.read_text().splitlines() == ['AuthenticateSilent' if silent else 'Authenticate']
+                    count += 1
+    finally:
+        service.write_bytes(original)
+        sudoers.unlink(missing_ok=True)
+    return count
+
+
 def main():
     assert os.geteuid() == 0 and Path('/run/.containerenv').exists(), 'run only inside the disposable PAM container'
     assert not SERVICE.exists(), 'test service already exists'
@@ -101,6 +132,8 @@ def main():
         stub = f'#!/bin/sh\necho called >> {marker}\nexit "$(cat {work}/exit)"\n'
         SERVICE.write_text('auth required pam_facelock.so\n')
         try:
+            sudo_count = check_sudo_policies(work)
+            print(f'PASS: {sudo_count} real sudo policy cases', flush=True)
             for transport in ['oneshot', 'daemon', 'legacy']:
                 (work / 'outcome').write_text('true')
                 manager = daemon(work, legacy=transport == 'legacy') if transport != 'oneshot' else contextlib.nullcontext(None)
@@ -110,8 +143,8 @@ def main():
                         (work / 'exit').write_text('0' if matched else '1')
                         BINARY.write_text(stub)
                         BINARY.chmod(0o755)
-                        for mode, prompt, success in itertools.product(['off', 'terminal', 'desktop', 'both'], [True, False], [True, False]):
-                            CONFIG.write_text(f'[daemon]\nmode = "{"oneshot" if transport == "oneshot" else "daemon"}"\n[security]\nabort_if_ssh = false\nabort_if_lid_closed = false\n[notification]\nmode = "{mode}"\nnotify_prompt = {str(prompt).lower()}\nnotify_on_success = {str(success).lower()}\nnotify_on_failure = true\n')
+                        for mode, prompt, success in itertools.product(['off', 'terminal', 'desktop', 'both'], [True, False, 'on', 'off', 'system'], [True, False, 'on', 'off', 'system']):
+                            CONFIG.write_text(f'[daemon]\nmode = "{"oneshot" if transport == "oneshot" else "daemon"}"\n[security]\nabort_if_ssh = false\nabort_if_lid_closed = false\n[notification]\nmode = "{mode}"\nnotify_prompt = {json.dumps(prompt)}\nnotify_on_success = {json.dumps(success)}\nnotify_on_failure = "system"\n')
                             for interactive in [True, False]:
                                 for flags in [0, 1, 0x8000, 0x8001]:
                                     if calls:
@@ -121,10 +154,10 @@ def main():
                                     silent = bool(flags & 0x8000)
                                     unsupported = transport == 'legacy' and silent
                                     expected = []
-                                    if mode in ['terminal', 'both'] and not silent:
-                                        if prompt:
+                                    if mode in ['terminal', 'both']:
+                                        if prompt in (True, 'on') or (prompt == 'system' and not silent):
                                             expected.append([4, 'Identifying face...'])
-                                        if matched and success:
+                                        if matched and not unsupported and (success in (True, 'on') or (success == 'system' and not silent)):
                                             expected.append([4, 'Face recognized.'])
                                     result = 6 if unsupported else (0 if matched else 7)
                                     label = f'{transport=} {matched=} {mode=} {interactive=} {flags=} {prompt=} {success=}'
@@ -136,7 +169,7 @@ def main():
                                     else:
                                         assert marker.read_text() == 'called\n', label
                                     count += 1
-            print(f'PASS: {count} shell/PAM notification cases (fake daemon and oneshot child; no desktop delivery claim)')
+            print(f'PASS: {count} shell/PAM notification cases with boolean/string policies (fake daemon and oneshot child; no desktop delivery claim)')
         finally:
             CONFIG.write_bytes(config)
             shutil.copy2(backup, BINARY)

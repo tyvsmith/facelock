@@ -1661,6 +1661,15 @@ and every service file was read; a single unread place makes it `unknown` and
 names each one in `not_checked`, so an incomplete list is never mistaken for a
 complete one. What was found is still listed and still true.
 
+**Notification event policies.**
+
+`notifications.policy` reports canonical `prompt`, `on_success`, and `on_failure`
+strings whenever configuration is available, including when mode is off.
+Existing `notifications.delivery` booleans remain the event settings evaluated
+without `PAM_SILENT`; they do not predict a particular caller's feedback. The
+existing omission of `delivery` when mode is off is unchanged.
+
+
 **Stability tier.** Field names do not change and are not removed; new fields
 and new sections are additive; a removal is breaking. New words may be added to
 any of the typed vocabularies above, including `state`, so a consumer tolerates
@@ -1760,6 +1769,7 @@ are tested against:
   "notifications": {
     "state": "ok",
     "mode": "both",
+    "policy": { "prompt": "on", "on_success": "on", "on_failure": "off" },
     "delivery": { "prompt": true, "on_success": true, "on_failure": false }
   },
   "pam": {
@@ -4178,24 +4188,26 @@ the method call to the owner's unique bus name. A non-root owner is refused:
 the module falls through (oneshot fallback / password), never `PAM_SUCCESS`.
 
 ## PAM Semantics
+
 ### PAM authentication flags
 
-- `PAM_SILENT` suppresses PAM conversation feedback and desktop notifications
-  for that authentication request, independently of `[notification]`
-- silent daemon requests use `AuthenticateSilent(user: s)`, with the same reply,
-  caller authorization, rate limits, session/lid gates, cancellation, and audit
-  behavior as `Authenticate`; existing clients keep using `Authenticate`
-- an older daemon or bus policy without `AuthenticateSilent` falls through to
-  password authentication; an unsupported silent method never retries through
-  oneshot to bypass the running daemon's session checks
-- `PAM_DISALLOW_NULL_AUTHTOK` requires no additional action: face authentication
-  consumes no password token and never grants success from an empty token
-- unknown authentication flag bits are ignored; shell interactivity and terminal
-  availability do not change authentication policy
-- `PAM_SILENT` does not suppress audit records or the privileged `AuthAttempted`
-  signal; oneshot child output remains captured by PAM
-
-
+- notification event keys accept `true`/`"on"`, `false`/`"off"`, or `"system"`,
+  independently and in any mixture; unknown strings and other types are errors
+- `true`/`"on"` enables the event even under `PAM_SILENT`; `false`/`"off"`
+  disables it; `"system"` enables it only without `PAM_SILENT`
+- channel selection still applies; `mode = "off"` always disables feedback
+- omitted defaults remain start on, success on, failure off; serialization writes
+  canonical strings; existing boolean configurations require no migration
+- upgrade every config reader before using strings; older readers reject them
+- silent daemon requests use `AuthenticateSilent(user: s)` so the daemon can
+  evaluate each desktop event policy against the caller's flags; authorization,
+  rate limits, session/lid gates, cancellation, replies, and audit stay unchanged
+- a running older daemon or bus policy without `AuthenticateSilent` falls through
+  to password authentication, never oneshot past the daemon's session checks
+- `PAM_DISALLOW_NULL_AUTHTOK` has no additional effect because face authentication
+  consumes no password token; unknown authentication flag bits are ignored
+- shell interactivity does not change policy; audit records and privileged
+  authentication signals are not notification events
 
 | Outcome | PAM Code |
 |---------|----------|

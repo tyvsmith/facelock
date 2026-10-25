@@ -397,21 +397,24 @@
 # Default: "terminal"
 # mode = "terminal"
 
+# Event policies accept booleans or strings, independently for each event:
+#   true / "on"  — show even when the PAM caller requests silence
+#   false / "off" — never show
+#   "system"     — show unless the PAM caller requests silence (PAM_SILENT)
+# Notification mode "off" always disables feedback, regardless of event policies.
+# Existing boolean values remain supported; no migration is required.
+
 # Show prompt when scanning starts ("Identifying face...").
-# Default: true
-# notify_prompt = true
+# Default: "on" (equivalent to true)
+# notify_prompt = "on"
 
 # Show notification on successful face match.
-# Default: true
-# notify_on_success = true
+# Default: "on" (equivalent to true)
+# notify_on_success = "on"
 
 # Show notification on failed face match.
-# Default: false (failure is already visible — you get a password prompt).
-# Set explicitly here, unlike the options above: this key's per-field parser
-# default disagrees with the type's overall default when the [notification]
-# header is present but the key itself is omitted, so a fresh install must
-# ship the value to get the documented behavior.
-notify_on_failure = false
+# Default: "off" (failure already leads to the password prompt).
+notify_on_failure = "off"
 
 
 # ── Audit ─────────────────────────────────────────────────────────

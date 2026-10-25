@@ -103,9 +103,14 @@ sudo facelock pam add --service sudo
 .fi
 .RE
 .SS Authentication Flags
-PAM_SILENT suppresses terminal feedback and desktop notifications for this
-request. Authentication policy and audit logging remain active. An older daemon
-that lacks AuthenticateSilent falls through to password authentication.
+Notification event settings accept true or "on" (show even under PAM_SILENT),
+false or "off" (never show), and "system" (show unless PAM_SILENT is supplied).
+The notification mode still selects the channels; mode "off" disables all
+feedback. Defaults remain start on, success on, failure off. Boolean and string
+values may be mixed. Saved configurations use strings, which older versions
+cannot read.
+An older daemon that lacks AuthenticateSilent falls through to password
+authentication. Authentication policy and audit logging remain active.
 PAM_DISALLOW_NULL_AUTHTOK has no additional effect because face authentication
 does not consume a password token. Unknown authentication flag bits are ignored.
 
@@ -200,7 +205,8 @@ Exceeding a PAM-side deadline returns PAM_AUTH_ERR, not PAM_IGNORE.
 .B [notification]
 .BR mode ,
 .BR notify_prompt ,
-.BR notify_on_success
+.BR notify_on_success ,
+.BR notify_on_failure
 .br
 What the module writes into the PAM conversation while it waits. Desktop
 delivery is the daemon's job, not the module's.
