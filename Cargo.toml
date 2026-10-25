@@ -27,7 +27,7 @@ thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tss-esapi = "8.0.0-alpha.2"
+tss-esapi = { version = "8.0.0-alpha.2", default-features = false }
 
 [profile.release]
 lto = true
