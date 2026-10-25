@@ -9,7 +9,7 @@ derives-from:
   - dist/facelock.tmpfiles
   - systemd/facelock-daemon.service
   - docs/adr/**
-reviewed: 2026-10-20
+reviewed: 2026-10-25
 ---
 
 # Security Rules
@@ -22,7 +22,7 @@ most recent to change them.
 - `security.require_ir` defaults to **true**. Never weaken this default.
 - Frame variance checks must be in the auth path.
 - Model files SHA256-verified at load time.
-- D-Bus system bus policy: deny-all default; every local user may send `Authenticate` only (daemon checks caller UID == target user), root gets the whole interface incl. signals; no group policy (ADR 010).
+- D-Bus system bus policy: deny-all default; every local user may send `Authenticate` and `AuthenticateSilent` (both check caller UID == target user), root gets the whole interface incl. signals; no group policy (ADR 010).
 - D-Bus daemon verifies caller UID via `GetConnectionUnixUser` before executing methods.
 - D-Bus message size limits enforced by the bus daemon.
 - PAM module logs all auth attempts to syslog.

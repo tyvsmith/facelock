@@ -892,8 +892,9 @@ fn security_section(
 #[derive(Debug, Clone, Serialize)]
 struct NotificationsDetail {
     mode: NotificationModeWord,
-    /// When each notification is sent; absent when the mode is `off` and
-    /// nothing is sent at all.
+    policy: NotificationPolicies,
+    /// Legacy non-silent request projection; use `policy` for PAM_SILENT behavior.
+    /// Absent when mode is `off`.
     #[serde(skip_serializing_if = "Option::is_none")]
     delivery: Option<NotificationDelivery>,
 }
@@ -908,6 +909,32 @@ enum NotificationModeWord {
     Terminal,
     Desktop,
     Both,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct NotificationPolicies {
+    prompt: NotificationPolicyWord,
+    on_success: NotificationPolicyWord,
+    on_failure: NotificationPolicyWord,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum NotificationPolicyWord {
+    On,
+    Off,
+    System,
+}
+
+impl From<facelock_core::config::NotificationPolicy> for NotificationPolicyWord {
+    fn from(policy: facelock_core::config::NotificationPolicy) -> Self {
+        use facelock_core::config::NotificationPolicy;
+        match policy {
+            NotificationPolicy::On => Self::On,
+            NotificationPolicy::Off => Self::Off,
+            NotificationPolicy::System => Self::System,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -941,10 +968,15 @@ fn notifications_section(
     // and the human report renders no verdict line here either.
     Section::new(Verdict::ok()).with(NotificationsDetail {
         mode,
+        policy: NotificationPolicies {
+            prompt: notifications.notify_prompt.into(),
+            on_success: notifications.notify_on_success.into(),
+            on_failure: notifications.notify_on_failure.into(),
+        },
         delivery: (notifications.mode != NotificationMode::Off).then_some(NotificationDelivery {
-            prompt: notifications.notify_prompt,
-            on_success: notifications.notify_on_success,
-            on_failure: notifications.notify_on_failure,
+            prompt: notifications.notify_prompt.enabled(false),
+            on_success: notifications.notify_on_success.enabled(false),
+            on_failure: notifications.notify_on_failure.enabled(false),
         }),
     })
 }
@@ -1176,9 +1208,9 @@ mod tests {
         });
         health.notifications = Fact::claimed(NotificationHealth {
             mode: facelock_core::config::NotificationMode::Off,
-            notify_prompt: false,
-            notify_on_success: false,
-            notify_on_failure: false,
+            notify_prompt: facelock_core::config::NotificationPolicy::Off,
+            notify_on_success: facelock_core::config::NotificationPolicy::Off,
+            notify_on_failure: facelock_core::config::NotificationPolicy::Off,
         });
         health.pam = PamWiring {
             module_path: "/lib/security/pam_facelock.so".into(),
@@ -1344,6 +1376,7 @@ mod tests {
             "notifications": {
                 "state": "ok",
                 "mode": "both",
+                "policy": { "prompt": "on", "on_success": "on", "on_failure": "off" },
                 "delivery": { "prompt": true, "on_success": true, "on_failure": false }
             },
             "pam": {
@@ -1366,6 +1399,37 @@ mod tests {
             }
         });
         assert_eq!(document(&healthy()), expected);
+    }
+
+    #[test]
+    fn notification_policies_preserve_system_and_legacy_delivery() {
+        use facelock_core::config::{NotificationMode, NotificationPolicy};
+        let mut health = healthy();
+        health.notifications = Fact::claimed(NotificationHealth {
+            mode: NotificationMode::Both,
+            notify_prompt: NotificationPolicy::System,
+            notify_on_success: NotificationPolicy::On,
+            notify_on_failure: NotificationPolicy::Off,
+        });
+        let value = document(&health);
+        assert_eq!(
+            value["notifications"]["policy"],
+            serde_json::json!({
+                "prompt": "system", "on_success": "on", "on_failure": "off"
+            })
+        );
+        assert_eq!(
+            value["notifications"]["delivery"],
+            serde_json::json!({
+                "prompt": true, "on_success": true, "on_failure": false
+            })
+        );
+        if let Fact::Claimed(notifications) = &mut health.notifications {
+            notifications.mode = NotificationMode::Off;
+        }
+        let value = document(&health);
+        assert_eq!(value["notifications"]["policy"]["prompt"], "system");
+        assert!(value["notifications"].get("delivery").is_none());
     }
 
     /// The document `docs/contracts.md` prints is the document this build

@@ -22,7 +22,7 @@
 use std::path::{Path, PathBuf};
 
 use facelock_core::Config;
-use facelock_core::config::{EncryptionMethod, NotificationMode};
+use facelock_core::config::{EncryptionMethod, NotificationMode, NotificationPolicy};
 use facelock_core::types::DeviceBinding;
 use facelock_store::{FaceStore, StoreError};
 
@@ -495,9 +495,9 @@ impl SecurityHealth {
 #[derive(Debug, Clone)]
 pub struct NotificationHealth {
     pub mode: NotificationMode,
-    pub notify_prompt: bool,
-    pub notify_on_success: bool,
-    pub notify_on_failure: bool,
+    pub notify_prompt: NotificationPolicy,
+    pub notify_on_success: NotificationPolicy,
+    pub notify_on_failure: NotificationPolicy,
 }
 
 impl NotificationHealth {
@@ -584,6 +584,22 @@ mod tests {
 
     fn config_with(toml: &str) -> Config {
         Config::parse(toml).expect("test config parses")
+    }
+
+    #[test]
+    fn notification_health_preserves_mixed_policies() {
+        let config = config_with(
+            r#"
+[notification]
+notify_prompt = "system"
+notify_on_success = true
+notify_on_failure = "off"
+"#,
+        );
+        let health = NotificationHealth::from_config(&config);
+        assert_eq!(health.notify_prompt, NotificationPolicy::System);
+        assert_eq!(health.notify_on_success, NotificationPolicy::On);
+        assert_eq!(health.notify_on_failure, NotificationPolicy::Off);
     }
 
     // -----------------------------------------------------------------------

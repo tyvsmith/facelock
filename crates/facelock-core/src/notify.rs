@@ -73,9 +73,9 @@ pub fn should_notify_desktop(config: &NotificationConfig, event: &NotifyEvent) -
         return false;
     }
     match event {
-        NotifyEvent::Scanning => config.notify_prompt,
-        NotifyEvent::Success { .. } => config.notify_on_success,
-        NotifyEvent::Failure { .. } => config.notify_on_failure,
+        NotifyEvent::Scanning => config.notify_prompt.enabled(false),
+        NotifyEvent::Success { .. } => config.notify_on_success.enabled(false),
+        NotifyEvent::Failure { .. } => config.notify_on_failure.enabled(false),
     }
 }
 
@@ -114,9 +114,9 @@ mod tests {
     fn desktop_config() -> NotificationConfig {
         NotificationConfig {
             mode: NotificationMode::Both,
-            notify_prompt: true,
-            notify_on_success: true,
-            notify_on_failure: true,
+            notify_prompt: true.into(),
+            notify_on_success: true.into(),
+            notify_on_failure: true.into(),
         }
     }
 
@@ -171,7 +171,7 @@ mod tests {
         let config = NotificationConfig::default();
         assert!(config.terminal());
         assert!(!config.desktop());
-        assert!(!config.notify_on_failure);
+        assert!(!config.notify_on_failure.enabled(false));
     }
 
     #[test]
@@ -187,7 +187,7 @@ mod tests {
     #[test]
     fn notify_prompt_controls_scanning() {
         let config = NotificationConfig {
-            notify_prompt: false,
+            notify_prompt: false.into(),
             ..desktop_config()
         };
         assert!(!should_notify_desktop(&config, &NotifyEvent::Scanning));
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn notify_on_success_controls_success() {
         let config = NotificationConfig {
-            notify_on_success: false,
+            notify_on_success: false.into(),
             ..desktop_config()
         };
         assert!(should_notify_desktop(&config, &NotifyEvent::Scanning));
@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn notify_on_failure_controls_failure() {
         let config = NotificationConfig {
-            notify_on_failure: false,
+            notify_on_failure: false.into(),
             ..desktop_config()
         };
         assert!(should_notify_desktop(&config, &success()));

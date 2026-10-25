@@ -14,6 +14,63 @@ pub enum ConfigError {
     Validation(String),
 }
 
+/// Per-event feedback policy. Booleans remain aliases for On and Off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NotificationPolicy {
+    On,
+    Off,
+    System,
+}
+
+impl NotificationPolicy {
+    pub fn enabled(self, pam_silent: bool) -> bool {
+        match self {
+            Self::On => true,
+            Self::Off => false,
+            Self::System => !pam_silent,
+        }
+    }
+}
+
+impl From<bool> for NotificationPolicy {
+    fn from(value: bool) -> Self {
+        if value { Self::On } else { Self::Off }
+    }
+}
+
+impl<'de> Deserialize<'de> for NotificationPolicy {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        struct PolicyVisitor;
+        impl serde::de::Visitor<'_> for PolicyVisitor {
+            type Value = NotificationPolicy;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a boolean or one of \"on\", \"off\", \"system\"")
+            }
+            fn visit_bool<E: serde::de::Error>(
+                self,
+                value: bool,
+            ) -> std::result::Result<Self::Value, E> {
+                Ok(value.into())
+            }
+            fn visit_str<E: serde::de::Error>(
+                self,
+                value: &str,
+            ) -> std::result::Result<Self::Value, E> {
+                match value {
+                    "on" => Ok(NotificationPolicy::On),
+                    "off" => Ok(NotificationPolicy::Off),
+                    "system" => Ok(NotificationPolicy::System),
+                    _ => Err(E::unknown_variant(value, &["on", "off", "system"])),
+                }
+            }
+        }
+        deserializer.deserialize_any(PolicyVisitor)
+    }
+}
+
 /// `Default` is derived and composes each section's own `Default`, so
 /// `Config::default()` and `Config::parse("")` are the same value by
 /// construction rather than by coincidence — a property
@@ -565,22 +622,22 @@ pub enum NotificationMode {
 pub struct NotificationConfig {
     pub mode: NotificationMode,
     /// Show prompt text/notification when scanning starts ("Identifying face...")
-    pub notify_prompt: bool,
+    pub notify_prompt: NotificationPolicy,
     /// Show notification on successful face match
-    pub notify_on_success: bool,
+    pub notify_on_success: NotificationPolicy,
     /// Show notification on failed face match.
     /// Default: false — a failed match is already visible (you get a password
     /// prompt).
-    pub notify_on_failure: bool,
+    pub notify_on_failure: NotificationPolicy,
 }
 
 impl Default for NotificationConfig {
     fn default() -> Self {
         Self {
             mode: NotificationMode::Terminal,
-            notify_prompt: true,
-            notify_on_success: true,
-            notify_on_failure: false,
+            notify_prompt: true.into(),
+            notify_on_success: true.into(),
+            notify_on_failure: false.into(),
         }
     }
 }
@@ -1102,6 +1159,43 @@ fn is_sha256_hex(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mixed_notification_policies_serialize_as_strings_and_round_trip() {
+        let config = Config::parse("[notification]\nnotify_prompt = true\nnotify_on_success = \"system\"\nnotify_on_failure = false").unwrap();
+        let serialized = toml::to_string(&config).unwrap();
+        assert!(serialized.contains("notify_prompt = \"on\""));
+        assert!(serialized.contains("notify_on_success = \"system\""));
+        assert!(serialized.contains("notify_on_failure = \"off\""));
+        assert_eq!(
+            Config::parse(&serialized).unwrap().notification,
+            config.notification
+        );
+    }
+
+    #[test]
+    fn notification_policies_accept_boolean_and_string_values() {
+        for (value, expected) in [
+            ("true", NotificationPolicy::On),
+            ("false", NotificationPolicy::Off),
+            ("\"on\"", NotificationPolicy::On),
+            ("\"off\"", NotificationPolicy::Off),
+            ("\"system\"", NotificationPolicy::System),
+        ] {
+            let config = Config::parse(&format!("[notification]\nnotify_prompt = {value}\nnotify_on_success = {value}\nnotify_on_failure = {value}\n")).unwrap();
+            assert_eq!(config.notification.notify_prompt, expected);
+            assert_eq!(config.notification.notify_on_success, expected);
+            assert_eq!(config.notification.notify_on_failure, expected);
+            assert_eq!(expected.enabled(false), expected != NotificationPolicy::Off);
+            assert_eq!(expected.enabled(true), expected == NotificationPolicy::On);
+        }
+        for value in ["\"true\"", "\"always\"", "1", "[]", "{}"] {
+            assert!(
+                Config::parse(&format!("[notification]\nnotify_prompt = {value}")).is_err(),
+                "accepted {value}"
+            );
+        }
+    }
 
     #[test]
     fn parse_minimal_config() {

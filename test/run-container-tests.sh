@@ -829,6 +829,8 @@ wait_for_daemon_name() {
     return 1
 }
 
+run_test "shell and PAM notification matrix" "python3 /pam-notifications.py" 0
+
 python3 /fake-facelock-daemon.py > /tmp/fake-daemon-root.log 2>&1 &
 FAKE_ROOT_PID=$!
 wait_for_daemon_name || echo "warning: root fake daemon did not claim the name"

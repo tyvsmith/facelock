@@ -1661,6 +1661,15 @@ and every service file was read; a single unread place makes it `unknown` and
 names each one in `not_checked`, so an incomplete list is never mistaken for a
 complete one. What was found is still listed and still true.
 
+**Notification event policies.**
+
+`notifications.policy` reports canonical `prompt`, `on_success`, and `on_failure`
+strings whenever configuration is available, including when mode is off.
+Existing `notifications.delivery` booleans remain the event settings evaluated
+without `PAM_SILENT`; they do not predict a particular caller's feedback. The
+existing omission of `delivery` when mode is off is unchanged.
+
+
 **Stability tier.** Field names do not change and are not removed; new fields
 and new sections are additive; a removal is breaking. New words may be added to
 any of the typed vocabularies above, including `state`, so a consumer tolerates
@@ -1760,6 +1769,7 @@ are tested against:
   "notifications": {
     "state": "ok",
     "mode": "both",
+    "policy": { "prompt": "on", "on_success": "on", "on_failure": "off" },
     "delivery": { "prompt": true, "on_success": true, "on_failure": false }
   },
   "pam": {
@@ -2009,7 +2019,7 @@ pass, which is how this contract lost its coverage twice (issues #189, #303).
 **AccessDenied hint.** A D-Bus `AccessDenied` reply carries one actionable
 hint (`ipc_client::add_access_denied_hint`): root is required. Since almost
 every D-Bus method is root-only (see IPC Protocol below) and, under ADR 010,
-the bus admits a non-root caller to `Authenticate` alone, a denial from the
+the bus admits a non-root caller to `Authenticate` and `AuthenticateSilent`, a denial from the
 daemon's `require_root` and a denial from the bus policy have the same fix.
 There is no group to join (ADR 010).
 
@@ -3875,13 +3885,13 @@ The daemon registers on the system bus via D-Bus activation.
 - **Interface**: `org.facelock.Daemon`
 
 ### Methods
-`Authenticate`, `TestAuthenticate`, `Enroll`, `ListModels`, `RemoveModel`, `ClearModels`, `PreviewFrame`, `PreviewDetectFrame`, `ListDevices`, `ReleaseCamera`, `Ping`, `Shutdown`
+`Authenticate`, `AuthenticateSilent`, `TestAuthenticate`, `Enroll`, `ListModels`, `RemoveModel`, `ClearModels`, `PreviewFrame`, `PreviewDetectFrame`, `ListDevices`, `ReleaseCamera`, `Ping`, `Shutdown`
 
 Method authorization contract (updated under DEC-6/N13 — the CLI's
 root-by-default privilege map left no unprivileged consumer for most of
 these, so tightening them to root-only closes the per-frame similarity
 hill-climbing oracle by construction rather than by redacting fields):
-- `Authenticate`: root or the matching Unix user. The one user-scoped method
+- `Authenticate` and `AuthenticateSilent`: root or the matching Unix user. User-scoped authentication
   — screen lockers run their PAM stack as the user, so this is architecture,
   not policy. It is **real authentication**: a failed attempt that saw a face
   consumes biometric-guess budget, whatever the caller's UID; no-face attempts
@@ -3898,8 +3908,8 @@ hill-climbing oracle by construction rather than by redacting fields):
   `PreviewFrame`, `PreviewDetectFrame`, `ListDevices`, `ReleaseCamera`,
   `Ping`, `Shutdown` — is root only.
   The bus policy (`dbus/org.facelock.Daemon.conf`) grants root the whole
-  interface and every local user exactly `Authenticate` (ADR 010) — so
-  adding a root-only method needs no policy edit, and a future user-scoped
+  interface and every local user `Authenticate` and `AuthenticateSilent`
+  (ADR 010), so adding a root-only method needs no policy edit, and a future user-scoped
   method needs one deliberately; there is no group policy, and signals are
   root-only. The per-method root/user-scoped decision is the in-daemon check on
   the caller UID from `GetConnectionUnixUser`, keyed by a table-driven scope
@@ -3909,8 +3919,8 @@ hill-climbing oracle by construction rather than by redacting fields):
 Daemon ingress ordering is part of the authorization contract. The server
 resolves and authorizes the caller/target pair before refreshing daemon
 activity or touching handler reload, SQLite, audit, or capture state. Every
-authorized non-root `Authenticate` then spends one token from a daemon-local,
-per-caller-UID availability bucket before any of that shared work: capacity
+authorized non-root `Authenticate` or `AuthenticateSilent` then spends one
+token from a daemon-local, per-caller-UID availability bucket before any of that shared work: capacity
 10, one token restored per monotonic second. Saturation is an in-band
 recoverable `AuthResult` (`model_id = -2`, `label = "rate limited"`), so PAM
 continues to the password. The charge applies even when the request later
@@ -3918,12 +3928,12 @@ finds no model, fails another preflight gate, or meets a busy capture. UID 0
 is trusted and exempt from this ingress bucket; `TestAuthenticate` remains
 root-only and ingress-budget-free. This availability budget is distinct from
 `security.rate_limit`: the latter remains the persistent, per-target-user
-biometric-guess limiter and still charges root `Authenticate` failures under
-the rules in "facelock test Semantics".
+biometric-guess limiter and still charges root failures from both
+authentication methods under the rules in "facelock test Semantics".
 
 The remote-session gate is bound to the D-Bus caller rather than the daemon's
 environment, and never considers the machine's other sessions. For an
-authorized `Authenticate`, root included, with
+authorized `Authenticate` or `AuthenticateSilent`, root included, with
 `security.abort_if_ssh = true`, the daemon asks
 `org.freedesktop.DBus.GetConnectionCredentials` for the message sender's
 unique bus name and requires the returned `ProcessFD`. It derives the PID from
@@ -3973,7 +3983,7 @@ transport continues to enforce SSH provenance from the PAM-sanitized
 `SSH_CONNECTION` / `SSH_TTY` environment instead of D-Bus.
 
 The lid gate rides the same pre-lock boundary, and is otherwise unlike the
-remote-session gate. For an authorized `Authenticate` with
+remote-session gate. For an authorized `Authenticate` or `AuthenticateSilent` with
 `security.abort_if_lid_closed = true` — the default, and **including UID 0**,
 since a PAM `sudo` attempt arrives as root — the daemon reads
 `org.freedesktop.login1.Manager.LidClosed` with property caching disabled, so
@@ -4035,16 +4045,17 @@ Enrollment behavior is mode-independent: oneshot (`facelock enroll` in direct
 mode) and the daemon's `Enroll` method run the same capture loop, so the
 quality gate and the angle-diversity check apply in both.
 
-Capture concurrency: `Authenticate`, `TestAuthenticate`, `Enroll`,
+Capture concurrency: `Authenticate`, `AuthenticateSilent`, `TestAuthenticate`, `Enroll`,
 `PreviewFrame`, and `PreviewDetectFrame` are serialized by an in-flight
 capture guard. While one capture is in progress, a concurrent call to any of
 these methods fails **immediately** with an
 `org.freedesktop.DBus.Error.Failed` error whose message contains `daemon
 busy` (no queuing behind the internal handler lock). An authorized non-root
-`Authenticate` spends its ingress token before this busy rejection.
+`Authenticate` or `AuthenticateSilent` spends its ingress token before this
+busy rejection.
 
-`Authenticate` and `TestAuthenticate` run their camera-independent audited
-preflight on one locked handler generation before claiming the capture guard.
+`Authenticate`, `AuthenticateSilent`, and `TestAuthenticate` run their
+camera-independent audited preflight on one locked handler generation before claiming the capture guard.
 A preflight rejection such as no enrolled models therefore never occupies the
 global capture slot. The handler stays locked across a successful preflight
 and capture admission so live reload cannot turn the split into a fail-open
@@ -4057,7 +4068,8 @@ degrade to the next auth mechanism (password), never a lockout.
 
 ### Signals
 - `AuthAttempted(user: s, matched: b)` — emitted best-effort after each successful method
-  return from `Authenticate` and `TestAuthenticate`, including in-band preflight
+  return from `Authenticate`, `AuthenticateSilent`, and `TestAuthenticate`,
+  including in-band preflight
   rejections where no camera opened; out-of-band D-Bus errors emit none. The payload
   intentionally carries **no similarity score** (the raw biometric score is
   an information leak / spoof-tuning oracle). The system bus policy
@@ -4070,7 +4082,7 @@ enum variants are not wire wrappers:
 
 | Method | Return value |
 |--------|--------------|
-| `Authenticate`, `TestAuthenticate` | `AuthResult { matched, model_id, label, similarity }` |
+| `Authenticate`, `AuthenticateSilent`, `TestAuthenticate` | `AuthResult { matched, model_id, label, similarity }` |
 | `Enroll` | `(model_id: u32, embedding_count: u32)` |
 | `ListModels` | array of `ModelInfo { id, user, label, created_at, embedder_model, device_id, key_id }` |
 | `PreviewFrame` | JPEG byte array |
@@ -4091,8 +4103,8 @@ daemon from either side of that change cannot decode each other's
 ### Authenticate error encoding
 
 `Authenticate` returns `AuthResult (matched: b, model_id: i, label: s, similarity: d)`.
-`TestAuthenticate` returns the same type with the same sentinels — one
-encoding, so the two cannot drift.
+`AuthenticateSilent` and `TestAuthenticate` return the same type with the
+same sentinels. All three methods share one encoding.
 Sentinel `model_id` values (only meaningful with `matched == false`):
 
 | model_id | Meaning |
@@ -4178,6 +4190,26 @@ the method call to the owner's unique bus name. A non-root owner is refused:
 the module falls through (oneshot fallback / password), never `PAM_SUCCESS`.
 
 ## PAM Semantics
+
+### PAM authentication flags
+
+- notification event keys accept `true`/`"on"`, `false`/`"off"`, or `"system"`,
+  independently and in any mixture; unknown strings and other types are errors
+- `true`/`"on"` enables the event even under `PAM_SILENT`; `false`/`"off"`
+  disables it; `"system"` enables it only without `PAM_SILENT`
+- channel selection still applies; `mode = "off"` always disables feedback
+- omitted defaults remain start on, success on, failure off; serialization writes
+  canonical strings; existing boolean configurations require no migration
+- upgrade every config reader before using strings; older readers reject them
+- silent daemon requests use `AuthenticateSilent(user: s)` so the daemon can
+  evaluate each desktop event policy against the caller's flags; authorization,
+  rate limits, session/lid gates, cancellation, replies, and audit stay unchanged
+- a running older daemon or bus policy without `AuthenticateSilent` falls through
+  to password authentication, never oneshot past the daemon's session checks
+- `PAM_DISALLOW_NULL_AUTHTOK` has no additional effect because face authentication
+  consumes no password token; unknown authentication flag bits are ignored
+- shell interactivity does not change policy; audit records and privileged
+  authentication signals are not notification events
 
 | Outcome | PAM Code |
 |---------|----------|

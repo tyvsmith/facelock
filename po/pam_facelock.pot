@@ -17,11 +17,11 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: crates/pam-facelock/src/lib.rs:1226
+#: crates/pam-facelock/src/lib.rs:1324
 msgid "Identifying face..."
 msgstr ""
 
-#: crates/pam-facelock/src/lib.rs:1236 crates/pam-facelock/src/lib.rs:1250
-#: crates/pam-facelock/src/lib.rs:1294
+#: crates/pam-facelock/src/lib.rs:1334 crates/pam-facelock/src/lib.rs:1350
+#: crates/pam-facelock/src/lib.rs:1394
 msgid "Face recognized."
 msgstr ""

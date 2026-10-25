@@ -153,6 +153,62 @@ enum PamNotificationMode {
     Both,
 }
 
+/// Per-event feedback policy. Booleans remain aliases for On and Off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PamNotificationPolicy {
+    On,
+    Off,
+    System,
+}
+
+impl PamNotificationPolicy {
+    pub fn enabled(self, pam_silent: bool) -> bool {
+        match self {
+            Self::On => true,
+            Self::Off => false,
+            Self::System => !pam_silent,
+        }
+    }
+}
+
+impl From<bool> for PamNotificationPolicy {
+    fn from(value: bool) -> Self {
+        if value { Self::On } else { Self::Off }
+    }
+}
+
+impl<'de> Deserialize<'de> for PamNotificationPolicy {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        struct PolicyVisitor;
+        impl serde::de::Visitor<'_> for PolicyVisitor {
+            type Value = PamNotificationPolicy;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a boolean or one of \"on\", \"off\", \"system\"")
+            }
+            fn visit_bool<E: serde::de::Error>(
+                self,
+                value: bool,
+            ) -> std::result::Result<Self::Value, E> {
+                Ok(value.into())
+            }
+            fn visit_str<E: serde::de::Error>(
+                self,
+                value: &str,
+            ) -> std::result::Result<Self::Value, E> {
+                match value {
+                    "on" => Ok(PamNotificationPolicy::On),
+                    "off" => Ok(PamNotificationPolicy::Off),
+                    "system" => Ok(PamNotificationPolicy::System),
+                    _ => Err(E::unknown_variant(value, &["on", "off", "system"])),
+                }
+            }
+        }
+        deserializer.deserialize_any(PolicyVisitor)
+    }
+}
+
 /// Private mirror of the `[notification]` table in facelock-core's
 /// `NotificationConfig` — the canonical schema. The dependency ceiling
 /// (libc/toml/serde/zbus only) forbids sharing the types; keep field names
@@ -171,16 +227,20 @@ enum PamNotificationMode {
 #[serde(default)]
 struct PamNotificationConfig {
     mode: PamNotificationMode,
-    notify_prompt: bool,
-    notify_on_success: bool,
+    notify_prompt: PamNotificationPolicy,
+    notify_on_success: PamNotificationPolicy,
+    // Validated here even though failure popups are delivered by the daemon.
+    #[allow(dead_code)]
+    notify_on_failure: PamNotificationPolicy,
 }
 
 impl Default for PamNotificationConfig {
     fn default() -> Self {
         Self {
             mode: PamNotificationMode::Terminal,
-            notify_prompt: true,
-            notify_on_success: true,
+            notify_prompt: true.into(),
+            notify_on_success: true.into(),
+            notify_on_failure: false.into(),
         }
     }
 }
@@ -530,6 +590,22 @@ fn classify_authenticate_error(err: &zbus::Error) -> String {
     }
 }
 
+// A running older daemon must not be bypassed through oneshot when it lacks
+// the silent method: oneshot cannot reproduce its logind provenance checks.
+fn classify_authentication_reply_error(err: &zbus::Error, silent: bool) -> String {
+    if silent
+        && matches!(err, zbus::Error::FDO(e) if matches!(**e, zbus::fdo::Error::UnknownMethod(_) | zbus::fdo::Error::UnknownInterface(_)))
+    {
+        return format!("dbus_access_denied: silent authentication unsupported: {err}");
+    }
+    if silent
+        && matches!(err, zbus::Error::MethodError(name, _, _) if matches!(name.as_str(), "org.freedesktop.DBus.Error.UnknownMethod" | "org.freedesktop.DBus.Error.UnknownInterface"))
+    {
+        return format!("dbus_access_denied: silent authentication unsupported: {err}");
+    }
+    classify_authenticate_error(err)
+}
+
 /// What `authenticate` does with an `Err` from the daemon transport.
 #[derive(Debug, PartialEq, Eq)]
 enum TransportErrorAction {
@@ -645,7 +721,11 @@ async fn verify_daemon_peer(
 /// long-lived host such as a locker, and the dropped connection's close must
 /// still run so the daemon's caller-departure watch cancels the stuck
 /// authentication, both of which a single-threaded runtime would prevent.
-fn daemon_authenticate(config: &PamConfig, user: &str) -> Result<AuthResponse, String> {
+fn daemon_authenticate(
+    config: &PamConfig,
+    user: &str,
+    silent: bool,
+) -> Result<AuthResponse, String> {
     // Method timeout = recognition timeout + buffer for camera open/warmup/model load
     let method_timeout_secs = config.recognition.timeout_secs as u64 + 5;
     // Overall deadline adds a further buffer for connection establishment,
@@ -660,6 +740,7 @@ fn daemon_authenticate(config: &PamConfig, user: &str) -> Result<AuthResponse, S
             let _ = tx.send(zbus::block_on(daemon_authenticate_async(
                 method_timeout_secs,
                 &user_owned,
+                silent,
             )));
         })
         .map_err(|e| format!("dbus_call_failed: worker thread spawn failed: {e}"))?;
@@ -680,6 +761,7 @@ fn daemon_authenticate(config: &PamConfig, user: &str) -> Result<AuthResponse, S
 async fn daemon_authenticate_async(
     method_timeout_secs: u64,
     user: &str,
+    silent: bool,
 ) -> Result<AuthResponse, String> {
     let connection = zbus::connection::Builder::system()
         .method_timeout(std::time::Duration::from_secs(method_timeout_secs))
@@ -701,9 +783,16 @@ async fn daemon_authenticate_async(
 
     // D-Bus method returns (matched: bool, model_id: i32, label: String, similarity: f64)
     let reply: (bool, i32, String, f64) = proxy
-        .call("Authenticate", &(user,))
+        .call(
+            if silent {
+                "AuthenticateSilent"
+            } else {
+                "Authenticate"
+            },
+            &(user,),
+        )
         .await
-        .map_err(|e: zbus::Error| classify_authenticate_error(&e))?;
+        .map_err(|e: zbus::Error| classify_authentication_reply_error(&e, silent))?;
 
     let (matched, model_id, label, similarity) = reply;
     Ok(parse_auth_reply(matched, model_id, label, similarity))
@@ -1163,7 +1252,14 @@ fn pam_code_for_no_match(face_seen: bool, similarity: f32) -> libc::c_int {
     }
 }
 
-fn identify(pamh: *mut libc::c_void) -> libc::c_int {
+// Empty-token policy does not apply: face authentication consumes no PAM_AUTHTOK.
+// Unknown flag bits are ignored.
+fn pam_silent(flags: libc::c_int) -> bool {
+    const PAM_SILENT: libc::c_int = 0x8000;
+    flags & PAM_SILENT != 0
+}
+
+fn identify(pamh: *mut libc::c_void, flags: libc::c_int) -> libc::c_int {
     // 0. Get PAM service name for logging
     let service = unsafe { pam_get_service(pamh) }.unwrap_or_else(|| "unknown".to_string());
 
@@ -1221,8 +1317,10 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
         }
     };
 
+    let silent = pam_silent(flags);
+
     // 4. Display scanning notice
-    if config.notification.notify_prompt && config.notification.terminal() {
+    if config.notification.notify_prompt.enabled(silent) && config.notification.terminal() {
         unsafe { pam_info(pamh, &gettext("Identifying face...")) };
     }
 
@@ -1230,7 +1328,7 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
     if config.daemon.mode == "oneshot" {
         let result = run_oneshot_auth(&service, &user, &config);
         if result == PAM_SUCCESS
-            && config.notification.notify_on_success
+            && config.notification.notify_on_success.enabled(silent)
             && config.notification.terminal()
         {
             unsafe { pam_info(pamh, &gettext("Face recognized.")) };
@@ -1243,10 +1341,12 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
     // notify-send into the user's session bus); the auth_attempted signal
     // carries no notification duty. PAM only provides terminal feedback via
     // pam_info().
-    match daemon_authenticate(&config, &user) {
+    match daemon_authenticate(&config, &user, silent) {
         Ok(AuthResponse::Matched { .. }) => {
             log_auth(&service, "success", &user, LOG_INFO);
-            if config.notification.notify_on_success && config.notification.terminal() {
+            if config.notification.notify_on_success.enabled(silent)
+                && config.notification.terminal()
+            {
                 unsafe { pam_info(pamh, &gettext("Face recognized.")) };
             }
             PAM_SUCCESS
@@ -1288,7 +1388,7 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
             );
             let result = run_oneshot_auth(&service, &user, &config);
             if result == PAM_SUCCESS
-                && config.notification.notify_on_success
+                && config.notification.notify_on_success.enabled(silent)
                 && config.notification.terminal()
             {
                 unsafe { pam_info(pamh, &gettext("Face recognized.")) };
@@ -1309,12 +1409,12 @@ fn identify(pamh: *mut libc::c_void) -> libc::c_int {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pam_sm_authenticate(
     pamh: *mut libc::c_void,
-    _flags: libc::c_int,
+    flags: libc::c_int,
     _argc: libc::c_int,
     _argv: *const *const libc::c_char,
 ) -> libc::c_int {
     // catch_unwind at FFI boundary: any panic -> PAM_IGNORE
-    match panic::catch_unwind(panic::AssertUnwindSafe(|| identify(pamh))) {
+    match panic::catch_unwind(panic::AssertUnwindSafe(|| identify(pamh, flags))) {
         Ok(code) => code,
         Err(_) => {
             // Panic occurred -- log and fail gracefully
@@ -1344,6 +1444,87 @@ pub unsafe extern "C" fn pam_sm_setcred(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pam_notification_policy_parser_matches_core_semantics() {
+        for key in ["notify_prompt", "notify_on_success", "notify_on_failure"] {
+            for (value, expected) in [
+                ("true", PamNotificationPolicy::On),
+                ("false", PamNotificationPolicy::Off),
+                ("\"on\"", PamNotificationPolicy::On),
+                ("\"off\"", PamNotificationPolicy::Off),
+                ("\"system\"", PamNotificationPolicy::System),
+            ] {
+                let parsed: PamConfig =
+                    toml::from_str(&format!("[notification]\n{key} = {value}")).unwrap();
+                let actual = match key {
+                    "notify_prompt" => parsed.notification.notify_prompt,
+                    "notify_on_success" => parsed.notification.notify_on_success,
+                    _ => parsed.notification.notify_on_failure,
+                };
+                assert_eq!(actual, expected);
+                assert_eq!(actual.enabled(false), actual != PamNotificationPolicy::Off);
+                assert_eq!(actual.enabled(true), actual == PamNotificationPolicy::On);
+            }
+            for value in ["\"true\"", "\"always\"", "1", "[]", "{}"] {
+                assert!(
+                    toml::from_str::<PamConfig>(&format!("[notification]\n{key} = {value}"))
+                        .is_err()
+                );
+            }
+        }
+        let config: PamConfig = toml::from_str("[notification]\nnotify_prompt = true\nnotify_on_success = \"system\"\nnotify_on_failure = \"off\"").unwrap();
+        assert_eq!(config.notification.notify_prompt, PamNotificationPolicy::On);
+        assert_eq!(
+            config.notification.notify_on_success,
+            PamNotificationPolicy::System
+        );
+    }
+
+    #[test]
+    fn unsupported_silent_method_never_retries_through_oneshot() {
+        for error in [
+            zbus::fdo::Error::UnknownMethod("old daemon".into()),
+            zbus::fdo::Error::UnknownInterface("old daemon".into()),
+        ] {
+            let error = zbus::Error::from(error);
+            let classified = classify_authentication_reply_error(&error, true);
+            assert!(matches!(
+                action_for_transport_error(&classified),
+                TransportErrorAction::Return(PAM_IGNORE, _)
+            ));
+        }
+    }
+
+    #[test]
+    fn raw_unsupported_silent_method_never_retries() {
+        for name in [
+            "org.freedesktop.DBus.Error.UnknownMethod",
+            "org.freedesktop.DBus.Error.UnknownInterface",
+        ] {
+            let call =
+                zbus::message::Message::method_call("/org/facelock/Daemon", "AuthenticateSilent")
+                    .serial(std::num::NonZeroU32::new(1).unwrap())
+                    .build(&("alice",))
+                    .unwrap();
+            let reply = zbus::message::Message::error(&call.header(), name)
+                .build(&("unsupported",))
+                .unwrap();
+            let error = zbus::Error::from(reply);
+            assert!(matches!(
+                action_for_transport_error(&classify_authentication_reply_error(&error, true)),
+                TransportErrorAction::Return(PAM_IGNORE, _)
+            ));
+        }
+    }
+
+    #[test]
+    fn silent_flags() {
+        assert!(pam_silent(0x8000));
+        assert!(pam_silent(0x8001));
+        assert!(!pam_silent(1));
+        assert!(!pam_silent(0x4000));
+    }
 
     /// The oneshot table, row for row (docs/contracts.md, "facelock auth
     /// Exit Codes"). The cross-crate half — that each code a rejection class
@@ -2056,7 +2237,7 @@ auth_bin = "/usr/local/bin/evil"
         assert!(config.security.pam_policy.is_none());
         assert_eq!(config.recognition.timeout_secs, DEFAULT_TIMEOUT_SECS);
         assert!(config.notification.terminal());
-        assert!(config.notification.notify_prompt);
-        assert!(config.notification.notify_on_success);
+        assert!(config.notification.notify_prompt.enabled(false));
+        assert!(config.notification.notify_on_success.enabled(false));
     }
 }

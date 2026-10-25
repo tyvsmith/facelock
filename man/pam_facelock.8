@@ -102,6 +102,18 @@ The recommended way to manage PAM configuration is:
 sudo facelock pam add --service sudo
 .fi
 .RE
+.SS Authentication Flags
+Notification event settings accept true or "on" (show even under PAM_SILENT),
+false or "off" (never show), and "system" (show unless PAM_SILENT is supplied).
+The notification mode still selects the channels; mode "off" disables all
+feedback. Defaults remain start on, success on, failure off. Boolean and string
+values may be mixed. Saved configurations use strings, which older versions
+cannot read.
+An older daemon that lacks AuthenticateSilent falls through to password
+authentication. Authentication policy and audit logging remain active.
+PAM_DISALLOW_NULL_AUTHTOK has no additional effect because face authentication
+does not consume a password token. Unknown authentication flag bits are ignored.
+
 .SH SECURITY
 .SS IR Camera Requirement
 By default, facelock requires an infrared (IR) camera for authentication
@@ -120,15 +132,19 @@ budget. Oneshot mode uses persistent accounting across process invocations.
 Communication between the PAM module and the daemon uses the D\-Bus system bus.
 The system bus policy
 .RI ( /usr/share/dbus-1/system.d/org.facelock.Daemon.conf )
-denies the daemon's name and destination by default and then makes exactly one
-exception for unprivileged callers: any local user may send
-.BR Authenticate ,
+denies the daemon's name and destination by default and then permits
+unprivileged callers to send
+.B Authenticate
+and
+.BR AuthenticateSilent ,
 which is what lets a screen locker or the polkit agent unlock as the user
 running it. Every other method, and receipt of the daemon's signals, is
 restricted to root. The daemon independently verifies the caller UID via
 .B GetConnectionUnixUser
 before executing any method, and allows a non\-root
 .B Authenticate
+or
+.B AuthenticateSilent
 only for the caller's own username. Message size limits are enforced by the
 D\-Bus daemon.
 .SS Fixed Inputs
@@ -189,7 +205,8 @@ Exceeding a PAM-side deadline returns PAM_AUTH_ERR, not PAM_IGNORE.
 .B [notification]
 .BR mode ,
 .BR notify_prompt ,
-.BR notify_on_success
+.BR notify_on_success ,
+.BR notify_on_failure
 .br
 What the module writes into the PAM conversation while it waits. Desktop
 delivery is the daemon's job, not the module's.
