@@ -5005,7 +5005,7 @@ WantedBy=multi-user.target
     fn legacy_allowlist_parser_rejects_malformed_duplicate_and_unknown_records() {
         let parsed = parse_legacy_system_asset_hashes(LEGACY_SYSTEM_ASSET_HASHES).unwrap();
         assert_eq!(parsed["systemd-unit"].len(), 9);
-        assert_eq!(parsed["dbus-policy"].len(), 5);
+        assert_eq!(parsed["dbus-policy"].len(), 6);
         assert_eq!(parsed["dbus-activation"].len(), 1);
         let lines: Vec<&str> = LEGACY_SYSTEM_ASSET_HASHES.lines().collect();
         for (index, line) in lines.iter().enumerate() {
