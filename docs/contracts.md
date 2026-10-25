@@ -4051,10 +4051,11 @@ capture guard. While one capture is in progress, a concurrent call to any of
 these methods fails **immediately** with an
 `org.freedesktop.DBus.Error.Failed` error whose message contains `daemon
 busy` (no queuing behind the internal handler lock). An authorized non-root
-`Authenticate` spends its ingress token before this busy rejection.
+`Authenticate` or `AuthenticateSilent` spends its ingress token before this
+busy rejection.
 
-`Authenticate` and `TestAuthenticate` run their camera-independent audited
-preflight on one locked handler generation before claiming the capture guard.
+`Authenticate`, `AuthenticateSilent`, and `TestAuthenticate` run their
+camera-independent audited preflight on one locked handler generation before claiming the capture guard.
 A preflight rejection such as no enrolled models therefore never occupies the
 global capture slot. The handler stays locked across a successful preflight
 and capture admission so live reload cannot turn the split into a fail-open
@@ -4067,7 +4068,8 @@ degrade to the next auth mechanism (password), never a lockout.
 
 ### Signals
 - `AuthAttempted(user: s, matched: b)` — emitted best-effort after each successful method
-  return from `Authenticate` and `TestAuthenticate`, including in-band preflight
+  return from `Authenticate`, `AuthenticateSilent`, and `TestAuthenticate`,
+  including in-band preflight
   rejections where no camera opened; out-of-band D-Bus errors emit none. The payload
   intentionally carries **no similarity score** (the raw biometric score is
   an information leak / spoof-tuning oracle). The system bus policy
@@ -4101,8 +4103,8 @@ daemon from either side of that change cannot decode each other's
 ### Authenticate error encoding
 
 `Authenticate` returns `AuthResult (matched: b, model_id: i, label: s, similarity: d)`.
-`TestAuthenticate` returns the same type with the same sentinels — one
-encoding, so the two cannot drift.
+`AuthenticateSilent` and `TestAuthenticate` return the same type with the
+same sentinels. All three methods share one encoding.
 Sentinel `model_id` values (only meaningful with `matched == false`):
 
 | model_id | Meaning |
