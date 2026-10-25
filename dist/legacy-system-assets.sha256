@@ -35,3 +35,6 @@ dbus-policy f046a97378b006122b71069fa831b983e293e3fdfec2d44edbdfa67ec0211e7c
 
 # source 04ec3efe2decf6f7c2dd7a20d20d6f5d4aa5e190:dbus/org.facelock.Daemon.service
 dbus-activation ed5ab678c401a4fe61c06fda3f31246a61fd4ce30b7add75bee671977260b9ee
+
+# source 2e04dd31a13499aa7918fde548f4125515aa0a8f:dbus/org.facelock.Daemon.conf
+dbus-policy 16e9372a4321b46b22bef1e384781b33bf138de7ca00665bd28dbe41a810758c

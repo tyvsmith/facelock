@@ -5005,7 +5005,7 @@ WantedBy=multi-user.target
     fn legacy_allowlist_parser_rejects_malformed_duplicate_and_unknown_records() {
         let parsed = parse_legacy_system_asset_hashes(LEGACY_SYSTEM_ASSET_HASHES).unwrap();
         assert_eq!(parsed["systemd-unit"].len(), 9);
-        assert_eq!(parsed["dbus-policy"].len(), 4);
+        assert_eq!(parsed["dbus-policy"].len(), 5);
         assert_eq!(parsed["dbus-activation"].len(), 1);
         let lines: Vec<&str> = LEGACY_SYSTEM_ASSET_HASHES.lines().collect();
         for (index, line) in lines.iter().enumerate() {
@@ -7415,8 +7415,8 @@ mod tests {
             .expect("default context denies the interface");
         assert_eq!(
             default.matches("<allow").count(),
-            1,
-            "exactly one allow in the default context"
+            2,
+            "exactly two authentication allows in the default context"
         );
         let allow_start = default.find("<allow").expect("the one allow");
         let allow = between(default, "<allow", "/>");
@@ -7430,6 +7430,18 @@ mod tests {
             r#"send_member="Authenticate""#,
         ] {
             assert!(allow.contains(attr), "allow lacks {attr}: {allow}");
+        }
+        let silent = default
+            .split_once("send_member=\"Authenticate\"/>")
+            .unwrap()
+            .1;
+        let allow = between(silent, "<allow", "/>");
+        for attr in [
+            r#"send_destination="org.facelock.Daemon""#,
+            r#"send_interface="org.facelock.Daemon""#,
+            r#"send_member="AuthenticateSilent""#,
+        ] {
+            assert!(allow.contains(attr));
         }
         assert!(
             default

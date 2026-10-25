@@ -2009,7 +2009,7 @@ pass, which is how this contract lost its coverage twice (issues #189, #303).
 **AccessDenied hint.** A D-Bus `AccessDenied` reply carries one actionable
 hint (`ipc_client::add_access_denied_hint`): root is required. Since almost
 every D-Bus method is root-only (see IPC Protocol below) and, under ADR 010,
-the bus admits a non-root caller to `Authenticate` alone, a denial from the
+the bus admits a non-root caller to `Authenticate` and `AuthenticateSilent`, a denial from the
 daemon's `require_root` and a denial from the bus policy have the same fix.
 There is no group to join (ADR 010).
 
@@ -3875,13 +3875,13 @@ The daemon registers on the system bus via D-Bus activation.
 - **Interface**: `org.facelock.Daemon`
 
 ### Methods
-`Authenticate`, `TestAuthenticate`, `Enroll`, `ListModels`, `RemoveModel`, `ClearModels`, `PreviewFrame`, `PreviewDetectFrame`, `ListDevices`, `ReleaseCamera`, `Ping`, `Shutdown`
+`Authenticate`, `AuthenticateSilent`, `TestAuthenticate`, `Enroll`, `ListModels`, `RemoveModel`, `ClearModels`, `PreviewFrame`, `PreviewDetectFrame`, `ListDevices`, `ReleaseCamera`, `Ping`, `Shutdown`
 
 Method authorization contract (updated under DEC-6/N13 — the CLI's
 root-by-default privilege map left no unprivileged consumer for most of
 these, so tightening them to root-only closes the per-frame similarity
 hill-climbing oracle by construction rather than by redacting fields):
-- `Authenticate`: root or the matching Unix user. The one user-scoped method
+- `Authenticate` and `AuthenticateSilent`: root or the matching Unix user. User-scoped authentication
   — screen lockers run their PAM stack as the user, so this is architecture,
   not policy. It is **real authentication**: a failed attempt that saw a face
   consumes biometric-guess budget, whatever the caller's UID; no-face attempts
@@ -4035,7 +4035,7 @@ Enrollment behavior is mode-independent: oneshot (`facelock enroll` in direct
 mode) and the daemon's `Enroll` method run the same capture loop, so the
 quality gate and the angle-diversity check apply in both.
 
-Capture concurrency: `Authenticate`, `TestAuthenticate`, `Enroll`,
+Capture concurrency: `Authenticate`, `AuthenticateSilent`, `TestAuthenticate`, `Enroll`,
 `PreviewFrame`, and `PreviewDetectFrame` are serialized by an in-flight
 capture guard. While one capture is in progress, a concurrent call to any of
 these methods fails **immediately** with an
@@ -4070,7 +4070,7 @@ enum variants are not wire wrappers:
 
 | Method | Return value |
 |--------|--------------|
-| `Authenticate`, `TestAuthenticate` | `AuthResult { matched, model_id, label, similarity }` |
+| `Authenticate`, `AuthenticateSilent`, `TestAuthenticate` | `AuthResult { matched, model_id, label, similarity }` |
 | `Enroll` | `(model_id: u32, embedding_count: u32)` |
 | `ListModels` | array of `ModelInfo { id, user, label, created_at, embedder_model, device_id, key_id }` |
 | `PreviewFrame` | JPEG byte array |
@@ -4178,6 +4178,24 @@ the method call to the owner's unique bus name. A non-root owner is refused:
 the module falls through (oneshot fallback / password), never `PAM_SUCCESS`.
 
 ## PAM Semantics
+### PAM authentication flags
+
+- `PAM_SILENT` suppresses PAM conversation feedback and desktop notifications
+  for that authentication request, independently of `[notification]`
+- silent daemon requests use `AuthenticateSilent(user: s)`, with the same reply,
+  caller authorization, rate limits, session/lid gates, cancellation, and audit
+  behavior as `Authenticate`; existing clients keep using `Authenticate`
+- an older daemon or bus policy without `AuthenticateSilent` falls through to
+  password authentication; an unsupported silent method never retries through
+  oneshot to bypass the running daemon's session checks
+- `PAM_DISALLOW_NULL_AUTHTOK` requires no additional action: face authentication
+  consumes no password token and never grants success from an empty token
+- unknown authentication flag bits are ignored; shell interactivity and terminal
+  availability do not change authentication policy
+- `PAM_SILENT` does not suppress audit records or the privileged `AuthAttempted`
+  signal; oneshot child output remains captured by PAM
+
+
 
 | Outcome | PAM Code |
 |---------|----------|

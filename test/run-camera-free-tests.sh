@@ -303,6 +303,10 @@ EOF
         "runuser -u sigwatcher -- dbus-send --system --print-reply --reply-timeout=30000 --dest=org.facelock.Daemon /org/facelock/Daemon org.facelock.Daemon.Authenticate string:sigwatcher" \
         "int32 -[13]"
 
+    run_test_contains "A plain local user's AuthenticateSilent reaches the daemon (no model)" \
+        "runuser -u sigwatcher -- dbus-send --system --print-reply --reply-timeout=30000 --dest=org.facelock.Daemon /org/facelock/Daemon org.facelock.Daemon.AuthenticateSilent string:sigwatcher" \
+        "int32 -[13]"
+
     check_denied_as() {
         # $1 = user, $2 = method, $3.. = dbus-send args
         local user="$1" method="$2"
@@ -320,6 +324,8 @@ EOF
     }
     run_test "A plain local user's Authenticate for another user is denied by the daemon" \
         "check_denied_as sigwatcher Authenticate string:testuser"
+    run_test "A plain local user's AuthenticateSilent for another user is denied" \
+        "check_denied_as sigwatcher AuthenticateSilent string:testuser"
     run_test "A plain local user's Ping is denied by the bus" \
         "check_denied_as sigwatcher Ping"
 

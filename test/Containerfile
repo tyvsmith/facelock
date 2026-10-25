@@ -97,6 +97,7 @@ COPY test/fake-facelock-daemon.py /fake-facelock-daemon.py
 # timeout assertion in run-integration-tests.sh (pamtester stops at the first
 # failed operation)
 COPY test/pam-auth-twice.py /pam-auth-twice.py
+COPY test/pam-notification-probe.py test/pam-notifications.py /
 
 # Stable source-install lifecycle oracle for the booted real-systemd gate.
 COPY scripts/source-install-daemon-lifecycle.sh /source-install-lifecycle/scripts/source-install-daemon-lifecycle.sh

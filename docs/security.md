@@ -860,11 +860,11 @@ overrides them. Two grants (ADR 010):
 There is no group policy: the `facelock` group is retired (ADR 010) —
 packaging no longer creates it and `facelock setup` removes a leftover one.
 
-Because the bus lets any local user reach `Authenticate`, the daemon's own
+Because the bus lets any local user reach `Authenticate` and `AuthenticateSilent`, the daemon's own
 check — it verifies the caller UID via `GetConnectionUnixUser` on every method
 call and applies method-level authorization — is the boundary for that method
 rather than a second layer:
-- `Authenticate`: root, or a non-root caller acting on their own username. This is the **only** user-scoped method, and it is architecture rather than policy: screen lockers run their PAM stack as the user, so a user must be able to request authentication for themselves.
+- `Authenticate` and `AuthenticateSilent`: root, or a non-root caller acting on their own username. Both are user-scoped because screen lockers run their PAM stack as the user, so a user must be able to request authentication for themselves.
 - Everything else is **root only**: `TestAuthenticate`, `Enroll`, `ListModels`, `RemoveModel`, `ClearModels`, `PreviewFrame`, `PreviewDetectFrame`, `ListDevices`, `ReleaseCamera`, `Ping`, `Shutdown`.
 
 What opening `Authenticate` exposes, and why it is acceptable: any local UID

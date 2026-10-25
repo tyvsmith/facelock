@@ -141,6 +141,7 @@ impl BoundedCheck {
 /// Everything one `Authenticate` must learn from the system bus before it may
 /// take the handler mutex.
 struct AuthenticateChecks {
+    silent: bool,
     /// Is the caller's logind session remote? Consumed by `abort_if_ssh`.
     session_is_remote: BoundedCheck,
     /// Does logind report the lid closed? Consumed by
@@ -153,6 +154,7 @@ impl AuthenticateChecks {
     /// Neither fact wired up: both gates, if installed, refuse.
     fn unsupplied(session_reason: &'static str, lid_reason: &'static str) -> Self {
         Self {
+            silent: false,
             session_is_remote: BoundedCheck::unsupplied(session_reason),
             lid_is_closed: BoundedCheck::unsupplied(lid_reason),
         }
@@ -1241,6 +1243,7 @@ macro_rules! declare_methods {
 
 declare_methods! {
     Authenticate => "Authenticate",
+    AuthenticateSilent => "AuthenticateSilent",
     TestAuthenticate => "TestAuthenticate",
     Enroll => "Enroll",
     ListModels => "ListModels",
@@ -1255,9 +1258,13 @@ declare_methods! {
 }
 
 impl Method {
+    fn is_authentication(self) -> bool {
+        matches!(self, Self::Authenticate | Self::AuthenticateSilent)
+    }
+
     /// Authorization target for each method.
     ///
-    /// `Authenticate` is the only user-scoped method: screen lockers run
+    /// `Authenticate` and `AuthenticateSilent` are user-scoped: screen lockers run
     /// their PAM stack as the user, so a user must be able to request
     /// authentication for themselves — that is architecture, not policy.
     /// Everything else is root-only. In particular `PreviewDetectFrame`,
@@ -1272,7 +1279,7 @@ impl Method {
     /// offer, not an incidental default.
     fn scope(self) -> Scope {
         match self {
-            Method::Authenticate => Scope::UserScoped,
+            Method::Authenticate | Method::AuthenticateSilent => Scope::UserScoped,
             Method::TestAuthenticate => Scope::Root,
             _ => Scope::Root,
         }
@@ -1280,7 +1287,7 @@ impl Method {
 }
 
 /// Who may call a D-Bus method. The bus policy admits root to the whole
-/// interface and every local user to `Authenticate` only (ADR 010); this
+/// interface and every local user to the two authentication methods; this
 /// in-daemon check (keyed on the caller UID from `GetConnectionUnixUser`) is
 /// the per-method decision, and for `Authenticate` it is the boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1673,18 +1680,21 @@ where
             user,
             cancel,
             PROCESS_PROVENANCE_TIMEOUT,
+            false,
             session_check,
             lid_check,
         )
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn authenticate_as_with_checks_timeout<F, Fut, L, LFut>(
         &self,
         caller: CallerIdentity,
         user: &str,
         cancel: CancelToken,
         check_timeout: Duration,
+        silent: bool,
         session_check: F,
         lid_check: L,
     ) -> fdo::Result<AuthResult>
@@ -1697,10 +1707,15 @@ where
         self.run_authentication(
             caller,
             user,
-            Method::Authenticate,
+            if silent {
+                Method::AuthenticateSilent
+            } else {
+                Method::Authenticate
+            },
             AuthIntent::Authenticate,
             cancel,
             AuthenticateChecks {
+                silent,
                 session_is_remote: BoundedCheck::new(session_check, check_timeout),
                 lid_is_closed: BoundedCheck::new(lid_check, LID_STATE_TIMEOUT),
             },
@@ -1755,7 +1770,7 @@ where
         checks: AuthenticateChecks,
     ) -> fdo::Result<AuthResult> {
         authorize_method(&caller, method, Some(user))?;
-        if method == Method::Authenticate
+        if method.is_authentication()
             && caller.uid != 0
             && !self.ingress_limiter.check_and_charge(caller.uid)
         {
@@ -1785,7 +1800,7 @@ where
         // asynchronous D-Bus operations; awaiting any of them while retaining
         // this guard would let a stalled system-bus peer pin all later
         // handler operations and shutdown.
-        let (provenance_required, lid_required) = if method == Method::Authenticate {
+        let (provenance_required, lid_required) = if method.is_authentication() {
             let handler = Arc::clone(&handler);
             let capture_slot = Arc::clone(&capture_slot);
             tokio::task::spawn_blocking(move || {
@@ -1831,7 +1846,7 @@ where
         // handler gives when capture is cancelled.
         let lid_cancelled = matches!(lid, Some(Err(CheckFailure::Cancelled)));
 
-        let pre_check_context = if method == Method::Authenticate {
+        let pre_check_context = if method.is_authentication() {
             // An `Err` here is a lid the daemon could not establish, and a
             // `None` is a gate that was off when the policy was snapshotted
             // and may have been switched on since. `pre_check` refuses on
@@ -1859,7 +1874,7 @@ where
                 &handler,
                 Some((capture_slot.as_ref(), operation)),
             )?;
-            if method == Method::Authenticate && handler.config.security.abort_if_ssh {
+            if method.is_authentication() && handler.config.security.abort_if_ssh {
                 match provenance {
                     Some(Ok(false)) => {}
                     Some(Ok(true)) => {
@@ -1945,7 +1960,12 @@ where
                     // swallowed); staying cheap enough not to delay one is an
                     // obligation of the implementation, not a guarantee of
                     // this call site.
-                    notify_auth_outcome(&notify_config, notifier_factory(&user).as_ref(), &result);
+                    notify_auth_outcome(
+                        &notify_config,
+                        notifier_factory(&user).as_ref(),
+                        &result,
+                        checks.silent,
+                    );
 
                     Ok(AuthResult {
                         matched: result.matched,
@@ -2262,14 +2282,14 @@ where
     }
 }
 
-#[interface(name = "org.facelock.Daemon")]
 impl FacelockService<Camera<'static>, FaceEngine> {
-    async fn authenticate(
+    async fn authenticate_request(
         &self,
-        #[zbus(header)] hdr: zbus::message::Header<'_>,
-        #[zbus(connection)] connection: &zbus::Connection,
-        #[zbus(signal_emitter)] ctxt: SignalEmitter<'_>,
+        hdr: zbus::message::Header<'_>,
+        connection: &zbus::Connection,
+        ctxt: SignalEmitter<'_>,
         user: &str,
+        silent: bool,
     ) -> fdo::Result<AuthResult> {
         let caller = resolve_caller_identity(&hdr, connection).await?;
         let caller_uid = caller.uid;
@@ -2287,10 +2307,12 @@ impl FacelockService<Camera<'static>, FaceEngine> {
         let cancel = CancelToken::new();
         let _watch = watch_caller_departure(connection, hdr.sender(), cancel.clone()).await;
         let result = self
-            .authenticate_as_with_checks(
+            .authenticate_as_with_checks_timeout(
                 caller,
                 user,
                 cancel,
+                PROCESS_PROVENANCE_TIMEOUT,
+                silent,
                 move || async move {
                     caller_session_is_remote(&session_connection, sender, caller_uid).await
                 },
@@ -2307,6 +2329,31 @@ impl FacelockService<Camera<'static>, FaceEngine> {
         }
 
         result
+    }
+}
+
+#[interface(name = "org.facelock.Daemon")]
+impl FacelockService<Camera<'static>, FaceEngine> {
+    async fn authenticate(
+        &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] connection: &zbus::Connection,
+        #[zbus(signal_emitter)] ctxt: SignalEmitter<'_>,
+        user: &str,
+    ) -> fdo::Result<AuthResult> {
+        self.authenticate_request(hdr, connection, ctxt, user, false)
+            .await
+    }
+
+    async fn authenticate_silent(
+        &self,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] connection: &zbus::Connection,
+        #[zbus(signal_emitter)] ctxt: SignalEmitter<'_>,
+        user: &str,
+    ) -> fdo::Result<AuthResult> {
+        self.authenticate_request(hdr, connection, ctxt, user, true)
+            .await
     }
 
     /// The root-only diagnostic counterpart of `Authenticate`, behind
@@ -2460,7 +2507,11 @@ fn notify_auth_outcome(
     config: &facelock_core::config::NotificationConfig,
     notifier: &dyn Notifier,
     result: &facelock_core::types::MatchResult,
+    silent: bool,
 ) {
+    if silent {
+        return;
+    }
     let event = if result.matched {
         NotifyEvent::Success {
             label: result.label.clone(),
@@ -3507,6 +3558,7 @@ enabled = false
                     "alice",
                     CancelToken::new(),
                     Duration::from_millis(100),
+                    false,
                     move || async move {
                         check_started.store(true, Ordering::SeqCst);
                         std::future::pending::<Result<bool, String>>().await
@@ -3552,6 +3604,7 @@ enabled = false
                     "alice",
                     CancelToken::new(),
                     Duration::from_secs(5),
+                    false,
                     move || async move {
                         check_started.store(true, Ordering::SeqCst);
                         std::future::pending::<Result<bool, String>>().await
@@ -3599,6 +3652,7 @@ enabled = false
                     "alice",
                     request_cancel,
                     Duration::from_secs(5),
+                    false,
                     move || async move {
                         check_started.store(true, Ordering::SeqCst);
                         std::future::pending::<Result<bool, String>>().await
@@ -3992,7 +4046,7 @@ enabled = false
     fn the_wire_authenticate_passes_the_logind_lid_reader_to_the_gate() {
         let source = include_str!("server.rs");
         // Split needles so this test's own text is not what it finds.
-        let header = concat!("async fn ", "authenticate(");
+        let header = concat!("async fn ", "authenticate_request(");
         assert_eq!(
             source.matches(header).count(),
             1,
@@ -4028,7 +4082,7 @@ enabled = false
             .collect();
         assert_eq!(
             real,
-            vec![Method::Authenticate],
+            vec![Method::Authenticate, Method::AuthenticateSilent],
             "a new Authenticate-intent method must also be given the lid lookup in run_authentication"
         );
     }
@@ -4038,7 +4092,7 @@ enabled = false
     /// third authentication entry point forces a decision here.
     fn intent_for_test(method: Method) -> Option<AuthIntent> {
         match method {
-            Method::Authenticate => Some(AuthIntent::Authenticate),
+            Method::Authenticate | Method::AuthenticateSilent => Some(AuthIntent::Authenticate),
             Method::TestAuthenticate => Some(AuthIntent::Test),
             _ => None,
         }
@@ -4093,12 +4147,21 @@ enabled = false
         }
     }
 
+    #[test]
+    fn silent_auth_suppresses_success_and_failure_popups() {
+        for matched in [true, false] {
+            let recorder = RecordingNotifier::new();
+            notify_auth_outcome(&desktop_config(), &recorder, &match_result(matched), true);
+            assert!(recorder.events().is_empty());
+        }
+    }
+
     /// D9: a failed auth emits a Failure notification through the injected
     /// notifier when the config enables desktop failure notifications.
     #[test]
     fn failed_auth_emits_failure_notification_when_enabled() {
         let recorder = RecordingNotifier::new();
-        notify_auth_outcome(&desktop_config(), &recorder, &match_result(false));
+        notify_auth_outcome(&desktop_config(), &recorder, &match_result(false), false);
         assert_eq!(
             recorder.events(),
             vec![NotifyEvent::Failure {
@@ -4116,6 +4179,7 @@ enabled = false
             &NotificationConfig::default(),
             &recorder,
             &match_result(false),
+            false,
         );
         assert_eq!(recorder.events(), vec![]);
     }
@@ -4124,7 +4188,7 @@ enabled = false
     #[test]
     fn successful_auth_emits_success_event_with_match_data() {
         let recorder = RecordingNotifier::new();
-        notify_auth_outcome(&desktop_config(), &recorder, &match_result(true));
+        notify_auth_outcome(&desktop_config(), &recorder, &match_result(true), false);
         assert_eq!(
             recorder.events(),
             vec![NotifyEvent::Success {
@@ -4136,7 +4200,7 @@ enabled = false
 
     // --- Authorization matrix (N13) ---
     //
-    // Authenticate is the only user-scoped method; everything else is
+    // Authenticate and AuthenticateSilent are user-scoped; everything else is
     // root-only. These tests iterate Method::ALL, which `declare_methods!`
     // generates from the same list as the variants — so a new method really
     // cannot be added without landing in the matrix.
@@ -4307,7 +4371,7 @@ impl SyntheticService {
     #[test]
     fn authz_matrix_every_method_is_root_only_except_authenticate() {
         for method in Method::ALL.iter().copied() {
-            let expected = if method == Method::Authenticate {
+            let expected = if method.is_authentication() {
                 Scope::UserScoped
             } else {
                 Scope::Root
@@ -4320,7 +4384,7 @@ impl SyntheticService {
     fn authz_matrix_non_root_is_denied_every_root_scoped_method() {
         let alice = caller(1000, Some("alice"));
         for method in Method::ALL.iter().copied() {
-            if method == Method::Authenticate {
+            if method.is_authentication() {
                 continue;
             }
             let err = authorize_method(&alice, method, Some("alice")).unwrap_err();
