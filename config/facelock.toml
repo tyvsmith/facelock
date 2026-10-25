@@ -414,7 +414,7 @@
 
 # Show notification on failed face match.
 # Default: "off" (failure already leads to the password prompt).
-notify_on_failure = "off"
+notify_on_failure = false
 
 
 # ── Audit ─────────────────────────────────────────────────────────

@@ -162,6 +162,20 @@ fn uncomment_all_examples(template: &str) -> Expansion {
 }
 
 #[test]
+fn shipped_notification_values_remain_readable_by_boolean_only_versions() {
+    let template: toml::Value = toml::from_str(TEMPLATE).expect("valid shipped template");
+    let notification = template.get("notification").expect("notification table");
+    for key in ["notify_prompt", "notify_on_success", "notify_on_failure"] {
+        if let Some(value) = notification.get(key) {
+            assert!(
+                value.as_bool().is_some(),
+                "active {key} must support older readers"
+            );
+        }
+    }
+}
+
+#[test]
 fn shipped_template_parses_to_config_default() {
     // Byte-for-byte what a fresh install gets at /etc/facelock/config.toml.
     let parsed = Config::parse(TEMPLATE).expect("shipped template must parse");
