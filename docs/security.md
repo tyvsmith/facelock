@@ -852,8 +852,8 @@ overrides them. Two grants (ADR 010):
 
 - **root**: may own the name, send anything on the interface, and receive the
   daemon's signals.
-- **every local user** (`default` context): may send exactly one method,
-  `org.facelock.Daemon.Authenticate`. Screen lockers and the polkit agent run
+- **every local user** (`default` context): may send `Authenticate` and
+  `AuthenticateSilent` on `org.facelock.Daemon`. Screen lockers and the polkit agent run
   their PAM stack as the user, so this is what lets face unlock work with no
   group and no re-login. Everything else stays denied at the bus.
 
@@ -867,7 +867,7 @@ rather than a second layer:
 - `Authenticate` and `AuthenticateSilent`: root, or a non-root caller acting on their own username. Both are user-scoped because screen lockers run their PAM stack as the user, so a user must be able to request authentication for themselves.
 - Everything else is **root only**: `TestAuthenticate`, `Enroll`, `ListModels`, `RemoveModel`, `ClearModels`, `PreviewFrame`, `PreviewDetectFrame`, `ListDevices`, `ReleaseCamera`, `Ping`, `Shutdown`.
 
-What opening `Authenticate` exposes, and why it is acceptable: any local UID
+What opening both authentication methods exposes, and why it is acceptable: any local UID
 may ask the daemon to authenticate **itself**. The daemon authorizes that
 caller/target pair before refreshing its idle timer or touching handler reload,
 SQLite, audit, or capture state. It then charges every authorized non-root
@@ -899,8 +899,8 @@ sessions to the same machine are open. This is the meaning Howdy's
 `abort_if_ssh` has; Howdy reads the caller's environment, the daemon reads
 the caller's logind session.
 
-With `security.abort_if_ssh = true`, every admitted `Authenticate`, root
-included, must also carry a live process identity from the bus daemon's
+With `security.abort_if_ssh = true`, every admitted `Authenticate` or
+`AuthenticateSilent`, root included, must also carry a live process identity from the bus daemon's
 `GetConnectionCredentials` `ProcessFD`. The daemon derives the PID only from
 that pidfd's `/proc/self/fdinfo` metadata, checks pidfd liveness on both sides
 of logind's `GetSessionByPID`, and accepts only a session whose `Remote`

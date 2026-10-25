@@ -3908,8 +3908,8 @@ hill-climbing oracle by construction rather than by redacting fields):
   `PreviewFrame`, `PreviewDetectFrame`, `ListDevices`, `ReleaseCamera`,
   `Ping`, `Shutdown` — is root only.
   The bus policy (`dbus/org.facelock.Daemon.conf`) grants root the whole
-  interface and every local user exactly `Authenticate` (ADR 010) — so
-  adding a root-only method needs no policy edit, and a future user-scoped
+  interface and every local user `Authenticate` and `AuthenticateSilent`
+  (ADR 010), so adding a root-only method needs no policy edit, and a future user-scoped
   method needs one deliberately; there is no group policy, and signals are
   root-only. The per-method root/user-scoped decision is the in-daemon check on
   the caller UID from `GetConnectionUnixUser`, keyed by a table-driven scope
@@ -3919,8 +3919,8 @@ hill-climbing oracle by construction rather than by redacting fields):
 Daemon ingress ordering is part of the authorization contract. The server
 resolves and authorizes the caller/target pair before refreshing daemon
 activity or touching handler reload, SQLite, audit, or capture state. Every
-authorized non-root `Authenticate` then spends one token from a daemon-local,
-per-caller-UID availability bucket before any of that shared work: capacity
+authorized non-root `Authenticate` or `AuthenticateSilent` then spends one
+token from a daemon-local, per-caller-UID availability bucket before any of that shared work: capacity
 10, one token restored per monotonic second. Saturation is an in-band
 recoverable `AuthResult` (`model_id = -2`, `label = "rate limited"`), so PAM
 continues to the password. The charge applies even when the request later
@@ -3928,12 +3928,12 @@ finds no model, fails another preflight gate, or meets a busy capture. UID 0
 is trusted and exempt from this ingress bucket; `TestAuthenticate` remains
 root-only and ingress-budget-free. This availability budget is distinct from
 `security.rate_limit`: the latter remains the persistent, per-target-user
-biometric-guess limiter and still charges root `Authenticate` failures under
-the rules in "facelock test Semantics".
+biometric-guess limiter and still charges root failures from both
+authentication methods under the rules in "facelock test Semantics".
 
 The remote-session gate is bound to the D-Bus caller rather than the daemon's
 environment, and never considers the machine's other sessions. For an
-authorized `Authenticate`, root included, with
+authorized `Authenticate` or `AuthenticateSilent`, root included, with
 `security.abort_if_ssh = true`, the daemon asks
 `org.freedesktop.DBus.GetConnectionCredentials` for the message sender's
 unique bus name and requires the returned `ProcessFD`. It derives the PID from
@@ -3983,7 +3983,7 @@ transport continues to enforce SSH provenance from the PAM-sanitized
 `SSH_CONNECTION` / `SSH_TTY` environment instead of D-Bus.
 
 The lid gate rides the same pre-lock boundary, and is otherwise unlike the
-remote-session gate. For an authorized `Authenticate` with
+remote-session gate. For an authorized `Authenticate` or `AuthenticateSilent` with
 `security.abort_if_lid_closed = true` — the default, and **including UID 0**,
 since a PAM `sudo` attempt arrives as root — the daemon reads
 `org.freedesktop.login1.Manager.LidClosed` with property caching disabled, so
