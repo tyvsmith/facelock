@@ -25,11 +25,11 @@
     "compat": {
       "main": {
         "source": "trixie",
-        "retire_at": "0.3.0"
+        "retire_at": "0.4.0"
       },
       "legacy": {
         "source": "none",
-        "retire_at": "0.3.0"
+        "retire_at": "0.4.0"
       }
     }
   },

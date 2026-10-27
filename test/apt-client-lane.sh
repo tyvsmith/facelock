@@ -7,7 +7,7 @@
 # release.yml and pages.yml do, replays a client that last updated from the
 # v0.1.4 tree, then acts as a clean APT client for every suite
 # dist/apt/conf/distributions declares: the codenamed pair and the v0.1.4 names
-# `main` and `legacy` that stay published until 0.3.0 (#310).
+# `main` and `legacy` that stay published until 0.4.0 (#310).
 #
 #   apt-client-lane.sh [--manifest <suite>=<path>]... [--compat <suite>=<source>]...
 #

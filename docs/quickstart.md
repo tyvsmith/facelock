@@ -84,9 +84,9 @@ with `gpg --show-keys` before trusting the source; `signed-by` scopes that key
 to this repository alone, and `apt update` rejects the suite if the archive
 signature does not match.
 
-Existing v0.1.4 entries naming `main` or `legacy` keep working until 0.3.0:
+Existing v0.1.4 entries naming `main` or `legacy` keep working until 0.4.0:
 `main` maps to the Trixie package set and `legacy` serves signed empty indexes.
-At 0.3.0, `apt update` fails until the entry is removed. Rewrite those entries
+At 0.4.0, `apt update` fails until the entry is removed. Rewrite those entries
 to your operating system's codename now.
 
 The production COPR targets Fedora 43, 44, and 45 only. It served 0.2.0-1 on

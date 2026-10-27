@@ -19,7 +19,7 @@ Label: Ty Smith Packages
 Codename: main
 Architectures: amd64
 Components: facelock
-Description: Facelock APT repository - deprecated v0.1.4 suite name, serves the trixie package until 0.3.0
+Description: Facelock APT repository - deprecated v0.1.4 suite name, serves the trixie package until 0.4.0
 SignWith: default
 
 Origin: tysmith

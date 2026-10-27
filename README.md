@@ -53,8 +53,8 @@ suites are amd64 only. The [quickstart](docs/quickstart.md#published-packages)
 carries the signing key fingerprint to check the downloaded keyring against.
 
 Source entries written for v0.1.4 name the `main` or `legacy` suite. They
-keep working until 0.3.0: `main` maps to the Trixie package set and `legacy`
-serves signed empty indexes. At 0.3.0, `apt update` fails until the entry is
+keep working until 0.4.0: `main` maps to the Trixie package set and `legacy`
+serves signed empty indexes. At 0.4.0, `apt update` fails until the entry is
 removed. Rewrite those entries to your operating system's codename now.
 Bookworm, Noble, and Ubuntu 25.x have no suite.
 
