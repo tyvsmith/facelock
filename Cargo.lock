@@ -868,7 +868,7 @@ dependencies = [
 
 [[package]]
 name = "facelock-bench"
-version = "0.2.1"
+version = "0.3.0-rc.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -883,7 +883,7 @@ dependencies = [
 
 [[package]]
 name = "facelock-camera"
-version = "0.2.1"
+version = "0.3.0-rc.1"
 dependencies = [
  "facelock-core",
  "image",
@@ -896,7 +896,7 @@ dependencies = [
 
 [[package]]
 name = "facelock-cli"
-version = "0.2.1"
+version = "0.3.0-rc.1"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -934,7 +934,7 @@ dependencies = [
 
 [[package]]
 name = "facelock-core"
-version = "0.2.1"
+version = "0.3.0-rc.1"
 dependencies = [
  "libc",
  "serde",
@@ -949,7 +949,7 @@ dependencies = [
 
 [[package]]
 name = "facelock-daemon"
-version = "0.2.1"
+version = "0.3.0-rc.1"
 dependencies = [
  "bytemuck",
  "facelock-camera",
@@ -976,7 +976,7 @@ dependencies = [
 
 [[package]]
 name = "facelock-face"
-version = "0.2.1"
+version = "0.3.0-rc.1"
 dependencies = [
  "facelock-core",
  "image",
@@ -992,7 +992,7 @@ dependencies = [
 
 [[package]]
 name = "facelock-polkit"
-version = "0.2.1"
+version = "0.3.0-rc.1"
 dependencies = [
  "anyhow",
  "facelock-core",
@@ -1005,7 +1005,7 @@ dependencies = [
 
 [[package]]
 name = "facelock-store"
-version = "0.2.1"
+version = "0.3.0-rc.1"
 dependencies = [
  "bytemuck",
  "facelock-core",
@@ -1016,7 +1016,7 @@ dependencies = [
 
 [[package]]
 name = "facelock-test-support"
-version = "0.2.1"
+version = "0.3.0-rc.1"
 dependencies = [
  "facelock-core",
  "rusqlite",
@@ -1024,7 +1024,7 @@ dependencies = [
 
 [[package]]
 name = "facelock-tpm"
-version = "0.2.1"
+version = "0.3.0-rc.1"
 dependencies = [
  "aes-gcm",
  "facelock-core",
@@ -2192,7 +2192,7 @@ checksum = "8d22b0417f1838db5a3ac0b3f98dfe39f6fb73624aa0a27c6bbb5040b9c7db2b"
 
 [[package]]
 name = "pam-facelock"
-version = "0.2.1"
+version = "0.3.0-rc.1"
 dependencies = [
  "libc",
  "serde",
