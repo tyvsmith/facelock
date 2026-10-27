@@ -2417,7 +2417,7 @@ The v0.1.4 suite names `main` and `legacy` are compatibility suites, not
 aliases or redirects, and neither ships a package of its own. Only `main`
 carries a package: the exact signed `trixie` package set. `legacy`, which
 served the non-TPM build, carries signed empty indexes so that `apt update`
-still succeeds. Both are published with every stable release through 0.2.x
+still succeeds. Both are published with every stable release through 0.3.x
 and both are removed at 0.4.0. `dist/release-matrix.json` declares them under
 `apt_suites.compat` with that `retire_at`. `test/check-release-matrix.py`
 requires their stanzas, the publisher steps, and the migration note while the
