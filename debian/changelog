@@ -1,3 +1,9 @@
+facelock (0.3.0-1) unstable; urgency=medium
+
+  * Release v0.3.0.
+
+ -- Ty Smith <ty@tysmith.me>  Tue, 27 Oct 2026 12:08:42 -0700
+
 facelock (0.3.0~rc.1-1) unstable; urgency=medium
 
   * Release v0.3.0-rc.1.

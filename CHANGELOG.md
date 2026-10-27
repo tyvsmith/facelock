@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-27
+
+### Changed
+
+- Promote 0.3.0-rc.1 to stable with the same authentication behavior and
+  upgrade requirements documented below
+- Restore stable package publication to APT, AUR, and Fedora COPR
+
+### Upgrade notes
+
+- Upgrade the CLI, PAM module, daemon, and D-Bus policy together, then restart
+  the daemon. Source installation restores an active daemon automatically
+- Preserve the original configuration before upgrading. Notification policies
+  saved as strings cannot be read by 0.2.1; restore boolean values before rollback
+- Keep existing enrollments and TPM state; the database remains at schema v7
+- Change APT entries naming `main` or `legacy` to `trixie` or `resolute` before
+  their retirement in 0.4.0
+
 ## [0.3.0-rc.1] - 2026-10-26
 
 ### Upgrade notes
