@@ -1,7 +1,7 @@
 # Maintainer: facelock contributors
 pkgname=facelock
-_tag=0.3.0-rc.1
-pkgver=0.3.0rc1
+_tag=0.3.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="Face authentication for Linux PAM"
 arch=('x86_64')

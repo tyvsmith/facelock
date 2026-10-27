@@ -11,7 +11,7 @@
   "jobs": [
     {
       "job": "copr_build",
-      "trigger": "ignore",
+      "trigger": "release",
       "owner": "tyvsmith",
       "project": "facelock",
       "update_release": false,
