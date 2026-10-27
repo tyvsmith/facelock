@@ -330,6 +330,8 @@ case "$rpm_dependency_failure_output" in
 esac
 cp "$repo_root/.claude/skills/release/SKILL.md" "$matrix_root/.claude/skills/release/"
 cp "$repo_root/.packit.yaml" "$matrix_root/"
+# Stable fixtures remain stable when the source tree prepares a prerelease.
+sed -i 's/"trigger": "ignore"/"trigger": "release"/' "$matrix_root/.packit.yaml"
 cp "$repo_root/justfile" "$matrix_root/"
 cp "$repo_root/.github/workflows/ci.yml" "$matrix_root/.github/workflows/"
 cp "$repo_root/.github/workflows/release.yml" "$matrix_root/.github/workflows/"
@@ -907,17 +909,17 @@ assert_matrix_mutation_rejected \
     "stable publication suite input resolute to duplicate trixie" \
     ".github/workflows/release.yml" \
     's/"resolute=$(exact_deb_from_manifest resolute)"/"trixie=$(exact_deb_from_manifest resolute)"/'
-# The v0.1.4 suite names stay published until 0.3.0 (#310). Every place that
+# The v0.1.4 suite names stay published until 0.4.0 (#310). Every place that
 # promise lives must agree, and the window must actually close.
 assert_matrix_mutation_rejected \
     "compatibility suite retire_at removed" \
     "dist/release-matrix.json" \
-    '0,/"retire_at": "0.3.0"/s//"retired": "0.3.0"/' \
+    '0,/"retire_at": "0.4.0"/s//"retired": "0.4.0"/' \
     "has no stable retire_at version"
 assert_matrix_mutation_rejected \
     "compatibility suites retire at different versions" \
     "dist/release-matrix.json" \
-    '0,/"retire_at": "0.3.0"/s//"retire_at": "0.4.0"/' \
+    '0,/"retire_at": "0.4.0"/s//"retire_at": "0.5.0"/' \
     "must share one retirement version"
 assert_matrix_mutation_rejected \
     "compatibility suite main sourced from resolute" \
@@ -967,7 +969,7 @@ assert_matrix_mutation_rejected \
 assert_matrix_mutation_rejected \
     "README migration note dropped" \
     "README.md" \
-    's/keep working until 0.3.0/keep working/' \
+    's/keep working until 0.4.0/keep working/' \
     "README.md omits the APT compatibility window"
 assert_matrix_mutation_rejected \
     "README install instruction configures the main suite" \
@@ -980,54 +982,62 @@ assert_matrix_mutation_rejected \
     's/keep working until/continue working until/' \
     "book/src/quickstart.md omits the APT compatibility window"
 assert_matrix_mutation_rejected \
-    "README 0.3.0 failure mode dropped" \
+    "README 0.4.0 failure mode dropped" \
     "README.md" \
     's/fails until/fails/' \
     "README.md omits the APT compatibility window"
 assert_matrix_mutation_rejected \
     "website migration note dropped" \
     "website/index.html" \
-    's/keep working until 0.3.0/keep working/' \
+    's/keep working until 0.4.0/keep working/' \
     "website/index.html omits the APT compatibility window"
 assert_matrix_mutation_rejected \
     "release checklist line dropped" \
     "docs/releasing.md" \
-    's/compatibility suites present until 0.3.0/compatibility suites present/' \
+    's/compatibility suites present until 0.4.0/compatibility suites present/' \
     "docs/releasing.md omits the APT compatibility window"
 assert_matrix_mutation_rejected \
     "contract retirement version dropped" \
     "docs/contracts.md" \
-    's/removed at 0.3.0/removed later/' \
+    's/removed at 0.4.0/removed later/' \
     "docs/contracts.md omits the APT compatibility window"
 
-for retired_version in 0.3.0 0.3.0-alpha.1 1.0.0; do
+for retired_version in 0.4.0 0.4.0-alpha.1 1.0.0; do
     if checker_output=$(RELEASE_MATRIX_VERSION="$retired_version" python3 "$matrix_root/test/check-release-matrix.py" 2>&1); then
         fail "release matrix checker kept the APT compatibility suites at $retired_version"
     fi
     case "$checker_output" in
-        *"reached retire_at 0.3.0"*) ;;
+        *"reached retire_at 0.4.0"*) ;;
         *) fail "release matrix checker rejected $retired_version for another reason: $checker_output" ;;
     esac
     echo "release matrix expiry case: compatibility suites rejected at $retired_version"
 done
-RELEASE_MATRIX_VERSION=0.2.9 python3 "$matrix_root/test/check-release-matrix.py" >/dev/null
-echo "release matrix expiry case: compatibility suites accepted at 0.2.9"
+for active_version in 0.3.0 0.3.9; do
+    RELEASE_MATRIX_VERSION="$active_version" python3 "$matrix_root/test/check-release-matrix.py" >/dev/null
+    echo "release matrix expiry case: compatibility suites accepted at $active_version"
+done
+
+prerelease_root="$tmp_root/matrix-prerelease-window"
+cp -R "$matrix_root" "$prerelease_root"
+sed -i 's/"trigger": "release"/"trigger": "ignore"/' "$prerelease_root/.packit.yaml"
+RELEASE_MATRIX_VERSION=0.3.0-rc.1 python3 "$prerelease_root/test/check-release-matrix.py" >/dev/null
+echo "release matrix expiry case: compatibility suites accepted at 0.3.0-rc.1"
 
 # The terminal state is reachable: with the stanzas and the window claims
-# gone, and the publisher untouched, 0.3.0 passes.
+# gone, and the publisher untouched, 0.4.0 passes.
 retired_root="$tmp_root/matrix-retired"
 cp -R "$matrix_root" "$retired_root"
 awk 'BEGIN { RS = ""; ORS = "\n\n" } !/Codename: (main|legacy)\n/' \
     "$matrix_root/dist/apt/conf/distributions" > "$retired_root/dist/apt/conf/distributions"
-sed -i 's/`main` and `legacy` are compatibility suites/`main` and `legacy` were compatibility suites/; s/removed at 0.3.0/removed in 0.3.0/' \
+sed -i 's/`main` and `legacy` are compatibility suites/`main` and `legacy` were compatibility suites/; s/removed at 0.4.0/removed in 0.4.0/' \
     "$retired_root/docs/contracts.md"
-sed -i 's/compatibility suites present until 0.3.0/compatibility suites removed in 0.3.0/' "$retired_root/docs/releasing.md"
+sed -i 's/compatibility suites present until 0.4.0/compatibility suites removed in 0.4.0/' "$retired_root/docs/releasing.md"
 sed -i 's/keep working until/previously worked until/' \
     "$retired_root/README.md" "$retired_root/$quickstart_fixture" "$retired_root/website/index.html"
-if ! checker_output=$(RELEASE_MATRIX_VERSION=0.3.0 python3 "$retired_root/test/check-release-matrix.py" 2>&1); then
-    fail "release matrix checker rejected the retired compatibility-suite state at 0.3.0: $checker_output"
+if ! checker_output=$(RELEASE_MATRIX_VERSION=0.4.0 python3 "$retired_root/test/check-release-matrix.py" 2>&1); then
+    fail "release matrix checker rejected the retired compatibility-suite state at 0.4.0: $checker_output"
 fi
-echo "release matrix expiry case: retired state accepted at 0.3.0"
+echo "release matrix expiry case: retired state accepted at 0.4.0"
 if RELEASE_MATRIX_VERSION=0.2.0 python3 "$retired_root/test/check-release-matrix.py" >/dev/null 2>&1; then
     fail "release matrix checker accepted the retired compatibility-suite state inside the window"
 fi

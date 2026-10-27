@@ -254,6 +254,15 @@ classification needs a `force_ir` quirk keyed on the node's `modalias` and
 separate LED class device rather than a UVC emitter, name it in
 `device.ir_led`.
 
+LED-class illumination is not hardware-validated for this release. The
+packaged daemon's `ProtectKernelTunables=yes` can prevent its sysfs write;
+a direct CLI run does not prove the daemon can control the LED. Do not
+weaken the service sandbox as a general workaround. An unclean exit such as
+SIGKILL or OOM can leave the LED lit because cleanup cannot run. The current
+release does not provide an automatic crash reset; restore the device's
+brightness manually if this occurs. Diagnostics and recovery follow-up are
+tracked in [#413](https://github.com/tyvsmith/facelock/issues/413).
+
 ## Init System Support
 
 ### systemd (recommended)

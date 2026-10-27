@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0-rc.1] - 2026-10-26
+
+### Upgrade notes
+
+- Upgrade the CLI, PAM module, daemon, and D-Bus policy together, then restart
+  the daemon. The model-list reply now includes `key_id`; mixed CLI/daemon
+  versions cannot decode that reply. Source installation restores an active
+  daemon after replacing the files.
+- Existing notification booleans remain supported: `true` means `"on"` and
+  `false` means `"off"`. `"system"` follows the caller's `PAM_SILENT` flag.
+  Prompt and success feedback remain enabled by default; failure feedback
+  remains disabled. Saving configuration through setup can write string
+  policies that older releases cannot parse. Preserve the original config
+  before upgrading and restore it before rolling back.
+- Keep APT entries naming `main` or `legacy` working until `0.4.0`, extending
+  the previous `0.3.0` deadline. Change those entries to the operating-system
+  codename, `trixie` or `resolute`, before that deadline.
+
 ### Fixed
 
 - **Daemon `Authenticate` accepts user-manager callers and checks root callers** (#397):
@@ -147,6 +165,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   about 70 MB instead of 50 MB. `facelock-bin` is unchanged.
 
 ### Added
+
+- Configure each authentication notification as `"on"`, `"off"`, or
+  `"system"`, with existing booleans retained as aliases. `"on"` explicitly
+  permits feedback under `PAM_SILENT`; `"system"` suppresses it. Mode `off`
+  suppresses all feedback. A new `AuthenticateSilent` D-Bus method carries the
+  caller's silence flag without changing authentication checks.
 
 - **Commands now show which key sealed each model** (#359): `facelock list` gains a `Key`
   column (`legacy` for a row that records none), and each model in `list --json` and
