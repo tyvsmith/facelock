@@ -17,7 +17,7 @@ facelock-store = { path = "../facelock-store" }
 signal-hook = "0.4"
 tracing.workspace = true
 tracing-subscriber.workspace = true
-nix = { version = "0.31", features = ["socket", "user", "fs"] }
+nix = { version = "0.32", features = ["socket", "user", "fs"] }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 facelock-tpm = { path = "../facelock-tpm" }
 bytemuck = { version = "1", features = ["derive"] }
