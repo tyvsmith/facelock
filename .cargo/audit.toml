@@ -53,13 +53,4 @@ ignore = [
     # rav1e. Runs only at compile time and ships no runtime code; rav1e has not
     # migrated to a maintained replacement yet. Revisit when rav1e drops paste.
     "RUSTSEC-2024-0436",
-
-    # zbus 5.x split crates — zbus 6.0 merged zvariant, zvariant_derive and
-    # zbus_names into the maintained zbus crate. That release requires Rust
-    # 1.89, while Facelock supports 1.88; the 5.x crates have no patched
-    # standalone release. These are maintenance notices, not vulnerability or
-    # unsoundness reports. Revisit when Facelock raises its MSRV to 1.89.
-    "RUSTSEC-2026-0370",
-    "RUSTSEC-2026-0371",
-    "RUSTSEC-2026-0372",
 ]
