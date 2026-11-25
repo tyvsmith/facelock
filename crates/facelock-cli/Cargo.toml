@@ -43,7 +43,7 @@ dialoguer = "0.12"
 signal-hook = "0.4"
 thiserror = { workspace = true }
 libc = "0.2"
-nix = { version = "0.31", features = ["user", "socket"] }
+nix = { version = "0.32", features = ["user", "socket"] }
 facelock-tpm = { path = "../facelock-tpm" }
 zbus = { version = "6", default-features = false, features = ["tokio-multithread", "proxy", "tracing"] }
 tss-esapi = { workspace = true, optional = true }
