@@ -140,8 +140,9 @@ notes = "Logitech BRIO 4K with IR sensor"
 # This is the control Lenovo's Windows camera driver (SpITIRDmft64, "SetFwLed")
 # writes; the driver takes its level from the caller, so 8 is measured, not
 # copied. The emitter is only driven when device.ir_emitter = true (off by
-# default). Unit 5 on the RGB function is a different control, so use it with
-# the IR node only.
+# default), and only on a node classified as IR. This quirk also matches the
+# RGB node of the same USB device, where unit 5 is a different control, so that
+# node is left alone.
 [[quirk]]
 vendor_id = "30c9"
 product_id = "011a"

@@ -66,8 +66,10 @@ and the emitter is left alone.
 
 The unit and selector come from the camera's UVC descriptor
 (`/sys/bus/usb/devices/<bus>-<port>/descriptors`, or `lsusb -v`); a vendor's own
-driver usually shows the value and cadence it writes. Use the IR node only: a
-unit ID names a different control on a USB device's RGB function.
+driver usually shows the value and cadence it writes. The emitter is driven only
+on a node classified as IR: a quirk matches every node of its USB device, and a
+unit ID names a different control on the device's RGB function, so that node is
+left alone even with `device.ir_emitter = true`.
 
 ## [recognition]
 

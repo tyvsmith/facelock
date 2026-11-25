@@ -210,6 +210,32 @@ fn warmup_top_up(burst_frames: usize, warmup_frames: u32) -> usize {
     (warmup_frames as usize).saturating_sub(burst_frames)
 }
 
+/// Re-assert a self-clearing IR emitter if its refresh interval has elapsed.
+///
+/// Called before every frame dequeue, including the Y16 calibration burst and
+/// its warmup top-up, so no read happens against an emitter that has already
+/// switched itself off. A failed refresh is logged once and ends refreshing for
+/// this camera, rather than warning on every frame.
+fn refresh_emitter(refresher: &mut Option<EmitterRefresher>, device_path: &str) {
+    if let Some(active) = refresher.as_mut()
+        && let Err(e) = active.refresh_if_due()
+    {
+        tracing::warn!("IR emitter refresh failed on {device_path}, no longer refreshing: {e}");
+        *refresher = None;
+    }
+}
+
+/// Whether the quirk's emitter control may be driven on this node: only when
+/// the user asked for it (`device.ir_emitter`) and the node is classified IR.
+///
+/// A quirk matches by USB ID, so it also matches every other node of the same
+/// device. On a camera whose RGB and IR functions share one vendor:product,
+/// an explicit RGB `device.path` would otherwise send the IR function's unit
+/// and selector to an unrelated control on the RGB function.
+fn emitter_allowed(ir_emitter_enabled: bool, node_is_ir: bool) -> bool {
+    ir_emitter_enabled && node_is_ir
+}
+
 /// Pin a non-auth session's Y16 conversion scale by sampling a burst of frames
 /// and taking the brightest sample any of them produced.
 ///
@@ -232,16 +258,22 @@ fn warmup_top_up(burst_frames: usize, warmup_frames: u32) -> usize {
 /// Tolerating errors would therefore trade a hard failure carrying the real
 /// message for a `Camera` that returns "Invalid argument" from every capture,
 /// having reported a successfully pinned scale on the way out.
+///
+/// `before_read` runs ahead of every dequeue. The caller uses it to keep a
+/// self-clearing IR emitter lit, so the burst does not sample dark frames and
+/// pin a scale that clips the illuminated frames that follow.
 fn calibrate_y16_shift(
     stream: &mut FrameStream<'_>,
     device_path: &str,
     target: usize,
+    before_read: &mut dyn FnMut(),
 ) -> Result<(u8, usize)> {
     let start = Instant::now();
     let mut peak = 0u16;
     let mut frames = 0usize;
 
     while frames < target && start.elapsed() < Y16_CALIBRATION_BUDGET {
+        before_read();
         match stream.next() {
             Ok(buf) => {
                 peak = peak.max(preprocess::y16_peak(buf));
@@ -592,8 +624,12 @@ impl<'a> Camera<'a> {
         // enable and later in Drop.
         let emitter_xu_info = quirk.and_then(EmitterXuInfo::from_quirk);
 
-        // Attempt to enable IR emitter if configured
-        let ir_emitter_active = if config.ir_emitter {
+        // Attempt to enable IR emitter if configured, and only on a node
+        // classified IR. This one gate is also what arms the refresher and the
+        // disable on drop, so all three act on the IR node alone: a USB-ID quirk
+        // also matches the RGB node of the same device, whose unit IDs name
+        // different controls.
+        let ir_emitter_active = if emitter_allowed(config.ir_emitter, caps.is_ir) {
             match ir_emitter::enable_emitter(&device_path, quirk) {
                 Ok(true) => {
                     tracing::info!("IR emitter enabled on {device_path}");
@@ -609,6 +645,12 @@ impl<'a> Camera<'a> {
                 }
             }
         } else {
+            if config.ir_emitter && emitter_xu_info.is_some() {
+                tracing::info!(
+                    "device.ir_emitter is set but {device_path} is not classified as an IR \
+                     node; leaving the quirk's emitter control alone"
+                );
+            }
             false
         };
 
@@ -746,30 +788,27 @@ impl<'a> Camera<'a> {
             // Authentication checks `caps.ir_texture_scale` before any
             // capture. This lazy path exists for enrollment/preview/bench
             // conversion only and never upgrades the capability to verified.
+            let refresher = &mut self.emitter_refresher;
+            let device_path = self.device_path.as_str();
             let (shift, frames) = calibrate_y16_shift(
                 &mut self.stream,
-                &self.device_path,
+                device_path,
                 self.y16_calibration_frames,
+                &mut || refresh_emitter(refresher, device_path),
             )?;
             self.y16_shift = Some(shift);
             for _ in 0..warmup_top_up(frames, self.warmup_frames) {
+                refresh_emitter(&mut self.emitter_refresher, &self.device_path);
                 self.stream.next().map_err(|e| {
                     FacelockError::Camera(format!("warmup after Y16 calibration failed: {e}"))
                 })?;
             }
         }
 
-        // Keep a self-clearing emitter lit. Each frame the callers read comes
-        // through here, so the write cadence follows frame consumption.
-        if let Some(refresher) = self.emitter_refresher.as_mut()
-            && let Err(e) = refresher.refresh_if_due()
-        {
-            tracing::warn!(
-                "IR emitter refresh failed on {}, no longer refreshing: {e}",
-                self.device_path
-            );
-            self.emitter_refresher = None;
-        }
+        // Keep a self-clearing emitter lit. Every dequeue is preceded by this
+        // check (calibration and its top-up above, and the frame below), so the
+        // write cadence follows frame consumption.
+        refresh_emitter(&mut self.emitter_refresher, &self.device_path);
 
         // stream.next() uses the v4l built-in poll with CAPTURE_TIMEOUT.
         // If the camera stops producing frames, this returns TimedOut error
@@ -1278,6 +1317,54 @@ mod tests {
             height: 2,
         };
         assert!(!is_dark_with_config(&frame, 0.6, 10));
+    }
+
+    #[test]
+    fn emitter_is_driven_only_on_an_ir_node_that_asked_for_it() {
+        assert!(emitter_allowed(true, true));
+        // A quirk matches every node of a USB device; the RGB node must be left
+        // alone even when the user enabled the emitter.
+        assert!(!emitter_allowed(true, false));
+        assert!(!emitter_allowed(false, true));
+        assert!(!emitter_allowed(false, false));
+    }
+
+    /// A refresher aimed at `/dev/null`: opens fine, and the XU ioctl on it
+    /// always fails, which is exactly the "write failed" case.
+    fn failing_refresher(interval: std::time::Duration) -> Option<EmitterRefresher> {
+        let info = EmitterXuInfo {
+            xu_unit: 5,
+            selector: 2,
+            enable_value: 8,
+            refresh: Some(interval),
+        };
+        EmitterRefresher::new("/dev/null", &info).expect("open /dev/null")
+    }
+
+    #[test]
+    fn a_failed_refresh_is_logged_once_and_then_dropped() {
+        let interval = crate::ir_emitter::MIN_REFRESH_INTERVAL;
+        let mut refresher = failing_refresher(interval);
+        assert!(refresher.is_some());
+
+        std::thread::sleep(interval * 2);
+        refresh_emitter(&mut refresher, "/dev/null");
+
+        assert!(
+            refresher.is_none(),
+            "a failed write must end refreshing instead of retrying on every frame"
+        );
+        // And a camera with no refresher left is a no-op, not a panic.
+        refresh_emitter(&mut refresher, "/dev/null");
+        assert!(refresher.is_none());
+    }
+
+    #[test]
+    fn a_refresh_that_is_not_due_leaves_the_refresher_in_place() {
+        // Not due, so no ioctl is attempted and nothing can fail.
+        let mut refresher = failing_refresher(std::time::Duration::from_secs(3600));
+        refresh_emitter(&mut refresher, "/dev/null");
+        assert!(refresher.is_some());
     }
 
     #[test]

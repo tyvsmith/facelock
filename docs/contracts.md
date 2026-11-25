@@ -3781,10 +3781,14 @@ match and a mono-only format table are not subject to this gate.
 
 #### Emitter keys
 
-When `device.ir_emitter = true` and the matched quirk resolves an emitter
-control, opening the camera writes the quirk's enable byte to that UVC extension
-unit control (`UVCIOC_CTRL_QUERY`, `UVC_SET_CUR`, one byte); dropping the camera
-writes `0`.
+When `device.ir_emitter = true`, the opened node is classified IR
+(`CameraCaps::is_ir`), and the matched quirk resolves an emitter control, opening
+the camera writes the quirk's enable byte to that UVC extension unit control
+(`UVCIOC_CTRL_QUERY`, `UVC_SET_CUR`, one byte); dropping the camera writes `0`.
+A node that is not classified IR is never written to, even when the quirk
+matches it by USB ID: a quirk matches every node of its device, and a unit ID can
+name an unrelated control on another function. The same condition gates the
+refresh and the write on drop.
 
 | Key | Contract |
 |-----|----------|
@@ -3792,7 +3796,7 @@ writes `0`.
 | `emitter_xu_unit` | Unit ID (decimal `u8`). Wins over `emitter_xu_guid`. |
 | `emitter_xu_guid` | Legacy. Not a GUID match: the first dash-separated segment is the unit ID, parsed as hex `u8`. Used only when `emitter_xu_unit` is absent. |
 | `emitter_xu_value` | Enable byte, default `1`. Non-zero. |
-| `emitter_xu_refresh_ms` | Optional. While frames are being read, re-write the enable byte once at least this many milliseconds (floor 10) have passed since the last write. Checked once per captured frame, no timer thread; it does not run while no frame is being read. A failed refresh logs one warning and stops refreshing for that camera. |
+| `emitter_xu_refresh_ms` | Optional. While frames are being read, re-write the enable byte once at least this many milliseconds (floor 10) have passed since the last write. Checked before every frame dequeue, including the Y16 calibration burst and its warmup top-up; there is no timer thread, so it does not run while no frame is being read. A failed refresh logs one warning and stops refreshing for that camera. |
 
 A quirk that sets any emitter key but cannot resolve a working emitter (no
 selector; neither unit nor a parseable GUID segment; `emitter_xu_value = 0`)
