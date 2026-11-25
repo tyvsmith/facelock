@@ -360,7 +360,7 @@ fn grey_to_rgb(buf: &[u8], width: usize, height: usize, stride: usize) -> Result
 }
 
 use crate::ir_emitter;
-use crate::ir_emitter::EmitterXuInfo;
+use crate::ir_emitter::{EmitterRefresher, EmitterXuInfo};
 use crate::ir_led::IrLed;
 use crate::mplane;
 use crate::preprocess;
@@ -383,6 +383,11 @@ pub struct Camera<'a> {
     ir_emitter_active: bool,
     /// Emitter XU info, stored for disable on drop when the quirk ref is gone.
     emitter_xu_info: Option<EmitterXuInfo>,
+    /// Re-asserts the emitter from the frame loop, for firmware that clears
+    /// the control shortly after each write (`emitter_xu_refresh_ms`). `None`
+    /// when the quirk configures no refresh, and cleared after a failed
+    /// refresh so one error is logged once rather than per frame.
+    emitter_refresher: Option<EmitterRefresher>,
     /// LED class illuminator lit while the camera is open (`device.ir_led`);
     /// switched off on drop.
     ir_led: Option<IrLed>,
@@ -607,6 +612,27 @@ impl<'a> Camera<'a> {
             false
         };
 
+        // Firmware that drops the emitter a few frames after each write needs
+        // it re-asserted while frames are read (see `capture_rgb`).
+        let emitter_refresher = match emitter_xu_info.as_ref().filter(|_| ir_emitter_active) {
+            Some(info) => match EmitterRefresher::new(&device_path, info) {
+                Ok(refresher) => {
+                    if let Some(interval) = info.refresh {
+                        tracing::info!(
+                            "IR emitter on {device_path} re-asserted every {} ms while streaming",
+                            interval.as_millis()
+                        );
+                    }
+                    refresher
+                }
+                Err(e) => {
+                    tracing::warn!("IR emitter refresh unavailable on {device_path}: {e}");
+                    None
+                }
+            },
+            None => None,
+        };
+
         let ir_led = config
             .ir_led
             .as_deref()
@@ -665,6 +691,7 @@ impl<'a> Camera<'a> {
             device_path,
             ir_emitter_active,
             emitter_xu_info,
+            emitter_refresher,
             ir_led,
             caps,
             y16_shift,
@@ -730,6 +757,18 @@ impl<'a> Camera<'a> {
                     FacelockError::Camera(format!("warmup after Y16 calibration failed: {e}"))
                 })?;
             }
+        }
+
+        // Keep a self-clearing emitter lit. Each frame the callers read comes
+        // through here, so the write cadence follows frame consumption.
+        if let Some(refresher) = self.emitter_refresher.as_mut()
+            && let Err(e) = refresher.refresh_if_due()
+        {
+            tracing::warn!(
+                "IR emitter refresh failed on {}, no longer refreshing: {e}",
+                self.device_path
+            );
+            self.emitter_refresher = None;
         }
 
         // stream.next() uses the v4l built-in poll with CAPTURE_TIMEOUT.
@@ -983,6 +1022,9 @@ mod tests {
             force_ir: None,
             emitter_xu_guid: None,
             emitter_xu_selector: None,
+            emitter_xu_unit: None,
+            emitter_xu_value: None,
+            emitter_xu_refresh_ms: None,
             warmup_frames: None,
             format_preference: Some(format_preference.into()),
             y16_bit_depth: None,

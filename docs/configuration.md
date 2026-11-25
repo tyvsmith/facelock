@@ -42,6 +42,33 @@ key. A quirk matches a node by one of:
 See `docs/compatibility.md` for a media-controller example and
 `docs/security.md` §A for why each match carries the authority it does.
 
+#### IR emitter keys
+
+With `device.ir_emitter = true`, a matched quirk can tell facelock how to switch
+the camera's emitter on through a UVC extension-unit control. Only the unit and
+selector are required; the rest tune cameras whose firmware does not behave like
+a plain on/off switch.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `emitter_xu_unit` | u8 | unset | Extension unit ID (`bUnitID` in the camera's UVC descriptor, decimal) that carries the control. Wins over `emitter_xu_guid`. |
+| `emitter_xu_selector` | u8 | unset | Control selector within that unit. Required. |
+| `emitter_xu_value` | u8 | `1` | Byte written to switch the emitter on. Must be non-zero: `0` is what switches it off. Set it where the control is an intensity level and `1` is too dim to light a face. |
+| `emitter_xu_refresh_ms` | u32 | unset | Re-write the enable value this often while the camera is streaming (clamped to at least 10). Set it where the firmware clears the control a few frames after each write. Unset writes once at open. |
+| `emitter_xu_guid` | string | unset | Legacy spelling of `emitter_xu_unit`. **Not matched as a GUID**: only the first dash-separated segment is read, as a hex number (`"09-..."` is unit 9), and a full UUID does not work. Ignored when `emitter_xu_unit` is set. |
+
+The refresh runs from the frame loop, not a timer, so it re-asserts the emitter
+only while frames are being read; the first frame read after the camera has sat
+idle (the warm-hold window) triggers an immediate write. Closing the camera
+writes `0`. A quirk whose emitter keys cannot work (no selector, a unit that
+does not resolve, `emitter_xu_value = 0`) logs a warning when the quirks load
+and the emitter is left alone.
+
+The unit and selector come from the camera's UVC descriptor
+(`/sys/bus/usb/devices/<bus>-<port>/descriptors`, or `lsusb -v`); a vendor's own
+driver usually shows the value and cadence it writes. Use the IR node only: a
+unit ID names a different control on a USB device's RGB function.
+
 ## [recognition]
 
 Face detection and embedding parameters.
