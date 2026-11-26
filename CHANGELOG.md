@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Hardware quirk keys `emitter_xu_unit`, `emitter_xu_value` and
+  `emitter_xu_refresh_ms` for IR cameras whose emitter control is an intensity
+  level, or is cleared by the firmware a few frames after each write. Existing
+  quirks keep writing `1` once at open
+- Shipped quirk for the Lenovo ThinkBook Luxvisions/Sunplus IR camera
+  (`30c9:011a`), whose emitter previously never lit and left every
+  authentication frame dark. Set `device.ir_emitter = true` to use it
+
+### Fixed
+
+- A quirk whose emitter keys cannot work, such as a full UUID in
+  `emitter_xu_guid` (only its first segment is read, as the hex unit ID), now
+  logs a warning when the quirks load instead of being skipped silently
+- The ThinkBook `30c9:011a` quirk no longer sets `force_ir`. Its IR node is
+  GREY-only, so format detection already classifies it; `force_ir` would mark
+  the color node IR when the IR node is not enumerated
+
 ## [0.3.0] - 2026-10-27
 
 ### Changed

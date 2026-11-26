@@ -37,12 +37,32 @@ pub struct Quirk {
     /// Force this device to be treated as an IR camera
     #[serde(default)]
     pub force_ir: Option<bool>,
-    /// UVC Extension Unit GUID for IR emitter control
+    /// Legacy spelling of the emitter's UVC Extension Unit ID. Despite the
+    /// name this is not matched as a GUID: only the first dash-separated
+    /// segment is read, as a hex number, and used as the unit ID (`"09-..."`
+    /// is unit 9). Ignored when [`emitter_xu_unit`](Self::emitter_xu_unit) is
+    /// set; prefer that key in new entries.
     #[serde(default)]
     pub emitter_xu_guid: Option<String>,
+    /// UVC Extension Unit ID (the `bUnitID` in the camera's UVC descriptor,
+    /// decimal) that carries the IR emitter control. Wins over
+    /// [`emitter_xu_guid`](Self::emitter_xu_guid).
+    #[serde(default)]
+    pub emitter_xu_unit: Option<u8>,
     /// UVC XU control selector for emitter toggle
     #[serde(default)]
     pub emitter_xu_selector: Option<u8>,
+    /// Byte written to the emitter control to switch it on (default 1). On
+    /// some firmware the control is an intensity level, where 1 is too dim to
+    /// light a face. Must be non-zero: zero is what switches the emitter off.
+    #[serde(default)]
+    pub emitter_xu_value: Option<u8>,
+    /// Re-write the enable value this often (milliseconds) while the camera
+    /// is streaming. For firmware that clears the control a few frames after
+    /// each write, which otherwise lights the emitter for only a blip. Unset
+    /// (the default) writes once at open. Clamped to at least 10 ms.
+    #[serde(default)]
+    pub emitter_xu_refresh_ms: Option<u32>,
     /// Override warmup frames for this camera
     #[serde(default)]
     pub warmup_frames: Option<u32>,
@@ -162,6 +182,7 @@ impl QuirksDb {
         let mut file: QuirksFile =
             toml::from_str(&content).map_err(|e| format!("parse error: {e}"))?;
         warn_incomplete_platform_keys(path, &file.quirk);
+        warn_unusable_emitter_keys(path, &file.quirk);
         // Quirk files are often written with the padded V4L2 FourCC ("Y16 ").
         // Normalize here so comparisons against `FormatInfo::fourcc` match.
         for quirk in &mut file.quirk {
@@ -385,6 +406,21 @@ fn warn_incomplete_platform_keys(path: &Path, quirks: &[Quirk]) {
                 notes = quirk.notes.as_deref().unwrap_or(""),
                 "quirk sets only one of modalias/node_name; both are required \
                  for a platform identity match, so it will not match by one"
+            );
+        }
+    }
+}
+
+/// A quirk whose emitter keys can never yield a working emitter (no selector,
+/// a unit that cannot be resolved, an enable value of zero) is otherwise
+/// skipped at open with only a debug line. Say so at load instead.
+fn warn_unusable_emitter_keys(path: &Path, quirks: &[Quirk]) {
+    for quirk in quirks {
+        if let Some(problem) = crate::ir_emitter::emitter_config_problem(quirk) {
+            warn!(
+                file = %path.display(),
+                notes = quirk.notes.as_deref().unwrap_or(""),
+                "quirk emitter keys are unusable, so the IR emitter will not be driven: {problem}"
             );
         }
     }
@@ -630,6 +666,44 @@ y16_bit_depth = 10
     }
 
     #[test]
+    fn quirk_deserialization_emitter_tuning_keys() {
+        let toml = r#"
+[[quirk]]
+vendor_id = "1234"
+product_id = "5678"
+emitter_xu_unit = 5
+emitter_xu_selector = 2
+emitter_xu_value = 50
+emitter_xu_refresh_ms = 100
+"#;
+        let file: QuirksFile = toml::from_str(toml).unwrap();
+        let q = &file.quirk[0];
+        assert_eq!(q.emitter_xu_unit, Some(5));
+        assert_eq!(q.emitter_xu_selector, Some(2));
+        assert_eq!(q.emitter_xu_value, Some(50));
+        assert_eq!(q.emitter_xu_refresh_ms, Some(100));
+        assert_eq!(q.emitter_xu_guid, None);
+    }
+
+    #[test]
+    fn quirk_without_emitter_tuning_keys_leaves_them_unset() {
+        // Existing quirk files, which predate these keys, must keep loading and
+        // keep meaning "write 1 once".
+        let toml = r#"
+[[quirk]]
+vendor_id = "1234"
+product_id = "5678"
+emitter_xu_guid = "09-abcd"
+emitter_xu_selector = 3
+"#;
+        let file: QuirksFile = toml::from_str(toml).unwrap();
+        let q = &file.quirk[0];
+        assert_eq!(q.emitter_xu_unit, None);
+        assert_eq!(q.emitter_xu_value, None);
+        assert_eq!(q.emitter_xu_refresh_ms, None);
+    }
+
+    #[test]
     fn quirks_db_find_by_name() {
         let mut db = QuirksDb::default();
         db.quirks.push(Quirk {
@@ -641,6 +715,9 @@ y16_bit_depth = 10
             force_ir: Some(true),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
+            emitter_xu_unit: None,
+            emitter_xu_value: None,
+            emitter_xu_refresh_ms: None,
             warmup_frames: Some(8),
             format_preference: None,
             y16_bit_depth: None,
@@ -673,6 +750,9 @@ y16_bit_depth = 10
             force_ir: Some(true),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
+            emitter_xu_unit: None,
+            emitter_xu_value: None,
+            emitter_xu_refresh_ms: None,
             warmup_frames: Some(10),
             format_preference: Some("Y16".into()),
             y16_bit_depth: None,
@@ -689,6 +769,9 @@ y16_bit_depth = 10
             force_ir: Some(false), // Different value to test priority
             emitter_xu_guid: None,
             emitter_xu_selector: None,
+            emitter_xu_unit: None,
+            emitter_xu_value: None,
+            emitter_xu_refresh_ms: None,
             warmup_frames: None,
             format_preference: None,
             y16_bit_depth: None,
@@ -719,6 +802,9 @@ y16_bit_depth = 10
             force_ir: Some(true),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
+            emitter_xu_unit: None,
+            emitter_xu_value: None,
+            emitter_xu_refresh_ms: None,
             warmup_frames: None,
             format_preference: None,
             y16_bit_depth: None,
@@ -743,6 +829,9 @@ y16_bit_depth = 10
             force_ir: Some(true),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
+            emitter_xu_unit: None,
+            emitter_xu_value: None,
+            emitter_xu_refresh_ms: None,
             warmup_frames: None,
             format_preference: None,
             y16_bit_depth: None,
@@ -758,6 +847,9 @@ y16_bit_depth = 10
             force_ir: Some(false),
             emitter_xu_guid: None,
             emitter_xu_selector: None,
+            emitter_xu_unit: None,
+            emitter_xu_value: None,
+            emitter_xu_refresh_ms: None,
             warmup_frames: None,
             format_preference: None,
             y16_bit_depth: None,
@@ -1331,6 +1423,53 @@ notes = "Full test quirk"
                 q.notes
             );
         }
+    }
+
+    /// An emitter key on a shipped quirk that cannot resolve to a working
+    /// emitter is skipped at open with only a debug line. Nothing else would
+    /// notice, so check the real shipped file.
+    #[test]
+    fn shipped_emitter_quirks_are_all_usable() {
+        let Some(quirks) = shipped_default_quirks() else {
+            return;
+        };
+        for q in &quirks {
+            assert_eq!(
+                crate::ir_emitter::emitter_config_problem(q),
+                None,
+                "shipped quirk {:?} sets emitter keys that cannot drive an emitter",
+                q.notes
+            );
+        }
+    }
+
+    /// The ThinkBook Luxvisions/Sunplus IR camera (30c9:011a) needs all four
+    /// emitter keys: its firmware clears the control a few frames after each
+    /// write, and the level is an exposure knob where a low value (8) gives a
+    /// well-exposed face while the default of 1 is too dim and anything above
+    /// about 15 clips it. Pinned so a refactor of the emitter path cannot
+    /// quietly fall back to a single write of 1.
+    #[test]
+    fn shipped_thinkbook_quirk_holds_the_emitter_on() {
+        let Some(quirks) = shipped_default_quirks() else {
+            return;
+        };
+        let q = quirks
+            .iter()
+            .find(|q| {
+                q.vendor_id.as_deref() == Some("30c9") && q.product_id.as_deref() == Some("011a")
+            })
+            .expect("ThinkBook 30c9:011a quirk is shipped");
+        let info = crate::ir_emitter::EmitterXuInfo::from_quirk(q).expect("emitter keys resolve");
+        assert_eq!((info.xu_unit, info.selector), (5, 2));
+        assert_eq!(info.enable_value, 8);
+        assert_eq!(info.refresh, Some(std::time::Duration::from_millis(100)));
+        // The IR node is GREY-only, so format classification marks it IR.
+        // force_ir is deliberately unset: it is device-level, and with the
+        // GREY node absent it would mark the RGB node IR, where unit 5 is a
+        // different control.
+        assert_eq!(q.format_preference.as_deref(), Some("GREY"));
+        assert_eq!(q.force_ir, None);
     }
 
     /// Table-driven regression for #99: every shipped `name_pattern` quirk in

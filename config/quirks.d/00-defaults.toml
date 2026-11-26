@@ -26,9 +26,23 @@
 #                             authoritative as a USB ID. Never matches a virtual
 #                             (v4l2loopback) node.
 #   force_ir                - treat this device as an IR camera regardless of format detection
-#   emitter_xu_guid         - UVC Extension Unit GUID for IR emitter control
+#   emitter_xu_unit         - UVC Extension Unit ID (the unit's bUnitID in the
+#                             camera's UVC descriptor, decimal) that carries the
+#                             IR emitter control. Needs emitter_xu_selector
 #   emitter_xu_selector     - UVC XU control selector for emitter toggle
-#   warmup_frames           - override device.warmup_frames for this camera
+#   emitter_xu_value        - byte written to switch the emitter on (default 1,
+#                             non-zero; 0 is the off value). Set it where the
+#                             control is an intensity level and 1 is too dim
+#   emitter_xu_refresh_ms   - re-write the enable value this often (>= 10) while
+#                             the camera streams. Set it where the firmware
+#                             clears the control a few frames after each write.
+#                             Unset: write once at open
+#   emitter_xu_guid         - legacy spelling of emitter_xu_unit. NOT matched as
+#                             a GUID: only the first dash-separated segment is
+#                             read, as a HEX unit ID ("09-..." is unit 9). A full
+#                             UUID does not work. Ignored when emitter_xu_unit
+#                             is set
+#   warmup_frames          - override device.warmup_frames for this camera
 #   format_preference       - preferred pixel format (e.g. "GREY", "Y16 ", "YUYV");
 #                             counts as IR evidence only when IR-typical and
 #                             actually advertised by the capture node
@@ -103,6 +117,47 @@ force_ir = true
 warmup_frames = 1
 format_preference = "GREY"
 notes = "Logitech BRIO 4K with IR sensor"
+
+# --- Lenovo ThinkBook (Luxvisions / Sunplus IT) ---
+
+# One USB device, two UVC functions: interface 1.0 is the RGB camera, interface
+# 1.2 is the IR sensor (GREY, 640x360 and 360x360). Same node split as the BRIO.
+#
+# The emitter is a firmware LED behind the IR function's extension unit 5
+# (GUID 52182091-70d0-4ff5-acbc-0d04cc5f5a64), selector 2: one byte, 0..=100,
+# 0 = off. The firmware clears it a few frames after every write, so a single
+# write lights the emitter for about four frames; re-writing it every 100 ms
+# holds it on.
+#
+# The level is the exposure knob, and a low one is right. Measured on a face at
+# laptop distance with auto-exposure settled: 4..10 gives a well-exposed face
+# with no clipped pixels, 15 clips about 10% of the face region and 20 about
+# 20%, and anything from about 25 up is the firmware's maximum and washes the
+# face out. A blown-out face scores poorly against an enrolled one, so 8 sits
+# in the middle of the clean range. Re-enroll after changing it: templates made
+# at a different level were captured under different lighting.
+#
+# This is the control Lenovo's Windows camera driver (SpITIRDmft64, "SetFwLed")
+# writes; the driver takes its level from the caller, so 8 is measured, not
+# copied. The emitter is only driven when device.ir_emitter = true (off by
+# default), and only on a node classified as IR.
+#
+# force_ir is deliberately unset. The IR node enumerates GREY only, so format
+# classification already marks it IR and auto-detection picks it. force_ir is
+# device-level ("this USB device has an IR sensor"): when the GREY node is not
+# enumerated it would mark the RGB node IR, and unit 5 on that function is a
+# different control. format_preference still names the IR node's native format
+# for capture negotiation.
+[[quirk]]
+vendor_id = "30c9"
+product_id = "011a"
+warmup_frames = 8
+format_preference = "GREY"
+emitter_xu_unit = 5
+emitter_xu_selector = 2
+emitter_xu_value = 8
+emitter_xu_refresh_ms = 100
+notes = "Lenovo ThinkBook Luxvisions/Sunplus IR camera (30c9:011a); emitter on XU unit 5 selector 2"
 
 # --- Microsoft Surface cameras ---
 

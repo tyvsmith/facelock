@@ -4,13 +4,22 @@
 //! This module provides the interface for controlling these emitters using
 //! the Linux UVC driver's `UVCIOC_CTRL_QUERY` ioctl.
 //!
-//! The quirks database supplies per-device XU GUID and selector values.
+//! The quirks database supplies per-device XU unit and selector values, and
+//! optionally the byte to write (some firmware treats the control as an
+//! intensity level) and a refresh interval (some firmware clears it a few
+//! frames after every write, so a single write only lights the emitter for a
+//! blip). See [`EmitterRefresher`] for the refresh.
 
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use crate::quirks::Quirk;
+
+/// Shortest refresh interval honored. A quirk asking for less is clamped, so
+/// a typo cannot turn every captured frame into a burst of ioctls.
+pub const MIN_REFRESH_INTERVAL: Duration = Duration::from_millis(10);
 
 // UVC XU query types (from linux/usb/video.h)
 const UVC_GET_CUR: u8 = 0x81;
@@ -36,40 +45,94 @@ struct UvcXuControlQuery {
 /// in structs that outlive the quirk reference.
 #[derive(Debug, Clone)]
 pub struct EmitterXuInfo {
-    /// The UVC Extension Unit ID (parsed from the GUID via sysfs lookup).
-    /// For now we use the XU unit byte directly from the GUID's first octet.
+    /// The UVC Extension Unit ID (`bUnitID` from the camera's UVC descriptor).
     pub xu_unit: u8,
     /// The control selector within the XU.
     pub selector: u8,
+    /// Byte written to switch the emitter on. `1` unless the quirk says
+    /// otherwise; always non-zero (zero is the off value).
+    pub enable_value: u8,
+    /// When set, the enable value is re-written this often while the camera
+    /// streams. Never below [`MIN_REFRESH_INTERVAL`].
+    pub refresh: Option<Duration>,
 }
 
 impl EmitterXuInfo {
     /// Try to extract emitter XU info from a quirk.
-    /// Returns `None` if the quirk lacks `emitter_xu_guid` or `emitter_xu_selector`.
+    ///
+    /// Returns `None` when the quirk has no usable emitter configuration: see
+    /// [`emitter_config_problem`] for the reasons, which the quirk loader
+    /// reports as a warning.
     pub fn from_quirk(quirk: &Quirk) -> Option<Self> {
-        let guid = quirk.emitter_xu_guid.as_deref()?;
+        if emitter_config_problem(quirk).is_some() {
+            return None;
+        }
         let selector = quirk.emitter_xu_selector?;
+        let xu_unit = resolve_xu_unit(quirk)?;
+        let enable_value = quirk.emitter_xu_value.unwrap_or(1);
+        let refresh = quirk
+            .emitter_xu_refresh_ms
+            .map(|ms| Duration::from_millis(u64::from(ms)).max(MIN_REFRESH_INTERVAL));
 
-        // Parse the XU unit ID from the GUID string.
-        // The GUID is typically a hex string like "abcd-1234-..." or a raw hex blob.
-        // We need the UVC Extension Unit ID which is an integer assigned by the
-        // UVC descriptor, not directly derivable from the GUID alone.
-        //
-        // In practice, the quirks database should encode the XU unit ID in the first
-        // segment of the GUID (e.g., "09-..." means unit 9).  If the GUID is a full
-        // UUID, we parse the first hex segment as the unit ID.
-        let xu_unit = parse_xu_unit_from_guid(guid)?;
-
-        Some(Self { xu_unit, selector })
+        Some(Self {
+            xu_unit,
+            selector,
+            enable_value,
+            refresh,
+        })
     }
+}
+
+/// Resolve the XU unit ID: the explicit `emitter_xu_unit` key wins, otherwise
+/// the legacy first-segment-of-`emitter_xu_guid` spelling.
+fn resolve_xu_unit(quirk: &Quirk) -> Option<u8> {
+    match quirk.emitter_xu_unit {
+        Some(unit) => Some(unit),
+        None => parse_xu_unit_from_guid(quirk.emitter_xu_guid.as_deref()?),
+    }
+}
+
+/// Why a quirk's emitter keys cannot produce a working emitter, or `None` when
+/// they are either absent or complete and usable.
+///
+/// A quirk that sets no emitter key at all is not a problem: most cameras have
+/// no controllable emitter.
+pub(crate) fn emitter_config_problem(quirk: &Quirk) -> Option<String> {
+    let any_emitter_key = quirk.emitter_xu_guid.is_some()
+        || quirk.emitter_xu_unit.is_some()
+        || quirk.emitter_xu_selector.is_some()
+        || quirk.emitter_xu_value.is_some()
+        || quirk.emitter_xu_refresh_ms.is_some();
+    if !any_emitter_key {
+        return None;
+    }
+    if quirk.emitter_xu_selector.is_none() {
+        return Some("emitter_xu_selector is not set".into());
+    }
+    if resolve_xu_unit(quirk).is_none() {
+        return Some(match quirk.emitter_xu_guid.as_deref() {
+            Some(guid) => format!(
+                "emitter_xu_guid {guid:?} is not read as a GUID: its first dash-separated \
+                 segment must be the hex unit ID (e.g. \"05\" or \"05-...\"). Set \
+                 emitter_xu_unit instead"
+            ),
+            None => "neither emitter_xu_unit nor emitter_xu_guid is set".into(),
+        });
+    }
+    if quirk.emitter_xu_value == Some(0) {
+        return Some(
+            "emitter_xu_value is 0, which is the off value; the emitter would never turn on".into(),
+        );
+    }
+    None
 }
 
 /// Parse the XU unit ID from a quirks GUID string.
 ///
-/// Supports formats:
-/// - Plain decimal number: "9"
-/// - First hex segment of a UUID-style string: "09-abcd-..." -> 9
-/// - Full hex without dashes (first two hex chars): "09abcdef..." -> 9
+/// Legacy spelling kept for existing quirk files. Only the first
+/// dash-separated segment is read, as a hex number: `"09"`, `"9"` and
+/// `"09-abcd-..."` are all unit 9. The rest of the string is ignored, so this
+/// is not GUID matching. New entries should use `emitter_xu_unit`.
 fn parse_xu_unit_from_guid(guid: &str) -> Option<u8> {
     let first_segment = guid.split('-').next().unwrap_or(guid);
     // Try parsing as a hex number (handles both "09" and "9")
@@ -93,11 +156,13 @@ pub fn enable_emitter(device_path: &str, quirk: Option<&Quirk>) -> Result<bool, 
         }
     };
 
-    set_emitter_control(device_path, &xu_info, 1)?;
+    set_emitter_control(device_path, &xu_info, xu_info.enable_value)?;
     tracing::debug!(
         device = device_path,
         xu_unit = xu_info.xu_unit,
         selector = xu_info.selector,
+        value = xu_info.enable_value,
+        refresh_ms = xu_info.refresh.map(|d| d.as_millis() as u64),
         "IR emitter enabled via UVC XU"
     );
     Ok(true)
@@ -115,7 +180,7 @@ pub fn enable_emitter_with_info(
         return Err(format!("device not found: {device_path}"));
     }
 
-    set_emitter_control(device_path, xu_info, 1)?;
+    set_emitter_control(device_path, xu_info, xu_info.enable_value)?;
     Ok(true)
 }
 
@@ -190,6 +255,17 @@ fn set_emitter_control(
         .open(device_path)
         .map_err(|e| format!("failed to open {device_path}: {e}"))?;
 
+    write_emitter_control(&file, device_path, xu_info, value)
+}
+
+/// `UVC_SET_CUR` on an already-open device node. `device_path` is only used
+/// to name the device in the error.
+fn write_emitter_control(
+    file: &File,
+    device_path: &str,
+    xu_info: &EmitterXuInfo,
+    value: u8,
+) -> Result<(), String> {
     let mut data = [value];
 
     let query = UvcXuControlQuery {
@@ -214,6 +290,78 @@ fn set_emitter_control(
     } else {
         Ok(())
     }
+}
+
+/// Keeps an IR emitter lit for the life of a streaming session on firmware
+/// that clears the control a few frames after each write.
+///
+/// The owner calls [`refresh_if_due`](Self::refresh_if_due) from its frame
+/// loop, so there is no timer thread to start, stop or race with `Drop`: the
+/// emitter is re-asserted exactly while frames are being consumed, and is not
+/// when nobody is reading (the warm-hold window between attempts). The first
+/// call after such a gap writes immediately, which is why a camera's warmup
+/// frames matter: the first lit frame arrives a few frames after that write.
+///
+/// Holds its own descriptor on the device node, opened once, so a refresh is a
+/// single ioctl rather than an open/ioctl/close.
+pub struct EmitterRefresher {
+    file: File,
+    device_path: String,
+    xu_info: EmitterXuInfo,
+    interval: Duration,
+    last_write: Instant,
+}
+
+impl EmitterRefresher {
+    /// Open the refresher for `device_path`, or `Ok(None)` when the quirk
+    /// configures no refresh interval. The caller has already written the
+    /// enable value once (via [`enable_emitter`]), so the first refresh is
+    /// due one interval from now.
+    pub fn new(device_path: &str, xu_info: &EmitterXuInfo) -> Result<Option<Self>, String> {
+        let Some(interval) = xu_info.refresh else {
+            return Ok(None);
+        };
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(device_path)
+            .map_err(|e| format!("failed to open {device_path}: {e}"))?;
+        Ok(Some(Self {
+            file,
+            device_path: device_path.to_string(),
+            xu_info: xu_info.clone(),
+            interval,
+            last_write: Instant::now(),
+        }))
+    }
+
+    /// Re-write the enable value if a full interval has passed since the last
+    /// write. Cheap when not due: one clock read.
+    pub fn refresh_if_due(&mut self) -> Result<(), String> {
+        self.refresh_at(Instant::now())
+    }
+
+    fn refresh_at(&mut self, now: Instant) -> Result<(), String> {
+        if !refresh_due(self.last_write, now, self.interval) {
+            return Ok(());
+        }
+        // Advance before the write so a failing ioctl is not retried on every
+        // frame; the caller decides whether an error ends refreshing.
+        self.last_write = now;
+        write_emitter_control(
+            &self.file,
+            &self.device_path,
+            &self.xu_info,
+            self.xu_info.enable_value,
+        )
+    }
+}
+
+/// Whether a refresh is due. `now` earlier than `last_write` (a clock quirk)
+/// counts as not due rather than underflowing.
+fn refresh_due(last_write: Instant, now: Instant, interval: Duration) -> bool {
+    now.checked_duration_since(last_write)
+        .is_some_and(|elapsed| elapsed >= interval)
 }
 
 /// Send a `UVC_GET_CUR` to the emitter XU control.
@@ -323,6 +471,163 @@ mod tests {
     }
 
     #[test]
+    fn defaults_preserve_single_write_of_one() {
+        // A quirk with only the original keys must behave exactly as before:
+        // write 1 once, no refresh.
+        let info = EmitterXuInfo::from_quirk(&make_quirk_with_emitter()).unwrap();
+        assert_eq!(info.enable_value, 1);
+        assert_eq!(info.refresh, None);
+    }
+
+    #[test]
+    fn explicit_unit_wins_over_guid() {
+        let mut quirk = make_quirk_with_emitter();
+        quirk.emitter_xu_guid = Some("09-abcd-1234".into());
+        quirk.emitter_xu_unit = Some(5);
+        assert_eq!(EmitterXuInfo::from_quirk(&quirk).unwrap().xu_unit, 5);
+    }
+
+    #[test]
+    fn unit_alone_is_enough_without_a_guid() {
+        let mut quirk = make_quirk_with_emitter();
+        quirk.emitter_xu_guid = None;
+        quirk.emitter_xu_unit = Some(5);
+        let info = EmitterXuInfo::from_quirk(&quirk).unwrap();
+        assert_eq!((info.xu_unit, info.selector), (5, 3));
+    }
+
+    #[test]
+    fn value_and_refresh_come_from_the_quirk() {
+        let mut quirk = make_quirk_with_emitter();
+        quirk.emitter_xu_value = Some(50);
+        quirk.emitter_xu_refresh_ms = Some(100);
+        let info = EmitterXuInfo::from_quirk(&quirk).unwrap();
+        assert_eq!(info.enable_value, 50);
+        assert_eq!(info.refresh, Some(Duration::from_millis(100)));
+    }
+
+    #[test]
+    fn refresh_interval_is_clamped_to_the_minimum() {
+        let mut quirk = make_quirk_with_emitter();
+        quirk.emitter_xu_refresh_ms = Some(0);
+        assert_eq!(
+            EmitterXuInfo::from_quirk(&quirk).unwrap().refresh,
+            Some(MIN_REFRESH_INTERVAL)
+        );
+        quirk.emitter_xu_refresh_ms = Some(1);
+        assert_eq!(
+            EmitterXuInfo::from_quirk(&quirk).unwrap().refresh,
+            Some(MIN_REFRESH_INTERVAL)
+        );
+    }
+
+    #[test]
+    fn zero_enable_value_is_rejected() {
+        // Zero is the off value; an "enable" of zero would never light anything.
+        let mut quirk = make_quirk_with_emitter();
+        quirk.emitter_xu_value = Some(0);
+        assert!(EmitterXuInfo::from_quirk(&quirk).is_none());
+        assert!(
+            emitter_config_problem(&quirk)
+                .unwrap()
+                .contains("off value")
+        );
+    }
+
+    #[test]
+    fn config_problem_is_none_without_any_emitter_key() {
+        assert_eq!(emitter_config_problem(&make_quirk_without_emitter()), None);
+    }
+
+    #[test]
+    fn config_problem_is_none_for_a_complete_quirk() {
+        assert_eq!(emitter_config_problem(&make_quirk_with_emitter()), None);
+    }
+
+    #[test]
+    fn config_problem_flags_a_missing_selector() {
+        let mut quirk = make_quirk_with_emitter();
+        quirk.emitter_xu_selector = None;
+        assert!(
+            emitter_config_problem(&quirk)
+                .unwrap()
+                .contains("emitter_xu_selector")
+        );
+        assert!(EmitterXuInfo::from_quirk(&quirk).is_none());
+    }
+
+    #[test]
+    fn config_problem_flags_a_full_uuid_in_the_guid_key() {
+        // The trap this guards: `emitter_xu_guid` looks like it takes a GUID,
+        // but only the first segment is read, as the hex unit ID. A real UUID's
+        // first segment overflows a byte, so the emitter was silently skipped.
+        let mut quirk = make_quirk_with_emitter();
+        quirk.emitter_xu_guid = Some("52182091-70d0-4ff5-acbc-0d04cc5f5a64".into());
+        assert!(EmitterXuInfo::from_quirk(&quirk).is_none());
+        let problem = emitter_config_problem(&quirk).unwrap();
+        assert!(problem.contains("emitter_xu_unit"), "{problem}");
+        assert!(problem.contains("52182091"), "{problem}");
+    }
+
+    #[test]
+    fn config_problem_flags_missing_unit_and_guid() {
+        let mut quirk = make_quirk_with_emitter();
+        quirk.emitter_xu_guid = None;
+        assert!(
+            emitter_config_problem(&quirk)
+                .unwrap()
+                .contains("neither emitter_xu_unit nor emitter_xu_guid")
+        );
+    }
+
+    #[test]
+    fn config_problem_flags_value_or_refresh_without_the_rest() {
+        // Tuning keys on a quirk that never says where the control is.
+        let mut quirk = make_quirk_without_emitter();
+        quirk.emitter_xu_value = Some(50);
+        assert!(emitter_config_problem(&quirk).is_some());
+        let mut quirk = make_quirk_without_emitter();
+        quirk.emitter_xu_refresh_ms = Some(100);
+        assert!(emitter_config_problem(&quirk).is_some());
+    }
+
+    #[test]
+    fn refresh_due_respects_the_interval() {
+        let t0 = Instant::now();
+        let interval = Duration::from_millis(100);
+        assert!(!refresh_due(t0, t0, interval));
+        assert!(!refresh_due(t0, t0 + Duration::from_millis(99), interval));
+        assert!(refresh_due(t0, t0 + Duration::from_millis(100), interval));
+        assert!(refresh_due(t0, t0 + Duration::from_secs(5), interval));
+    }
+
+    #[test]
+    fn refresh_due_tolerates_a_backwards_clock_reading() {
+        let t0 = Instant::now();
+        let later = t0 + Duration::from_secs(1);
+        assert!(!refresh_due(later, t0, Duration::from_millis(100)));
+    }
+
+    #[test]
+    fn refresher_is_absent_without_a_refresh_interval() {
+        // Opens nothing: no interval configured means no descriptor either.
+        let info = EmitterXuInfo::from_quirk(&make_quirk_with_emitter()).unwrap();
+        assert!(
+            EmitterRefresher::new("/dev/nonexistent_camera", &info)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn refresher_open_failure_is_an_error_not_a_panic() {
+        let mut quirk = make_quirk_with_emitter();
+        quirk.emitter_xu_refresh_ms = Some(100);
+        let info = EmitterXuInfo::from_quirk(&quirk).unwrap();
+        assert!(EmitterRefresher::new("/dev/nonexistent_camera", &info).is_err());
+    }
+
+    #[test]
     fn emitter_xu_info_from_quirk_without_fields() {
         let quirk = make_quirk_without_emitter();
         let info = EmitterXuInfo::from_quirk(&quirk);
@@ -352,6 +657,9 @@ mod tests {
             force_ir: None,
             emitter_xu_guid: Some("09-abcd-1234".into()),
             emitter_xu_selector: Some(3),
+            emitter_xu_unit: None,
+            emitter_xu_value: None,
+            emitter_xu_refresh_ms: None,
             warmup_frames: None,
             format_preference: None,
             y16_bit_depth: None,
@@ -370,6 +678,9 @@ mod tests {
             force_ir: None,
             emitter_xu_guid: None,
             emitter_xu_selector: None,
+            emitter_xu_unit: None,
+            emitter_xu_value: None,
+            emitter_xu_refresh_ms: None,
             warmup_frames: None,
             format_preference: None,
             y16_bit_depth: None,
