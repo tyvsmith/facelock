@@ -140,13 +140,17 @@ notes = "Logitech BRIO 4K with IR sensor"
 # This is the control Lenovo's Windows camera driver (SpITIRDmft64, "SetFwLed")
 # writes; the driver takes its level from the caller, so 8 is measured, not
 # copied. The emitter is only driven when device.ir_emitter = true (off by
-# default), and only on a node classified as IR. This quirk also matches the
-# RGB node of the same USB device, where unit 5 is a different control, so that
-# node is left alone.
+# default), and only on a node classified as IR.
+#
+# force_ir is deliberately unset. The IR node enumerates GREY only, so format
+# classification already marks it IR and auto-detection picks it. force_ir is
+# device-level ("this USB device has an IR sensor"): when the GREY node is not
+# enumerated it would mark the RGB node IR, and unit 5 on that function is a
+# different control. format_preference still names the IR node's native format
+# for capture negotiation.
 [[quirk]]
 vendor_id = "30c9"
 product_id = "011a"
-force_ir = true
 warmup_frames = 8
 format_preference = "GREY"
 emitter_xu_unit = 5

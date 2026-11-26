@@ -1464,9 +1464,12 @@ notes = "Full test quirk"
         assert_eq!((info.xu_unit, info.selector), (5, 2));
         assert_eq!(info.enable_value, 8);
         assert_eq!(info.refresh, Some(std::time::Duration::from_millis(100)));
-        // Same node split as the BRIO: the GREY node is the IR sensor.
+        // The IR node is GREY-only, so format classification marks it IR.
+        // force_ir is deliberately unset: it is device-level, and with the
+        // GREY node absent it would mark the RGB node IR, where unit 5 is a
+        // different control.
         assert_eq!(q.format_preference.as_deref(), Some("GREY"));
-        assert_eq!(q.force_ir, Some(true));
+        assert_eq!(q.force_ir, None);
     }
 
     /// Table-driven regression for #99: every shipped `name_pattern` quirk in

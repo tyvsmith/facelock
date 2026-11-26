@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A quirk whose emitter keys cannot work, such as a full UUID in
   `emitter_xu_guid` (only its first segment is read, as the hex unit ID), now
   logs a warning when the quirks load instead of being skipped silently
+- The ThinkBook `30c9:011a` quirk no longer sets `force_ir`. Its IR node is
+  GREY-only, so format detection already classifies it; `force_ir` would mark
+  the color node IR when the IR node is not enumerated
 
 ## [0.3.0] - 2026-10-27
 

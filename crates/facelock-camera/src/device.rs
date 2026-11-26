@@ -875,6 +875,64 @@ mod tests {
         Some(("046d".into(), "085e".into()))
     }
 
+    fn thinkbook_quirk() -> crate::quirks::Quirk {
+        crate::quirks::Quirk {
+            vendor_id: Some("30c9".into()),
+            product_id: Some("011a".into()),
+            name_pattern: None,
+            modalias: None,
+            node_name: None,
+            force_ir: None,
+            emitter_xu_guid: None,
+            emitter_xu_selector: Some(2),
+            emitter_xu_unit: Some(5),
+            emitter_xu_value: Some(8),
+            emitter_xu_refresh_ms: Some(100),
+            warmup_frames: Some(8),
+            format_preference: Some("GREY".into()),
+            y16_bit_depth: None,
+            rotation: None,
+            notes: Some("Lenovo ThinkBook Luxvisions/Sunplus IR camera".into()),
+        }
+    }
+
+    #[test]
+    fn thinkbook_grey_node_is_ir_without_force_ir() {
+        // The shipped 30c9:011a quirk omits force_ir. The IR function is
+        // GREY-only, so format evidence classifies it and auto-detection
+        // picks it. A lone RGB node — the IR function not enumerated — stays
+        // color. force_ir would mark that node IR, and unit 5 there is a
+        // different control.
+        let mut db = crate::quirks::QuirksDb::default();
+        db.push_quirk_for_test(thinkbook_quirk());
+        let ids = Some(("30c9".into(), "011a".into()));
+
+        let rgb = device_at("/dev/video0", "Integrated Camera", &["YUYV", "MJPG"]);
+        let ir = device_at("/dev/video2", "Integrated Camera", &["GREY"]);
+        let devices = [rgb.clone(), ir];
+        let sources =
+            classify_ir_sources_with_ids(&devices, Some(&db), &[ids.clone(), ids.clone()]);
+        assert_eq!(
+            sources[0],
+            IrSource::None,
+            "RGB sibling must not classify IR"
+        );
+        assert_eq!(
+            sources[1],
+            IrSource::Format,
+            "GREY-only node classifies IR from its formats"
+        );
+        let picked = pick_auto_device(&devices, &sources).expect("a device is picked");
+        assert_eq!(picked.path, "/dev/video2");
+
+        let lone = classify_ir_sources_with_ids(&[rgb], Some(&db), &[ids]);
+        assert_eq!(
+            lone[0],
+            IrSource::None,
+            "a lone RGB node must not inherit a device-level IR classification"
+        );
+    }
+
     #[test]
     fn brio_multi_node_only_grey_node_classifies_ir() {
         // Regression (hardware-verified, Logitech BRIO 046d:085e): one physical
