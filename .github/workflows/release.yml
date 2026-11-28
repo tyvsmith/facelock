@@ -415,7 +415,7 @@ jobs:
     outputs:
       attestation: ${{ steps.attest.outputs.sha256 }}
     container:
-      image: registry.fedoraproject.org/fedora:44@sha256:99741a26ce7d4ee2746a564552210f267a458c527cc09ea7dd103ecbe62b0d5a
+      image: registry.fedoraproject.org/fedora:44@sha256:c1e457a3c398b0d7b12d060ad86ad52bab714a17faecc907deb1262fb2b72d98
     env:
       # `container.image` cannot read an env context, so the pinned digest is
       # written twice. test/release-artifacts-contract.sh holds the two equal.
